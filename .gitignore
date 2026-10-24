@@ -6,8 +6,9 @@ AGENTS.md
 /.claude/
 /skills-lock.json
 
-# Local Claude Code mod (compact button and sub-agents pane)
+# Local Claude Code mods (compact button and sub-agents pane, usage limits)
 /.claude/skills/compact-agents/
+/.claude/skills/usage-limits/
 
 # Build output
 .pio/
