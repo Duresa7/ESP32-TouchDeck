@@ -4,9 +4,9 @@
 
 CONFIG_IDF_TARGET="esp32s3"
 
-# 16 MB flash, with a larger app partition for UI assets later.
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
-CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
 # 8 MB octal PSRAM, needed for the 1024x600 RGB display frame buffers.
 CONFIG_SPIRAM=y
