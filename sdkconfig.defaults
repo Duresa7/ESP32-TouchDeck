@@ -1,0 +1,14 @@
+# Defaults for the Waveshare ESP32-S3-Touch-LCD-5B.
+# Applied when sdkconfig is first generated; run `idf.py menuconfig` to change
+# settings, or delete sdkconfig to regenerate it from this file.
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# 16 MB flash, with a larger app partition for UI assets later.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
+# 8 MB octal PSRAM, needed for the 1024x600 RGB display frame buffers.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y

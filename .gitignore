@@ -7,6 +7,10 @@ build/
 out/
 dist/
 
+# ESP-IDF generated files
+sdkconfig.old
+managed_components/
+
 # PlatformIO and Arduino generated files
 .pioenvs/
 .piolibdeps/
