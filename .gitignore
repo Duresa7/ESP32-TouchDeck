@@ -1,6 +1,11 @@
 # Agent instructions
 AGENTS.md
 
+# Local agent skills and installation metadata
+/.agents/
+/.claude/
+/skills-lock.json
+
 # Build output
 .pio/
 build/
