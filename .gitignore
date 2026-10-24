@@ -1,0 +1,43 @@
+# Agent instructions
+AGENTS.md
+
+# Build output
+.pio/
+build/
+out/
+dist/
+
+# PlatformIO and Arduino generated files
+.pioenvs/
+.piolibdeps/
+libraries/
+*.elf
+*.hex
+*.bin
+*.map
+
+# IDE settings
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Environment and local secrets
+.env
+.env.*
+!.env.example
