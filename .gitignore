@@ -12,6 +12,9 @@ build/
 out/
 dist/
 
+# Hardware verification evidence
+/.verify/
+
 # ESP-IDF generated files
 sdkconfig.old
 managed_components/
