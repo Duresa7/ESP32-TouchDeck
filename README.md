@@ -34,8 +34,10 @@ idf.py -p COM3 flash monitor
 ```
 
 Replace `COM3` with your board's serial port. Press `Ctrl+]` to exit the
-monitor. Board defaults (flash size, PSRAM) live in
-`firmware/sdkconfig.defaults`.
+monitor. Board defaults (flash size, PSRAM, display timing) live in
+`firmware/sdkconfig.defaults`. The first build downloads LVGL and the LVGL
+adapter from the ESP-IDF component registry, so it needs a network connection.
+`firmware/dependencies.lock` pins the versions.
 
 ## Serial console
 
@@ -50,6 +52,21 @@ td> version
 
 The commands are `help`, `version`, `heap`, `uptime`, and `reboot`. An unknown
 command answers with `"ok":false` and an `error`.
+
+## Display
+
+On boot the panel shows a test screen of eight color bars and a `TouchDeck`
+label, drawn with LVGL 9. The display component adds three console commands:
+
+- `screenshot [1|2|4]` streams the screen as RGB565 in `@tdb ` base64 lines and
+  ends with a reply that carries a CRC-32. Scale 2 or 4 keeps every second or
+  fourth pixel.
+- `perf fps <seconds>` redraws the whole screen every frame and replies with the
+  frames per second when the time is up.
+- `backlight on|off` switches the backlight through the CH422G expander.
+
+These three are registered by the display component and do not appear in
+`help`.
 
 ## Unit tests
 
