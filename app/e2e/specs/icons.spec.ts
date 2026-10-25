@@ -28,6 +28,14 @@ const status = () => $('[data-testid="editor-status"]').getText();
 const record = () => invoke<MockRecord>('e2e_mock_record');
 const glyph = (tile: string) => $(`[data-testid="tile"][data-id="${tile}"] [data-testid="tile-glyph"]`);
 
+/** How many pixels a tile's glyph canvas draws with any alpha. */
+const glyphOpaque = (tile: string) =>
+  browser.execute((id) => {
+    const canvas = document.querySelector<HTMLCanvasElement>(`[data-testid="tile"][data-id="${id}"] [data-testid="tile-glyph"]`);
+    const data = canvas?.getContext('2d')?.getImageData(0, 0, canvas.width, canvas.height).data ?? new Uint8ClampedArray();
+    return data.filter((a, i) => i % 4 === 3 && a > 0).length;
+  }, tile);
+
 async function waitStatus(match: RegExp, timeout = 10_000) {
   await browser.waitUntil(async () => match.test(await status()), { timeout, interval: 50, timeoutMsg: `status never matched ${match}: "${await status()}"` });
   return status();
@@ -73,6 +81,15 @@ async function currentLayout(): Promise<string> {
   return JSON.stringify(JSON.parse(await browser.execute(() => (window as unknown as { tdExported: string }).tdExported)));
 }
 
+/** Each picker option's name and how many pixels its canvas draws with any alpha. */
+function drawnOptions() {
+  return [...document.querySelectorAll<HTMLElement>('[data-testid="icon-option"]')].map((option) => {
+    const canvas = option.querySelector('canvas');
+    const alpha = canvas?.getContext('2d')?.getImageData(0, 0, canvas.width, canvas.height).data.filter((_, i) => i % 4 === 3) ?? [];
+    return { name: option.dataset.name ?? '', opaque: alpha.filter((a) => a > 0).length };
+  });
+}
+
 function save(name: string, value: unknown) {
   mkdirSync(out, { recursive: true });
   writeFileSync(join(out, name), JSON.stringify(value, null, 2) + '\n');
@@ -95,10 +112,12 @@ describe('tile icons on the mock deck', () => {
     await openPicker();
     await browser.waitUntil(
       async () =>
-        (await browser.execute(() => [...document.querySelectorAll<HTMLImageElement>('[data-testid="icon-option"] img')].filter((img) => img.naturalWidth === 64).length)) ===
-        index.icons.length,
+        (await browser.execute(drawnOptions)).filter((option) => option.opaque > 0).length === index.icons.length,
       { timeout: 10_000, timeoutMsg: 'not every built-in icon drew' },
-    );
+    ).catch(async (error) => {
+      const seen = await browser.execute(drawnOptions);
+      throw new Error(`${String(error)}; ${seen.length} options: ${seen.map((option) => `${option.name}:${option.opaque}`).join(' ')}`);
+    });
     const names = await $$('[data-testid="icon-option"]').map((option) => option.getAttribute('data-name'));
     expect([...names].sort()).toEqual(index.icons.map((icon) => icon.name).sort());
     note('builtin', { index: index.icons.length, drawn: names.length });
@@ -114,8 +133,10 @@ describe('tile icons on the mock deck', () => {
     await option.click();
     await glyph(terminalTile).waitForExist({ timeout: 5_000 });
     expect(await glyph(terminalTile).getAttribute('data-id')).toBe(terminalId);
+    const drawn = await glyphOpaque(terminalTile);
+    expect(drawn).toBeGreaterThan(0);
     expect(await $('[data-testid="tile-icon"]').getValue()).toBe(`file:${terminalId}`);
-    note('picker', { search: 'term', matches: names, icon: `file:${terminalId}` });
+    note('picker', { search: 'term', matches: names, icon: `file:${terminalId}`, tile_glyph_pixels: drawn });
     await shot('picker');
   });
 
@@ -143,6 +164,8 @@ describe('tile icons on the mock deck', () => {
     await $('[data-testid="use-app-icon"]').click();
     await glyph(id).waitForExist({ timeout: 10_000 });
     const iconId = String(await glyph(id).getAttribute('data-id'));
+    const drawn = await glyphOpaque(id);
+    expect(drawn).toBeGreaterThan(0);
     const file = await invoke<number[]>('icon_file', { id: iconId });
     const opaque = file.slice(12 + 8192).filter((a) => a === 255).length;
     expect(file.length).toBe(12300);
@@ -152,7 +175,7 @@ describe('tile icons on the mock deck', () => {
     await $('[data-testid="push"]').click();
     const text = await waitStatus(/^Deck shows .*1 icon sent$/);
     expect((await record()).icons).toContain(iconId);
-    note('app_icon', { path: NOTEPAD, id: iconId, opaque, status: text });
+    note('app_icon', { path: NOTEPAD, id: iconId, opaque, tile_glyph_pixels: drawn, status: text });
     await shot('app-icon');
   });
 

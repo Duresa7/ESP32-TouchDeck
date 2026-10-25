@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fileId, iconUrls, loadIcon } from './icons.ts';
+  import { fileId, iconPixels, loadIcon, paint } from './icons.ts';
   import type { Action, Tile } from './validate.ts';
 
   interface Props {
@@ -63,8 +63,8 @@
   role="button"
   tabindex="-1"
 >
-  {#if iconId && $iconUrls[iconId]}
-    <img class="glyph" src={$iconUrls[iconId]} alt="" draggable="false" data-testid="tile-glyph" data-id={iconId} />
+  {#if iconId && $iconPixels[iconId]}
+    <canvas class="glyph" use:paint={$iconPixels[iconId]} data-testid="tile-glyph" data-id={iconId}></canvas>
   {:else if tile.icon}
     <span class="icon">{tile.icon.replace(/^lv:/, '')}</span>
   {/if}

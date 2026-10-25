@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { builtinIcons, fileId, iconUrls, loadIcon, searchIcons, type BuiltinIcon } from './icons.ts';
+  import { builtinIcons, fileId, iconPixels, loadIcon, paint, searchIcons, type BuiltinIcon } from './icons.ts';
   import { editor } from './layoutStore.ts';
   import { setIcon, type Edit, type Layout, type Tile } from './validate.ts';
 
@@ -68,8 +68,8 @@
 <div class="picker" data-testid="icon-picker">
   <div class="row">
     <span class="preview" data-testid="icon-preview" data-id={current ?? ''}>
-      {#if current && $iconUrls[current]}
-        <img src={$iconUrls[current]} alt="" />
+      {#if current && $iconPixels[current]}
+        <canvas use:paint={$iconPixels[current]}></canvas>
       {/if}
     </span>
     <button onclick={() => (open = !open)} data-testid="icon-picker-toggle">{open ? 'Hide icons' : 'Choose icon'}</button>
@@ -78,7 +78,7 @@
     {/if}
     {#if suggested && suggested.id !== current}
       <button class="suggest" onclick={() => use(suggested!.id)} title="Suggested for this action" data-testid="icon-suggested" data-name={suggested.name}>
-        {#if $iconUrls[suggested.id]}<img src={$iconUrls[suggested.id]} alt="" />{/if}
+        {#if $iconPixels[suggested.id]}<canvas use:paint={$iconPixels[suggested.id]}></canvas>{/if}
         {suggested.label}
       </button>
     {/if}
@@ -97,7 +97,7 @@
           data-name={icon.name}
           data-id={icon.id}
         >
-          {#if $iconUrls[icon.id]}<img src={$iconUrls[icon.id]} alt={icon.label} />{/if}
+          {#if $iconPixels[icon.id]}<canvas use:paint={$iconPixels[icon.id]} aria-label={icon.label}></canvas>{/if}
           <span>{icon.name}</span>
         </button>
       {:else}
@@ -135,7 +135,7 @@
     background: #111827;
   }
 
-  .preview img {
+  .preview canvas {
     width: 32px;
     height: 32px;
   }
@@ -146,7 +146,7 @@
     gap: 6px;
   }
 
-  .suggest img {
+  .suggest canvas {
     width: 18px;
     height: 18px;
   }
@@ -168,7 +168,7 @@
     min-width: 0;
   }
 
-  .option img {
+  .option canvas {
     width: 32px;
     height: 32px;
   }

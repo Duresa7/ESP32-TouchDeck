@@ -44,26 +44,35 @@ export function searchIcons(icons: BuiltinIcon[], query: string): BuiltinIcon[] 
   });
 }
 
-function toDataUrl(rgba: Uint8ClampedArray): string {
-  const canvas = document.createElement('canvas');
-  canvas.width = SIDE;
-  canvas.height = SIDE;
-  canvas.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(rgba), SIDE, SIDE), 0, 0);
-  return canvas.toDataURL('image/png');
+/**
+ * Paints decoded icon pixels into a 64 by 64 canvas. A canvas needs no image URL, so the
+ * app's content security policy stays as it is.
+ */
+export function paint(canvas: HTMLCanvasElement, rgba: Uint8ClampedArray | undefined) {
+  const draw = (pixels: Uint8ClampedArray | undefined) => {
+    canvas.width = SIDE;
+    canvas.height = SIDE;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.clearRect(0, 0, SIDE, SIDE);
+    if (pixels) context.putImageData(new ImageData(new Uint8ClampedArray(pixels), SIDE, SIDE), 0, 0);
+  };
+  draw(rgba);
+  return { update: draw };
 }
 
-/** Image URLs of the icon files the window has loaded, by id. */
-export const iconUrls = writable<Record<string, string>>({});
+/** Decoded pixels of the icon files the window has loaded, by id. */
+export const iconPixels = writable<Record<string, Uint8ClampedArray>>({});
 const requested = new Set<string>();
 
-/** Loads an icon file from the app once and adds its image to `iconUrls`. */
+/** Loads an icon file from the app once and adds its pixels to `iconPixels`. */
 export function loadIcon(id: string) {
   if (requested.has(id)) return;
   requested.add(id);
   invoke<ArrayBuffer>('icon_file', { id })
     .then((buffer) => {
       const rgba = decodeIcon(new Uint8Array(buffer));
-      if (rgba) iconUrls.update((urls) => ({ ...urls, [id]: toDataUrl(rgba) }));
+      if (rgba) iconPixels.update((icons) => ({ ...icons, [id]: rgba }));
     })
     .catch(() => requested.delete(id));
 }
