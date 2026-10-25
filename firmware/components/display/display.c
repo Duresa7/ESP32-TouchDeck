@@ -19,6 +19,7 @@
  * interrupt and the renderer do not fight over PSRAM. app_main runs on core 0. */
 #define LVGL_TASK_CORE 0
 #define LOCK_TIMEOUT_MS 3000
+#define SNAPSHOT_TIMEOUT_MS 5000
 #define FIRST_FRAME_TIMEOUT_MS 1500
 #define SNAPSHOT_ALIGN 64
 #define PERF_TICK_MS 1
@@ -30,6 +31,9 @@ static struct {
     lv_draw_buf_t shot;
     atomic_uint frames;
     SemaphoreHandle_t first_frame;
+    SemaphoreHandle_t snap_done;
+    atomic_bool snap_pending;
+    bool snap_ok;
 } s;
 
 /* Runs on the LVGL task after the adapter's flush callback returned. The last flush of a refresh
@@ -60,7 +64,8 @@ static esp_err_t alloc_snapshot_buffer(void)
 esp_err_t display_start(void)
 {
     s.first_frame = xSemaphoreCreateBinary();
-    ESP_RETURN_ON_FALSE(s.first_frame != NULL, ESP_ERR_NO_MEM, TAG, "first frame semaphore");
+    s.snap_done = xSemaphoreCreateBinary();
+    ESP_RETURN_ON_FALSE(s.first_frame != NULL && s.snap_done != NULL, ESP_ERR_NO_MEM, TAG, "semaphores");
 
     const esp_lv_adapter_rotation_t rotation = ESP_LV_ADAPTER_ROTATE_0;
     const esp_lv_adapter_tear_avoid_mode_t tear_mode = ESP_LV_ADAPTER_TEAR_AVOID_MODE_DEFAULT_RGB;
@@ -105,12 +110,36 @@ esp_err_t display_start(void)
     return result;
 }
 
+/* Runs on the LVGL task with the adapter lock held. Rendering a screen takes about 3.5 KB of stack, which
+ * the 6 KB console task cannot spare, and the LVGL task has 12 KB. The token goes out before the flag clears,
+ * so a request that follows a timed-out one cannot take the old token for its own job. */
+static void snapshot_job(void *arg)
+{
+    (void)arg;
+    s.snap_ok = lv_snapshot_take_to_draw_buf(lv_screen_active(), LV_COLOR_FORMAT_RGB565, &s.shot) == LV_RESULT_OK;
+    xSemaphoreGive(s.snap_done);
+    atomic_store(&s.snap_pending, false);
+}
+
 esp_err_t display_snapshot(td_shot_image_t *out)
 {
-    ESP_RETURN_ON_ERROR(esp_lv_adapter_lock(LOCK_TIMEOUT_MS), TAG, "adapter lock");
-    const lv_result_t res = lv_snapshot_take_to_draw_buf(lv_screen_active(), LV_COLOR_FORMAT_RGB565, &s.shot);
-    esp_lv_adapter_unlock();
-    ESP_RETURN_ON_FALSE(res == LV_RESULT_OK, ESP_FAIL, TAG, "snapshot");
+    if (atomic_exchange(&s.snap_pending, true)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    xSemaphoreTake(s.snap_done, 0);
+
+    esp_err_t err = esp_lv_adapter_lock(LOCK_TIMEOUT_MS);
+    if (err == ESP_OK) {
+        err = lv_async_call(snapshot_job, NULL) == LV_RESULT_OK ? ESP_OK : ESP_FAIL;
+        esp_lv_adapter_unlock();
+    }
+    if (err != ESP_OK) {
+        atomic_store(&s.snap_pending, false);
+        return err;
+    }
+    ESP_RETURN_ON_FALSE(xSemaphoreTake(s.snap_done, pdMS_TO_TICKS(SNAPSHOT_TIMEOUT_MS)) == pdTRUE, ESP_ERR_TIMEOUT, TAG,
+                        "snapshot timed out");
+    ESP_RETURN_ON_FALSE(s.snap_ok, ESP_FAIL, TAG, "snapshot");
 
     const lv_image_header_t *h = &s.shot.header;
     *out = (td_shot_image_t){ .px = s.shot.data, .width = (uint16_t)h->w, .height = (uint16_t)h->h, .stride = h->stride };

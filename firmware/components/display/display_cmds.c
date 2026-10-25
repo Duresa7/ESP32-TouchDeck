@@ -69,7 +69,8 @@ static int cmd_screenshot(int argc, char **argv)
     td_shot_image_t img;
     esp_err_t err = display_snapshot(&img);
     if (err != ESP_OK) {
-        send_error("screenshot", err == ESP_ERR_TIMEOUT ? "display busy" : "snapshot failed");
+        send_error("screenshot", err == ESP_ERR_INVALID_STATE ? "busy" :
+                                 err == ESP_ERR_TIMEOUT ? "display busy" : "snapshot failed");
         return 0;
     }
 
