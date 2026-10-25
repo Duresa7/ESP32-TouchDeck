@@ -17,9 +17,10 @@ const ui_theme_t ui_theme = {
     .glow_width = 28,
     .glow_spread = 2,
     .glow_opa = 120,
-    /* Only this band slides, so the title above it and the dots below it are never redrawn by a swipe. It is
-     * taller than the grid by the reach of a pressed tile's glow. */
-    .band = { .x = 0, .y = 44, .w = TD_LCD_H_RES, .h = 528 },
+    /* Only this band slides, so a slide redraws the band and leaves the strips above and below it alone. It is
+     * taller than the grid by 20 px each side, and a pressed tile's glow reaches 17 px (glow_width / 2 + 1 +
+     * glow_spread). */
+    .band = { .x = 0, .y = 56, .w = TD_LCD_H_RES, .h = 504 },
     .grid = { .x = 28, .y = 76, .w = 968, .h = 464 },
     .gap = 16,
     .title_x = 36,
@@ -81,7 +82,6 @@ static void init_tile_styles(ui_styles_t *st)
     lv_style_set_border_width(&st->tile_down, t->tile_down_border);
     lv_style_set_shadow_width(&st->tile_down, t->glow_width);
     lv_style_set_shadow_opa(&st->tile_down, t->glow_opa);
-    lv_style_set_transition(&st->tile_down, &s_tile_transition);
 
     lv_style_init(&st->tile_label);
     lv_style_set_text_font(&st->tile_label, t->font_tile);
@@ -108,7 +108,6 @@ static void init_text_and_dot_styles(ui_styles_t *st)
     lv_style_init(&st->dot_on);
     lv_style_set_bg_color(&st->dot_on, ui_color(t->color.dot_active));
     lv_style_set_transform_width(&st->dot_on, t->dot_active_extra);
-    lv_style_set_transition(&st->dot_on, &s_dot_transition);
 }
 
 const ui_styles_t *ui_styles(void)
