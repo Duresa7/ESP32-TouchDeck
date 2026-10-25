@@ -1,7 +1,7 @@
 //! A deck that speaks protocol 1 in process, so the app and its tests run without a board.
 //! It keeps the state the firmware keeps and records every message it receives.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{self, ErrorKind, Read, Write};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -9,8 +9,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
-use td_core::{Body, Event, Frame, Hello, ICON_PAGE, Item, Role, Settings, StreamDecoder};
+use td_core::frame::CHUNK_DATA_MAX;
+use td_core::layout::{Page, UPLOAD_MAX};
+use td_core::{
+    Body, Event, Frame, Hello, ICON_PAGE, Item, Layout, Orientation, Role, Settings, StreamDecoder,
+};
 
+use crate::xfer::{LayoutState, RETRY_AFTER, TRANSMISSIONS, WINDOW, crc32};
 use crate::{READ_TICK, Transport};
 
 pub const MOCK_PORT: &str = "mock";
@@ -18,6 +23,39 @@ pub const MOCK_ELF_SHA256: &str =
     "6d6f636b6465636b6d6f636b6465636b6d6f636b6465636b6d6f636b6465636b";
 const ONLINE_FOR: Duration = Duration::from_secs(5);
 const HEARTBEAT: Duration = Duration::from_secs(2);
+const BUILTIN: &[u8] = include_bytes!("../../../../schema/examples/builtin.json");
+
+/// A put the deck is receiving into `<path>.tmp`.
+#[derive(Debug)]
+struct Inbound {
+    xfer: u8,
+    orientation: Orientation,
+    bytes: usize,
+    crc32: u32,
+    data: Vec<u8>,
+    next: u16,
+}
+
+/// A get the deck is sending, with the send time and count of each chunk in flight.
+#[derive(Debug)]
+struct Outbound {
+    xfer: u8,
+    data: Vec<u8>,
+    base: u16,
+    ahead: u16,
+    sent: HashMap<u16, (Instant, u32)>,
+}
+
+impl Outbound {
+    fn count(&self) -> u16 {
+        self.data.len().div_ceil(CHUNK_DATA_MAX) as u16
+    }
+
+    fn chunk(&self, idx: u16) -> Vec<u8> {
+        let start = usize::from(idx) * CHUNK_DATA_MAX;
+        self.data[start..(start + CHUNK_DATA_MAX).min(self.data.len())].to_vec()
+    }
+}
 
 #[derive(Debug)]
 struct State {
@@ -37,6 +75,16 @@ struct State {
     booted: Instant,
     link: Option<Sender<Vec<u8>>>,
     generation: u64,
+    layouts: HashMap<Orientation, Vec<u8>>,
+    shown: Orientation,
+    last_xfer: u8,
+    last_seq: u8,
+    inbound: Option<Inbound>,
+    outbound: Option<Outbound>,
+    lose_in: Vec<u16>,
+    lose_out: Vec<u16>,
+    corrupt_next_put: bool,
+    reboots: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +128,16 @@ impl MockDeck {
                 booted: Instant::now(),
                 link: None,
                 generation: 0,
+                layouts: HashMap::new(),
+                shown: Orientation::Landscape,
+                last_xfer: 0,
+                last_seq: 0,
+                inbound: None,
+                outbound: None,
+                lose_in: Vec::new(),
+                lose_out: Vec::new(),
+                corrupt_next_put: false,
+                reboots: 0,
             })),
         }
     }
@@ -151,6 +209,280 @@ impl MockDeck {
         self.state().widgets.clone()
     }
 
+    /// The layout file the deck stores for `orientation`, as it arrived.
+    pub fn layout(&self, orientation: Orientation) -> Option<Vec<u8>> {
+        self.state().layouts.get(&orientation).cloned()
+    }
+
+    pub fn reboots(&self) -> u32 {
+        self.state().reboots
+    }
+
+    /// Drops arriving chunks with these indices, one listed index per arrival.
+    pub fn lose_chunks(&self, indices: impl IntoIterator<Item = u16>) {
+        self.state().lose_in.extend(indices);
+    }
+
+    /// Drops the deck's own chunk sends with these indices, one listed index per send.
+    pub fn lose_sent_chunks(&self, indices: impl IntoIterator<Item = u16>) {
+        self.state().lose_out.extend(indices);
+    }
+
+    /// Flips one bit of the next put's data, so its CRC-32 fails at `xfer.end`.
+    pub fn corrupt_next_put(&self) {
+        self.state().corrupt_next_put = true;
+    }
+
+    /// The `layout state` fields for the layout the deck shows in its boot orientation.
+    pub fn layout_state(&self) -> LayoutState {
+        let state = self.state();
+        let stored = state.layouts.get(&state.shown).and_then(|bytes| {
+            Layout::parse(bytes)
+                .ok()
+                .map(|layout| (layout, bytes.len()))
+        });
+        let (source, (layout, bytes)) = match stored {
+            Some(stored) => ("storage", stored),
+            None => (
+                "builtin",
+                (
+                    Layout::parse(BUILTIN).expect("builtin.json is valid"),
+                    BUILTIN.len(),
+                ),
+            ),
+        };
+        let mut tiles = 0;
+        let mut icons = BTreeSet::new();
+        for page in &layout.pages {
+            if let Page::Grid { tiles: list, .. } = page {
+                tiles += list.len() as u32;
+                icons.extend(list.iter().filter_map(|tile| {
+                    tile.icon
+                        .as_deref()
+                        .filter(|icon| icon.starts_with("file:"))
+                }));
+            }
+        }
+        let missing = icons
+            .iter()
+            .filter(|icon| !state.icons.contains(&icon[5..]))
+            .count() as u32;
+        LayoutState {
+            source: source.into(),
+            name: layout.name.clone(),
+            orientation: state.shown,
+            pages: layout.pages.len() as u32,
+            tiles,
+            icons_loaded: Some(icons.len() as u32 - missing),
+            icons_missing: Some(missing),
+            bytes: Some(bytes as u32),
+            load_ms: Some(0),
+            error: Some(String::new()),
+        }
+    }
+
+    fn next_xfer(state: &mut State) -> u8 {
+        state.last_xfer = state.last_xfer % 255 + 1;
+        state.last_xfer
+    }
+
+    /// Sends the chunks of a get that are due: new ones inside the window and ones whose
+    /// ack is 200 ms late. A chunk sent 5 times without an ack aborts the get.
+    fn pump(&self, to_host: &Sender<Vec<u8>>) {
+        let mut wires = Vec::new();
+        {
+            let mut guard = self.state();
+            let state = &mut *guard;
+            let Some(out) = state.outbound.as_mut() else {
+                return;
+            };
+            let now = Instant::now();
+            let mut due: Vec<u16> = (out.base..out.ahead)
+                .filter(|idx| {
+                    out.sent
+                        .get(idx)
+                        .is_some_and(|(at, _)| *at + RETRY_AFTER <= now)
+                })
+                .collect();
+            while out.ahead < out.count() && out.ahead < out.base + WINDOW {
+                due.push(out.ahead);
+                out.ahead += 1;
+            }
+            for idx in due {
+                let times = out.sent.get(&idx).map_or(0, |(_, times)| *times);
+                if times >= TRANSMISSIONS {
+                    state.outbound = None;
+                    return;
+                }
+                out.sent.insert(idx, (now, times + 1));
+                if let Some(at) = state.lose_out.iter().position(|lost| *lost == idx) {
+                    state.lose_out.remove(at);
+                    continue;
+                }
+                state.last_seq = state.last_seq % 255 + 1;
+                let frame = Frame {
+                    role: Role::Request(state.last_seq),
+                    body: Body::Chunk {
+                        xfer: out.xfer,
+                        idx,
+                        data: out.chunk(idx),
+                    },
+                };
+                wires.push(frame.encode().expect("chunks fit one frame"));
+                state.frames_tx += 1;
+            }
+        }
+        for wire in wires {
+            let _ = to_host.send(wire);
+        }
+    }
+
+    /// Takes one chunk of a put, or one ack of a get, and returns the wire bytes to answer.
+    fn answer_xfer(&self, role: Role, body: Body) -> Vec<u8> {
+        let mut guard = self.state();
+        let state = &mut *guard;
+        state.frames_rx += 1;
+        state.last_rx = Some(Instant::now());
+        match (role, body) {
+            (Role::Request(seq), Body::Chunk { xfer, idx, data }) => {
+                let Some(inbound) = state
+                    .inbound
+                    .as_mut()
+                    .filter(|inbound| inbound.xfer == xfer)
+                else {
+                    state.dropped += 1;
+                    return Vec::new();
+                };
+                if let Some(at) = state.lose_in.iter().position(|lost| *lost == idx) {
+                    state.lose_in.remove(at);
+                    return Vec::new();
+                }
+                if idx == inbound.next && inbound.data.len() + data.len() <= inbound.bytes {
+                    inbound.data.extend_from_slice(&data);
+                    inbound.next += 1;
+                }
+                let ack = Frame {
+                    role: Role::Response(seq),
+                    body: Body::Ack {
+                        xfer,
+                        next: inbound.next,
+                    },
+                };
+                state.frames_tx += 1;
+                ack.encode().expect("acks fit one frame")
+            }
+            (Role::Response(_), Body::Ack { xfer, next }) => {
+                if let Some(out) = state.outbound.as_mut().filter(|out| out.xfer == xfer)
+                    && next > out.base
+                {
+                    out.base = next.min(out.ahead);
+                    let base = out.base;
+                    out.sent.retain(|idx, _| *idx >= base);
+                }
+                Vec::new()
+            }
+            _ => {
+                state.dropped += 1;
+                Vec::new()
+            }
+        }
+    }
+
+    fn layout_put(&self, request: &Map<String, Value>) -> Result<Map<String, Value>, String> {
+        let orientation = orientation_of(request)?;
+        let bytes = request
+            .get("bytes")
+            .and_then(Value::as_u64)
+            .ok_or("layout.put needs bytes")? as usize;
+        let crc32 = request
+            .get("crc32")
+            .and_then(Value::as_u64)
+            .and_then(|crc| u32::try_from(crc).ok())
+            .ok_or("layout.put needs crc32")?;
+        if bytes > UPLOAD_MAX {
+            return Err(format!("layout is {bytes} bytes; maximum is {UPLOAD_MAX}"));
+        }
+        let mut state = self.state();
+        let xfer = MockDeck::next_xfer(&mut state);
+        state.inbound = Some(Inbound {
+            xfer,
+            orientation,
+            bytes,
+            crc32,
+            data: Vec::with_capacity(bytes),
+            next: 0,
+        });
+        Ok(Map::from_iter([("xfer".to_owned(), json!(xfer))]))
+    }
+
+    fn layout_get(&self, request: &Map<String, Value>) -> Result<Map<String, Value>, String> {
+        let orientation = orientation_of(request)?;
+        let mut state = self.state();
+        let data = state.layouts.get(&orientation).cloned().ok_or_else(|| {
+            format!(
+                "no stored layout for {}",
+                request["orientation"].as_str().unwrap_or_default()
+            )
+        })?;
+        let xfer = MockDeck::next_xfer(&mut state);
+        let fields = json!({"xfer": xfer, "bytes": data.len(), "crc32": crc32(&data)});
+        state.outbound = Some(Outbound {
+            xfer,
+            data,
+            base: 0,
+            ahead: 0,
+            sent: HashMap::new(),
+        });
+        Ok(fields.as_object().cloned().unwrap_or_default())
+    }
+
+    fn xfer_end(&self, request: &Map<String, Value>) -> Result<Map<String, Value>, String> {
+        let xfer = request
+            .get("xfer")
+            .and_then(Value::as_u64)
+            .ok_or("xfer.end needs xfer")?;
+        let mut state = self.state();
+        if state
+            .outbound
+            .as_ref()
+            .is_some_and(|out| u64::from(out.xfer) == xfer)
+        {
+            state.outbound = None;
+            return Ok(Map::new());
+        }
+        let inbound = state
+            .inbound
+            .take()
+            .filter(|inbound| u64::from(inbound.xfer) == xfer)
+            .ok_or("no transfer with that xfer")?;
+        let mut data = inbound.data;
+        if std::mem::take(&mut state.corrupt_next_put)
+            && let Some(byte) = data.first_mut()
+        {
+            *byte ^= 1;
+        }
+        if data.len() != inbound.bytes {
+            return Err(format!(
+                "received {} of {} bytes",
+                data.len(),
+                inbound.bytes
+            ));
+        }
+        if crc32(&data) != inbound.crc32 {
+            return Err("crc32 mismatch".into());
+        }
+        if let Err(errors) = Layout::parse(&data) {
+            return Err(format!("invalid layout: {}", errors[0]));
+        }
+        state.layouts.insert(inbound.orientation, data);
+        if inbound.orientation == state.shown {
+            state.hello.layout = "storage".into();
+        }
+        drop(state);
+        let fields = serde_json::to_value(self.layout_state()).expect("layout state serializes");
+        Ok(fields.as_object().cloned().unwrap_or_default())
+    }
+
     fn run(&self, from_host: &Receiver<Vec<u8>>, to_host: &Sender<Vec<u8>>, generation: u64) {
         let mut decoder = StreamDecoder::default();
         let mut line = Vec::new();
@@ -180,6 +512,10 @@ impl MockDeck {
             }
             for item in decoder.feed(&bytes, Instant::now()) {
                 let out = match item {
+                    Item::Frame(Frame {
+                        role,
+                        body: body @ (Body::Chunk { .. } | Body::Ack { .. }),
+                    }) => self.answer_xfer(role, body),
                     Item::Frame(frame) => self.answer_frame(frame),
                     Item::Text(text) => self.answer_text(&text, &mut line),
                 };
@@ -191,6 +527,7 @@ impl MockDeck {
                     }
                 }
             }
+            self.pump(to_host);
         }
     }
 
@@ -210,6 +547,21 @@ impl MockDeck {
                 "version" => {
                     let hello = self.state().hello.clone();
                     json!({"cmd": "version", "ok": true, "project_name": "touchdeck", "version": hello.version, "elf_sha256": hello.elf_sha256})
+                }
+                "reboot" => {
+                    let mut state = self.state();
+                    state.reboots += 1;
+                    state.shown = state.settings.orientation;
+                    state.booted = Instant::now();
+                    state.online_since_hello = false;
+                    state.inbound = None;
+                    state.outbound = None;
+                    state.hello.layout = if state.layouts.contains_key(&state.shown) {
+                        "storage".into()
+                    } else {
+                        "builtin".into()
+                    };
+                    json!({"cmd": "reboot", "ok": true})
                 }
                 "link" => {
                     let mut reply = Map::from_iter([
@@ -283,7 +635,7 @@ impl MockDeck {
         &self,
         m: &str,
         request: &Map<String, Value>,
-    ) -> Result<Map<String, Value>, &'static str> {
+    ) -> Result<Map<String, Value>, String> {
         let object = |value: Value| value.as_object().cloned().unwrap_or_default();
         match m {
             "hello" => {
@@ -324,14 +676,25 @@ impl MockDeck {
                 let tile = request
                     .get("tile")
                     .and_then(Value::as_str)
-                    .ok_or("widget.set needs a tile")?;
+                    .ok_or("widget.set needs a tile".to_owned())?;
                 self.state()
                     .widgets
                     .insert(tile.to_owned(), Value::Object(request.clone()));
                 Ok(Map::new())
             }
-            _ => Err("unknown message"),
+            "layout.put" => self.layout_put(request),
+            "layout.get" => self.layout_get(request),
+            "xfer.end" => self.xfer_end(request),
+            _ => Err("unknown message".into()),
         }
+    }
+}
+
+fn orientation_of(request: &Map<String, Value>) -> Result<Orientation, String> {
+    match request.get("orientation").and_then(Value::as_str) {
+        Some("landscape") => Ok(Orientation::Landscape),
+        Some("portrait") => Ok(Orientation::Portrait),
+        _ => Err("orientation must be landscape or portrait".into()),
     }
 }
 
@@ -462,7 +825,7 @@ mod tests {
         let deck = MockDeck::new();
         assert_eq!(
             deck.dispatch("layout.nope", &Map::new()),
-            Err("unknown message")
+            Err("unknown message".to_owned())
         );
     }
 }

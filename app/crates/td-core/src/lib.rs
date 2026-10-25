@@ -1,3 +1,4 @@
+pub mod edit;
 pub mod frame;
 pub mod layout;
 pub mod settings;
