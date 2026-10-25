@@ -10,6 +10,8 @@ use td_link::discover::{Candidate, Probe, discover, probe_transport};
 use td_link::mock::MOCK_PORT;
 use td_link::{Incoming, MockDeck, Serial, Session, SessionConfig, Transport};
 
+use crate::sources::SourcesState;
+
 const HELLO_TIMEOUT: Duration = Duration::from_secs(1);
 
 struct Link {
@@ -133,6 +135,7 @@ pub async fn connect(app: AppHandle, port: String) -> Result<DeckInfo, String> {
             ));
         }
         let session = Arc::new(session);
+        app.state::<SourcesState>().connected(session.clone());
         let id = state.sessions.fetch_add(1, Ordering::Relaxed) + 1;
         *state.link.lock().unwrap() = Some(Link {
             id,
@@ -169,6 +172,11 @@ fn forward(
                 let _ = app.emit("console-line", line);
             }
             Incoming::Event(event) => {
+                if event["m"] == "press"
+                    && let Some(tile) = event["tile"].as_str()
+                {
+                    app.state::<SourcesState>().pressed(tile);
+                }
                 let _ = app.emit("deck-event", event);
             }
             Incoming::Closed(reason) => {
@@ -176,6 +184,7 @@ fn forward(
                 let mut link = state.link.lock().unwrap();
                 if link.as_ref().is_some_and(|link| link.id == closed.session) {
                     link.take();
+                    app.state::<SourcesState>().disconnected();
                 }
                 drop(link);
                 session.close();
@@ -191,6 +200,7 @@ pub async fn disconnect(app: AppHandle) -> Result<(), String> {
     blocking(move || {
         let link = app.state::<AppState>().link.lock().unwrap().take();
         if let Some(link) = link {
+            app.state::<SourcesState>().disconnected();
             link.session.close();
         }
     })
@@ -227,4 +237,29 @@ pub fn e2e_mock(state: State<'_, AppState>, action: String) -> Result<(), String
         other => return Err(format!("unknown mock action {other:?}")),
     }
     Ok(())
+}
+
+#[cfg(feature = "e2e")]
+#[tauri::command]
+pub fn e2e_mock_press(
+    state: State<'_, AppState>,
+    page: String,
+    tile: String,
+) -> Result<(), String> {
+    state
+        .mock
+        .as_ref()
+        .ok_or("the app is not running the mock deck")?
+        .press(&page, &tile, "widget");
+    Ok(())
+}
+
+#[cfg(feature = "e2e")]
+#[tauri::command]
+pub fn e2e_mock_sets(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
+    Ok(state
+        .mock
+        .as_ref()
+        .ok_or("the app is not running the mock deck")?
+        .sets())
 }

@@ -2,6 +2,7 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount, tick } from 'svelte';
   import { append, classify, type ConsoleEntry } from './lib/console.ts';
+  import Sources from './routes/Sources.svelte';
   import {
     HELLO_FIELDS,
     connect,
@@ -17,6 +18,7 @@
   } from './lib/deck.ts';
 
   let title = $state('TouchDeck');
+  let tab = $state<'console' | 'sources'>('console');
   let decks = $state<Candidate[]>([]);
   let listed = $state(false);
   let scanning = $state(false);
@@ -117,6 +119,10 @@
     <span class="mark" aria-hidden="true"></span>
     <span data-testid="title">{title}</span>
   </div>
+  <nav class="tabs" aria-label="Pages">
+    <button class:active={tab === 'console'} aria-pressed={tab === 'console'} onclick={() => (tab = 'console')} data-testid="tab-console">Console</button>
+    <button class:active={tab === 'sources'} aria-pressed={tab === 'sources'} onclick={() => (tab = 'sources')} data-testid="tab-sources">Sources</button>
+  </nav>
   <div class="status" data-testid="link-status">
     <span class="dot" data-testid="status-dot" data-state={online ? 'online' : 'offline'}></span>
     <span>{status}</span>
@@ -166,7 +172,11 @@
     {/if}
   </section>
 
-  <section class="panel console" data-testid="console">
+  {#if tab === 'sources'}
+    <Sources />
+  {/if}
+
+  <section class="panel console" class:gone={tab !== 'console'} data-testid="console">
     <div class="panel-head">
       <h2>Console</h2>
       <span class="hint">{online ? 'Lines go to the deck console' : 'Connect a deck to use the console'}</span>
@@ -192,3 +202,19 @@
     </form>
   </section>
 </main>
+
+<style>
+  .tabs {
+    display: flex;
+    gap: 6px;
+  }
+
+  .tabs button.active {
+    border-color: var(--accent);
+    background: var(--raised);
+  }
+
+  .gone {
+    display: none;
+  }
+</style>
