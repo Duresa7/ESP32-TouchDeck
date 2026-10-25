@@ -18,8 +18,10 @@
 #include "key_sink_log.h"
 #include "keys.h"
 #include "power.h"
+#include "td_store.h"
 
 static const char *TAG = "touchdeck";
+static const char *SETTINGS_TAG = "settings";
 
 static key_sink_log_t s_key_log;
 
@@ -74,6 +76,25 @@ void app_main(void)
     size_t link_cmd_count;
     const esp_console_cmd_t *link_cmds = td_link_console_commands(&link_cmd_count);
     register_commands("Link", link_cmds, link_cmd_count);
+    size_t store_cmd_count;
+    const esp_console_cmd_t *store_cmds = td_store_console_commands(&store_cmd_count);
+    register_commands("Store", store_cmds, store_cmd_count);
+
+    /* The volume mounts before the console starts, and the settings load before the display does. Orientation is read
+     * and reported here and applied when the deck builds in the orientation milestone. */
+    td_settings_t settings;
+    td_settings_defaults(&settings);
+    esp_err_t store_err = td_store_mount(NULL);
+    if (store_err == ESP_OK) {
+        const esp_err_t settings_err = td_store_settings_load(&settings);
+        if (settings_err == ESP_ERR_INVALID_RESPONSE) {
+            ESP_LOGW(SETTINGS_TAG, "settings.json is not usable, using the defaults for what it does not give");
+        }
+    } else {
+        ESP_LOGE(TAG, "Store failed to mount, the settings are the defaults: %s", esp_err_to_name(store_err));
+    }
+    ESP_LOGI(SETTINGS_TAG, "idle_timeout_s=%u orientation=%s", (unsigned)settings.idle_timeout_s,
+             td_settings_orientation_name(settings.orientation));
 
     /* The engine exists before the console can run a keys command. Its only sink here is the console key log.
      * The USB HID sink plugs in behind the same key_sink_t in the post-product update. */
@@ -102,6 +123,8 @@ void app_main(void)
     esp_err_t power_err = power_start(esp_timer_get_time());
     if (power_err != ESP_OK) {
         ESP_LOGE(TAG, "Power failed to start, the screen stays on: %s", esp_err_to_name(power_err));
+    } else {
+        power_set_idle_timeout_s(settings.idle_timeout_s, esp_timer_get_time());
     }
 
     esp_err_t touch_err = touch_start();
