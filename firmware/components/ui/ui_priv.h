@@ -3,11 +3,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "lvgl.h"
+#include "ui.h"
 #include "td_layout.h"
 #include "ui_pages.h"
 
 #define UI_PAGES_MAX 8
-#define UI_LAYOUT_ERROR_MAX 196
 
 /*
  * What the console reports about the deck. Totals count the page changes that ran their whole slide, so
@@ -39,24 +39,6 @@ typedef struct {
     char icon[24];
 } ui_tile_info_t;
 
-/* The layout on screen. `error` is the latest refusal, of the boot file or of a candidate a reload kept off the
- * screen, and is empty after a load that worked. */
-typedef struct {
-    bool from_storage;
-    char name[TD_LAYOUT_TITLE_MAX];
-    char orientation[12];
-    uint8_t pages;
-    uint16_t tiles;
-    uint16_t icons_loaded;
-    uint16_t icons_missing;
-    uint32_t bytes;
-    uint32_t load_ms;
-    char error[UI_LAYOUT_ERROR_MAX];
-} ui_layout_info_t;
-
-/* True once ui_build() has drawn a deck. */
-bool ui_ready(void);
-
 /* Copies the deck's state under the layout lock. Valid once ui_ready() is true. The totals are whole when
  * `animating` is false. */
 void ui_get_state(ui_state_t *out);
@@ -66,14 +48,6 @@ bool ui_goto(uint8_t page);
 
 /* Copies a tile and where it sits on screen while its page shows, under the layout lock. */
 bool ui_tile_info(const char *id, ui_tile_info_t *out);
-
-/* Copies what `layout state` reports, under the layout lock. */
-void ui_layout_info(ui_layout_info_t *out);
-
-/* Loads the stored layout for the boot orientation, or the built-in one with `use_builtin`, and swaps it onto the
- * screen. A candidate that fails leaves the current layout on screen and its error in `layout state`. Takes the
- * LVGL lock, so never call it from an LVGL callback. On failure *err says why. */
-bool ui_layout_reload(bool use_builtin, td_layout_error_t *err);
 
 /* The `layout` console command. */
 int ui_layout_cmd(int argc, char **argv);

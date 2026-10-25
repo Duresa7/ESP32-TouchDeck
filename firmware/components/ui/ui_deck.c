@@ -615,6 +615,11 @@ bool ui_layout_reload(bool use_builtin, td_layout_error_t *err)
     return true;
 }
 
+const char *ui_layout_slot(void)
+{
+    return s.orientation[0] != '\0' ? s.orientation : "landscape";
+}
+
 bool ui_ready(void)
 {
     return atomic_load(&s.built);

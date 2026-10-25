@@ -112,6 +112,14 @@ echo a request, and report the connection state. The text command `link state`
 reports the same counters. The port stays available for the debug console and
 ROM flashing.
 
+The link also moves files and mirrors input. `layout.put` and `layout.get` copy a
+layout in chunks, `icon.put`, `icon.list`, and `icon.rm` manage the icons, and
+`settings.get`, `settings.put`, and `store.stat` read and change the deck. A put
+is checked and validated before it replaces the stored file, and a layout for the
+orientation on screen is shown without a reboot. While the app is connected, the
+deck sends a `press` event for each app or widget tap and a `key.report` event
+for each key report the engine emits, so the app can type the keys on the PC.
+
 The local verification harness provides `link hello`, `link ping --count 100`,
 `link state`, `link raw --hex <frame>`, and `link selftest`. `link scenario <file>`
 sends timed console lines and binary frames through one port handle. Console
@@ -232,8 +240,8 @@ as `check-layouts.mjs`, and it reports the same rule key.
 - `ui tile <id>` also reports the tile's `action` type and its `icon`.
 
 A `key` tile with `mods` sends its modifiers together with any active ones. A
-`page` tile slides to its page. App and widget tiles log
-`ui: press <page>/<tile> <kind>` and send nothing until the app link carries them.
+`page` tile slides to its page. App and widget tiles send a `press` event over
+the app link, and log `ui: press <page>/<tile> <kind>` when no link hook is set.
 A `file:<id>` icon is a 64 by 64 bitmap in [schema/icon-format.md](schema/icon-format.md).
 
 ## Unit tests

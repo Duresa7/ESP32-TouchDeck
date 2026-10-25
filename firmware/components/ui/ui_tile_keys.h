@@ -13,8 +13,8 @@ void ui_tile_keys_start(void);
 void ui_tile_keys_dress(lv_obj_t *obj, const ui_tile_t *tile);
 
 /* The tile on `page` was tapped: runs its action, then syncs the looks. A key, modifier or consumer action goes to
- * the engine, a page action slides to its page, and an app or widget action only logs `ui: press <page>/<tile>
- * <kind>`, because the deck sends nothing for it. */
+ * the engine, a page action slides to its page, and an app or widget action goes to the press hook, which
+ * the link turns into a `press` event, and logs `ui: press <page>/<tile> <kind>` when no hook is set. */
 void ui_tile_keys_click(const ui_page_t *page, const ui_tile_t *tile);
 
 /* The page changed: one-shot modifiers return to OFF and locked ones stay. */
