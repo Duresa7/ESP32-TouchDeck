@@ -28,7 +28,7 @@
           }
         },
         {
-          "id": "arm_shift",
+          "id": "shift",
           "label": "Shift",
           "row": 0,
           "col": 2,
@@ -77,6 +77,20 @@
           "action": {
             "type": "none"
           }
+        },
+        {
+          "id": "f5",
+          "label": "F5",
+          "row": 1,
+          "col": 2,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "key",
+            "usage": 62,
+            "mods": []
+          }
         }
       ]
     },
@@ -88,7 +102,7 @@
       "cols": 3,
       "tiles": [
         {
-          "id": "terminal",
+          "id": "launch",
           "label": "Terminal",
           "row": 0,
           "col": 0,
@@ -103,7 +117,7 @@
           }
         },
         {
-          "id": "project",
+          "id": "open",
           "label": "Project",
           "row": 0,
           "col": 1,
@@ -116,7 +130,7 @@
           }
         },
         {
-          "id": "echo",
+          "id": "command",
           "label": "Echo",
           "row": 0,
           "col": 2,
@@ -175,7 +189,7 @@
           }
         },
         {
-          "id": "proxy_status",
+          "id": "proxy",
           "label": "Proxy status",
           "row": 0,
           "col": 2,
@@ -187,6 +201,21 @@
             "source": "cliproxyapi",
             "field": "status",
             "account": "default"
+          }
+        },
+        {
+          "id": "model",
+          "label": "Model",
+          "row": 1,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "widget",
+            "source": "claude-status",
+            "field": "model",
+            "account": "current"
           }
         }
       ]

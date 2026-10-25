@@ -152,8 +152,15 @@ The 22 tile IDs, labels, cell positions, and usages match the milestone 1 tables
 
 [dev.json](examples/dev.json) has three grid pages and a CLIProxyAPI dashboard.
 It covers all nine action types, a horizontal span, a vertical span, a key chord,
-a dashboard jump, two Claude status widgets, and one CLIProxyAPI widget.
+a dashboard jump, three Claude status widgets, and one CLIProxyAPI widget.
 Its command tile describes `cmd /c echo TouchDeck` on Windows.
+
+Later milestone lanes depend on these fixture IDs and roles. `f5` sends F5 with
+usage 62, and `shift` applies Shift on the same page. `chord` is a key with `ctrl`
+and `shift`. `launch`, `command`, and `open` each use their matching app action.
+The `claude-status` widgets `context`, `cost`, and `model` use fields `context_pct`,
+`cost_usd`, and `model`. The `proxy` widget uses `cliproxyapi` field `status`.
+The `accounts` dashboard uses source `cliproxyapi`, and `accounts_jump` opens it.
 
 The twelve [invalid examples](examples/invalid/) each break one rejection rule.
 Each is strict JSON. Its first line has the form:

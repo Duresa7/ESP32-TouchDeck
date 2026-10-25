@@ -73,16 +73,43 @@ test('dev exercises every action, both spanning directions, and all requested wi
   assert.ok(tiles.some((tile) => tile.colSpan > 1));
   assert.ok(actions.some((action) => action.type === 'key' && action.mods.length > 0));
   assert.ok(actions.some((action) => action.type === 'page' && action.page === dev.pages[3].id));
-  assert.equal(actions.filter((action) => action.type === 'widget' && action.source === 'claude-status').length, 2);
+  assert.equal(actions.filter((action) => action.type === 'widget' && action.source === 'claude-status').length, 3);
   assert.equal(actions.filter((action) => action.type === 'widget' && action.source === 'cliproxyapi').length, 1);
   assert.deepEqual(actions.find((action) => action.type === 'command'), { type: 'command', program: 'cmd', args: ['/c', 'echo', 'TouchDeck'], cwd: '', shell: false });
+});
+
+test('dev preserves the ids and roles used by later milestone lanes', () => {
+  const tiles = new Map(dev.pages.flatMap((page) => (page.tiles ?? []).map((tile) => [tile.id, { page: page.id, action: tile.action }])));
+  for (const id of ['f5', 'shift', 'chord', 'launch', 'command', 'open', 'context', 'cost', 'model', 'proxy']) {
+    assert.ok(tiles.has(id), `missing fixture tile ${id}`);
+  }
+  assert.deepEqual(tiles.get('f5').action, { type: 'key', usage: 62, mods: [] });
+  assert.deepEqual(tiles.get('shift').action, { type: 'mod', mod: 'shift' });
+  assert.equal(tiles.get('f5').page, tiles.get('shift').page);
+  assert.equal(tiles.get('chord').action.type, 'key');
+  assert.deepEqual(new Set(tiles.get('chord').action.mods), new Set(['ctrl', 'shift']));
+  assert.equal(tiles.get('launch').action.type, 'launch');
+  assert.equal(tiles.get('open').action.type, 'open');
+  assert.deepEqual(tiles.get('command').action, { type: 'command', program: 'cmd', args: ['/c', 'echo', 'TouchDeck'], cwd: '', shell: false });
+  for (const [id, source, field] of [
+    ['context', 'claude-status', 'context_pct'],
+    ['cost', 'claude-status', 'cost_usd'],
+    ['model', 'claude-status', 'model'],
+    ['proxy', 'cliproxyapi', 'status'],
+  ]) {
+    const action = tiles.get(id).action;
+    assert.deepEqual([action.type, action.source, action.field], ['widget', source, field]);
+  }
+  const accounts = dev.pages.find((page) => page.id === 'accounts');
+  assert.deepEqual(accounts, { id: 'accounts', title: 'Accounts', kind: 'dashboard', source: 'cliproxyapi' });
+  assert.ok([...tiles.values()].some(({ action }) => action.type === 'page' && action.page === 'accounts'));
 });
 
 test('overlap names both tiles once even when multiple cells overlap', () => {
   const layout = copy();
   const [first, second] = layout.pages[0].tiles;
   Object.assign(second, { row: first.row, col: first.col, colSpan: first.colSpan });
-  assert.deepEqual(validateLayout(layout), ['page "shortcuts" tiles "chord" and "arm_shift" overlap']);
+  assert.deepEqual(validateLayout(layout), ['page "shortcuts" tiles "chord" and "shift" overlap']);
 });
 
 test('overlap reports every pair when three tiles share a cell', () => {
@@ -91,9 +118,9 @@ test('overlap reports every pair when three tiles share a cell', () => {
   Object.assign(second, { row: first.row, col: first.col });
   Object.assign(third, { row: first.row, col: first.col });
   assert.deepEqual(validateLayout(layout), [
-    'page "shortcuts" tiles "chord" and "arm_shift" overlap',
+    'page "shortcuts" tiles "chord" and "shift" overlap',
     'page "shortcuts" tiles "chord" and "quiet" overlap',
-    'page "shortcuts" tiles "arm_shift" and "quiet" overlap',
+    'page "shortcuts" tiles "shift" and "quiet" overlap',
   ]);
 });
 
