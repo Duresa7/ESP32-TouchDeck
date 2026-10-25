@@ -1,4 +1,5 @@
 #include "td_console.h"
+#include "td_rx_sync.h"
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
@@ -158,15 +159,21 @@ static atomic_uint s_rx_dropped;
  */
 static void rx_task(void *arg)
 {
+    td_rx_sync_t sync = { 0 };
     char chunk[TD_RX_CHUNK];
     for (;;) {
         int n = usb_serial_jtag_read_bytes(chunk, sizeof chunk, portMAX_DELAY);
         if (n <= 0) {
             vTaskDelay(pdMS_TO_TICKS(10));
-        } else if (xStreamBufferSpacesAvailable(s_rx_queue) < (size_t)n) {
-            atomic_fetch_add(&s_rx_dropped, (unsigned)n);
-        } else {
-            xStreamBufferSend(s_rx_queue, chunk, (size_t)n, 0);
+            continue;
+        }
+        size_t lost = 0;
+        size_t m = td_rx_sync(&sync, chunk, (size_t)n, xStreamBufferSpacesAvailable(s_rx_queue), &lost);
+        if (m > 0) {
+            xStreamBufferSend(s_rx_queue, chunk, m, 0);
+        }
+        if (lost > 0) {
+            atomic_fetch_add(&s_rx_dropped, (unsigned)lost);
         }
     }
 }
