@@ -478,6 +478,9 @@ impl Parser<'_> {
             .bytes
             .get(self.pos..self.pos + 4)
             .ok_or_else(|| self.error("short unicode escape"))?;
+        if !digits.iter().all(u8::is_ascii_hexdigit) {
+            return Err(self.error("bad unicode escape"));
+        }
         let text = std::str::from_utf8(digits).map_err(|_| self.error("bad unicode escape"))?;
         let unit = u16::from_str_radix(text, 16).map_err(|_| self.error("bad unicode escape"))?;
         self.pos += 4;
@@ -1209,6 +1212,24 @@ mod tests {
             .unwrap()
             .replace("\"label\":\"T\"", "\"label\":\"\\ud83c\\udf9b\"");
         assert!(Layout::parse(paired.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn unicode_escapes_need_four_hex_digits() {
+        for escape in [r"\u+041", r"\u 041", r"\u-041"] {
+            let text = String::from_utf8(launch_layout(""))
+                .unwrap()
+                .replace("\"label\":\"T\"", &format!("\"label\":\"{escape}\""));
+            assert_eq!(
+                keys(&Layout::parse(text.as_bytes()).unwrap_err()),
+                ["file.json"],
+                "{escape}"
+            );
+        }
+        let valid = String::from_utf8(launch_layout(""))
+            .unwrap()
+            .replace("\"label\":\"T\"", r#""label":"A""#);
+        assert!(Layout::parse(valid.as_bytes()).is_ok());
     }
 
     #[test]
