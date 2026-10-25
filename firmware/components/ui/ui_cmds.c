@@ -5,12 +5,17 @@
 #include "board_pins.h"
 #include "display.h"
 #include "esp_lv_adapter.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "td_console.h"
 #include "touch.h"
 #include "ui_theme.h"
 
 #define LOCK_TIMEOUT_MS 3000
 #define HOLD_MAX_MS 2000
+#define HOLD_REGISTER_POLL_MS 5
+#define HOLD_REGISTER_MAX_MS 150
+#define HOLD_SETTLE_SLACK_MS 40
 
 static void send(td_reply_t *r)
 {
@@ -157,6 +162,19 @@ static void cmd_hold(int argc, char **argv)
         return;
     }
 
+    /* The console runs one command at a time, so a screenshot sent behind this line is taken after the pressed look
+     * has finished its transition, and the reply names the tile LVGL pressed. */
+    ui_state_t st;
+    ui_get_state(&st);
+    for (int waited = 0; st.pressed_tile[0] == '\0' && waited < HOLD_REGISTER_MAX_MS; waited += HOLD_REGISTER_POLL_MS) {
+        vTaskDelay(pdMS_TO_TICKS(HOLD_REGISTER_POLL_MS));
+        ui_get_state(&st);
+    }
+    if (st.pressed_tile[0] != '\0') {
+        vTaskDelay(pdMS_TO_TICKS(ui_theme.anim_press_ms + HOLD_SETTLE_SLACK_MS));
+        ui_get_state(&st);
+    }
+
     char buf[TD_REPLY_MAX];
     td_reply_t r;
     td_reply_begin(&r, buf, sizeof buf, "ui", true);
@@ -164,6 +182,7 @@ static void cmd_hold(int argc, char **argv)
     td_reply_int(&r, "x", v[0]);
     td_reply_int(&r, "y", v[1]);
     td_reply_int(&r, "ms", v[2]);
+    td_reply_str(&r, "pressed_tile", st.pressed_tile);
     send(&r);
 }
 
