@@ -250,7 +250,7 @@ pub fn e2e_mock_press(
         .mock
         .as_ref()
         .ok_or("the app is not running the mock deck")?
-        .press(&page, &tile, "widget");
+        .emit_press(&page, &tile, "widget");
     Ok(())
 }
 

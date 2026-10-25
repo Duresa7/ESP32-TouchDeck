@@ -1,13 +1,14 @@
 pub mod discover;
 pub mod mock;
 pub mod session;
+pub mod xfer;
 
 use std::io::{self, Read, Write};
 use std::time::Duration;
 
 pub use discover::{Candidate, Probe, discover, probe_transport};
 pub use mock::MockDeck;
-pub use session::{Incoming, LinkError, Session, SessionConfig};
+pub use session::{Incoming, LinkError, Session, SessionConfig, Transfer, XferFrame};
 
 pub const VID: u16 = 0x303A;
 pub const PID: u16 = 0x1001;

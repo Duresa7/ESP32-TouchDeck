@@ -3,9 +3,10 @@ use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use td_core::{Pong, Request};
+use td_core::{Layout, Orientation, Pong, Request, Settings};
 use td_link::discover::{Candidate, candidate_ports, discover, probe_transport};
 use td_link::mock::MOCK_PORT;
+use td_link::xfer::{get_layout, put_layout};
 use td_link::{Incoming, MockDeck, Serial, Session, SessionConfig, Transport};
 
 const USAGE: &str = "usage: td-link [--port <port> | --mock] [--timeout <ms>] <command>
@@ -14,7 +15,15 @@ commands:
   hello                  print the deck's hello reply
   ping [--count <n>]     send n pings and print how many replies matched
   console \"<line>\"       send one console line and print its @td reply
-  events [--seconds <n>] print each event as one JSON line";
+  events [--seconds <n>] print each event as one JSON line
+  put-layout <file> [--orientation landscape|portrait]
+                         validate a layout and push it; orientation defaults to the file's
+  get-layout [--orientation <o>] [--out <file>]
+                         pull the stored layout and write it to a file or stdout
+  settings get           print the deck settings
+  settings put [--idle <s>] [--orientation <o>]
+                         store settings; unnamed fields keep the deck's values
+  reboot                 restart the deck through its console";
 
 struct Args {
     port: Option<String>,
@@ -61,6 +70,27 @@ fn option<T: std::str::FromStr>(rest: &[String], name: &str, default: T) -> Resu
             .and_then(|v| v.parse().ok())
             .ok_or(format!("{name} needs a positive number")),
         None => Ok(default),
+    }
+}
+
+fn text_option<'a>(rest: &'a [String], name: &str) -> Result<Option<&'a str>, String> {
+    match rest.iter().position(|arg| arg == name) {
+        Some(index) => rest
+            .get(index + 1)
+            .map(|v| Some(v.as_str()))
+            .ok_or(format!("{name} needs a value")),
+        None => Ok(None),
+    }
+}
+
+fn orientation(rest: &[String]) -> Result<Option<Orientation>, String> {
+    match text_option(rest, "--orientation")? {
+        None => Ok(None),
+        Some("landscape") => Ok(Some(Orientation::Landscape)),
+        Some("portrait") => Ok(Some(Orientation::Portrait)),
+        Some(other) => Err(format!(
+            "--orientation is landscape or portrait, not {other:?}"
+        )),
     }
 }
 
@@ -181,6 +211,87 @@ fn run(args: &Args) -> Result<bool, String> {
                 }
             }
             Ok(true)
+        }
+        "put-layout" => {
+            let path = args.rest.first().ok_or("put-layout needs a file")?;
+            let bytes = std::fs::read(path).map_err(|error| format!("{path}: {error}"))?;
+            let layout = Layout::parse(&bytes).map_err(|errors| {
+                let all: Vec<String> = errors.iter().map(ToString::to_string).collect();
+                format!("{path} is not a valid layout: {}", all.join("; "))
+            })?;
+            let orientation = orientation(&args.rest)?.unwrap_or(layout.orientation);
+            let (session, _) = open(args, quiet())?;
+            let report =
+                put_layout(&session, orientation, &layout).map_err(|error| error.to_string())?;
+            let mut out = serde_json::to_value(&report).expect("reports serialize");
+            out["ok"] = json!(true);
+            print(&out);
+            Ok(true)
+        }
+        "get-layout" => {
+            let orientation = orientation(&args.rest)?.unwrap_or(Orientation::Landscape);
+            let (session, _) = open(args, quiet())?;
+            let report = get_layout(&session, orientation).map_err(|error| error.to_string())?;
+            match text_option(&args.rest, "--out")? {
+                Some(out) => {
+                    std::fs::write(out, &report.data).map_err(|error| format!("{out}: {error}"))?;
+                    let mut summary = serde_json::to_value(&report).expect("reports serialize");
+                    summary["ok"] = json!(true);
+                    summary["out"] = json!(out);
+                    print(&summary);
+                }
+                None => println!("{}", String::from_utf8_lossy(&report.data)),
+            }
+            Ok(true)
+        }
+        "settings" => {
+            let (session, _) = open(args, quiet())?;
+            let current: Settings = session
+                .request(&Request::SettingsGet, args.timeout)
+                .and_then(|reply| reply.fields().map_err(td_link::LinkError::Reply))
+                .map_err(|error| error.to_string())?;
+            match args.rest.first().map(String::as_str) {
+                Some("get") | None => {
+                    print(&serde_json::to_value(current).expect("settings serialize"));
+                    Ok(true)
+                }
+                Some("put") => {
+                    let settings = Settings {
+                        idle_timeout_s: option(&args.rest, "--idle", current.idle_timeout_s)?,
+                        orientation: orientation(&args.rest)?.unwrap_or(current.orientation),
+                    };
+                    let reply = session
+                        .request(&Request::SettingsPut(settings), args.timeout)
+                        .map_err(|error| error.to_string())?;
+                    print(&reply.to_value());
+                    Ok(reply.ok)
+                }
+                Some(other) => Err(format!("settings takes get or put, not {other:?}")),
+            }
+        }
+        "reboot" => {
+            let (session, incoming) = open(args, quiet())?;
+            session
+                .send_line("reboot")
+                .map_err(|error| error.to_string())?;
+            let deadline = Instant::now() + Duration::from_secs(2).max(args.timeout);
+            while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+                match incoming.recv_timeout(left) {
+                    Ok(Incoming::Line(text)) if text.contains("@td {") => {
+                        let at = text.find("@td {").expect("just found");
+                        let reply: Value = serde_json::from_str(&text[at + 4..])
+                            .map_err(|error| format!("bad @td reply: {error}"))?;
+                        print(&reply);
+                        return Ok(reply["ok"] == true);
+                    }
+                    Ok(Incoming::Closed(reason)) => {
+                        print(&json!({"ok": true, "closed": reason}));
+                        return Ok(true);
+                    }
+                    _ => {}
+                }
+            }
+            Err("no reply to reboot within 2 s".into())
         }
         other => Err(format!("unknown command {other:?}\n{USAGE}")),
     }
