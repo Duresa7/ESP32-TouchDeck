@@ -500,7 +500,6 @@ void touch_set_recovery_cb(touch_recovery_cb_t on_armed)
     atomic_store(&s_recovery_cb, on_armed);
 }
 
-
 void touch_set_log(bool on)
 {
     atomic_store(&s.log, on);
