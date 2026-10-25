@@ -1,4 +1,5 @@
 #include "td_console.h"
+#include "td_cmd_table.h"
 #include "td_rx_sync.h"
 #include <stdatomic.h>
 #include <stdio.h>
@@ -6,6 +7,7 @@
 #include "esp_app_desc.h"
 #include "esp_check.h"
 #include "esp_console.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_stdio.h"
 #include "esp_system.h"
@@ -29,17 +31,52 @@
 
 static const char *TAG = "td_console";
 
+/* The driver's TX ring holds 256 bytes, and a single write larger than the ring never fits. */
+#define TD_TX_CHUNK 128
+#define TD_TX_WAIT_MS 1000
+
+static bool write_locked(const char *s, size_t len)
+{
+    size_t done = 0;
+    while (done < len) {
+        const size_t n = len - done < TD_TX_CHUNK ? len - done : TD_TX_CHUNK;
+        if (usb_serial_jtag_write_bytes(s + done, n, pdMS_TO_TICKS(TD_TX_WAIT_MS)) != (int)n) {
+            break;
+        }
+        done += n;
+    }
+    return done == len;
+}
+
+bool td_console_write(const char *s, size_t len)
+{
+    flockfile(stdout);
+    fflush(stdout);
+    const bool ok = write_locked(s, len);
+    funlockfile(stdout);
+    return ok;
+}
+
+bool td_console_write_line(const char *line)
+{
+    flockfile(stdout);
+    fflush(stdout);
+    const bool ok = write_locked(line, strlen(line)) && write_locked("\r\n", 2);
+    funlockfile(stdout);
+    return ok;
+}
+
 static void emit(td_reply_t *r)
 {
     td_reply_end(r);
-    printf("%s\n", r->buf);
+    td_console_write_line(r->buf);
 }
 
 static void emit_error(const char *cmd, const char *message)
 {
     char buf[TD_REPLY_MAX];
     td_reply_error(buf, sizeof buf, cmd, message);
-    printf("%s\n", buf);
+    td_console_write_line(buf);
 }
 
 static int cmd_help(int argc, char **argv);
@@ -72,6 +109,10 @@ static int cmd_heap(int argc, char **argv)
     td_reply_begin(&r, buf, sizeof buf, "heap", true);
     td_reply_int(&r, "free_heap", esp_get_free_heap_size());
     td_reply_int(&r, "min_free_heap", esp_get_minimum_free_heap_size());
+    td_reply_int(&r, "free_internal", heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    td_reply_int(&r, "min_free_internal", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    td_reply_int(&r, "free_psram", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    td_reply_int(&r, "min_free_psram", heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM));
     emit(&r);
     return 0;
 }
@@ -98,28 +139,48 @@ static int cmd_reboot(int argc, char **argv)
     return 0;
 }
 
-static const esp_console_cmd_t s_cmds[] = {
+static const esp_console_cmd_t s_builtin_cmds[] = {
     { .command = "help", .help = "list the console commands", .func = cmd_help },
     { .command = "version", .help = "report the app descriptor", .func = cmd_version },
     { .command = "heap", .help = "report free heap", .func = cmd_heap },
     { .command = "uptime", .help = "report milliseconds since boot", .func = cmd_uptime },
     { .command = "reboot", .help = "restart the board", .func = cmd_reboot },
 };
-#define TD_CMD_COUNT (sizeof s_cmds / sizeof s_cmds[0])
+
+static td_cmd_table_t s_table;
+
+/* The table starts with the console's own commands. `help` lists them first, and no other component can reuse
+ * their names. */
+static td_cmd_table_t *table(void)
+{
+    if (s_table.count == 0) {
+        td_cmd_table_add(&s_table, s_builtin_cmds, sizeof s_builtin_cmds / sizeof s_builtin_cmds[0]);
+    }
+    return &s_table;
+}
 
 static int cmd_help(int argc, char **argv)
 {
-    const char *names[TD_CMD_COUNT];
-    for (size_t i = 0; i < TD_CMD_COUNT; i++) {
-        names[i] = s_cmds[i].command;
-    }
+    const char *names[TD_CMD_TABLE_MAX];
+    const size_t count = td_cmd_table_names(table(), names);
 
     char buf[TD_REPLY_MAX];
     td_reply_t r;
     td_reply_begin(&r, buf, sizeof buf, "help", true);
-    td_reply_strs(&r, "commands", names, TD_CMD_COUNT);
+    td_reply_strs(&r, "commands", names, count);
     emit(&r);
     return 0;
+}
+
+esp_err_t td_console_register(const esp_console_cmd_t *cmds, size_t count)
+{
+    const esp_err_t err = td_cmd_table_add(table(), cmds, count);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "registering %u command(s) starting with \"%s\" failed: %s%s", (unsigned)count,
+                 count > 0 && cmds[0].command ? cmds[0].command : "", esp_err_to_name(err),
+                 err == ESP_ERR_INVALID_STATE ? " (register before td_console_start)" : "");
+    }
+    return err;
 }
 
 typedef struct {
@@ -307,6 +368,7 @@ static void console_task(void *arg)
 
 esp_err_t td_console_start(void)
 {
+    td_cmd_table_seal(table());
     ESP_RETURN_ON_ERROR(esp_stdio_install_io_driver(), TAG, "stdio driver");
     if (!usb_serial_jtag_is_driver_installed()) {
         ESP_LOGW(TAG, "console is off: its input task reads the USB-Serial/JTAG driver, which only the USB-Serial/JTAG primary console installs");
@@ -316,8 +378,8 @@ esp_err_t td_console_start(void)
     esp_console_config_t config = ESP_CONSOLE_CONFIG_DEFAULT();
     config.max_cmdline_length = TD_LINE_MAX;
     ESP_RETURN_ON_ERROR(esp_console_init(&config), TAG, "console init");
-    for (size_t i = 0; i < TD_CMD_COUNT; i++) {
-        ESP_RETURN_ON_ERROR(esp_console_cmd_register(&s_cmds[i]), TAG, "register %s", s_cmds[i].command);
+    for (size_t i = 0; i < s_table.count; i++) {
+        ESP_RETURN_ON_ERROR(esp_console_cmd_register(&s_table.cmds[i]), TAG, "register %s", s_table.cmds[i].command);
     }
 
     s_rx_queue = xStreamBufferCreate(TD_RX_QUEUE_BYTES, 1);

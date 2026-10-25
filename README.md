@@ -34,8 +34,10 @@ idf.py -p COM3 flash monitor
 ```
 
 Replace `COM3` with your board's serial port. Press `Ctrl+]` to exit the
-monitor. Board defaults (flash size, PSRAM) live in
-`firmware/sdkconfig.defaults`.
+monitor. Board defaults (flash size, PSRAM, CPU speed, LVGL options) live in
+`firmware/sdkconfig.defaults`. The first build downloads LVGL and the LVGL
+adapter from the ESP-IDF component registry, so it needs a network connection.
+`firmware/dependencies.lock` pins the versions.
 
 ## Serial console
 
@@ -48,8 +50,18 @@ td> version
 @td {"cmd":"version","ok":true,"project_name":"touchdeck",...}
 ```
 
-The commands are `help`, `version`, `heap`, `uptime`, and `reboot`. An unknown
-command answers with `"ok":false` and an `error`.
+The commands are `help`, `version`, `heap`, `uptime`, and `reboot`, plus the
+three the display adds, which `help` lists too. An unknown command answers with
+`"ok":false` and an `error`.
+
+A component adds commands with `td_console_register`, which takes an array of
+`esp_console_cmd_t`. `app_main` calls it for every component before
+`td_console_start`, which seals the list. A registration after that fails with
+`ESP_ERR_INVALID_STATE`.
+
+Replies leave through the USB driver and wait for the host when its buffer is
+full, so a redrawing display cannot drop them. Log lines and the `td> ` prompt
+still go through stdio and can be dropped.
 
 Input waits in a 2048-byte queue while a command runs. The queue accepts 2047
 bytes, which holds about 250 short lines or seven full-length ones. When a burst
@@ -90,6 +102,22 @@ The console reads the USB-Serial/JTAG driver, so it needs USB-Serial/JTAG as
 the primary console, which `firmware/sdkconfig.defaults` sets. With another
 primary console the firmware still boots, logs that the console is off, and
 does not start it.
+
+## Display
+
+On boot the panel shows a test screen of eight color bars and a `TouchDeck`
+label, drawn with LVGL 9. The display component adds three console commands:
+
+- `screenshot [1|2|4]` streams the screen as RGB565 in `@tdb ` base64 lines and
+  ends with a reply that carries a CRC-32. Scale 2 or 4 keeps every second or
+  fourth pixel.
+- `perf fps <seconds>` redraws the whole screen every frame and replies with the
+  frames per second when the time is up.
+- `backlight on|off` switches the backlight through the CH422G expander.
+
+The display component hands its commands to `td_console_register`, so `help`
+lists them. Until the display has started, `screenshot` and `perf` answer
+`display not ready`.
 
 ## Unit tests
 
