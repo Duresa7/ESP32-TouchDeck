@@ -1,4 +1,10 @@
-file(GLOB td_test_manifests "${CMAKE_CURRENT_LIST_DIR}/../../components/*/test/CMakeLists.txt")
+set(td_test_glob "${CMAKE_CURRENT_LIST_DIR}/../../components/*/test/CMakeLists.txt")
+# ESP-IDF reads this file once in script mode to collect requirements, and CONFIGURE_DEPENDS is invalid there.
+if(CMAKE_SCRIPT_MODE_FILE)
+    file(GLOB td_test_manifests "${td_test_glob}")
+else()
+    file(GLOB td_test_manifests CONFIGURE_DEPENDS "${td_test_glob}")
+endif()
 
 set(td_test_srcs)
 set(td_test_requires)
