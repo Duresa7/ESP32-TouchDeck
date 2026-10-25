@@ -255,7 +255,7 @@ static void build_tile(lv_obj_t *parent, const ui_page_t *page, const ui_tile_t 
     lv_obj_add_style(label, &st->tile_label, 0);
     lv_obj_center(label);
 
-    ui_tile_keys_dress(obj, tile);
+    ui_tile_keys_dress(obj, label, tile);
 }
 
 static void build_page(uint8_t index)

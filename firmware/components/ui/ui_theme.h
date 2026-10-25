@@ -19,6 +19,7 @@ typedef struct {
         uint16_t tile_down;
         uint16_t text;
         uint16_t title;
+        uint16_t caption;
         uint16_t dot_idle;
         uint16_t dot_active;
         uint16_t glow;
@@ -45,6 +46,13 @@ typedef struct {
         int16_t radius;
         int16_t inset;
     } lock;
+    /* A media tile stacks an icon over a caption. icon_dy and caption_dy are the pixels from the tile's centre to
+     * the centre of each label, and the caption is label_inset narrower than the tile on each side. */
+    struct {
+        int16_t icon_dy;
+        int16_t caption_dy;
+        int16_t label_inset;
+    } media;
     uint16_t mod_poll_ms;
     ui_rect_t band;
     ui_rect_t grid;
@@ -63,6 +71,7 @@ typedef struct {
     uint16_t anim_dot_ms;
     const lv_font_t *font_tile;
     const lv_font_t *font_title;
+    const lv_font_t *font_caption;
 } ui_theme_t;
 
 extern const ui_theme_t ui_theme;
@@ -71,6 +80,7 @@ typedef struct {
     lv_style_t tile;
     lv_style_t tile_down;
     lv_style_t tile_label;
+    lv_style_t tile_caption;
     lv_style_t title;
     lv_style_t dot;
     lv_style_t dot_on;

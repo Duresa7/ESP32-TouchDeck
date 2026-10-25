@@ -108,7 +108,10 @@ does not start it.
 On boot the panel shows the deck, drawn with LVGL 9: dark rounded tiles on a
 near-black background, with page dots at the bottom. It has two pages,
 `F-Keys` and `Media`, and a swipe left or right changes the page. A swipe past
-either end bounces back. The tiles are labeled and send nothing yet. A page is
+either end bounces back. Tiles on `F-Keys` send F1 to F12 and the Shift, Ctrl,
+Alt, and Win modifiers, and tiles on `Media` send previous, play or pause, next,
+mute, volume down, and volume up. Each goes through the key engine to the console
+key log, because no USB keyboard exists yet. A page is
 `{id, title, rows, cols, tiles[]}`, and the built-in pages are one `const` table in
 `firmware/components/td_ui_core/ui_pages.c`. Every color, size, shadow, and
 animation time of the look is a named token in `firmware/components/ui/ui_theme.c`.

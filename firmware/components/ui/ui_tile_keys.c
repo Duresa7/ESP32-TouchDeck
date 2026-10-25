@@ -1,3 +1,4 @@
+#include <string.h>
 #include "ui_tile_keys.h"
 #include "keys.h"
 #include "ui_theme.h"
@@ -57,9 +58,55 @@ void ui_tile_keys_start(void)
     lv_timer_create(on_poll, ui_theme.mod_poll_ms, NULL);
 }
 
-void ui_tile_keys_dress(lv_obj_t *obj, const ui_tile_t *tile)
+static const struct {
+    const char *tile_id;
+    const char *glyph;
+} k_icons[] = {
+    { "prev", LV_SYMBOL_PREV },
+    { "playpause", LV_SYMBOL_PLAY LV_SYMBOL_PAUSE },
+    { "next", LV_SYMBOL_NEXT },
+    { "mute", LV_SYMBOL_MUTE },
+    { "voldown", LV_SYMBOL_VOLUME_MID },
+    { "volup", LV_SYMBOL_VOLUME_MAX },
+};
+
+static const char *icon_for(const ui_tile_t *tile)
+{
+    for (size_t i = 0; i < sizeof k_icons / sizeof k_icons[0]; i++) {
+        if (strcmp(k_icons[i].tile_id, tile->id) == 0) {
+            return k_icons[i].glyph;
+        }
+    }
+    return NULL;
+}
+
+static void dress_media(lv_obj_t *obj, lv_obj_t *label, const char *glyph)
+{
+    const ui_styles_t *st = ui_styles();
+    const ui_theme_t *t = &ui_theme;
+
+    lv_obj_add_style(label, &st->tile_caption, 0);
+    lv_obj_set_size(label, lv_obj_get_width(obj) - 2 * t->media.label_inset, lv_font_get_line_height(t->font_caption));
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(label, LV_ALIGN_CENTER, 0, t->media.caption_dy);
+
+    lv_obj_t *icon = lv_label_create(obj);
+    lv_label_set_text_static(icon, glyph);
+    lv_obj_add_style(icon, &st->tile_label, 0);
+    lv_obj_align(icon, LV_ALIGN_CENTER, 0, t->media.icon_dy);
+}
+
+void ui_tile_keys_dress(lv_obj_t *obj, lv_obj_t *label, const ui_tile_t *tile)
 {
     const ui_action_t action = ui_tile_action(tile);
+    if (action.kind == UI_ACTION_CONSUMER) {
+        const char *glyph = icon_for(tile);
+        if (glyph != NULL) {
+            dress_media(obj, label, glyph);
+        }
+        return;
+    }
     if (action.kind != UI_ACTION_MOD) {
         return;
     }
@@ -89,9 +136,15 @@ static void click_mod(void *ctx, key_mod_t mod)
     keys_mod(mod);
 }
 
+static void click_consumer(void *ctx, uint16_t usage)
+{
+    (void)ctx;
+    keys_consumer(usage);
+}
+
 void ui_tile_keys_click(const ui_tile_t *tile)
 {
-    static const ui_action_ops_t ops = { .key = click_key, .mod = click_mod };
+    static const ui_action_ops_t ops = { .key = click_key, .mod = click_mod, .consumer = click_consumer };
     if (ui_tile_click(tile, &ops, NULL)) {
         sync_mods();
     }
