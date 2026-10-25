@@ -177,17 +177,15 @@ static bool read_line(rx_t *rx, char *line, size_t cap)
     }
 }
 
-static void first_word(const char *line, char *word, size_t cap)
+static void command_word(const char *line, char *word, size_t cap)
 {
-    while (*line == ' ' || *line == '\t') {
-        line++;
+    char copy[TD_LINE_MAX];
+    char *argv[2];
+    strlcpy(copy, line, sizeof copy);
+    word[0] = '\0';
+    if (esp_console_split_argv(copy, argv, 2) > 0) {
+        strlcpy(word, argv[0], cap);
     }
-    size_t n = strcspn(line, " \t");
-    if (n >= cap) {
-        n = cap - 1;
-    }
-    memcpy(word, line, n);
-    word[n] = '\0';
 }
 
 static void run_line(const char *line)
@@ -198,7 +196,7 @@ static void run_line(const char *line)
         return;
     }
     char word[TD_WORD_MAX];
-    first_word(line, word, sizeof word);
+    command_word(line, word, sizeof word);
     emit_error(word, err == ESP_ERR_NOT_FOUND ? "unknown command" : "internal error");
 }
 
@@ -213,7 +211,7 @@ static void console_task(void *arg)
             run_line(line);
         } else {
             char word[TD_WORD_MAX];
-            first_word(line, word, sizeof word);
+            command_word(line, word, sizeof word);
             emit_error(word, "line too long");
         }
     }
