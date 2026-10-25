@@ -19,16 +19,14 @@ typedef enum {
 static void send(td_reply_t *r)
 {
     td_reply_end(r);
-    printf("%s\n", r->buf);
-    fflush(stdout);
+    td_console_write_line(r->buf);
 }
 
 static void send_error(const char *message)
 {
     char buf[TD_REPLY_MAX];
     td_reply_error(buf, sizeof buf, "touch", message);
-    printf("%s\n", buf);
-    fflush(stdout);
+    td_console_write_line(buf);
 }
 
 static bool require_touch(void)
