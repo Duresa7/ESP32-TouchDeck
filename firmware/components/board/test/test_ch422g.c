@@ -10,7 +10,7 @@
 #define EV_DELAY(ms) (0x02000000u | (ms))
 #define EV_TOUCH_INT 0x03000000u
 
-#define ASSERT_ERR(want, got) TEST_ASSERT_EQUAL_STRING(esp_err_to_name(want), esp_err_to_name(got))
+#define ASSERT_ERR(want, got) TEST_ASSERT_EQUAL_INT((want), (got))
 
 #define EXPECT_EVENTS(...)                                                     \
     do {                                                                       \
@@ -21,16 +21,23 @@
 typedef struct {
     uint32_t events[MAX_EVENTS];
     size_t count;
+    bool overflow;
     unsigned writes;
     unsigned nack_at;
+    bool touch_int_fails;
 } recorder_t;
 
 /* Static so the driver never holds a pointer into a returned test's stack frame. */
 static recorder_t s_rec;
 
+/* Called from inside the driver, which holds its lock, so a failed assertion here would leave it locked.
+ * Overflow is therefore a flag that expect_events asserts on. */
 static void record(recorder_t *r, uint32_t event)
 {
-    TEST_ASSERT_TRUE_MESSAGE(r->count < MAX_EVENTS, "recorder overflow");
+    if (r->count == MAX_EVENTS) {
+        r->overflow = true;
+        return;
+    }
     r->events[r->count++] = event;
 }
 
@@ -49,8 +56,9 @@ static void rec_delay_ms(void *ctx, uint32_t ms)
 
 static esp_err_t rec_hold_touch_int_low(void *ctx)
 {
-    record(ctx, EV_TOUCH_INT);
-    return ESP_OK;
+    recorder_t *r = ctx;
+    record(r, EV_TOUCH_INT);
+    return r->touch_int_fails ? ESP_FAIL : ESP_OK;
 }
 
 static ch422g_platform_t recorder_platform(void)
@@ -86,6 +94,7 @@ static void nack_next_write(void)
 
 static void expect_events(const uint32_t *want, size_t count)
 {
+    TEST_ASSERT_FALSE_MESSAGE(s_rec.overflow, "recorder overflow");
     TEST_ASSERT_EQUAL_UINT32(count, s_rec.count);
     TEST_ASSERT_EQUAL_HEX32_ARRAY(want, s_rec.events, count);
 }
@@ -175,6 +184,7 @@ TEST_CASE("a start whose first write NACKs fails and leaves the driver stopped",
 {
     ASSERT_ERR(ESP_ERR_INVALID_RESPONSE, start_recorded(1));
     EXPECT_EVENTS(EV_WRITE(0x24, 0x01));
+    TEST_ASSERT_EQUAL_HEX8(0x00, ch422g_output());
 
     s_rec.count = 0;
     expect_setters_refused();
@@ -192,6 +202,32 @@ TEST_CASE("a start that fails midway stops there and stops a running driver", "[
     EXPECT_EVENTS(EV_WRITE(0x24, 0x01), EV_WRITE(0x38, 0x2C), EV_DELAY(100), EV_TOUCH_INT,
                   EV_DELAY(100), EV_WRITE(0x38, 0x2E));
     TEST_ASSERT_EQUAL_HEX8(0x2C, ch422g_output());
+
+    s_rec.count = 0;
+    expect_setters_refused();
+    TEST_ASSERT_EQUAL_UINT32(0, s_rec.count);
+}
+
+TEST_CASE("a start whose touch interrupt hold fails stops before the release", "[ch422g]")
+{
+    memset(&s_rec, 0, sizeof s_rec);
+    s_rec.touch_int_fails = true;
+    const ch422g_platform_t platform = recorder_platform();
+    ASSERT_ERR(ESP_FAIL, ch422g_start(&platform));
+    EXPECT_EVENTS(EV_WRITE(0x24, 0x01), EV_WRITE(0x38, 0x2C), EV_DELAY(100), EV_TOUCH_INT);
+    TEST_ASSERT_EQUAL_HEX8(0x2C, ch422g_output());
+
+    s_rec.count = 0;
+    expect_setters_refused();
+    TEST_ASSERT_EQUAL_UINT32(0, s_rec.count);
+}
+
+TEST_CASE("a NACK on the final start write keeps the last acknowledged byte and stops the driver", "[ch422g]")
+{
+    ASSERT_ERR(ESP_ERR_INVALID_RESPONSE, start_recorded(4));
+    EXPECT_EVENTS(EV_WRITE(0x24, 0x01), EV_WRITE(0x38, 0x2C), EV_DELAY(100), EV_TOUCH_INT,
+                  EV_DELAY(100), EV_WRITE(0x38, 0x2E), EV_DELAY(200), EV_WRITE(0x38, 0x1E));
+    TEST_ASSERT_EQUAL_HEX8(0x2E, ch422g_output());
 
     s_rec.count = 0;
     expect_setters_refused();
