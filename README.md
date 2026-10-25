@@ -190,7 +190,7 @@ The `recovery` console command has two forms:
 
 A swipe lasts at most 2000 ms, so `touch begin <x> <y>`, `touch move <x> <y>` and
 `touch end` hold an injected contact for as long as a test needs and return at
-once. A contact that nobody ends lifts by itself after 30 seconds. `touch stats`
+once. A contact that nobody ends lifts by itself after 60 seconds. `touch stats`
 adds `watch_samples`, `watch_ns_avg`, and `watch_ns_max`, which is what the watcher
 costs per sample.
 

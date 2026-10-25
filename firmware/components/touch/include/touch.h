@@ -31,7 +31,7 @@ const esp_console_cmd_t *touch_console_commands(size_t *count);
 esp_err_t touch_inject_hold(uint16_t x, uint16_t y, uint32_t ms);
 
 /* The longest a contact from touch_hold_begin() lasts without touch_hold_end(), after which it lifts by itself. */
-#define TD_TOUCH_HOLD_MAX_MS 30000
+#define TD_TOUCH_HOLD_MAX_MS 60000
 
 /*
  * An injected contact that lasts as long as the caller wants, for the recovery hold that the 2000 ms swipe cannot
