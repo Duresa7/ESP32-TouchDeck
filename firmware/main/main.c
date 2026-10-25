@@ -11,8 +11,17 @@
 #include "esp_log.h"
 #include "td_console.h"
 #include "display.h"
+#include "touch.h"
 
 static const char *TAG = "touchdeck";
+
+static void register_commands(const char *owner, const esp_console_cmd_t *cmds, size_t count)
+{
+    esp_err_t err = td_console_register(cmds, count);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "%s commands not registered: %s", owner, esp_err_to_name(err));
+    }
+}
 
 void app_main(void)
 {
@@ -41,10 +50,10 @@ void app_main(void)
     /* td_console_start seals the command list, so every component hands over its commands first. */
     size_t display_cmd_count;
     const esp_console_cmd_t *display_cmds = display_console_commands(&display_cmd_count);
-    esp_err_t register_err = td_console_register(display_cmds, display_cmd_count);
-    if (register_err != ESP_OK) {
-        ESP_LOGE(TAG, "Display commands not registered: %s", esp_err_to_name(register_err));
-    }
+    register_commands("Display", display_cmds, display_cmd_count);
+    size_t touch_cmd_count;
+    const esp_console_cmd_t *touch_cmds = touch_console_commands(&touch_cmd_count);
+    register_commands("Touch", touch_cmds, touch_cmd_count);
 
     esp_err_t console_err = td_console_start();
     if (console_err != ESP_OK) {
@@ -54,6 +63,11 @@ void app_main(void)
     esp_err_t display_err = display_start();
     if (display_err != ESP_OK) {
         ESP_LOGE(TAG, "Display failed to start: %s", esp_err_to_name(display_err));
+    }
+
+    esp_err_t touch_err = touch_start();
+    if (touch_err != ESP_OK) {
+        ESP_LOGE(TAG, "Touch failed to start: %s", esp_err_to_name(touch_err));
     }
 
     int ticks = 0;

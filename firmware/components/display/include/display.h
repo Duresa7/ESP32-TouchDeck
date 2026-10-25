@@ -12,8 +12,8 @@ extern "C" {
  * Returns ESP_ERR_TIMEOUT when the first frame did not reach the panel in time. */
 esp_err_t display_start(void);
 
-/* The screenshot, perf and backlight console commands, for td_console_register(). They stay safe to run
- * before display_start() and after it failed, and answer "display not ready" instead. */
+/* The display's console commands, for td_console_register(). Before display_start() and after it failed, a
+ * well-formed command answers "display not ready". */
 const esp_console_cmd_t *display_console_commands(size_t *count);
 
 #ifdef __cplusplus
