@@ -10,6 +10,7 @@
 #include "esp_system.h"
 #include "esp_log.h"
 #include "td_console.h"
+#include "display.h"
 
 static const char *TAG = "touchdeck";
 
@@ -40,6 +41,11 @@ void app_main(void)
     esp_err_t console_err = td_console_start();
     if (console_err != ESP_OK) {
         ESP_LOGE(TAG, "Console failed to start: %s", esp_err_to_name(console_err));
+    }
+
+    esp_err_t display_err = display_start();
+    if (display_err != ESP_OK) {
+        ESP_LOGE(TAG, "Display failed to start: %s", esp_err_to_name(display_err));
     }
 
     int ticks = 0;
