@@ -53,6 +53,9 @@ typedef void (*td_recovery_info_fn_t)(td_recovery_info_t *out);
 /* The touch component registers how to read its watcher, so this component never depends on it. */
 void td_recovery_set_info_fn(td_recovery_info_fn_t fn);
 
+/* Reads the registered watcher, or IDLE and zeros before registration. */
+void td_recovery_get_info(td_recovery_info_t *out);
+
 /* The `recovery` console command, for td_console_register(). */
 const esp_console_cmd_t *td_recovery_console_commands(size_t *count);
 

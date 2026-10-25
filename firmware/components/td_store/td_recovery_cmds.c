@@ -4,7 +4,6 @@
 #include "freertos/task.h"
 #include "td_console.h"
 #include "td_recovery.h"
-#include "td_recovery_priv.h"
 
 #define ARM_REPLY_FLUSH_MS 200
 

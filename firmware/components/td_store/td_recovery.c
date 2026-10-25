@@ -4,7 +4,6 @@
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "td_recovery_priv.h"
 #include "td_store.h"
 
 #define ARM_TASK_STACK 4096
