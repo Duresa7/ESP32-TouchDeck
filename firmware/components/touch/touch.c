@@ -19,6 +19,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
+#include "power.h"
 
 #define GT911_STATUS_REG 0x814E
 #define GT911_STATUS_REPORT_READY 0x80
@@ -116,18 +117,24 @@ static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
             shared.drained_us = now;
         }
     }
-    shared.last = out;
     const bool release_follows = injected && out.pressed && td_touch_release_follows(&shared.queue);
+    portEXIT_CRITICAL(&shared.lock);
+
+    /* The idle gate comes after the queue, so an injected tap is swallowed like a finger. It sits outside the spinlock
+     * because a wake writes the CH422G over I2C. What it returns is what LVGL takes. */
+    const td_touch_sample_t seen = power_filter(out, held.pressed, now);
+    portENTER_CRITICAL(&shared.lock);
+    shared.last = seen;
     portEXIT_CRITICAL(&shared.lock);
 
     if (poll == TD_TOUCH_POLL_REPORT && atomic_load(&s.log)) {
         ESP_LOGI(TAG, "x=%u y=%u pressed=%d", held.x, held.y, held.pressed);
     }
 
-    data->point.x = out.x;
-    data->point.y = out.y;
-    data->state = out.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
-    data->continue_reading = release_follows;
+    data->point.x = seen.x;
+    data->point.y = seen.y;
+    data->state = seen.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+    data->continue_reading = release_follows && seen.pressed;
 }
 
 static const char *direction_name(lv_dir_t dir)

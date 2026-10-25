@@ -9,12 +9,14 @@
 #include "esp_psram.h"
 #include "esp_system.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "td_console.h"
 #include "display.h"
 #include "touch.h"
 #include "ui.h"
 #include "key_sink_log.h"
 #include "keys.h"
+#include "power.h"
 
 static const char *TAG = "touchdeck";
 
@@ -65,6 +67,9 @@ void app_main(void)
     size_t keys_cmd_count;
     const esp_console_cmd_t *keys_cmds = keys_console_commands(&s_key_log, &keys_cmd_count);
     register_commands("Keys", keys_cmds, keys_cmd_count);
+    size_t power_cmd_count;
+    const esp_console_cmd_t *power_cmds = power_console_commands(&power_cmd_count);
+    register_commands("Power", power_cmds, power_cmd_count);
 
     /* The engine exists before the console can run a keys command. Its only sink here is the console key log.
      * The USB HID sink plugs in behind the same key_sink_t in the post-product update. */
@@ -82,6 +87,12 @@ void app_main(void)
     esp_err_t display_err = display_start(ui_build);
     if (display_err != ESP_OK) {
         ESP_LOGE(TAG, "Display failed to start: %s", esp_err_to_name(display_err));
+    }
+
+    /* The gate needs the CH422G that display_start brought up, and it must exist before touch reads start. */
+    esp_err_t power_err = power_start(esp_timer_get_time());
+    if (power_err != ESP_OK) {
+        ESP_LOGE(TAG, "Power failed to start, the screen stays on: %s", esp_err_to_name(power_err));
     }
 
     esp_err_t touch_err = touch_start();
