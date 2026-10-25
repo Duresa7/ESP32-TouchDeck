@@ -19,6 +19,8 @@ static struct {
     size_t rd;
     size_t used;
     size_t dropped;
+    size_t overflows;
+    bool queued_last_read;
     char queued[LOG_MAX];
     size_t queued_len;
     char line[64];
@@ -31,6 +33,7 @@ static void model_reset(size_t cap)
 {
     memset(&s_model, 0, sizeof s_model);
     s_model.cap = cap;
+    s_model.queued_last_read = true;
 }
 
 static size_t feed_with_space(const char *s, size_t n, size_t space)
@@ -38,7 +41,12 @@ static size_t feed_with_space(const char *s, size_t n, size_t space)
     char buf[64];
     TEST_ASSERT_TRUE(n <= sizeof buf);
     memcpy(buf, s, n);
+    size_t dropped_before = s_model.dropped;
     size_t m = td_rx_sync(&s_model.sync, buf, n, space, &s_model.dropped);
+    if (s_model.dropped > dropped_before && s_model.queued_last_read) {
+        s_model.overflows++;
+    }
+    s_model.queued_last_read = m > 0;
     TEST_ASSERT_TRUE_MESSAGE(m <= space, "queued more than the free space");
     for (size_t i = 0; i < m; i++) {
         s_model.ring[(s_model.rd + s_model.used) % QUEUE_MAX] = buf[i];
@@ -81,6 +89,21 @@ static void drain(size_t max)
         s_model.used--;
         console_byte(c);
     }
+}
+
+static size_t lines_ran(void)
+{
+    size_t lines = 0;
+    for (size_t i = 0; i < s_model.ran_len; i++) {
+        lines += s_model.ran[i] == '\n';
+    }
+    return lines;
+}
+
+/* The sum a script computes for CR LF input: each line that ran counts its text and two ending bytes, and the drops add their counted bytes. */
+static size_t accounted_crlf(void)
+{
+    return s_model.ran_len + lines_ran() + s_model.dropped;
 }
 
 #define FEED(str, space) feed_with_space(str, sizeof(str) - 1, space)
@@ -182,6 +205,27 @@ TEST_CASE("a drop that ends on a carriage return keeps the line feed that follow
     EXPECT_QUEUED("he\0\nheap\r\n");
     TEST_ASSERT_EQUAL_STRING("heap\n", s_model.ran);
     TEST_ASSERT_EQUAL_UINT(2 + 3, s_model.dropped);
+}
+
+TEST_CASE("carriage return line feed input can leave the byte accounting one short", "[td_rx_sync]")
+{
+    model_reset(QUEUE_MAX);
+    FEED("he", 100);
+    FEED("ap\r", 3);
+    FEED("\nheap\r\n", 100);
+    drain(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_STRING("heap\n", s_model.ran);
+    TEST_ASSERT_EQUAL_UINT(sizeof("heap\r\nheap\r\n") - 1 - 1, accounted_crlf());
+}
+
+TEST_CASE("carriage return line feed input can count the line feed of an answered line twice", "[td_rx_sync]")
+{
+    model_reset(QUEUE_MAX);
+    FEED("heap\r", 100);
+    FEED("\n", 1);
+    drain(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_STRING("heap\n", s_model.ran);
+    TEST_ASSERT_EQUAL_UINT(sizeof("heap\r\n") - 1 + 1, accounted_crlf());
 }
 
 TEST_CASE("a read is queued only when one byte stays free", "[td_rx_sync]")
@@ -297,8 +341,12 @@ static void fuzz(uint32_t seed, size_t cap, const char *eol)
         ran_bytes += len + eol_len;
         p = end + 1;
     }
+    size_t total = ran_bytes + s_model.dropped;
     if (eol_len == 1) {
-        TEST_ASSERT_EQUAL_UINT(stream_len, ran_bytes + s_model.dropped);
+        TEST_ASSERT_EQUAL_UINT(stream_len, total);
+    } else {
+        size_t gap = total > stream_len ? total - stream_len : stream_len - total;
+        TEST_ASSERT_TRUE_MESSAGE(gap <= s_model.overflows, "off by more than one byte per queue overflow");
     }
 }
 
@@ -315,4 +363,11 @@ TEST_CASE("carriage return line feed input never runs a glued line", "[td_rx_syn
     fuzz(5, 2048, "\r\n");
     fuzz(6, 512, "\r\n");
     fuzz(7, 128, "\r\n");
+}
+
+TEST_CASE("carriage return input never runs a glued line and accounts for every byte", "[td_rx_sync]")
+{
+    fuzz(8, 2048, "\r");
+    fuzz(9, 512, "\r");
+    fuzz(10, 128, "\r");
 }

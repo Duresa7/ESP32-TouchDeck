@@ -53,20 +53,40 @@ td> version
 The commands are `help`, `version`, `heap`, `uptime`, and `reboot`. An unknown
 command answers with `"ok":false` and an `error`.
 
-Input waits in a 2048-byte queue while a command runs. That holds about 250
-short lines or eight full-length ones. When a burst fills the queue, the
-firmware drops the next read of up to 64 bytes and then everything through the
-next CR or LF, so a line that a drop cut never runs. It reports the loss before
-the next prompt:
+Input waits in a 2048-byte queue while a command runs. The queue accepts 2047
+bytes, which holds about 250 short lines or seven full-length ones. When a burst
+fills it, the firmware drops the next read of up to 64 bytes and then everything
+through the next CR or LF, so a line that a drop cut never runs. It reports the
+loss before the next prompt:
 
 ```
 @td {"cmd":"console","ok":false,"error":"input overflow","dropped_bytes":N}
 ```
 
-`dropped_bytes` counts every byte it threw away, the cut line included. When
-every line ends in a line feed, the bytes of the lines that got a reply plus
-`dropped_bytes` equal the bytes you sent. A script that sends a burst should
-wait for replies after about 250 short lines.
+`dropped_bytes` counts every byte the firmware threw away, the cut line
+included. It counts the rest of a cut line as those bytes arrive, which can be
+after the first notice printed, so one loss can print several of these lines.
+Add up every one.
+
+The firmware cannot count a loss inside the USB driver. The driver's interrupt
+copies each USB packet into a 256-byte ring and ignores the result of
+`xRingbufferSendFromISR`. If `td_rx`, the task that empties the ring, cannot
+run while about four full packets arrive, the next packet is lost with no
+count.
+
+When no line is blank and every line ends in one CR or one LF, the bytes of the
+lines that got a reply, line endings included, plus the `dropped_bytes` of every
+notice equal the bytes you sent. CR LF breaks that, by up to one byte each time
+the queue overflows, in either direction:
+
+- The dropped input can end between a line's CR and its LF. The console reads
+  that LF as an empty line, which nothing counts, so the sum comes up one byte
+  short.
+- The dropped input can start on the LF of a line that already got a reply. That
+  LF is counted twice, so the sum runs one byte over.
+
+To check the sum exactly, end every line with LF. A script that sends a burst
+should wait for replies after about 250 short lines.
 
 The console reads the USB-Serial/JTAG driver, so it needs USB-Serial/JTAG as
 the primary console, which `firmware/sdkconfig.defaults` sets. With another
