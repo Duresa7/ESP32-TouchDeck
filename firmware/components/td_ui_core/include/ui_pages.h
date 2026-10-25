@@ -45,8 +45,9 @@ typedef struct {
 const ui_page_t *ui_builtin_pages(size_t *count);
 
 /*
- * True when the page is safe to draw. The grid is 1 to UI_GRID_MAX in each direction, ids and labels are
- * non-empty, every tile has a span of at least 1 and stays inside the grid, and no two tiles share a cell.
+ * True when the page is safe to draw. The grid is 1 to UI_GRID_MAX in each direction, the page's id and title
+ * and every tile's id and label are non-empty, every tile has a span of at least 1 and stays inside the grid,
+ * and no two tiles share a cell. It checks one page, so an id that two pages share is not caught here.
  */
 bool ui_page_valid(const ui_page_t *page);
 

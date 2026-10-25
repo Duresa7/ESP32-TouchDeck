@@ -17,7 +17,7 @@
         TEST_ASSERT_EQUAL_INT16((want_h), (got).h);      \
     } while (0)
 
-static const ui_rect_t k_area = { .x = 28, .y = 70, .w = 968, .h = 470 };
+static const ui_rect_t k_area = { .x = 28, .y = 76, .w = 968, .h = 464 };
 
 static const char *const k_fkeys_ids[] = {
     "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "shift", "ctrl", "alt", "win",
@@ -250,18 +250,18 @@ TEST_CASE("the Media page has transport tiles on row 0 and volume tiles on row 1
     expect_tiles(builtin_page(1), k_media_ids, k_media_labels, 6, 3);
 }
 
-TEST_CASE("F-Keys tile rects follow from a 968 by 470 area with a 16 pixel gap", "[ui_pages]")
+TEST_CASE("F-Keys tile rects follow from the deck's 968 by 464 grid with a 16 pixel gap", "[ui_pages]")
 {
     const ui_page_t *page = builtin_page(0);
-    /* Columns are 230 wide at x 28, 274, 520 and 766. Rows are 105, 106, 105 and 106 high at y 70, 191, 313, 434. */
-    EXPECT_RECT(rect_of(page, "f1"), 28, 70, 230, 105);
-    EXPECT_RECT(rect_of(page, "f2"), 274, 70, 230, 105);
-    EXPECT_RECT(rect_of(page, "f4"), 766, 70, 230, 105);
-    EXPECT_RECT(rect_of(page, "f6"), 274, 191, 230, 106);
-    EXPECT_RECT(rect_of(page, "f10"), 274, 313, 230, 105);
-    EXPECT_RECT(rect_of(page, "f12"), 766, 313, 230, 105);
-    EXPECT_RECT(rect_of(page, "shift"), 28, 434, 230, 106);
-    EXPECT_RECT(rect_of(page, "win"), 766, 434, 230, 106);
+    /* Columns are 230 wide at x 28, 274, 520 and 766. Rows are 104 high at y 76, 196, 316 and 436. */
+    EXPECT_RECT(rect_of(page, "f1"), 28, 76, 230, 104);
+    EXPECT_RECT(rect_of(page, "f2"), 274, 76, 230, 104);
+    EXPECT_RECT(rect_of(page, "f4"), 766, 76, 230, 104);
+    EXPECT_RECT(rect_of(page, "f6"), 274, 196, 230, 104);
+    EXPECT_RECT(rect_of(page, "f10"), 274, 316, 230, 104);
+    EXPECT_RECT(rect_of(page, "f12"), 766, 316, 230, 104);
+    EXPECT_RECT(rect_of(page, "shift"), 28, 436, 230, 104);
+    EXPECT_RECT(rect_of(page, "win"), 766, 436, 230, 104);
 
     const ui_rect_t f4 = rect_of(page, "f4");
     TEST_ASSERT_EQUAL_INT_MESSAGE(996, f4.x + f4.w, "the last column ends on the area's right edge");
@@ -269,16 +269,16 @@ TEST_CASE("F-Keys tile rects follow from a 968 by 470 area with a 16 pixel gap",
     TEST_ASSERT_EQUAL_INT_MESSAGE(540, win.y + win.h, "the last row ends on the area's bottom edge");
 }
 
-TEST_CASE("Media tile rects follow from a 968 by 470 area with a 16 pixel gap", "[ui_pages]")
+TEST_CASE("Media tile rects follow from the deck's 968 by 464 grid with a 16 pixel gap", "[ui_pages]")
 {
     const ui_page_t *page = builtin_page(1);
-    /* Columns are 312 wide at x 28, 356 and 684. Rows are 227 high at y 70 and 313. */
-    EXPECT_RECT(rect_of(page, "prev"), 28, 70, 312, 227);
-    EXPECT_RECT(rect_of(page, "playpause"), 356, 70, 312, 227);
-    EXPECT_RECT(rect_of(page, "next"), 684, 70, 312, 227);
-    EXPECT_RECT(rect_of(page, "mute"), 28, 313, 312, 227);
-    EXPECT_RECT(rect_of(page, "voldown"), 356, 313, 312, 227);
-    EXPECT_RECT(rect_of(page, "volup"), 684, 313, 312, 227);
+    /* Columns are 312 wide at x 28, 356 and 684. Rows are 224 high at y 76 and 316. */
+    EXPECT_RECT(rect_of(page, "prev"), 28, 76, 312, 224);
+    EXPECT_RECT(rect_of(page, "playpause"), 356, 76, 312, 224);
+    EXPECT_RECT(rect_of(page, "next"), 684, 76, 312, 224);
+    EXPECT_RECT(rect_of(page, "mute"), 28, 316, 312, 224);
+    EXPECT_RECT(rect_of(page, "voldown"), 356, 316, 312, 224);
+    EXPECT_RECT(rect_of(page, "volup"), 684, 316, 312, 224);
 }
 
 TEST_CASE("built-in tiles stay in the area, never overlap and sit exactly one gap apart", "[ui_pages]")
@@ -299,10 +299,10 @@ TEST_CASE("a tile that spans cells covers them and the gaps between them", "[ui_
     const ui_page_t page = page_of(4, 4, tiles, 3);
     TEST_ASSERT_TRUE(ui_page_valid(&page));
 
-    /* big is 230 + 16 + 230 wide and 105 + 16 + 106 high. wide is 3 * 230 + 2 * 16. tall is 105 + 16 + 106. */
-    EXPECT_RECT(rect_of(&page, "big"), 28, 70, 476, 227);
-    EXPECT_RECT(rect_of(&page, "wide"), 28, 434, 722, 106);
-    EXPECT_RECT(rect_of(&page, "tall"), 766, 313, 230, 227);
+    /* big is 230 + 16 + 230 wide and 104 + 16 + 104 high. wide is 3 * 230 + 2 * 16. tall is 104 + 16 + 104. */
+    EXPECT_RECT(rect_of(&page, "big"), 28, 76, 476, 224);
+    EXPECT_RECT(rect_of(&page, "wide"), 28, 436, 722, 104);
+    EXPECT_RECT(rect_of(&page, "tall"), 766, 316, 230, 224);
 
     const ui_page_t *fkeys = builtin_page(0);
     const ui_rect_t f1 = rect_of(fkeys, "f1");
@@ -417,6 +417,19 @@ TEST_CASE("ui_page_valid rejects an empty or missing id or label", "[ui_pages]")
     ui_page_t page = page_of(2, 2, tile, 1);
     page.id = "";
     TEST_ASSERT_FALSE_MESSAGE(ui_page_valid(&page), "an empty page id");
+
+    page = page_of(2, 2, tile, 1);
+    page.title = "";
+    TEST_ASSERT_FALSE_MESSAGE(ui_page_valid(&page), "an empty page title");
+    page.title = NULL;
+    TEST_ASSERT_FALSE_MESSAGE(ui_page_valid(&page), "a missing page title");
+}
+
+TEST_CASE("ui_page_valid rejects a missing page and a tile list that is missing", "[ui_pages]")
+{
+    TEST_ASSERT_FALSE(ui_page_valid(NULL));
+    expect_invalid("tiles counted but no table", 2, 2, NULL, 1);
+    expect_valid("an empty page", 2, 2, NULL, 0);
 }
 
 TEST_CASE("ui_page_find_tile finds a tile by id and nothing else", "[ui_pages]")

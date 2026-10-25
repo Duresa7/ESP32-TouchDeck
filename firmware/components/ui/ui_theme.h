@@ -6,8 +6,9 @@
 
 /* Colors are RGB565, because that is what the panel stores. A design color goes in as 8-bit channels and the
  * macro drops the low bits, so the value that a screenshot reads back is the token itself. Write red and blue as
- * multiples of 8 and green as a multiple of 4, so the 8-bit values show exactly. Every fill is one flat token,
- * because LVGL 9.6 cannot dither a gradient, and the panel would band it and tint it green. */
+ * multiples of 8 and green as a multiple of 4, or use 255, so the design color is the one the panel shows. Every
+ * fill is one flat token, because LVGL 9.6 cannot dither a gradient, and the panel would band it and tint it
+ * green. */
 #define UI_RGB565(r, g, b) ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
 
 /* Every color, size, shadow and animation time of the deck's look. The look is only read here. */
