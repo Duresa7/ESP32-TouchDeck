@@ -82,10 +82,9 @@ unsafe fn read_bitmap(bitmap: HBITMAP) -> Option<RgbaImage> {
         if lines == 0 {
             return None;
         }
-        let has_alpha = bgra.chunks_exact(4).any(|px| px[3] != 0);
+        let has_alpha = bgra.as_chunks::<4>().0.iter().any(|px| px[3] != 0);
         let mut image = RgbaImage::new(width as u32, height as u32);
-        for (px, out) in bgra.chunks_exact(4).zip(image.pixels_mut()) {
-            let [b, g, r, a] = [px[0], px[1], px[2], px[3]];
+        for (&[b, g, r, a], out) in bgra.as_chunks::<4>().0.iter().zip(image.pixels_mut()) {
             *out = if !has_alpha {
                 Rgba([r, g, b, 255])
             } else if a == 0 {
