@@ -157,7 +157,6 @@ pub async fn connect(app: AppHandle, port: String) -> Result<DeckInfo, String> {
     .await?
 }
 
-/// Turns one session's output into window events until it closes, then releases the port.
 fn forward(
     app: &AppHandle,
     session: &Arc<Session>,

@@ -1,9 +1,6 @@
 # Installs what the TouchDeck app needs on a fresh Windows PC. Safe to run again.
 #
 #   pwsh -NoProfile -File app\scripts\setup-windows.ps1
-#
-# Rust comes from rustup with the stable MSVC toolchain. The MSVC linker and the Windows
-# SDK come from the Visual Studio Build Tools C++ workload. WebView2 ships with Windows 11.
 $ErrorActionPreference = 'Stop'
 
 function Have($name) { [bool](Get-Command $name -ErrorAction SilentlyContinue) }

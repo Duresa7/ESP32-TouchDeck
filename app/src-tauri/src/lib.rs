@@ -4,9 +4,8 @@ use tauri::Manager;
 
 pub const BUILD_SHA: &str = env!("TD_GIT_SHA");
 
-/// `$TA doctor` finds the commit this binary was built from by this marker.
 #[used]
-static BUILD_MARK: &str = concat!("touchdeck-build-sha:", env!("TD_GIT_SHA"));
+static DOCTOR_MARKER: &str = concat!("touchdeck-build-sha:", env!("TD_GIT_SHA"));
 
 pub fn run() {
     let mock = std::env::var("TOUCHDECK_MOCK").is_ok_and(|value| value == "1");
