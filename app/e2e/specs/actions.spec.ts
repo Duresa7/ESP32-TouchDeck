@@ -78,7 +78,7 @@ describe('tile actions and command approval on the mock deck', () => {
 
   it('connects and loads a layout for the actions', async () => {
     await connectFirstDeck();
-    await $('[data-testid="view-actions"]').click();
+    await $('[data-testid="nav-actions"]').click();
     await load('first');
     await browser.waitUntil(async () => (await $('[data-testid="action-layout"]').getText()).includes('actions.spec'), { timeout: 3_000 });
   });

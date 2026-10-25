@@ -103,7 +103,7 @@ describe('key mirror on the mock deck', () => {
     await connectFirstDeck();
     fake = (await invoke<string[] | null>('e2e_input_log')) !== null;
     note('input', fake ? 'fake sink' : 'operating system');
-    await $('[data-testid="view-actions"]').click();
+    await $('[data-testid="nav-actions"]').click();
     await browser.waitUntil(async () => (await $('[data-testid="mirror-state"]').getAttribute('data-enabled')) === 'true', {
       timeout: 3_000,
       timeoutMsg: 'mirroring is not on',
@@ -197,9 +197,9 @@ describe('key mirror on the mock deck', () => {
   });
 
   it('types exactly 200 F14 taps from a burst and ends on a release', async () => {
-    await $('[data-testid="view-console"]').click();
+    await $('[data-testid="nav-deck"]').click();
     await connectFirstDeck();
-    await $('[data-testid="view-actions"]').click();
+    await $('[data-testid="nav-actions"]').click();
     await clearMonitor();
     const start = (await keyEvents()).length;
     await emit([kbd(0, [F14]), kbd(0, [])], 200, 25);
