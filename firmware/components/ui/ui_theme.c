@@ -33,8 +33,7 @@ const ui_theme_t ui_theme = {
         .inset = 18,
     },
     .media = {
-        .icon_dy = -22,
-        .caption_dy = 33,
+        .gap = 14,
         .label_inset = 16,
     },
     .mod_poll_ms = 50,
@@ -112,6 +111,7 @@ static void init_tile_styles(ui_styles_t *st)
     lv_style_init(&st->tile_caption);
     lv_style_set_text_font(&st->tile_caption, t->font_caption);
     lv_style_set_text_color(&st->tile_caption, ui_color(t->color.caption));
+    lv_style_set_text_align(&st->tile_caption, LV_TEXT_ALIGN_CENTER);
 }
 
 static void init_text_and_dot_styles(ui_styles_t *st)

@@ -46,11 +46,8 @@ typedef struct {
         int16_t radius;
         int16_t inset;
     } lock;
-    /* A media tile stacks an icon over a caption. icon_dy and caption_dy are the pixels from the tile's centre to
-     * the centre of each label, and the caption is label_inset narrower than the tile on each side. */
     struct {
-        int16_t icon_dy;
-        int16_t caption_dy;
+        int16_t gap;
         int16_t label_inset;
     } media;
     uint16_t mod_poll_ms;

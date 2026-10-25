@@ -235,6 +235,24 @@ static void on_release(lv_event_t *e)
     ESP_LOGI(TAG, "click taps=%u tile=%s", taps, tile_of(tile_obj)->id);
 }
 
+static void build_stacked_label(lv_obj_t *obj, lv_obj_t *label, const char *glyph, int32_t tile_w)
+{
+    const ui_styles_t *st = ui_styles();
+    const int32_t icon_h = lv_font_get_line_height(ui_theme.font_tile);
+    const int32_t caption_h = lv_font_get_line_height(ui_theme.font_caption);
+    const int32_t gap = ui_theme.media.gap;
+
+    lv_obj_add_style(label, &st->tile_caption, 0);
+    lv_obj_set_size(label, tile_w - 2 * ui_theme.media.label_inset, caption_h);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_CLIP);
+    lv_obj_align(label, LV_ALIGN_CENTER, 0, (icon_h + gap) / 2);
+
+    lv_obj_t *icon = lv_label_create(obj);
+    lv_label_set_text_static(icon, glyph);
+    lv_obj_add_style(icon, &st->tile_label, 0);
+    lv_obj_align(icon, LV_ALIGN_CENTER, 0, -(caption_h + gap) / 2);
+}
+
 static void build_tile(lv_obj_t *parent, const ui_page_t *page, const ui_tile_t *tile)
 {
     const ui_styles_t *st = ui_styles();
@@ -250,12 +268,17 @@ static void build_tile(lv_obj_t *parent, const ui_page_t *page, const ui_tile_t 
     lv_obj_set_event_bubble(obj, true);
     lv_obj_set_user_data(obj, (void *)tile);
 
+    const char *icon = ui_tile_keys_icon(tile);
     lv_obj_t *label = lv_label_create(obj);
     lv_label_set_text_static(label, tile->label);
-    lv_obj_add_style(label, &st->tile_label, 0);
-    lv_obj_center(label);
+    if (icon == NULL) {
+        lv_obj_add_style(label, &st->tile_label, 0);
+        lv_obj_center(label);
+    } else {
+        build_stacked_label(obj, label, icon, r.w);
+    }
 
-    ui_tile_keys_dress(obj, label, tile);
+    ui_tile_keys_dress(obj, tile);
 }
 
 static void build_page(uint8_t index)
