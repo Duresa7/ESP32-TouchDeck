@@ -6,10 +6,6 @@ AGENTS.md
 /.claude/
 /skills-lock.json
 
-# Local Claude Code mods (compact button and sub-agents pane, usage pane)
-/.claude/skills/compact-agents/
-/.claude/skills/usage/
-
 # Build output
 .pio/
 build/
@@ -23,10 +19,7 @@ dist/
 sdkconfig.old
 managed_components/
 
-# PlatformIO and Arduino generated files
-.pioenvs/
-.piolibdeps/
-libraries/
+# Firmware images
 *.elf
 *.hex
 *.bin
