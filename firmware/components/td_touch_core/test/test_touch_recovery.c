@@ -151,6 +151,26 @@ TEST_CASE("a hold on a dark screen arms by time, however the reads are spaced", 
     TEST_ASSERT_TRUE(w.held_ms < TD_RECOVERY_HOLD_MS + 65);
 }
 
+TEST_CASE("a hold across a power-off sample stream arms on the first read past the limit", "[touch_recovery]")
+{
+    /* With the panel off the reads come in bursts and long gaps, and the power filter hides the contact from the UI.
+     * The watcher sees the raw contact, so only the first and the last read of the hold matter. */
+    td_recovery_watch_t w = { 0 };
+    static const uint32_t reads_ms[] = { 0, 40, 900, 3100, 3140, 7800, 9990 };
+    for (size_t i = 0; i < sizeof reads_ms / sizeof reads_ms[0]; i++) {
+        const td_recovery_step_t step = td_recovery_watch_step(&w, press(512, 300), reads_ms[i]);
+        TEST_ASSERT_FALSE(step.armed);
+        TEST_ASSERT_FALSE(step.swallow);
+    }
+    TEST_ASSERT_EQUAL(TD_RECOVERY_HOLDING, w.state);
+
+    const td_recovery_step_t step = td_recovery_watch_step(&w, press(512, 300), 10400);
+    TEST_ASSERT_TRUE(step.armed);
+    TEST_ASSERT_TRUE(step.swallow);
+    TEST_ASSERT_EQUAL_UINT32(10400, w.held_ms);
+    TEST_ASSERT_EQUAL_UINT32(1, w.armed_count);
+}
+
 TEST_CASE("a clock that wraps mid-hold still arms", "[touch_recovery]")
 {
     td_recovery_watch_t w = { 0 };
