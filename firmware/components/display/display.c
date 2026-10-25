@@ -34,6 +34,7 @@ static struct {
     SemaphoreHandle_t snap_done;
     atomic_bool snap_pending;
     bool snap_ok;
+    atomic_bool ready;
 } s;
 
 /* Runs on the LVGL task after the adapter's flush callback returned. The last flush of a refresh
@@ -59,6 +60,11 @@ static esp_err_t alloc_snapshot_buffer(void)
                                        data, TD_LCD_FRAME_BYTES);
     ESP_RETURN_ON_FALSE(res == LV_RESULT_OK, ESP_FAIL, TAG, "snapshot buffer init");
     return ESP_OK;
+}
+
+bool display_ready(void)
+{
+    return atomic_load(&s.ready);
 }
 
 esp_err_t display_start(void)
@@ -100,13 +106,13 @@ esp_err_t display_start(void)
     esp_lv_adapter_unlock();
 
     ESP_RETURN_ON_ERROR(esp_lv_adapter_start(), TAG, "adapter start");
+    atomic_store(&s.ready, true);
 
     esp_err_t result = board_err;
     if (xSemaphoreTake(s.first_frame, pdMS_TO_TICKS(FIRST_FRAME_TIMEOUT_MS)) != pdTRUE) {
         ESP_LOGE(TAG, "no frame reached the panel within %d ms", FIRST_FRAME_TIMEOUT_MS);
         result = ESP_ERR_TIMEOUT;
     }
-    display_cmds_register();
     return result;
 }
 

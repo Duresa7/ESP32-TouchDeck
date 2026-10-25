@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "esp_err.h"
 #include "esp_lcd_types.h"
@@ -22,4 +23,5 @@ esp_err_t display_snapshot(td_shot_image_t *out);
  * Blocks the caller for that time. */
 esp_err_t display_perf_run(uint32_t seconds, display_perf_t *out);
 
-void display_cmds_register(void);
+/* True once the LVGL adapter has started, which is what snapshots and perf runs need. */
+bool display_ready(void);

@@ -38,6 +38,14 @@ void app_main(void)
         ESP_LOGW(TAG, "Running partition not found in the partition table");
     }
 
+    /* td_console_start seals the command list, so every component hands over its commands first. */
+    size_t display_cmd_count;
+    const esp_console_cmd_t *display_cmds = display_console_commands(&display_cmd_count);
+    esp_err_t register_err = td_console_register(display_cmds, display_cmd_count);
+    if (register_err != ESP_OK) {
+        ESP_LOGE(TAG, "Display commands not registered: %s", esp_err_to_name(register_err));
+    }
+
     esp_err_t console_err = td_console_start();
     if (console_err != ESP_OK) {
         ESP_LOGE(TAG, "Console failed to start: %s", esp_err_to_name(console_err));

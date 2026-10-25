@@ -7,7 +7,6 @@
 #include "ch422g.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_console.h"
-#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "td_console.h"
@@ -18,8 +17,6 @@
 /* The driver's TX ring holds 256 bytes, and a single write larger than the ring never fits. */
 #define SINK_CHUNK_BYTES 128
 #define SINK_TIMEOUT_MS 1000
-
-static const char *TAG = "display";
 
 static atomic_bool s_perf_busy;
 
@@ -58,11 +55,25 @@ static bool stdout_sink(void *ctx, const char *line, size_t len)
     return done == len;
 }
 
+/* The console starts before the display does, so a command can arrive while the display is still coming up, or
+ * after it failed to. The screenshot and perf paths need the LVGL adapter, which only exists once it has started. */
+static bool require_display(const char *cmd)
+{
+    if (display_ready()) {
+        return true;
+    }
+    send_error(cmd, "display not ready");
+    return false;
+}
+
 static int cmd_screenshot(int argc, char **argv)
 {
     td_shot_scale_t scale;
     if (argc > 2 || !td_shot_parse_scale(argc > 1 ? argv[1] : NULL, &scale)) {
         send_error("screenshot", "usage: screenshot [1|2|4]");
+        return 0;
+    }
+    if (!require_display("screenshot")) {
         return 0;
     }
 
@@ -135,6 +146,9 @@ static int cmd_perf(int argc, char **argv)
         send_error("perf", "usage: perf fps <seconds 1-60>");
         return 0;
     }
+    if (!require_display("perf")) {
+        return 0;
+    }
     if (atomic_exchange(&s_perf_busy, true)) {
         send_error("perf", "perf already running");
         return 0;
@@ -172,7 +186,7 @@ static int cmd_backlight(int argc, char **argv)
     return 0;
 }
 
-void display_cmds_register(void)
+const esp_console_cmd_t *display_console_commands(size_t *count)
 {
     static const esp_console_cmd_t cmds[] = {
         { .command = "screenshot", .help = "stream the screen as RGB565 base64 lines, scale 1, 2 or 4",
@@ -182,10 +196,6 @@ void display_cmds_register(void)
         { .command = "backlight", .help = "turn the backlight on or off, no argument reports it",
           .hint = "[on|off]", .func = cmd_backlight },
     };
-    for (size_t i = 0; i < sizeof cmds / sizeof cmds[0]; i++) {
-        esp_err_t err = esp_console_cmd_register(&cmds[i]);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "registering %s failed: %s", cmds[i].command, esp_err_to_name(err));
-        }
-    }
+    *count = sizeof cmds / sizeof cmds[0];
+    return cmds;
 }
