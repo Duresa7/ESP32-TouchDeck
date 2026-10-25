@@ -24,6 +24,7 @@
 #define TD_RX_TASK_PRIORITY 10
 #define TD_RX_CHUNK 64
 #define TD_RX_QUEUE_BYTES 2048
+#define TD_RX_IDLE_MS 100
 #define TD_TX_DRAIN_MS 250
 
 static const char *TAG = "td_console";
@@ -152,10 +153,11 @@ static atomic_uint s_rx_dropped;
  * discards the whole packet, without a trace, when the ring is full. Printing
  * costs the console task about 13 us per output byte, so a 220-byte reply
  * keeps it from reading for about 3 ms and a burst of short lines fills that
- * ring. This task outranks the console and drains the ring into s_rx_queue,
- * where a full queue is counted and reported instead of hidden. It reads the
- * driver directly because read() on stdin takes one byte per ring operation,
- * which is slower than back-to-back 64-byte packets.
+ * ring. This task outranks the console and drains the ring into s_rx_queue in
+ * reads of up to 64 bytes. When the queue is full, td_rx_sync drops the read and
+ * the rest of the line it cuts, and the loss is counted and reported instead of
+ * hidden. It reads the driver directly because read() on stdin takes one byte
+ * per ring operation, which is slower than back-to-back 64-byte packets.
  */
 static void rx_task(void *arg)
 {
@@ -192,36 +194,63 @@ static void report_dropped_input(void)
     emit(&r);
 }
 
-static char next_char(rx_t *rx)
+typedef enum {
+    LINE_OK,
+    LINE_TOO_LONG,
+    LINE_RESTART,
+} line_status_t;
+
+static int next_char(rx_t *rx)
 {
     while (rx->pos == rx->len) {
         echo_flush(rx);
-        rx->len = xStreamBufferReceive(s_rx_queue, rx->in, sizeof rx->in, portMAX_DELAY);
+        rx->len = xStreamBufferReceive(s_rx_queue, rx->in, sizeof rx->in, pdMS_TO_TICKS(TD_RX_IDLE_MS));
         rx->pos = 0;
+        if (rx->len == 0) {
+            return -1;
+        }
     }
-    return rx->in[rx->pos++];
+    return (unsigned char)rx->in[rx->pos++];
 }
 
-static bool read_line(rx_t *rx, char *line, size_t cap)
+static line_status_t restart_line(rx_t *rx)
+{
+    echo_add(rx, "\n", 1);
+    echo_flush(rx);
+    return LINE_RESTART;
+}
+
+/*
+ * LINE_RESTART makes the caller report dropped input and print a fresh prompt.
+ * It comes when td_rx_sync abandons the line being read, and when the console
+ * has sat idle with a dropped-input count nobody has printed yet.
+ */
+static line_status_t read_line(rx_t *rx, char *line, size_t cap)
 {
     size_t len = 0;
     bool too_long = false;
     for (;;) {
-        char c = next_char(rx);
-        if (c == '\r' || c == '\n') {
+        int c = next_char(rx);
+        if (c < 0) {
+            if (len == 0 && atomic_load(&s_rx_dropped) > 0) {
+                return restart_line(rx);
+            }
+        } else if (c == TD_RX_ABANDON) {
+            return restart_line(rx);
+        } else if (c == '\r' || c == '\n') {
             echo_add(rx, "\n", 1);
             echo_flush(rx);
             line[len] = '\0';
-            return !too_long;
-        }
-        if (c == '\b' || c == 0x7f) {
+            return too_long ? LINE_TOO_LONG : LINE_OK;
+        } else if (c == '\b' || c == 0x7f) {
             if (len > 0 && !too_long) {
                 len--;
                 echo_add(rx, "\b \b", 3);
             }
         } else if (len + 1 < cap) {
-            line[len++] = c;
-            echo_add(rx, &c, 1);
+            char ch = (char)c;
+            line[len++] = ch;
+            echo_add(rx, &ch, 1);
         } else {
             too_long = true;
         }
@@ -259,12 +288,18 @@ static void console_task(void *arg)
         report_dropped_input();
         printf(TD_PROMPT);
         fflush(stdout);
-        if (read_line(&rx, line, sizeof line)) {
+        switch (read_line(&rx, line, sizeof line)) {
+        case LINE_OK:
             run_line(line);
-        } else {
+            break;
+        case LINE_TOO_LONG: {
             char word[TD_WORD_MAX];
             command_word(line, word, sizeof word);
             emit_error(word, "line too long");
+            break;
+        }
+        case LINE_RESTART:
+            break;
         }
     }
 }
