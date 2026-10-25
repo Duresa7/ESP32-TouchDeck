@@ -1,7 +1,14 @@
-//! What the app does on the PC for the deck: type its mirrored keys and run its tile actions.
+//! What the app does on the PC for the deck: type its mirrored keys, run its tile actions, and
+//! make its icons.
 
 pub mod actions;
 pub mod approval;
+pub mod icon_pack;
+pub mod icons;
+#[cfg(target_os = "linux")]
+mod icons_linux;
+#[cfg(windows)]
+mod icons_windows;
 pub mod input;
 #[cfg(target_os = "linux")]
 mod input_linux;

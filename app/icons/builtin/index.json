@@ -1,0 +1,649 @@
+{
+  "license": "ISC, see LICENSE-lucide.txt",
+  "icons": [
+    {
+      "name": "terminal",
+      "file": "terminal.svg",
+      "label": "Terminal",
+      "tags": [
+        "terminal",
+        "code",
+        "command line",
+        "prompt",
+        "shell"
+      ],
+      "source": "lucide-static 0.460.0 icons/terminal.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "browser",
+      "file": "browser.svg",
+      "label": "Browser",
+      "tags": [
+        "browser",
+        "world",
+        "language",
+        "translate"
+      ],
+      "source": "lucide-static 0.460.0 icons/globe.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "folder",
+      "file": "folder.svg",
+      "label": "Folder",
+      "tags": [
+        "folder",
+        "directory"
+      ],
+      "source": "lucide-static 0.460.0 icons/folder.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "code",
+      "file": "code.svg",
+      "label": "Code",
+      "tags": [
+        "code",
+        "source",
+        "programming",
+        "html",
+        "xml"
+      ],
+      "source": "lucide-static 0.460.0 icons/code.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "settings",
+      "file": "settings.svg",
+      "label": "Settings",
+      "tags": [
+        "settings",
+        "cog",
+        "edit",
+        "gear",
+        "preferences"
+      ],
+      "source": "lucide-static 0.460.0 icons/settings.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "music",
+      "file": "music.svg",
+      "label": "Music",
+      "tags": [
+        "music",
+        "note",
+        "quaver",
+        "eighth note"
+      ],
+      "source": "lucide-static 0.460.0 icons/music.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "play",
+      "file": "play.svg",
+      "label": "Play",
+      "tags": [
+        "play",
+        "music",
+        "audio",
+        "video",
+        "start",
+        "run"
+      ],
+      "source": "lucide-static 0.460.0 icons/play.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "pause",
+      "file": "pause.svg",
+      "label": "Pause",
+      "tags": [
+        "pause",
+        "music",
+        "stop"
+      ],
+      "source": "lucide-static 0.460.0 icons/pause.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "next",
+      "file": "next.svg",
+      "label": "Next track",
+      "tags": [
+        "next",
+        "arrow",
+        "skip",
+        "music"
+      ],
+      "source": "lucide-static 0.460.0 icons/skip-forward.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "previous",
+      "file": "previous.svg",
+      "label": "Previous track",
+      "tags": [
+        "previous",
+        "arrow",
+        "music"
+      ],
+      "source": "lucide-static 0.460.0 icons/skip-back.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "volume",
+      "file": "volume.svg",
+      "label": "Volume",
+      "tags": [
+        "volume",
+        "music",
+        "sound",
+        "speaker"
+      ],
+      "source": "lucide-static 0.460.0 icons/volume-2.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "mute",
+      "file": "mute.svg",
+      "label": "Mute",
+      "tags": [
+        "mute",
+        "music",
+        "sound",
+        "speaker"
+      ],
+      "source": "lucide-static 0.460.0 icons/volume-x.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "mic",
+      "file": "mic.svg",
+      "label": "Microphone",
+      "tags": [
+        "mic",
+        "record",
+        "sound",
+        "listen",
+        "radio",
+        "podcast",
+        "microphone"
+      ],
+      "source": "lucide-static 0.460.0 icons/mic.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "mic-off",
+      "file": "mic-off.svg",
+      "label": "Microphone off",
+      "tags": [
+        "mic-off",
+        "record",
+        "sound",
+        "mute",
+        "microphone"
+      ],
+      "source": "lucide-static 0.460.0 icons/mic-off.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "camera",
+      "file": "camera.svg",
+      "label": "Camera",
+      "tags": [
+        "camera",
+        "photo",
+        "webcam",
+        "video"
+      ],
+      "source": "lucide-static 0.460.0 icons/camera.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "video",
+      "file": "video.svg",
+      "label": "Video",
+      "tags": [
+        "video",
+        "camera",
+        "movie",
+        "film",
+        "recording",
+        "motion picture",
+        "camcorder"
+      ],
+      "source": "lucide-static 0.460.0 icons/video.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "monitor",
+      "file": "monitor.svg",
+      "label": "Monitor",
+      "tags": [
+        "monitor",
+        "tv",
+        "screen",
+        "display",
+        "virtual machine",
+        "vm"
+      ],
+      "source": "lucide-static 0.460.0 icons/monitor.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "keyboard",
+      "file": "keyboard.svg",
+      "label": "Keyboard",
+      "tags": [
+        "keyboard",
+        "layout",
+        "spell",
+        "settings",
+        "mouse"
+      ],
+      "source": "lucide-static 0.460.0 icons/keyboard.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "mouse",
+      "file": "mouse.svg",
+      "label": "Mouse",
+      "tags": [
+        "mouse",
+        "device",
+        "scroll",
+        "click"
+      ],
+      "source": "lucide-static 0.460.0 icons/mouse.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "gamepad",
+      "file": "gamepad.svg",
+      "label": "Gamepad",
+      "tags": [
+        "gamepad",
+        "console"
+      ],
+      "source": "lucide-static 0.460.0 icons/gamepad-2.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "mail",
+      "file": "mail.svg",
+      "label": "Mail",
+      "tags": [
+        "mail",
+        "email",
+        "message",
+        "letter",
+        "unread"
+      ],
+      "source": "lucide-static 0.460.0 icons/mail.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "chat",
+      "file": "chat.svg",
+      "label": "Chat",
+      "tags": [
+        "chat",
+        "comment",
+        "conversation",
+        "dialog",
+        "feedback",
+        "speech bubble"
+      ],
+      "source": "lucide-static 0.460.0 icons/message-square.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "calendar",
+      "file": "calendar.svg",
+      "label": "Calendar",
+      "tags": [
+        "calendar",
+        "date",
+        "month",
+        "year",
+        "event",
+        "birthday",
+        "birthdate"
+      ],
+      "source": "lucide-static 0.460.0 icons/calendar.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "clock",
+      "file": "clock.svg",
+      "label": "Clock",
+      "tags": [
+        "clock",
+        "time",
+        "watch",
+        "alarm"
+      ],
+      "source": "lucide-static 0.460.0 icons/clock.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "file",
+      "file": "file.svg",
+      "label": "File",
+      "tags": [
+        "file",
+        "data",
+        "txt",
+        "pdf",
+        "document"
+      ],
+      "source": "lucide-static 0.460.0 icons/file-text.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "image",
+      "file": "image.svg",
+      "label": "Image",
+      "tags": [
+        "image",
+        "picture",
+        "photo"
+      ],
+      "source": "lucide-static 0.460.0 icons/image.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "download",
+      "file": "download.svg",
+      "label": "Download",
+      "tags": [
+        "download",
+        "import",
+        "export",
+        "save"
+      ],
+      "source": "lucide-static 0.460.0 icons/download.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "upload",
+      "file": "upload.svg",
+      "label": "Upload",
+      "tags": [
+        "upload",
+        "file"
+      ],
+      "source": "lucide-static 0.460.0 icons/upload.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "search",
+      "file": "search.svg",
+      "label": "Search",
+      "tags": [
+        "search",
+        "find",
+        "scan",
+        "magnifier",
+        "magnifying glass"
+      ],
+      "source": "lucide-static 0.460.0 icons/search.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "home",
+      "file": "home.svg",
+      "label": "Home",
+      "tags": [
+        "home",
+        "living",
+        "building",
+        "residence",
+        "architecture"
+      ],
+      "source": "lucide-static 0.460.0 icons/house.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "lock",
+      "file": "lock.svg",
+      "label": "Lock",
+      "tags": [
+        "lock",
+        "security",
+        "password",
+        "secure",
+        "admin"
+      ],
+      "source": "lucide-static 0.460.0 icons/lock.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "power",
+      "file": "power.svg",
+      "label": "Power",
+      "tags": [
+        "power",
+        "on",
+        "off",
+        "device",
+        "switch",
+        "toggle",
+        "binary"
+      ],
+      "source": "lucide-static 0.460.0 icons/power.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "refresh",
+      "file": "refresh.svg",
+      "label": "Refresh",
+      "tags": [
+        "refresh",
+        "rotate",
+        "reload",
+        "rerun",
+        "synchronise",
+        "synchronize",
+        "arrows"
+      ],
+      "source": "lucide-static 0.460.0 icons/refresh-cw.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "save",
+      "file": "save.svg",
+      "label": "Save",
+      "tags": [
+        "save",
+        "floppy disk"
+      ],
+      "source": "lucide-static 0.460.0 icons/save.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "copy",
+      "file": "copy.svg",
+      "label": "Copy",
+      "tags": [
+        "copy",
+        "clone",
+        "duplicate",
+        "multiple"
+      ],
+      "source": "lucide-static 0.460.0 icons/copy.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "cut",
+      "file": "cut.svg",
+      "label": "Cut",
+      "tags": [
+        "cut",
+        "snip",
+        "chop",
+        "stationery",
+        "crafts"
+      ],
+      "source": "lucide-static 0.460.0 icons/scissors.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "paste",
+      "file": "paste.svg",
+      "label": "Paste",
+      "tags": [
+        "paste",
+        "copy"
+      ],
+      "source": "lucide-static 0.460.0 icons/clipboard.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "trash",
+      "file": "trash.svg",
+      "label": "Trash",
+      "tags": [
+        "trash",
+        "garbage",
+        "delete",
+        "remove",
+        "bin"
+      ],
+      "source": "lucide-static 0.460.0 icons/trash-2.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "bolt",
+      "file": "bolt.svg",
+      "label": "Bolt",
+      "tags": [
+        "bolt",
+        "flash",
+        "camera",
+        "lightning",
+        "electricity",
+        "energy"
+      ],
+      "source": "lucide-static 0.460.0 icons/zap.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "cpu",
+      "file": "cpu.svg",
+      "label": "CPU",
+      "tags": [
+        "cpu",
+        "processor",
+        "cores",
+        "technology",
+        "computer",
+        "chip",
+        "circuit"
+      ],
+      "source": "lucide-static 0.460.0 icons/cpu.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "activity",
+      "file": "activity.svg",
+      "label": "Activity",
+      "tags": [
+        "activity",
+        "pulse",
+        "action",
+        "motion",
+        "movement",
+        "exercise",
+        "fitness"
+      ],
+      "source": "lucide-static 0.460.0 icons/activity.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "gauge",
+      "file": "gauge.svg",
+      "label": "Gauge",
+      "tags": [
+        "gauge",
+        "dashboard",
+        "dial",
+        "meter",
+        "speed",
+        "pressure",
+        "measure"
+      ],
+      "source": "lucide-static 0.460.0 icons/gauge.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "bot",
+      "file": "bot.svg",
+      "label": "Bot",
+      "tags": [
+        "bot",
+        "robot",
+        "ai",
+        "chat",
+        "assistant"
+      ],
+      "source": "lucide-static 0.460.0 icons/bot.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "server",
+      "file": "server.svg",
+      "label": "Server",
+      "tags": [
+        "server",
+        "cloud",
+        "storage"
+      ],
+      "source": "lucide-static 0.460.0 icons/server.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "coins",
+      "file": "coins.svg",
+      "label": "Cost",
+      "tags": [
+        "coins",
+        "money",
+        "cash",
+        "finance",
+        "gamble"
+      ],
+      "source": "lucide-static 0.460.0 icons/coins.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "git",
+      "file": "git.svg",
+      "label": "Git branch",
+      "tags": [
+        "git",
+        "code",
+        "version control"
+      ],
+      "source": "lucide-static 0.460.0 icons/git-branch.svg",
+      "license": "ISC"
+    },
+    {
+      "name": "star",
+      "file": "star.svg",
+      "label": "Star",
+      "tags": [
+        "star",
+        "bookmark",
+        "favorite",
+        "like",
+        "review",
+        "rating"
+      ],
+      "source": "lucide-static 0.460.0 icons/star.svg",
+      "license": "ISC"
+    }
+  ]
+}
