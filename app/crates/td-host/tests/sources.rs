@@ -1065,3 +1065,29 @@ fn the_config_file_round_trips_and_never_holds_the_key() {
     fs::write(&path, "not json").unwrap();
     assert_eq!(Config::load(&path), Config::default());
 }
+
+#[test]
+fn claude_poll_failures_keep_cached_values_and_mark_them_stale_after_three() {
+    for missing in [false, true] {
+        let dir = scratch("claude-poll-failures");
+        let file = dir.join("session.json");
+        fs::write(&file, fixture("statusline.json")).unwrap();
+        let mut source = ClaudeStatus::new(&dir);
+        let now = SystemTime::now();
+        assert!(source.poll_at(now).iter().all(|r| !r.stale));
+        if missing {
+            fs::remove_file(&file).unwrap();
+        } else {
+            fs::write(&file, "{ invalid").unwrap();
+        }
+        for attempt in 1..=3 {
+            let readings = source.poll_at(now);
+            assert_eq!(readings.len(), 5);
+            assert!(readings.iter().all(|r| r.stale == (attempt == 3)));
+        }
+        fs::write(&file, fixture("statusline.json")).unwrap();
+        let recovered = source.poll_at(SystemTime::now());
+        assert_eq!(recovered.len(), 5);
+        assert!(recovered.iter().all(|r| !r.stale));
+    }
+}

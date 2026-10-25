@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use super::{CLAUDE_STATUS, Info, Reading, Source, state_base, unix_ms};
+use super::{CLAUDE_STATUS, FAILS_TO_STALE, Info, Reading, Source, state_base, unix_ms};
 
 /// A file this much older than now no longer describes a live session.
 pub const STALE_AFTER: Duration = Duration::from_secs(600);
@@ -102,6 +102,7 @@ struct Cached {
 pub struct ClaudeStatus {
     dir: PathBuf,
     cached: Option<Cached>,
+    fails: u32,
     info: ClaudeInfo,
 }
 
@@ -115,6 +116,7 @@ impl ClaudeStatus {
         ClaudeStatus {
             dir,
             cached: None,
+            fails: 0,
             info,
         }
     }
@@ -157,8 +159,13 @@ impl ClaudeStatus {
                 }
             }
         } else {
-            self.cached = None;
+            self.info.error = Some("no status line file found".to_owned());
         }
+        self.fails = if self.info.error.is_some() {
+            self.fails.saturating_add(1)
+        } else {
+            0
+        };
         let Some(cached) = &self.cached else {
             self.info.session = None;
             self.info.updated = None;
@@ -166,9 +173,10 @@ impl ClaudeStatus {
             self.info.readings.clear();
             return Vec::new();
         };
-        let stale = now
-            .duration_since(cached.modified)
-            .is_ok_and(|age| age >= STALE_AFTER);
+        let stale = self.fails >= FAILS_TO_STALE
+            || now
+                .duration_since(cached.modified)
+                .is_ok_and(|age| age >= STALE_AFTER);
         let updated = unix_ms(cached.modified);
         let readings = cached.parsed.readings(updated, stale);
         self.info.session = cached
