@@ -105,8 +105,19 @@ does not start it.
 
 ## Display
 
-On boot the panel shows a test screen of eight color bars and a `TouchDeck`
-label, drawn with LVGL 9. The display component adds three console commands:
+On boot the panel shows the deck, drawn with LVGL 9: dark rounded tiles on a
+near-black background, with page dots at the bottom. It has two pages,
+`F-Keys` and `Media`, and a swipe left or right changes the page. A swipe past
+either end bounces back. The tiles are labeled and send nothing yet. A page is
+`{id, title, rows, cols, tiles[]}`, and the built-in pages are one `const` table in
+`firmware/components/td_ui_core/ui_pages.c`. Every color, size, shadow, and
+animation time of the look is a named token in `firmware/components/ui/ui_theme.c`.
+
+The `ui` component adds the `ui` console command: `ui state` reports the page and
+the tile that is pressed, `ui goto <page>` changes the page, `ui tile <id>` gives a
+tile's box, and `ui hold <x> <y> <ms>` holds a press on the glass for a test.
+
+The display component adds three console commands:
 
 - `screenshot [1|2|4]` streams the screen as RGB565 in `@tdb ` base64 lines and
   ends with a reply that carries a CRC-32. Scale 2 or 4 keeps every second or

@@ -254,12 +254,9 @@ bool touch_ready(void)
     return atomic_load(&s.ready);
 }
 
-esp_err_t touch_inject(const td_touch_sample_t *samples, size_t n, uint32_t timeout_ms, uint32_t *deliver_us)
+/* ESP_ERR_INVALID_STATE while a real finger is down, ESP_ERR_NO_MEM when the queue cannot hold all the samples. */
+static esp_err_t queue_samples(const td_touch_sample_t *samples, size_t n)
 {
-    if (n == 0) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    const int64_t start = esp_timer_get_time();
     esp_err_t err = ESP_OK;
     portENTER_CRITICAL(&shared.lock);
     if (shared.held.sample.pressed) {
@@ -271,6 +268,16 @@ esp_err_t touch_inject(const td_touch_sample_t *samples, size_t n, uint32_t time
         shared.drained_us = 0;
     }
     portEXIT_CRITICAL(&shared.lock);
+    return err;
+}
+
+esp_err_t touch_inject(const td_touch_sample_t *samples, size_t n, uint32_t timeout_ms, uint32_t *deliver_us)
+{
+    if (n == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    const int64_t start = esp_timer_get_time();
+    const esp_err_t err = queue_samples(samples, n);
     if (err != ESP_OK) {
         return err;
     }
@@ -298,6 +305,27 @@ esp_err_t touch_inject(const td_touch_sample_t *samples, size_t n, uint32_t time
         vTaskDelay(pdMS_TO_TICKS(INJECT_POLL_MS));
     }
     return ESP_ERR_TIMEOUT;
+}
+
+esp_err_t touch_inject_hold(uint16_t x, uint16_t y, uint32_t ms)
+{
+    if (!atomic_load(&s.ready)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    static td_touch_sample_t samples[TD_TOUCH_QUEUE_CAP];
+    const size_t n = td_touch_swipe(x, y, x, y, ms, samples, TD_TOUCH_QUEUE_CAP);
+    if (n == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    portENTER_CRITICAL(&shared.lock);
+    const bool busy = td_touch_queue_count(&shared.queue) != 0;
+    portEXIT_CRITICAL(&shared.lock);
+    if (busy) {
+        return ESP_ERR_NOT_FINISHED;
+    }
+    const esp_err_t err = queue_samples(samples, n);
+    return err == ESP_ERR_INVALID_STATE ? ESP_ERR_NOT_ALLOWED : err;
 }
 
 void touch_get_stats(touch_stats_t *out)
