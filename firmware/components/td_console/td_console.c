@@ -14,7 +14,6 @@
 #include "esp_timer.h"
 #include "driver/usb_serial_jtag.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 
@@ -190,7 +189,6 @@ typedef struct {
     size_t len;
     char echo[3 * 64];
     size_t echo_len;
-    uint32_t consumed;
 } rx_t;
 
 static void echo_flush(rx_t *rx)
@@ -211,18 +209,12 @@ static StreamBufferHandle_t s_rx_queue;
 static atomic_uint s_rx_dropped;
 static td_rx_sync_t s_rx_sync;
 static td_rx_split_t s_rx_split;
-static QueueHandle_t s_frame_order;
-static TaskHandle_t s_console_task;
-static uint32_t s_text_queued;
-static td_console_frame_enqueue_fn s_enqueue_frame;
-static td_console_frame_dispatch_fn s_dispatch_frame;
+static td_rx_frame_fn s_frame_handler;
 static void *s_frame_context;
 
-void td_console_set_frame_handler(td_console_frame_enqueue_fn enqueue,
-                                  td_console_frame_dispatch_fn dispatch, void *context)
+void td_console_set_frame_handler(td_rx_frame_fn handler, void *context)
 {
-    s_enqueue_frame = enqueue;
-    s_dispatch_frame = dispatch;
+    s_frame_handler = handler;
     s_frame_context = context;
 }
 
@@ -233,22 +225,18 @@ static void receive_text(char *text, size_t len, void *context)
     size_t count = td_rx_sync(&s_rx_sync, text, len, xStreamBufferSpacesAvailable(s_rx_queue), &lost);
     if (count > 0) {
         size_t sent = xStreamBufferSend(s_rx_queue, text, count, 0);
-        s_text_queued += sent;
         lost += count - sent;
     }
     if (lost > 0) {
         atomic_fetch_add(&s_rx_dropped, (unsigned)lost);
     }
-    xTaskNotifyGive(s_console_task);
 }
 
 static void receive_frame(const uint8_t *body, size_t len, void *context)
 {
     (void)context;
-    if (s_enqueue_frame && s_enqueue_frame(body, len, s_frame_context)) {
-        BaseType_t queued = xQueueSend(s_frame_order, &s_text_queued, 0);
-        configASSERT(queued == pdPASS);
-        xTaskNotifyGive(s_console_task);
+    if (s_frame_handler) {
+        s_frame_handler(body, len, s_frame_context);
     }
 }
 
@@ -292,25 +280,15 @@ static void report_dropped_input(void)
 
 static int next_char(rx_t *rx)
 {
-    for (;;) {
-        uint32_t before;
-        if (xQueuePeek(s_frame_order, &before, 0) == pdPASS && before == rx->consumed) {
-            xQueueReceive(s_frame_order, &before, 0);
-            echo_flush(rx);
-            s_dispatch_frame(s_frame_context);
-            continue;
-        }
-        if (rx->pos < rx->len) {
-            rx->consumed++;
-            return (unsigned char)rx->in[rx->pos++];
-        }
+    while (rx->pos == rx->len) {
         echo_flush(rx);
-        rx->len = xStreamBufferReceive(s_rx_queue, rx->in, sizeof rx->in, 0);
+        rx->len = xStreamBufferReceive(s_rx_queue, rx->in, sizeof rx->in, pdMS_TO_TICKS(TD_RX_IDLE_MS));
         rx->pos = 0;
-        if (rx->len == 0 && ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(TD_RX_IDLE_MS)) == 0) {
+        if (rx->len == 0) {
             return -1;
         }
     }
+    return (unsigned char)rx->in[rx->pos++];
 }
 
 static td_line_status_t read_line(rx_t *rx, char *line, size_t cap)
@@ -395,11 +373,9 @@ esp_err_t td_console_start(void)
 
     s_rx_queue = xStreamBufferCreate(TD_RX_QUEUE_BYTES, 1);
     ESP_RETURN_ON_FALSE(s_rx_queue, ESP_ERR_NO_MEM, TAG, "rx queue");
-    s_frame_order = xQueueCreate(TD_RX_PENDING_FRAMES, sizeof(uint32_t));
-    ESP_RETURN_ON_FALSE(s_frame_order, ESP_ERR_NO_MEM, TAG, "frame order queue");
-    ESP_RETURN_ON_FALSE(xTaskCreate(console_task, "td_console", TD_TASK_STACK, NULL, TD_TASK_PRIORITY,
-                                    &s_console_task) == pdPASS, ESP_FAIL, TAG, "console task");
     ESP_RETURN_ON_FALSE(xTaskCreate(rx_task, "td_rx", TD_RX_TASK_STACK, NULL, TD_RX_TASK_PRIORITY, NULL) == pdPASS,
                         ESP_FAIL, TAG, "rx task");
+    ESP_RETURN_ON_FALSE(xTaskCreate(console_task, "td_console", TD_TASK_STACK, NULL, TD_TASK_PRIORITY, NULL) == pdPASS,
+                        ESP_FAIL, TAG, "console task");
     return ESP_OK;
 }

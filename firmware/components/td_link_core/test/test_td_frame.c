@@ -124,3 +124,29 @@ TEST_CASE("decode rejects a changed CRC version length and dangling escape", "[t
     TEST_ASSERT_EQUAL(TD_FRAME_BAD_ESCAPE,
                       td_frame_decode_slip(dangling, sizeof dangling, s_body, sizeof s_body, &frame));
 }
+
+TEST_CASE("a maximum chunk carries 1021 data bytes even when every payload byte needs escaping", "[td_frame]")
+{
+    TEST_ASSERT_EQUAL_UINT(1021, TD_FRAME_CHUNK_DATA_MAX);
+    TEST_ASSERT_EQUAL_UINT(1032, TD_FRAME_BODY_MAX);
+    TEST_ASSERT_EQUAL_UINT(2066, TD_FRAME_WIRE_MAX);
+    for (size_t i = 0; i < TD_FRAME_PAYLOAD_MAX; i++) {
+        s_payload[i] = i % 2 ? 0xdb : 0xc0;
+    }
+    td_frame_t frame = {
+        .type = TD_FRAME_CHUNK, .seq = 0xdb, .len = TD_FRAME_PAYLOAD_MAX, .payload = s_payload,
+    };
+    size_t wire_len = td_frame_encode(&frame, s_wire, sizeof s_wire);
+    TEST_ASSERT_GREATER_THAN_UINT(2 * TD_FRAME_PAYLOAD_MAX, wire_len);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT(TD_FRAME_WIRE_MAX, wire_len);
+    td_frame_t decoded;
+    TEST_ASSERT_EQUAL(TD_FRAME_OK, td_frame_decode_slip(s_wire, wire_len, s_body, sizeof s_body, &decoded));
+    TEST_ASSERT_EQUAL_UINT(1024, decoded.len);
+    TEST_ASSERT_EQUAL_MEMORY(s_payload, decoded.payload, TD_FRAME_PAYLOAD_MAX);
+    frame.len = TD_FRAME_CHUNK_HEADER;
+    wire_len = td_frame_encode(&frame, s_wire, sizeof s_wire);
+    TEST_ASSERT_EQUAL(TD_FRAME_OK, td_frame_decode_slip(s_wire, wire_len, s_body, sizeof s_body, &decoded));
+    TEST_ASSERT_EQUAL_UINT(3, decoded.len);
+    frame.len--;
+    TEST_ASSERT_EQUAL_UINT(0, td_frame_encode(&frame, s_wire, sizeof s_wire));
+}

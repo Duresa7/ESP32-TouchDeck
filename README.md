@@ -36,7 +36,7 @@ idf.py -p COM3 flash monitor
 Replace `COM3` with your board's serial port. Press `Ctrl+]` to exit the
 monitor. Board defaults (flash size, PSRAM, CPU speed, LVGL options) live in
 `firmware/sdkconfig.defaults`. The first build downloads LVGL and the LVGL
-adapter from the ESP-IDF component registry, so it needs a network connection.
+adapter and cJSON from the ESP-IDF component registry, so it needs a network connection.
 `firmware/dependencies.lock` pins the versions.
 
 ## Serial console
@@ -60,8 +60,8 @@ A component adds commands with `td_console_register`, which takes an array of
 `ESP_ERR_INVALID_STATE`.
 
 Replies leave through the USB driver and wait for the host when its buffer is
-full, so a redrawing display cannot drop them. Log lines and the `td> ` prompt
-still go through stdio and can be dropped.
+full, so a redrawing display cannot drop them. The prompt and typed echo use
+the same writer. Log lines still go through stdio and can be dropped.
 
 Input waits in a 2048-byte queue while a command runs. The queue accepts 2047
 bytes, which holds about 250 short lines or seven full-length ones. When a burst
@@ -102,6 +102,22 @@ The console reads the USB-Serial/JTAG driver, so it needs USB-Serial/JTAG as
 the primary console, which `firmware/sdkconfig.defaults` sets. With another
 primary console the firmware still boots, logs that the console is off, and
 does not start it.
+
+## App link
+
+The [framed app link](schema/protocol/link-v1.md) shares the debug console's
+USB-Serial/JTAG port. SLIP frames carry CRC-protected payloads of up to 1024
+bytes. The `hello`, `ping`, and `link.state` messages identify the running build,
+echo a request, and report the connection state. The text command `link state`
+reports the same counters. The port stays available for the debug console and
+ROM flashing.
+
+The local verification harness provides `link hello`, `link ping --count 100`,
+`link state`, `link raw --hex <frame>`, and `link selftest`. `link scenario <file>`
+sends timed console lines and binary frames through one port handle. Console
+and link tasks reply independently, so callers match each channel separately.
+`link selftest` checks the [golden frames](schema/protocol/golden-frames.json)
+without a board. Live checks still require the board.
 
 ## Display
 

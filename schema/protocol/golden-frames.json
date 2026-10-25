@@ -193,6 +193,38 @@
       "valid": false,
       "hex": "c001db01c0",
       "error": "escape"
+    },
+    {
+      "name": "empty-chunk-data",
+      "valid": true,
+      "hex": "c001020600030007000090b6c0",
+      "decoded": {
+        "ver": 1,
+        "type": 2,
+        "seq": 6,
+        "flags": 0,
+        "len": 3,
+        "payload_hex": "070000"
+      }
+    },
+    {
+      "name": "ack-escaped-fields",
+      "valid": true,
+      "hex": "c00103dbdc010300dbdddbdcdbdd641fc0",
+      "decoded": {
+        "ver": 1,
+        "type": 3,
+        "seq": 192,
+        "flags": 1,
+        "len": 3,
+        "payload_hex": "dbc0db"
+      }
     }
-  ]
+  ],
+  "limits": {
+    "payload_bytes": 1024,
+    "chunk_data_bytes": 1021,
+    "decoded_body_bytes": 1032,
+    "wire_bytes": 2066
+  }
 }

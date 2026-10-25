@@ -12,7 +12,6 @@ extern "C" {
 #define TD_RX_ABANDON '\0'
 
 #define TD_RX_FRAME_MAX 1100
-#define TD_RX_PENDING_FRAMES 64
 
 typedef void (*td_rx_text_fn)(char *text, size_t len, void *context);
 typedef void (*td_rx_frame_fn)(const uint8_t *body, size_t len, void *context);
@@ -39,12 +38,8 @@ typedef struct {
 void td_rx_split(td_rx_split_t *s, char *buf, size_t n,
                  td_rx_text_fn text, td_rx_frame_fn frame, void *context);
 
-/* Enqueue accepts at most TD_RX_PENDING_FRAMES outstanding frames. Dispatch completes one.
- * Both callbacks must be registered before td_console_start. */
-typedef bool (*td_console_frame_enqueue_fn)(const uint8_t *body, size_t len, void *context);
-typedef void (*td_console_frame_dispatch_fn)(void *context);
-void td_console_set_frame_handler(td_console_frame_enqueue_fn enqueue,
-                                  td_console_frame_dispatch_fn dispatch, void *context);
+/* Register before td_console_start. NULL bodies report malformed SLIP. */
+void td_console_set_frame_handler(td_rx_frame_fn handler, void *context);
 
 /*
  * Decides what the input task queues for one read of n bytes in buf, given the

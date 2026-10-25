@@ -4,17 +4,15 @@
 #include <string.h>
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 
 #define TD_LINK_STREAM_BYTES 8192
 #define TD_LINK_IDLE_MS 5000
 
+_Static_assert(TD_RX_FRAME_MAX >= TD_FRAME_BODY_MAX, "receive buffer must hold a decoded maximum frame");
+
 static StreamBufferHandle_t s_frames;
-static SemaphoreHandle_t s_dispatch;
-static SemaphoreHandle_t s_done;
-static unsigned s_pending;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static td_link_state_t s_state;
 static uint8_t s_rx_packet[2 + TD_FRAME_BODY_MAX];
@@ -43,7 +41,7 @@ static void drop_frame(void)
     portEXIT_CRITICAL(&s_lock);
 }
 
-static bool receive_frame(const uint8_t *body, size_t len, void *context)
+static void receive_frame(const uint8_t *body, size_t len, void *context)
 {
     (void)context;
     td_frame_t frame;
@@ -51,7 +49,7 @@ static bool receive_frame(const uint8_t *body, size_t len, void *context)
         portENTER_CRITICAL(&s_lock);
         s_state.crc_errors++;
         portEXIT_CRITICAL(&s_lock);
-        return false;
+        return;
     }
     int64_t now = esp_timer_get_time() / 1000;
     portENTER_CRITICAL(&s_lock);
@@ -60,29 +58,17 @@ static bool receive_frame(const uint8_t *body, size_t len, void *context)
     }
     s_state.last_rx_ms = now;
     s_state.frames_rx++;
-    bool full = s_pending == TD_RX_PENDING_FRAMES;
     portEXIT_CRITICAL(&s_lock);
 
-    if (full || xStreamBufferSpacesAvailable(s_frames) < len + 2) {
+    if (xStreamBufferSpacesAvailable(s_frames) < len + 2) {
         drop_frame();
-        return false;
+        return;
     }
     s_rx_packet[0] = len & 0xff;
     s_rx_packet[1] = len >> 8;
     memcpy(s_rx_packet + 2, body, len);
     size_t sent = xStreamBufferSend(s_frames, s_rx_packet, len + 2, 0);
     configASSERT(sent == len + 2);
-    portENTER_CRITICAL(&s_lock);
-    s_pending++;
-    portEXIT_CRITICAL(&s_lock);
-    return true;
-}
-
-static void dispatch_frame(void *context)
-{
-    (void)context;
-    xSemaphoreGive(s_dispatch);
-    xSemaphoreTake(s_done, portMAX_DELAY);
 }
 
 static void read_bytes(uint8_t *buf, size_t len)
@@ -143,12 +129,7 @@ static void link_task(void *arg)
 {
     (void)arg;
     for (;;) {
-        xSemaphoreTake(s_dispatch, portMAX_DELAY);
         handle_frame();
-        portENTER_CRITICAL(&s_lock);
-        s_pending--;
-        portEXIT_CRITICAL(&s_lock);
-        xSemaphoreGive(s_done);
     }
 }
 
@@ -158,22 +139,14 @@ esp_err_t td_link_start(void)
         return ESP_ERR_INVALID_STATE;
     }
     s_frames = xStreamBufferCreate(TD_LINK_STREAM_BYTES, 1);
-    s_dispatch = xSemaphoreCreateBinary();
-    s_done = xSemaphoreCreateBinary();
-    if (!s_frames || !s_dispatch || !s_done
-        || xTaskCreate(link_task, "td_link", 6144, NULL, 3, NULL) != pdPASS) {
-        if (s_frames) {
-            vStreamBufferDelete(s_frames);
-        }
-        if (s_dispatch) {
-            vSemaphoreDelete(s_dispatch);
-        }
-        if (s_done) {
-            vSemaphoreDelete(s_done);
-        }
+    if (!s_frames) {
+        return ESP_ERR_NO_MEM;
+    }
+    if (xTaskCreate(link_task, "td_link", 6144, NULL, 3, NULL) != pdPASS) {
+        vStreamBufferDelete(s_frames);
         s_frames = NULL;
         return ESP_ERR_NO_MEM;
     }
-    td_console_set_frame_handler(receive_frame, dispatch_frame, NULL);
+    td_console_set_frame_handler(receive_frame, NULL);
     return ESP_OK;
 }

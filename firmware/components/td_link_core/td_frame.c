@@ -8,7 +8,7 @@ static bool valid_header(const td_frame_t *f)
     return f->type >= TD_FRAME_MESSAGE && f->type <= TD_FRAME_ACK
         && f->flags <= TD_FRAME_EVENT && (f->flags != TD_FRAME_EVENT || f->seq == 0)
         && f->len <= TD_FRAME_PAYLOAD_MAX
-        && (f->type != TD_FRAME_CHUNK || f->len >= 3)
+        && (f->type != TD_FRAME_CHUNK || f->len >= TD_FRAME_CHUNK_HEADER)
         && (f->type != TD_FRAME_ACK || f->len == 3);
 }
 
