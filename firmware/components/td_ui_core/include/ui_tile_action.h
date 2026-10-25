@@ -14,13 +14,15 @@ typedef enum {
     UI_ACTION_NONE = 0,
     UI_ACTION_KEY,
     UI_ACTION_MOD,
+    UI_ACTION_CONSUMER,
 } ui_action_kind_t;
 
 /* What a tile sends. NONE is 0, so a tile with no binding sends nothing. */
 typedef struct {
     ui_action_kind_t kind;
-    uint8_t key;     /* KEY: a keyboard usage, 1 to 255 */
-    key_mod_t mod;   /* MOD */
+    uint8_t key;       /* KEY: a keyboard usage, 1 to 255 */
+    key_mod_t mod;     /* MOD */
+    uint16_t consumer; /* CONSUMER: a consumer usage, 1 to 65535 */
 } ui_action_t;
 
 typedef struct {
@@ -37,6 +39,7 @@ ui_action_t ui_tile_action(const ui_tile_t *tile);
 typedef struct {
     void (*key)(void *ctx, uint8_t usage);
     void (*mod)(void *ctx, key_mod_t mod);
+    void (*consumer)(void *ctx, uint16_t usage);
 } ui_action_ops_t;
 
 /*

@@ -20,6 +20,12 @@ static const ui_binding_t k_bindings[] = {
     { "ctrl", { .kind = UI_ACTION_MOD, .mod = KEY_MOD_CTRL } },
     { "alt", { .kind = UI_ACTION_MOD, .mod = KEY_MOD_ALT } },
     { "win", { .kind = UI_ACTION_MOD, .mod = KEY_MOD_WIN } },
+    { "prev", { .kind = UI_ACTION_CONSUMER, .consumer = 182 } },
+    { "playpause", { .kind = UI_ACTION_CONSUMER, .consumer = 205 } },
+    { "next", { .kind = UI_ACTION_CONSUMER, .consumer = 181 } },
+    { "mute", { .kind = UI_ACTION_CONSUMER, .consumer = 226 } },
+    { "voldown", { .kind = UI_ACTION_CONSUMER, .consumer = 234 } },
+    { "volup", { .kind = UI_ACTION_CONSUMER, .consumer = 233 } },
 };
 
 const ui_binding_t *ui_builtin_bindings(size_t *count)
@@ -61,6 +67,12 @@ bool ui_tile_click(const ui_tile_t *tile, const ui_action_ops_t *ops, void *ctx)
             return false;
         }
         ops->mod(ctx, action.mod);
+        return true;
+    case UI_ACTION_CONSUMER:
+        if (ops->consumer == NULL) {
+            return false;
+        }
+        ops->consumer(ctx, action.consumer);
         return true;
     case UI_ACTION_NONE:
         break;

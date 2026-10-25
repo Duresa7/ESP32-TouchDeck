@@ -218,6 +218,9 @@ TEST_CASE("the binding table and the built-in pages agree", "[fkey_page]")
         case UI_ACTION_MOD:
             TEST_ASSERT_TRUE_MESSAGE((unsigned)bindings[i].action.mod < KEY_MOD_COUNT, id);
             break;
+        case UI_ACTION_CONSUMER:
+            TEST_ASSERT_TRUE_MESSAGE(bindings[i].action.consumer >= 1, id);
+            break;
         case UI_ACTION_NONE:
             TEST_FAIL_MESSAGE(id);
         }
