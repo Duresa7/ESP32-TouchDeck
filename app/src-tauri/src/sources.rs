@@ -125,6 +125,10 @@ impl SourcesState {
         self.hub.set_sink(None);
     }
 
+    pub fn use_layout(&self, layout: Layout) {
+        self.hub.use_layout(layout);
+    }
+
     pub fn pressed(&self, tile: &str) {
         self.hub.pressed(tile);
     }

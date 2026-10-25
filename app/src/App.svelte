@@ -1,7 +1,11 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount, tick } from 'svelte';
+  import Approval from './lib/actions/Approval.svelte';
   import { append, classify, type ConsoleEntry } from './lib/console.ts';
+  import Settings from './lib/settings/Settings.svelte';
+  import Actions from './routes/Actions.svelte';
+  import Editor from './routes/Editor.svelte';
   import Sources from './routes/Sources.svelte';
   import {
     HELLO_FIELDS,
@@ -18,7 +22,6 @@
   } from './lib/deck.ts';
 
   let title = $state('TouchDeck');
-  let tab = $state<'console' | 'sources'>('console');
   let decks = $state<Candidate[]>([]);
   let listed = $state(false);
   let scanning = $state(false);
@@ -28,6 +31,14 @@
   let entries = $state<ConsoleEntry[]>([]);
   let line = $state('');
   let log = $state<HTMLOListElement>();
+  let view = $state<'deck' | 'editor' | 'actions' | 'settings' | 'sources'>('deck');
+  const VIEWS = [
+    ['deck', 'Deck'],
+    ['editor', 'Editor'],
+    ['actions', 'Actions'],
+    ['settings', 'Settings'],
+    ['sources', 'Sources'],
+  ] as const;
 
   const online = $derived(deck !== null && deck.online);
   const status = $derived(online && deck ? `Connected to ${deck.port}` : problem ? `Offline (${problem})` : 'Not connected');
@@ -119,9 +130,12 @@
     <span class="mark" aria-hidden="true"></span>
     <span data-testid="title">{title}</span>
   </div>
-  <nav class="tabs" aria-label="Pages">
-    <button class:active={tab === 'console'} aria-pressed={tab === 'console'} onclick={() => (tab = 'console')} data-testid="tab-console">Console</button>
-    <button class:active={tab === 'sources'} aria-pressed={tab === 'sources'} onclick={() => (tab = 'sources')} data-testid="tab-sources">Sources</button>
+  <nav class="views" aria-label="Views">
+    {#each VIEWS as [id, name] (id)}
+      <button class:active={view === id} onclick={() => (view = id)} aria-current={view === id ? 'page' : undefined} data-testid="nav-{id}"
+        >{name}</button
+      >
+    {/each}
   </nav>
   <div class="status" data-testid="link-status">
     <span class="dot" data-testid="status-dot" data-state={online ? 'online' : 'offline'}></span>
@@ -129,6 +143,15 @@
   </div>
 </header>
 
+{#if view === 'sources'}
+  <Sources />
+{:else if view === 'editor'}
+  <Editor {online} />
+{:else if view === 'actions'}
+  <Actions {online} />
+{:else if view === 'settings'}
+  <Settings {online} session={online && deck ? deck.session : null} />
+{:else}
 <main class="layout">
   <section class="panel side">
     <div class="panel-head">
@@ -172,11 +195,7 @@
     {/if}
   </section>
 
-  {#if tab === 'sources'}
-    <Sources />
-  {/if}
-
-  <section class="panel console" class:gone={tab !== 'console'} data-testid="console">
+  <section class="panel console" data-testid="console">
     <div class="panel-head">
       <h2>Console</h2>
       <span class="hint">{online ? 'Lines go to the deck console' : 'Connect a deck to use the console'}</span>
@@ -202,19 +221,52 @@
     </form>
   </section>
 </main>
+{/if}
+
+<Approval />
 
 <style>
-  .tabs {
+  .views {
     display: flex;
-    gap: 6px;
+    gap: 4px;
+    margin-right: auto;
+    margin-left: 12px;
   }
 
-  .tabs button.active {
-    border-color: var(--accent);
+  .views button {
+    border-color: transparent;
+    background: transparent;
+    color: var(--muted);
+  }
+
+  .views button.active {
+    border-color: var(--line);
     background: var(--raised);
+    color: var(--text);
   }
 
-  .gone {
-    display: none;
+  :global(select),
+  :global(textarea),
+  :global(input:not([type='checkbox'])) {
+    min-width: 0;
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #0f141d;
+    color: var(--text);
+    font: inherit;
+  }
+
+  :global(textarea) {
+    resize: vertical;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+
+  :global(select:focus),
+  :global(textarea:focus),
+  :global(input:focus) {
+    border-color: var(--accent);
+    outline: none;
   }
 </style>

@@ -1,18 +1,26 @@
+use std::collections::{BTreeMap, VecDeque};
+use std::io::Write as _;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
+use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
-use td_core::Hello;
+use td_core::{Hello, Layout, Orientation, Request, Settings};
+use td_host::actions::{self, Plan};
+use td_host::{Approvals, CommandSpec, FakeSink, Grant, InputSink, Mirror, Mirrored, Outcome};
 use td_link::discover::{Candidate, Probe, discover, probe_transport};
 use td_link::mock::MOCK_PORT;
+use td_link::xfer::{PutReport, get_layout, put_layout};
 use td_link::{Incoming, MockDeck, Serial, Session, SessionConfig, Transport};
 
 use crate::sources::SourcesState;
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(1);
+const SETTINGS_TIMEOUT: Duration = Duration::from_secs(2);
 
 struct Link {
     id: u64,
@@ -25,14 +33,57 @@ pub struct AppState {
     mock: Option<MockDeck>,
     link: Mutex<Option<Link>>,
     sessions: AtomicU64,
+    fake_input: Option<FakeSink>,
+    mirror: Mutex<MirrorInfo>,
+    action_layout: Mutex<Option<(Layout, String)>>,
+    approvals: Mutex<Approvals>,
+    pending: Mutex<BTreeMap<u64, ApprovalRequest>>,
+    requests: AtomicU64,
+    action_log: Mutex<VecDeque<ActionLog>>,
+    log_path: Mutex<Option<PathBuf>>,
 }
 
 impl AppState {
     pub fn new(mock: bool) -> AppState {
+        // Linux tests type into a fake sink, since a CI runner has no /dev/uinput.
+        let fake = std::env::var("TOUCHDECK_INPUT").is_ok_and(|value| value == "fake")
+            || (mock && cfg!(target_os = "linux"));
         AppState {
             mock: mock.then(MockDeck::new),
             link: Mutex::new(None),
             sessions: AtomicU64::new(0),
+            fake_input: fake.then(FakeSink::default),
+            mirror: Mutex::new(MirrorInfo::default()),
+            action_layout: Mutex::new(None),
+            approvals: Mutex::new(Approvals::in_memory()),
+            pending: Mutex::new(BTreeMap::new()),
+            requests: AtomicU64::new(0),
+            action_log: Mutex::new(VecDeque::new()),
+            log_path: Mutex::new(None),
+        }
+    }
+
+    /// Keeps approvals in `approvals.json` under the config directory and the action log in
+    /// `actions.log` under the log directory. The mock deck keeps approvals in memory, so a
+    /// test never grants anything on the real list.
+    pub fn use_dirs(&self, config: Option<PathBuf>, logs: Option<PathBuf>) -> Result<(), String> {
+        if let Some(logs) = logs {
+            let _ = std::fs::create_dir_all(&logs);
+            *self.log_path.lock().unwrap() = Some(logs.join("actions.log"));
+        }
+        if let (None, Some(config)) = (&self.mock, config) {
+            let path = config.join("approvals.json");
+            let approvals = Approvals::load(path.clone())
+                .map_err(|error| format!("{}: {error}", path.display()))?;
+            *self.approvals.lock().unwrap() = approvals;
+        }
+        Ok(())
+    }
+
+    fn input_sink(&self) -> Result<Box<dyn InputSink>, String> {
+        match &self.fake_input {
+            Some(fake) => Ok(Box::new(fake.clone())),
+            None => td_host::input::system_sink(),
         }
     }
 
@@ -134,6 +185,7 @@ pub async fn connect(app: AppHandle, port: String) -> Result<DeckInfo, String> {
                 hello.product, hello.proto
             ));
         }
+        let mirror = start_mirror(&state, &hello);
         let session = Arc::new(session);
         app.state::<SourcesState>().connected(session.clone());
         let id = state.sessions.fetch_add(1, Ordering::Relaxed) + 1;
@@ -149,7 +201,9 @@ pub async fn connect(app: AppHandle, port: String) -> Result<DeckInfo, String> {
             port: port.clone(),
             reason: String::new(),
         };
-        std::thread::spawn(move || forward(&forwarder, &session, &incoming, closed));
+        let puller = (app.clone(), session.clone());
+        std::thread::spawn(move || forward(&forwarder, &session, &incoming, closed, mirror));
+        std::thread::spawn(move || pull_action_layout(&puller.0, &puller.1));
         Ok(DeckInfo {
             session: id,
             port,
@@ -165,6 +219,7 @@ fn forward(
     session: &Arc<Session>,
     incoming: &Receiver<Incoming>,
     closed: LinkClosed,
+    mut mirror: Option<Mirror>,
 ) {
     for item in incoming {
         match item {
@@ -172,14 +227,22 @@ fn forward(
                 let _ = app.emit("console-line", line);
             }
             Incoming::Event(event) => {
-                if event["m"] == "press"
-                    && let Some(tile) = event["tile"].as_str()
-                {
-                    app.state::<SourcesState>().pressed(tile);
+                if let Some(report) = Mirrored::parse(&event) {
+                    mirror_report(app, mirror.as_mut(), &report);
+                } else if event.get("m").and_then(Value::as_str) == Some("press") {
+                    if let Some(tile) = event["tile"].as_str() {
+                        app.state::<SourcesState>().pressed(tile);
+                    }
+                    if event["kind"] != "widget" {
+                        on_press(app, session, &event);
+                    }
                 }
                 let _ = app.emit("deck-event", event);
             }
             Incoming::Closed(reason) => {
+                if let Some(mirror) = mirror.as_mut() {
+                    mirror.release_all();
+                }
                 let state = app.state::<AppState>();
                 let mut link = state.link.lock().unwrap();
                 if link.as_ref().is_some_and(|link| link.id == closed.session) {
@@ -197,10 +260,10 @@ fn forward(
 
 #[tauri::command]
 pub async fn disconnect(app: AppHandle) -> Result<(), String> {
+    app.state::<SourcesState>().disconnected();
     blocking(move || {
         let link = app.state::<AppState>().link.lock().unwrap().take();
         if let Some(link) = link {
-            app.state::<SourcesState>().disconnected();
             link.session.close();
         }
     })
@@ -224,6 +287,103 @@ pub async fn console_send(app: AppHandle, line: String) -> Result<(), String> {
     .await?
 }
 
+fn session(app: &AppHandle) -> Result<Arc<Session>, String> {
+    app.state::<AppState>()
+        .connected()
+        .map(|(_, session)| session)
+        .ok_or_else(|| "no deck is connected".to_owned())
+}
+
+/// Validates a layout with the schema rules and pushes its canonical form into the deck's
+/// slot for its own orientation.
+#[tauri::command]
+pub async fn push_layout(app: AppHandle, layout: String) -> Result<PutReport, String> {
+    blocking(move || {
+        let parsed = Layout::parse(layout.as_bytes()).map_err(|errors| {
+            let all: Vec<String> = errors.iter().map(ToString::to_string).collect();
+            all.join("; ")
+        })?;
+        let report = put_layout(&*session(&app)?, parsed.orientation, &parsed)
+            .map_err(|error| error.to_string())?;
+        app.state::<SourcesState>().use_layout(parsed);
+        // The deck may now show another layout, so the next press reads it again.
+        *app.state::<AppState>().action_layout.lock().unwrap() = None;
+        Ok(report)
+    })
+    .await?
+}
+
+/// Pulls the layout the deck stores for `orientation` and returns its text.
+#[tauri::command]
+pub async fn pull_layout(app: AppHandle, orientation: Orientation) -> Result<String, String> {
+    blocking(move || {
+        let report =
+            get_layout(&*session(&app)?, orientation).map_err(|error| error.to_string())?;
+        String::from_utf8(report.data).map_err(|_| "the deck's layout is not UTF-8".to_owned())
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn settings_get(app: AppHandle) -> Result<Settings, String> {
+    blocking(move || {
+        session(&app)?
+            .request(&Request::SettingsGet, SETTINGS_TIMEOUT)
+            .map_err(|error| error.to_string())?
+            .fields()
+            .map_err(|error| error.to_string())
+    })
+    .await?
+}
+
+/// Stores the settings and returns the deck's reply fields, `reboot_required` included.
+#[tauri::command]
+pub async fn settings_put(app: AppHandle, settings: Settings) -> Result<Value, String> {
+    blocking(move || {
+        session(&app)?
+            .request(&Request::SettingsPut(settings), SETTINGS_TIMEOUT)
+            .map_err(|error| error.to_string())?
+            .fields()
+            .map_err(|error| error.to_string())
+    })
+    .await?
+}
+
+/// Restarts the deck with the console's `reboot` command.
+#[tauri::command]
+pub async fn reboot_deck(app: AppHandle) -> Result<(), String> {
+    blocking(move || {
+        session(&app)?
+            .send_line("reboot")
+            .map_err(|error| error.to_string())
+    })
+    .await?
+}
+
+/// What the mock deck recorded, for the e2e specs to assert on.
+#[cfg(feature = "e2e")]
+#[tauri::command]
+pub fn e2e_mock_record(state: State<'_, AppState>) -> Result<Value, String> {
+    let mock = state
+        .mock
+        .as_ref()
+        .ok_or("the app is not running the mock deck")?;
+    let layout = |orientation| {
+        mock.layout(orientation)
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+    };
+    Ok(serde_json::json!({
+        "received": mock.received(),
+        "lines": mock.lines(),
+        "settings": mock.settings(),
+        "reboots": mock.reboots(),
+        "layouts": {
+            "landscape": layout(Orientation::Landscape),
+            "portrait": layout(Orientation::Portrait),
+        },
+    }))
+}
+
 #[cfg(feature = "e2e")]
 #[tauri::command]
 pub fn e2e_mock(state: State<'_, AppState>, action: String) -> Result<(), String> {
@@ -237,6 +397,469 @@ pub fn e2e_mock(state: State<'_, AppState>, action: String) -> Result<(), String
         other => return Err(format!("unknown mock action {other:?}")),
     }
     Ok(())
+}
+
+const LAYOUT_PULL_TIMEOUT: Duration = Duration::from_secs(2);
+const ACTION_LOG_KEPT: usize = 100;
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct MirrorInfo {
+    enabled: bool,
+    reason: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct KeyMirrored {
+    seq: u32,
+    report: String,
+    outcome: &'static str,
+    gap: Option<(u32, u32)>,
+    errors: Vec<String>,
+    /// When the event reached the app, in milliseconds since the Unix epoch.
+    arrived_ms: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ApprovalRequest {
+    id: u64,
+    page: String,
+    tile: String,
+    hash: String,
+    #[serde(flatten)]
+    spec: CommandSpec,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ActionLog {
+    at_ms: f64,
+    page: String,
+    tile: String,
+    kind: String,
+    status: String,
+    detail: String,
+    pid: Option<u32>,
+    exit_code: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LayoutSummary {
+    name: String,
+    source: String,
+    pages: usize,
+    tiles: usize,
+}
+
+fn now_ms() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |since| since.as_secs_f64() * 1000.0)
+}
+
+fn start_mirror(state: &AppState, hello: &Hello) -> Option<Mirror> {
+    let (mirror, info) = match state.input_sink() {
+        Ok(sink) => {
+            let mut mirror = Mirror::new(sink);
+            let wanted = Mirror::wanted(&hello.sinks);
+            mirror.set_enabled(wanted);
+            let reason = if wanted {
+                "typing the deck's keys on this PC"
+            } else {
+                "off: the deck types through its own USB HID sink"
+            };
+            (
+                Some(mirror),
+                MirrorInfo {
+                    enabled: wanted,
+                    reason: reason.into(),
+                },
+            )
+        }
+        Err(error) => (
+            None,
+            MirrorInfo {
+                enabled: false,
+                reason: format!("off: {error}"),
+            },
+        ),
+    };
+    *state.mirror.lock().unwrap() = info;
+    mirror
+}
+
+fn mirror_report(app: &AppHandle, mirror: Option<&mut Mirror>, report: &Mirrored) {
+    let arrived_ms = now_ms();
+    let (outcome, errors) = match mirror {
+        Some(mirror) => (mirror.apply(report), std::mem::take(&mut mirror.errors)),
+        None => (Outcome::Off, Vec::new()),
+    };
+    let (label, gap) = match outcome {
+        Outcome::Typed { gap } => ("typed", gap),
+        Outcome::Duplicate => ("duplicate", None),
+        Outcome::Off => ("off", None),
+        Outcome::Unknown => ("unknown", None),
+    };
+    if let Some((from, to)) = gap {
+        eprintln!("key mirror: seq {from} to {to} never arrived; released every held key");
+    }
+    let _ = app.emit(
+        "key-mirror",
+        KeyMirrored {
+            seq: report.seq(),
+            report: report.describe(),
+            outcome: label,
+            gap,
+            errors,
+            arrived_ms,
+        },
+    );
+}
+
+fn summary(layout: &Layout, source: &str) -> LayoutSummary {
+    let tiles = layout
+        .pages
+        .iter()
+        .map(|page| match page {
+            td_core::layout::Page::Grid { tiles, .. } => tiles.len(),
+            td_core::layout::Page::Dashboard { .. } => 0,
+        })
+        .sum();
+    LayoutSummary {
+        name: layout.name.clone(),
+        source: source.into(),
+        pages: layout.pages.len(),
+        tiles,
+    }
+}
+
+/// Reads the layout the deck shows, so a press resolves to the tile's action. A deck that
+/// stores no layout shows the built-in one, which has no PC actions, and this keeps what it had.
+fn pull_action_layout(app: &AppHandle, session: &Session) -> bool {
+    let orientation = session
+        .request(&Request::SettingsGet, LAYOUT_PULL_TIMEOUT)
+        .ok()
+        .and_then(|reply| reply.fields::<Settings>().ok())
+        .map_or(td_core::Orientation::Landscape, |settings| {
+            settings.orientation
+        });
+    let Ok(report) = td_link::xfer::get_layout(session, orientation) else {
+        return false;
+    };
+    let Ok(layout) = Layout::parse(&report.data) else {
+        return false;
+    };
+    app.state::<SourcesState>().use_layout(layout.clone());
+    let summary = summary(&layout, "deck");
+    *app.state::<AppState>().action_layout.lock().unwrap() = Some((layout, "deck".into()));
+    let _ = app.emit("action-layout", summary);
+    true
+}
+
+fn resolve(app: &AppHandle, page: &str, tile: &str) -> Option<Plan> {
+    let state = app.state::<AppState>();
+    let layout = state.action_layout.lock().unwrap();
+    let (layout, _) = layout.as_ref()?;
+    actions::find_tile(layout, page, tile).map(|tile| Plan::of(&tile.action))
+}
+
+fn on_press(app: &AppHandle, session: &Session, event: &Value) {
+    let field = |name: &str| {
+        event
+            .get(name)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let (page, tile, kind) = (field("page"), field("tile"), field("kind"));
+    let entry = |status: &str, detail: String| ActionLog {
+        at_ms: now_ms(),
+        page: page.clone(),
+        tile: tile.clone(),
+        kind: kind.clone(),
+        status: status.into(),
+        detail,
+        pid: None,
+        exit_code: None,
+    };
+    let plan = match resolve(app, &page, &tile) {
+        Some(plan) => plan,
+        // The deck may show a layout pushed since the app last read it, so read it again once.
+        None if pull_action_layout(app, session) => match resolve(app, &page, &tile) {
+            Some(plan) => plan,
+            None => {
+                return log_action(
+                    app,
+                    entry("unknown", "no such tile in the deck's layout".into()),
+                );
+            }
+        },
+        None => {
+            return log_action(
+                app,
+                entry("unknown", "no layout to look the tile up in".into()),
+            );
+        }
+    };
+    match plan {
+        Plan::Deck => {}
+        Plan::Launch { path, args, cwd } => match actions::launch(&path, &args, &cwd) {
+            Ok(pid) => log_action(
+                app,
+                ActionLog {
+                    pid: Some(pid),
+                    ..entry("started", path)
+                },
+            ),
+            Err(error) => log_action(app, entry("failed", format!("{path}: {error}"))),
+        },
+        Plan::Open { target } => match actions::open(&target) {
+            Ok(()) => log_action(app, entry("opened", target)),
+            Err(error) => log_action(app, entry("failed", format!("{target}: {error}"))),
+        },
+        Plan::Command(spec) => {
+            let hash = spec.hash();
+            let state = app.state::<AppState>();
+            if state.approvals.lock().unwrap().is_always(&hash) {
+                return run_command(app, page, tile, spec, "always allowed");
+            }
+            let id = state.requests.fetch_add(1, Ordering::Relaxed) + 1;
+            let request = ApprovalRequest {
+                id,
+                page,
+                tile,
+                hash,
+                spec,
+            };
+            state.pending.lock().unwrap().insert(id, request.clone());
+            let _ = app.emit("approval-request", request);
+        }
+    }
+}
+
+fn run_command(app: &AppHandle, page: String, tile: String, spec: CommandSpec, why: &str) {
+    let app = app.clone();
+    let why = why.to_owned();
+    std::thread::spawn(move || {
+        let line = std::iter::once(spec.program.as_str())
+            .chain(spec.args.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let (status, exit_code, detail) = match actions::run(&spec) {
+            Ok(exit) => ("exited", exit.code(), format!("{line} ({why})")),
+            Err(error) => ("failed", None, format!("{line}: {error}")),
+        };
+        log_action(
+            &app,
+            ActionLog {
+                at_ms: now_ms(),
+                page,
+                tile,
+                kind: "command".into(),
+                status: status.into(),
+                detail,
+                pid: None,
+                exit_code,
+            },
+        );
+    });
+}
+
+fn log_action(app: &AppHandle, entry: ActionLog) {
+    let state = app.state::<AppState>();
+    {
+        let mut log = state.action_log.lock().unwrap();
+        log.push_back(entry.clone());
+        while log.len() > ACTION_LOG_KEPT {
+            log.pop_front();
+        }
+    }
+    if let Some(path) = state.log_path.lock().unwrap().as_ref()
+        && let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+    {
+        let _ = writeln!(
+            file,
+            "{}",
+            serde_json::to_string(&entry).unwrap_or_default()
+        );
+    }
+    let _ = app.emit("action-log", entry);
+}
+
+#[tauri::command]
+pub fn mirror_state(state: State<'_, AppState>) -> MirrorInfo {
+    state.mirror.lock().unwrap().clone()
+}
+
+#[tauri::command]
+pub fn set_action_layout(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    json: String,
+    source: Option<String>,
+) -> Result<LayoutSummary, String> {
+    let layout = Layout::parse(json.as_bytes()).map_err(|errors| {
+        errors
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ")
+    })?;
+    let source = source.unwrap_or_else(|| "file".into());
+    let summary = summary(&layout, &source);
+    *state.action_layout.lock().unwrap() = Some((layout, source));
+    let _ = app.emit("action-layout", summary.clone());
+    Ok(summary)
+}
+
+#[tauri::command]
+pub fn action_layout(state: State<'_, AppState>) -> Option<LayoutSummary> {
+    state
+        .action_layout
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|(layout, source)| summary(layout, source))
+}
+
+#[tauri::command]
+pub fn pending_approvals(state: State<'_, AppState>) -> Vec<ApprovalRequest> {
+    state.pending.lock().unwrap().values().cloned().collect()
+}
+
+#[tauri::command]
+pub fn action_log(state: State<'_, AppState>) -> Vec<ActionLog> {
+    state.action_log.lock().unwrap().iter().cloned().collect()
+}
+
+/// Answers an approval request with `once`, `always`, or `deny`.
+#[tauri::command]
+pub fn approval_answer(app: AppHandle, id: u64, answer: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let request = state
+        .pending
+        .lock()
+        .unwrap()
+        .remove(&id)
+        .ok_or_else(|| format!("no approval request {id} is waiting"))?;
+    let grant = match answer.as_str() {
+        "once" => Grant::Once,
+        "always" => Grant::Always,
+        "deny" => {
+            log_action(
+                &app,
+                ActionLog {
+                    at_ms: now_ms(),
+                    page: request.page,
+                    tile: request.tile,
+                    kind: "command".into(),
+                    status: "denied".into(),
+                    detail: request.spec.program,
+                    pid: None,
+                    exit_code: None,
+                },
+            );
+            return Ok(());
+        }
+        other => {
+            state.pending.lock().unwrap().insert(id, request);
+            return Err(format!("unknown answer {other:?}"));
+        }
+    };
+    let saved = state.approvals.lock().unwrap().grant(&request.hash, grant);
+    let why = match grant {
+        Grant::Once => "allowed once",
+        Grant::Always => "always allowed",
+    };
+    run_command(&app, request.page, request.tile, request.spec, why);
+    saved.map_err(|error| format!("ran, but the approval was not saved: {error}"))
+}
+
+/// Brings the window to the front without sending a key, so mirrored keys reach the key
+/// monitor. Returns whether the window is in front.
+#[tauri::command]
+pub fn focus_window(window: tauri::WebviewWindow) -> bool {
+    #[cfg(windows)]
+    {
+        window
+            .hwnd()
+            .is_ok_and(|hwnd| td_host::bring_to_front(hwnd.0 as isize))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window.set_focus();
+        window.is_focused().unwrap_or(false)
+    }
+}
+
+/// Drives the mock deck's events. Each entry is a `key.report` with `type` and `mods` and
+/// `keys` or `usage`, a `key.resync` with `mods` and `keys`, a `press` with `page`, `tile`,
+/// and `kind`, or `{"m":"drop","count":n}`, which loses `n` key reports. The list runs
+/// `repeat` times with `every_ms` between entries, on its own thread.
+#[cfg(feature = "e2e")]
+#[tauri::command]
+pub fn e2e_emit(
+    state: State<'_, AppState>,
+    events: Vec<Value>,
+    repeat: Option<u32>,
+    every_ms: Option<u64>,
+) -> Result<(), String> {
+    let mock = state
+        .mock
+        .clone()
+        .ok_or("the app is not running the mock deck")?;
+    let every = Duration::from_millis(every_ms.unwrap_or(0));
+    std::thread::spawn(move || {
+        for _ in 0..repeat.unwrap_or(1) {
+            for event in &events {
+                let text = |name: &str| event.get(name).and_then(Value::as_str).unwrap_or_default();
+                let number = |name: &str| event.get(name).and_then(Value::as_u64).unwrap_or(0);
+                match text("m") {
+                    "key.report" => {
+                        mock.emit_key(event);
+                    }
+                    "key.resync" => {
+                        let keys: Vec<u8> = event
+                            .get("keys")
+                            .and_then(Value::as_array)
+                            .map(|keys| {
+                                keys.iter()
+                                    .filter_map(Value::as_u64)
+                                    .map(|key| key as u8)
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        mock.emit_resync(number("mods") as u8, &keys);
+                    }
+                    "press" => {
+                        mock.emit_press(text("page"), text("tile"), text("kind"));
+                    }
+                    "drop" => mock.drop_key_reports(number("count") as u32),
+                    _ => {}
+                }
+                std::thread::sleep(every);
+            }
+        }
+    });
+    Ok(())
+}
+
+/// The key events the fake input sink recorded, oldest first, as `down <name>` or `up <name>`.
+#[cfg(feature = "e2e")]
+#[tauri::command]
+pub fn e2e_input_log(state: State<'_, AppState>) -> Option<Vec<String>> {
+    state.fake_input.as_ref().map(|fake| {
+        fake.events
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|event| match event {
+                td_host::KeyEvent::Down(code) => format!("down {}", td_host::keymap::name(*code)),
+                td_host::KeyEvent::Up(code) => format!("up {}", td_host::keymap::name(*code)),
+            })
+            .collect()
+    })
 }
 
 #[cfg(feature = "e2e")]

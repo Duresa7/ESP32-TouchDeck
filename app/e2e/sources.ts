@@ -41,7 +41,7 @@ export async function until<T>(read: () => Promise<T | undefined | false>, timeo
 }
 
 export async function openSources() {
-  await $('[data-testid="tab-sources"]').click();
+  await $('[data-testid="nav-sources"]').click();
   await $('[data-testid="sources-page"]').waitForExist({ timeout: 5_000 });
   await $('[data-testid="layout-path"]').waitForExist({ timeout: 5_000 });
 }

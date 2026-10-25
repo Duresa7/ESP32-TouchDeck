@@ -1,0 +1,210 @@
+import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import {
+  addPage,
+  addTile,
+  canonical,
+  freeCell,
+  freshId,
+  moveTile,
+  newGridPage,
+  newTile,
+  parseLayout,
+  removePage,
+  removeTile,
+  resizeTile,
+  setAction,
+  setIcon,
+  setLabel,
+  validateLayout,
+  validateSource,
+  type Edit,
+  type GridPage,
+  type Layout,
+  type Tile,
+} from './validate.ts';
+
+const schema = join(import.meta.dirname, '..', '..', '..', '..', 'schema');
+const examples = join(schema, 'examples');
+const invalid = join(examples, 'invalid');
+
+const dev = () => {
+  const parsed = parseLayout(readFileSync(join(examples, 'dev.json')));
+  assert.ok(parsed.ok);
+  return parsed.layout;
+};
+
+const tile = (id: string, row: number, col: number): Tile => ({ ...newTile(id, row, col), label: id.toUpperCase() });
+
+const small = (): Layout => ({
+  schema: 1,
+  name: 'Small',
+  orientation: 'landscape',
+  pages: [
+    { ...newGridPage('main', 'MAIN'), rows: 2, cols: 3, tiles: [tile('a', 0, 0), tile('b', 0, 1)] },
+    { ...newGridPage('other', 'OTHER'), rows: 1, cols: 1 },
+  ],
+});
+
+const grid = (layout: Layout, page: string) => layout.pages.find((p) => p.id === page) as GridPage;
+
+function ok(edit: Edit): Layout {
+  assert.ok(edit.ok, edit.ok ? '' : edit.reason);
+  return edit.layout;
+}
+
+function refused(edit: Edit): string {
+  assert.ok(!edit.ok, 'the edit was accepted');
+  return edit.reason;
+}
+
+test('the bundled examples are valid', () => {
+  for (const name of ['builtin.json', 'dev.json']) {
+    assert.deepEqual(validateSource(readFileSync(join(examples, name))), [], name);
+  }
+});
+
+test('each of the invalid examples fails with exactly its rule key, as check-layouts.mjs reports', () => {
+  const files = readdirSync(invalid).filter((name) => name.endsWith('.json'));
+  assert.equal(files.length, 38);
+  const keys = new Set<string>();
+  for (const name of files) {
+    const bytes = readFileSync(join(invalid, name));
+    const end = bytes.indexOf(0x0a);
+    const expected = /^expected: ([a-z][a-z0-9.-]*)\r?$/.exec(bytes.subarray(0, end).toString())?.[1];
+    assert.ok(expected, `${name} names no rule key`);
+    const errors = validateSource(bytes.subarray(end + 1));
+    assert.deepEqual(
+      errors.map((error) => error.key),
+      [expected],
+      `${name}: ${JSON.stringify(errors)}`,
+    );
+    keys.add(expected);
+  }
+  const readme = readFileSync(join(schema, 'README.md'), 'utf8');
+  const documented = new Set(
+    readme
+      .split('\n')
+      .map((line) => /^\| `([a-z0-9.-]+\.[a-z0-9.-]+)`/.exec(line)?.[1])
+      .filter((key): key is string => key !== undefined),
+  );
+  assert.deepEqual([...keys].sort(), [...documented].sort());
+});
+
+test('text rules apply to the raw source', () => {
+  const text = readFileSync(join(examples, 'builtin.json'), 'utf8');
+  assert.deepEqual(validateSource(new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode(text)])).map((e) => e.key), ['file.json']);
+  assert.deepEqual(validateSource(text.replace('"rows": 4', '"rows": 4.0')).map((e) => e.key), ['json.integer-form']);
+  assert.deepEqual(validateSource(text.replace('"col": 0', '"col": -0')).map((e) => e.key), ['json.integer-form']);
+  const nested = (levels: number) => '['.repeat(levels) + ']'.repeat(levels);
+  assert.deepEqual(validateSource(nested(16)).map((e) => e.key), ['shape.type']);
+  assert.deepEqual(validateSource(nested(17)).map((e) => e.key), ['file.json']);
+});
+
+test('the size limit counts the canonical compact form', () => {
+  const layout = dev();
+  const launch = grid(layout, 'desktop').tiles.find((t) => t.id === 'launch')!;
+  assert.equal(launch.action.type, 'launch');
+  if (launch.action.type !== 'launch') return;
+  launch.action.cwd = '';
+  launch.action.cwd = 'a'.repeat(32768 - canonical(layout).length);
+  assert.equal(canonical(layout).length, 32768);
+  assert.deepEqual(validateLayout(layout), []);
+  launch.action.cwd += 'a';
+  assert.deepEqual(validateLayout(layout).map((e) => e.key), ['layout.too-large']);
+});
+
+test('addTile accepts a free cell and refuses an overlap, the edge, or a duplicate id', () => {
+  const layout = small();
+  assert.equal(grid(ok(addTile(layout, 'main', tile('c', 1, 2))), 'main').tiles.length, 3);
+  assert.equal(refused(addTile(layout, 'main', tile('c', 0, 1))), 'overlaps b');
+  assert.equal(refused(addTile(layout, 'main', tile('c', 2, 0))), 'outside the 2x3 grid');
+  assert.match(refused(addTile(layout, 'main', tile('a', 1, 0))), /^id\.duplicate: /);
+  assert.equal(refused(addTile(layout, 'nope', tile('c', 0, 0))), 'no page nope');
+  assert.equal(grid(layout, 'main').tiles.length, 2, 'a refused edit leaves the layout as it was');
+});
+
+test('a 65th tile is refused', () => {
+  const layout = small();
+  layout.pages[1] = { ...newGridPage('other', 'OTHER'), rows: 8, cols: 8, tiles: Array.from({ length: 64 }, (_, i) => tile(`t${i}`, Math.floor(i / 8), i % 8)) };
+  assert.deepEqual(validateLayout(layout), []);
+  assert.equal(refused(addTile(layout, 'other', tile('t64', 0, 0))), 'a page holds at most 64 tiles');
+});
+
+test('moveTile lands on a free cell and names the tile it would cover', () => {
+  const layout = small();
+  const moved = grid(ok(moveTile(layout, 'main', 'a', 1, 2)), 'main').tiles[0];
+  assert.deepEqual([moved.row, moved.col], [1, 2]);
+  assert.equal(refused(moveTile(layout, 'main', 'a', 0, 1)), 'overlaps b');
+  assert.equal(refused(moveTile(layout, 'main', 'a', 0, 3)), 'outside the 2x3 grid');
+  assert.deepEqual(ok(moveTile(layout, 'main', 'a', 0, 0)), layout, 'a tile never overlaps itself');
+});
+
+test('resizeTile grows into free cells and stops at the edge or a neighbour', () => {
+  const layout = ok(moveTile(small(), 'main', 'b', 0, 2));
+  const grown = grid(ok(resizeTile(layout, 'main', 'a', 2, 2)), 'main').tiles[0];
+  assert.deepEqual([grown.rowSpan, grown.colSpan], [2, 2]);
+  assert.equal(refused(resizeTile(layout, 'main', 'a', 3, 1)), 'outside the 2x3 grid');
+  assert.equal(refused(resizeTile(layout, 'main', 'a', 1, 3)), 'overlaps b');
+  refused(resizeTile(layout, 'main', 'a', 0, 1));
+});
+
+test('setAction keeps a valid action and refuses an invalid one', () => {
+  const layout = small();
+  const key = { type: 'key', usage: 62, mods: ['ctrl', 'shift'] } as const;
+  assert.deepEqual(grid(ok(setAction(layout, 'main', 'a', { ...key, mods: [...key.mods] })), 'main').tiles[0].action, key);
+  assert.match(refused(setAction(layout, 'main', 'a', { type: 'key', usage: 0, mods: [] })), /^key\.usage-range: /);
+  assert.match(refused(setAction(layout, 'main', 'a', { type: 'page', page: 'gone' })), /^action\.page-missing: /);
+  assert.match(refused(setAction(layout, 'main', 'a', { type: 'launch', path: '', args: [], cwd: '' })), /^text\.empty: /);
+  assert.equal(refused(setAction(layout, 'main', 'zz', { type: 'none' })), 'no tile zz');
+});
+
+test('labels and icons follow the schema', () => {
+  const layout = small();
+  assert.equal(grid(ok(setLabel(layout, 'main', 'a', 'Build')), 'main').tiles[0].label, 'Build');
+  assert.match(refused(setLabel(layout, 'main', 'a', ' ')), /^label\.blank: /);
+  assert.match(refused(setLabel(layout, 'main', 'a', 'seventeen letters')), /^label\.too-long: /);
+  ok(setIcon(layout, 'main', 'a', 'lv:mute'));
+  assert.match(refused(setIcon(layout, 'main', 'a', 'lv:nope')), /^icon\.format: /);
+});
+
+test('removeTile drops only that tile', () => {
+  assert.deepEqual(
+    grid(ok(removeTile(small(), 'main', 'a')), 'main').tiles.map((t) => t.id),
+    ['b'],
+  );
+  assert.equal(refused(removeTile(small(), 'main', 'a2')), 'no tile a2');
+});
+
+test('addPage accepts up to eight and refuses a ninth', () => {
+  let layout = small();
+  for (let n = 3; n <= 8; n++) layout = ok(addPage(layout, newGridPage(`p${n}`, `P${n}`)));
+  assert.equal(layout.pages.length, 8);
+  assert.equal(refused(addPage(layout, newGridPage('p9', 'P9'))), 'a layout holds at most 8 pages');
+  assert.match(refused(addPage(small(), newGridPage('main', 'MAIN'))), /^id\.duplicate: /);
+});
+
+test('a removed page clears the page actions that pointed to it', () => {
+  const layout = ok(setAction(small(), 'main', 'a', { type: 'page', page: 'other' }));
+  const removed = ok(removePage(layout, 'other'));
+  assert.equal(removed.pages.length, 1);
+  assert.deepEqual(grid(removed, 'main').tiles[0].action, { type: 'none' });
+  assert.equal(refused(removePage(removed, 'main')), 'a layout keeps at least 1 page');
+  assert.equal(refused(removePage(layout, 'gone')), 'no page gone');
+});
+
+test('dev.json edits keep its frozen ids', () => {
+  const layout = dev();
+  const page = layout.pages[0].id;
+  const cell = freeCell(layout, page);
+  assert.ok(cell, "dev.json's first page has a free cell");
+  const id = freshId(layout, 'tile');
+  const added = ok(addTile(layout, page, newTile(id, ...cell)));
+  assert.equal(freshId(added, 'tile'), 'tile2');
+  assert.match(refused(addTile(added, page, newTile('other', ...cell))), /^overlaps /);
+  const dashboard = layout.pages.find((p) => p.kind === 'dashboard')!.id;
+  assert.equal(refused(addTile(layout, dashboard, newTile('x', 0, 0))), `page ${dashboard} is a dashboard`);
+  assert.ok(ok(removePage(layout, dashboard)).pages.every((p) => p.id !== dashboard));
+});
