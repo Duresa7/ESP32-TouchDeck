@@ -22,6 +22,3 @@ esp_err_t display_snapshot(td_shot_image_t *out);
 /* Invalidates the whole screen every LVGL cycle for `seconds` and counts the frames flushed to the panel.
  * Blocks the caller for that time. */
 esp_err_t display_perf_run(uint32_t seconds, display_perf_t *out);
-
-/* True once the LVGL adapter has started, which is what snapshots and perf runs need. */
-bool display_ready(void);
