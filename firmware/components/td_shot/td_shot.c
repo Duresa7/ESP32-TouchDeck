@@ -20,7 +20,8 @@ static bool geometry_ok(const td_shot_image_t *src, td_shot_scale_t scale)
     if (src->width % step != 0 || src->height % step != 0) {
         return false;
     }
-    return (uint64_t)(src->width / step) * (src->height / step) * 2 <= UINT32_MAX;
+    /* Leaves room to round the byte count up to whole lines in 32 bits. */
+    return (uint64_t)(src->width / step) * (src->height / step) * 2 <= UINT32_MAX - (TD_SHOT_LINE_RAW - 1);
 }
 
 bool td_shot_parse_scale(const char *arg, td_shot_scale_t *out)

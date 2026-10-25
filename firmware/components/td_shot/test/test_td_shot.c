@@ -12,7 +12,7 @@
 /* python -c "import zlib; print(zlib.crc32(bytes(((i*7+3)&0xFF) for i in range(64*48*2))))" */
 #define PATTERN_64X48_CRC32 200789576u
 
-#define ASSERT_ERR(want, got) TEST_ASSERT_EQUAL_STRING(esp_err_to_name(want), esp_err_to_name(got))
+#define ASSERT_ERR(want, got) TEST_ASSERT_EQUAL_INT((want), (got))
 
 typedef struct {
     char lines[MAX_LINES][TD_SHOT_LINE_MAX + 1];
@@ -234,6 +234,10 @@ TEST_CASE("layout is all zero for input the stream would reject", "[td_shot]")
 
     const td_shot_image_t huge = {.px = NULL, .width = 65535, .height = 65535, .stride = 131070};
     expect_layout(td_shot_layout(&huge, TD_SHOT_SCALE_1), 0, 0, 0, 0);
+
+    /* 4294967292 bytes fit in 32 bits, but rounding them up to whole lines would wrap to 0 lines. */
+    const td_shot_image_t wraps = {.px = NULL, .width = 32769, .height = 65534, .stride = 65538};
+    expect_layout(td_shot_layout(&wraps, TD_SHOT_SCALE_1), 0, 0, 0, 0);
 }
 
 TEST_CASE("base64 follows RFC 4648 padding on the final chunk", "[td_shot]")
@@ -292,6 +296,7 @@ TEST_CASE("a multi-line stream has full 1024-character lines", "[td_shot]")
     }
     TEST_ASSERT_EQUAL_UINT32(PATTERN_W * 48 * 2, decode_all(s_decoded));
     TEST_ASSERT_EQUAL_HEX8_ARRAY(s_pattern, s_decoded, PATTERN_W * 48 * 2);
+    TEST_ASSERT_EQUAL_HEX32(PATTERN_64X48_CRC32, crc);
 }
 
 TEST_CASE("a short final line carries its own padding", "[td_shot]")
@@ -345,6 +350,29 @@ TEST_CASE("a sink failure on the second line aborts with ESP_FAIL", "[td_shot]")
     ASSERT_ERR(ESP_FAIL, run_stream(&img, TD_SHOT_SCALE_1, 2, &crc));
     TEST_ASSERT_EQUAL_UINT32(2, s_sink.calls);
     TEST_ASSERT_EQUAL_HEX32(crc32_ref(s_pattern, TD_SHOT_LINE_RAW), crc);
+}
+
+TEST_CASE("a sink that rejects the first or the short final line stops there", "[td_shot]")
+{
+    fill_pattern();
+    const td_shot_image_t img = {.px = s_pattern, .width = PATTERN_W, .height = PATTERN_ROWS, .stride = PATTERN_W * 2};
+    uint32_t crc = 0xDEADBEEFu;
+    ASSERT_ERR(ESP_FAIL, run_stream(&img, TD_SHOT_SCALE_1, 1, &crc));
+    TEST_ASSERT_EQUAL_UINT32(1, s_sink.calls);
+    TEST_ASSERT_EQUAL_HEX32(0, crc);
+
+    ASSERT_ERR(ESP_FAIL, run_stream(&img, TD_SHOT_SCALE_1, 9, &crc));
+    TEST_ASSERT_EQUAL_UINT32(9, s_sink.calls);
+    TEST_ASSERT_EQUAL_HEX32(crc32_ref(s_pattern, 8 * TD_SHOT_LINE_RAW), crc);
+}
+
+TEST_CASE("an image with no pixels streams nothing and has CRC 0", "[td_shot]")
+{
+    const td_shot_image_t empty = {.px = s_pattern, .width = 0, .height = 0, .stride = 0};
+    uint32_t crc = 0xDEADBEEFu;
+    ASSERT_ERR(ESP_OK, run_stream(&empty, TD_SHOT_SCALE_1, 0, &crc));
+    TEST_ASSERT_EQUAL_UINT32(0, s_sink.calls);
+    TEST_ASSERT_EQUAL_HEX32(0, crc);
 }
 
 TEST_CASE("bad arguments return ESP_ERR_INVALID_ARG without calling the sink", "[td_shot]")
