@@ -9,6 +9,10 @@
 #include "ui_pages.h"
 #include "td_layout.h"
 
+/* A tile with no icon and no action, as the page geometry tests need. */
+#define TILE(id, label, row, col, row_span, col_span) \
+    { id, label, row, col, row_span, col_span, NULL, { .type = TD_ACTION_NONE } }
+
 typedef struct {
     unsigned key_calls;
     unsigned mod_calls;
@@ -122,7 +126,7 @@ TEST_CASE("a click on a bound tile runs exactly one op with the tile's argument"
 
 TEST_CASE("a click calls no op for an unbound tile, a missing argument or a missing op", "[fkey_page]")
 {
-    const ui_tile_t unbound = { "unbound", "Unbound", 0, 0, 1, 1 };
+    const ui_tile_t unbound = TILE("unbound", "Unbound", 0, 0, 1, 1);
     const ui_tile_t *f5 = tile_by_id(page_by_id("fkeys"), "f5");
     const ui_tile_t *shift = tile_by_id(page_by_id("fkeys"), "shift");
     recorder_t rec = { 0 };

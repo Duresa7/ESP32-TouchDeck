@@ -7,6 +7,10 @@
 #include "td_layout.h"
 #include "ui_pages.h"
 
+/* A tile with no icon and no action, as the page geometry tests need. */
+#define TILE(id, label, row, col, row_span, col_span) \
+    { id, label, row, col, row_span, col_span, NULL, { .type = TD_ACTION_NONE } }
+
 #define GAP 16
 #define MAX_IDS 64
 
@@ -302,9 +306,9 @@ TEST_CASE("built-in tiles stay in the area, never overlap and sit exactly one ga
 TEST_CASE("a tile that spans cells covers them and the gaps between them", "[ui_pages]")
 {
     static const ui_tile_t tiles[] = {
-        { "big", "Big", 0, 0, 2, 2 },
-        { "wide", "Wide", 3, 0, 1, 3 },
-        { "tall", "Tall", 2, 3, 2, 1 },
+        TILE("big", "Big", 0, 0, 2, 2),
+        TILE("wide", "Wide", 3, 0, 1, 3),
+        TILE("tall", "Tall", 2, 3, 2, 1),
     };
     const ui_page_t page = page_of(4, 4, tiles, 3);
     TEST_ASSERT_TRUE(ui_page_valid(&page));
@@ -327,10 +331,10 @@ TEST_CASE("a tile that spans cells covers them and the gaps between them", "[ui_
 TEST_CASE("an area that does not divide evenly keeps exact gaps and ends on its edge", "[ui_pages]")
 {
     static const ui_tile_t tiles[] = {
-        { "a", "A", 0, 0, 2, 2 },
-        { "b", "B", 0, 2, 1, 1 },
-        { "c", "C", 1, 2, 1, 1 },
-        { "d", "D", 2, 0, 1, 3 },
+        TILE("a", "A", 0, 0, 2, 2),
+        TILE("b", "B", 0, 2, 1, 1),
+        TILE("c", "C", 1, 2, 1, 1),
+        TILE("d", "D", 2, 0, 1, 3),
     };
     const ui_page_t page = page_of(3, 3, tiles, 4);
     TEST_ASSERT_TRUE(ui_page_valid(&page));
@@ -345,13 +349,13 @@ TEST_CASE("an area that does not divide evenly keeps exact gaps and ends on its 
 
 TEST_CASE("a tile outside the grid or outside a valid grid gets an empty rect", "[ui_pages]")
 {
-    const ui_tile_t below = { "t", "T", 2, 0, 1, 1 };
-    const ui_tile_t right = { "t", "T", 0, 2, 1, 1 };
-    const ui_tile_t tall = { "t", "T", 1, 0, 2, 1 };
-    const ui_tile_t wide = { "t", "T", 0, 1, 1, 2 };
-    const ui_tile_t flat = { "t", "T", 0, 0, 0, 1 };
-    const ui_tile_t thin = { "t", "T", 0, 0, 1, 0 };
-    const ui_tile_t inside = { "t", "T", 0, 0, 1, 1 };
+    const ui_tile_t below = TILE("t", "T", 2, 0, 1, 1);
+    const ui_tile_t right = TILE("t", "T", 0, 2, 1, 1);
+    const ui_tile_t tall = TILE("t", "T", 1, 0, 2, 1);
+    const ui_tile_t wide = TILE("t", "T", 0, 1, 1, 2);
+    const ui_tile_t flat = TILE("t", "T", 0, 0, 0, 1);
+    const ui_tile_t thin = TILE("t", "T", 0, 0, 1, 0);
+    const ui_tile_t inside = TILE("t", "T", 0, 0, 1, 1);
 
     const ui_page_t page = page_of(2, 2, &inside, 1);
     expect_empty_rect("a row below the grid", &page, &below);
@@ -370,43 +374,43 @@ TEST_CASE("a tile outside the grid or outside a valid grid gets an empty rect", 
 TEST_CASE("ui_page_valid accepts tiles that touch without sharing a cell", "[ui_pages]")
 {
     expect_valid("two tiles side by side", 2, 2,
-                 (const ui_tile_t[]){ { "a", "A", 0, 0, 1, 1 }, { "b", "B", 0, 1, 1, 1 } }, 2);
+                 (const ui_tile_t[]){ TILE("a", "A", 0, 0, 1, 1), TILE("b", "B", 0, 1, 1, 1) }, 2);
     expect_valid("a tall tile beside a short one", 2, 2,
-                 (const ui_tile_t[]){ { "a", "A", 0, 0, 2, 1 }, { "b", "B", 0, 1, 1, 1 } }, 2);
+                 (const ui_tile_t[]){ TILE("a", "A", 0, 0, 2, 1), TILE("b", "B", 0, 1, 1, 1) }, 2);
     expect_valid("a tile in the last cell of the biggest grid", UI_GRID_MAX, UI_GRID_MAX,
-                 (const ui_tile_t[]){ { "a", "A", UI_GRID_MAX - 1, UI_GRID_MAX - 1, 1, 1 } }, 1);
-    expect_valid("a 1 by 1 grid", 1, 1, (const ui_tile_t[]){ { "a", "A", 0, 0, 1, 1 } }, 1);
+                 (const ui_tile_t[]){ TILE("a", "A", UI_GRID_MAX - 1, UI_GRID_MAX - 1, 1, 1) }, 1);
+    expect_valid("a 1 by 1 grid", 1, 1, (const ui_tile_t[]){ TILE("a", "A", 0, 0, 1, 1) }, 1);
 }
 
 TEST_CASE("ui_page_valid rejects tiles that share a cell", "[ui_pages]")
 {
     expect_invalid("two tiles on one cell", 2, 2,
-                   (const ui_tile_t[]){ { "a", "A", 0, 0, 1, 1 }, { "b", "B", 0, 0, 1, 1 } }, 2);
+                   (const ui_tile_t[]){ TILE("a", "A", 0, 0, 1, 1), TILE("b", "B", 0, 0, 1, 1) }, 2);
     expect_invalid("a spanning tile over a single one", 2, 2,
-                   (const ui_tile_t[]){ { "a", "A", 0, 0, 2, 2 }, { "b", "B", 1, 1, 1, 1 } }, 2);
+                   (const ui_tile_t[]){ TILE("a", "A", 0, 0, 2, 2), TILE("b", "B", 1, 1, 1, 1) }, 2);
     expect_invalid("a single tile under a spanning one", 2, 3,
-                   (const ui_tile_t[]){ { "a", "A", 0, 2, 1, 1 }, { "b", "B", 0, 0, 1, 3 } }, 2);
+                   (const ui_tile_t[]){ TILE("a", "A", 0, 2, 1, 1), TILE("b", "B", 0, 0, 1, 3) }, 2);
     expect_invalid("two spanning tiles that cross", 3, 3,
-                   (const ui_tile_t[]){ { "a", "A", 0, 1, 3, 1 }, { "b", "B", 1, 0, 1, 3 } }, 2);
+                   (const ui_tile_t[]){ TILE("a", "A", 0, 1, 3, 1), TILE("b", "B", 1, 0, 1, 3) }, 2);
 }
 
 TEST_CASE("ui_page_valid rejects a tile outside the grid", "[ui_pages]")
 {
-    expect_invalid("a row below the grid", 2, 2, (const ui_tile_t[]){ { "a", "A", 2, 0, 1, 1 } }, 1);
-    expect_invalid("a column right of the grid", 2, 2, (const ui_tile_t[]){ { "a", "A", 0, 2, 1, 1 } }, 1);
-    expect_invalid("a row span past the bottom", 2, 2, (const ui_tile_t[]){ { "a", "A", 1, 0, 2, 1 } }, 1);
-    expect_invalid("a column span past the right edge", 2, 2, (const ui_tile_t[]){ { "a", "A", 0, 1, 1, 2 } }, 1);
+    expect_invalid("a row below the grid", 2, 2, (const ui_tile_t[]){ TILE("a", "A", 2, 0, 1, 1) }, 1);
+    expect_invalid("a column right of the grid", 2, 2, (const ui_tile_t[]){ TILE("a", "A", 0, 2, 1, 1) }, 1);
+    expect_invalid("a row span past the bottom", 2, 2, (const ui_tile_t[]){ TILE("a", "A", 1, 0, 2, 1) }, 1);
+    expect_invalid("a column span past the right edge", 2, 2, (const ui_tile_t[]){ TILE("a", "A", 0, 1, 1, 2) }, 1);
 }
 
 TEST_CASE("ui_page_valid rejects a zero span", "[ui_pages]")
 {
-    expect_invalid("a zero row span", 2, 2, (const ui_tile_t[]){ { "a", "A", 0, 0, 0, 1 } }, 1);
-    expect_invalid("a zero column span", 2, 2, (const ui_tile_t[]){ { "a", "A", 0, 0, 1, 0 } }, 1);
+    expect_invalid("a zero row span", 2, 2, (const ui_tile_t[]){ TILE("a", "A", 0, 0, 0, 1) }, 1);
+    expect_invalid("a zero column span", 2, 2, (const ui_tile_t[]){ TILE("a", "A", 0, 0, 1, 0) }, 1);
 }
 
 TEST_CASE("ui_page_valid rejects a grid that is empty or bigger than UI_GRID_MAX", "[ui_pages]")
 {
-    const ui_tile_t tile[] = { { "a", "A", 0, 0, 1, 1 } };
+    const ui_tile_t tile[] = { TILE("a", "A", 0, 0, 1, 1) };
     expect_invalid("zero rows", 0, 2, tile, 1);
     expect_invalid("zero cols", 2, 0, tile, 1);
     expect_invalid("zero rows and cols", 0, 0, tile, 1);
@@ -416,14 +420,14 @@ TEST_CASE("ui_page_valid rejects a grid that is empty or bigger than UI_GRID_MAX
 
 TEST_CASE("ui_page_valid rejects an empty or missing id or label", "[ui_pages]")
 {
-    expect_invalid("an empty tile id", 2, 2, (const ui_tile_t[]){ { "", "A", 0, 0, 1, 1 } }, 1);
-    expect_invalid("a missing tile id", 2, 2, (const ui_tile_t[]){ { NULL, "A", 0, 0, 1, 1 } }, 1);
-    expect_invalid("an empty tile label", 2, 2, (const ui_tile_t[]){ { "a", "", 0, 0, 1, 1 } }, 1);
-    expect_invalid("a missing tile label", 2, 2, (const ui_tile_t[]){ { "a", NULL, 0, 0, 1, 1 } }, 1);
+    expect_invalid("an empty tile id", 2, 2, (const ui_tile_t[]){ TILE("", "A", 0, 0, 1, 1) }, 1);
+    expect_invalid("a missing tile id", 2, 2, (const ui_tile_t[]){ TILE(NULL, "A", 0, 0, 1, 1) }, 1);
+    expect_invalid("an empty tile label", 2, 2, (const ui_tile_t[]){ TILE("a", "", 0, 0, 1, 1) }, 1);
+    expect_invalid("a missing tile label", 2, 2, (const ui_tile_t[]){ TILE("a", NULL, 0, 0, 1, 1) }, 1);
     expect_invalid("a bad tile after a good one", 2, 2,
-                   (const ui_tile_t[]){ { "a", "A", 0, 0, 1, 1 }, { "b", "", 0, 1, 1, 1 } }, 2);
+                   (const ui_tile_t[]){ TILE("a", "A", 0, 0, 1, 1), TILE("b", "", 0, 1, 1, 1) }, 2);
 
-    const ui_tile_t tile[] = { { "a", "A", 0, 0, 1, 1 } };
+    const ui_tile_t tile[] = { TILE("a", "A", 0, 0, 1, 1) };
     ui_page_t page = page_of(2, 2, tile, 1);
     page.id = "";
     TEST_ASSERT_FALSE_MESSAGE(ui_page_valid(&page), "an empty page id");
