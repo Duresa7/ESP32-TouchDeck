@@ -365,6 +365,39 @@ TEST_CASE("popping an empty queue returns false and leaves the output alone", "[
     EXPECT_SAMPLE(out, 0x1234, 0x5678, true);
 }
 
+TEST_CASE("a release follows only when the oldest queued sample is a release", "[touch_queue]")
+{
+    td_touch_queue_t *q = fresh_queue();
+    TEST_ASSERT_FALSE_MESSAGE(td_touch_release_follows(q), "an empty queue has no release");
+
+    const size_t n = td_touch_swipe(100, 100, 130, 100, 30, s_samples, TD_TOUCH_QUEUE_CAP);
+    TEST_ASSERT_EQUAL_UINT32(5, n);
+    TEST_ASSERT_TRUE(td_touch_queue_push(q, s_samples, n));
+
+    td_touch_sample_t got;
+    for (size_t i = 0; i < n - 1; i++) {
+        TEST_ASSERT_TRUE(td_touch_queue_pop(q, &got));
+        TEST_ASSERT_TRUE(got.pressed);
+        TEST_ASSERT_EQUAL_MESSAGE(i == n - 2, td_touch_release_follows(q),
+                                  "only the last pressed sample of a swipe is followed by its release");
+    }
+    TEST_ASSERT_TRUE(td_touch_queue_pop(q, &got));
+    TEST_ASSERT_FALSE(got.pressed);
+    TEST_ASSERT_FALSE_MESSAGE(td_touch_release_follows(q), "a drained queue has no release");
+}
+
+TEST_CASE("a tap's press is followed by its release", "[touch_queue]")
+{
+    td_touch_queue_t *q = fresh_queue();
+    td_touch_sample_t tap[2];
+    td_touch_tap(512, 490, tap);
+    TEST_ASSERT_TRUE(td_touch_queue_push(q, tap, 2));
+
+    td_touch_sample_t got;
+    TEST_ASSERT_TRUE(td_touch_queue_pop(q, &got));
+    TEST_ASSERT_TRUE_MESSAGE(td_touch_release_follows(q), "the press of a tap is followed by its release");
+}
+
 TEST_CASE("a tap is a press then a release at the same point", "[touch_queue]")
 {
     td_touch_sample_t tap[2];

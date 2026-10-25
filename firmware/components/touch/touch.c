@@ -117,6 +117,7 @@ static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         }
     }
     shared.last = out;
+    const bool release_follows = injected && out.pressed && td_touch_release_follows(&shared.queue);
     portEXIT_CRITICAL(&shared.lock);
 
     if (poll == TD_TOUCH_POLL_REPORT && atomic_load(&s.log)) {
@@ -126,7 +127,7 @@ static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     data->point.x = out.x;
     data->point.y = out.y;
     data->state = out.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
-    data->continue_reading = false;
+    data->continue_reading = release_follows;
 }
 
 static const char *direction_name(lv_dir_t dir)

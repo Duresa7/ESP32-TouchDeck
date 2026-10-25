@@ -63,6 +63,13 @@ size_t td_touch_swipe(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint32
  */
 td_touch_sample_t td_touch_next(td_touch_queue_t *q, td_touch_sample_t real, bool *injected);
 
+/*
+ * True when the oldest queued sample is a release. LVGL can take that release in the same pass as the press it
+ * follows, so a tap reaches its click without a render in between. Without that, the release waits for the
+ * panel to finish drawing the pressed state, one frame of about 41 ms.
+ */
+bool td_touch_release_follows(const td_touch_queue_t *q);
+
 #ifdef __cplusplus
 }
 #endif

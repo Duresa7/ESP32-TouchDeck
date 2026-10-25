@@ -78,3 +78,8 @@ td_touch_sample_t td_touch_next(td_touch_queue_t *q, td_touch_sample_t real, boo
     *injected = td_touch_queue_pop(q, &s);
     return s;
 }
+
+bool td_touch_release_follows(const td_touch_queue_t *q)
+{
+    return q->count > 0 && !q->items[q->head].pressed;
+}
