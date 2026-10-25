@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Duresa7/ESP32-TouchDeck/schema/layout.schema.json",
+  "title": "TouchDeck layout version 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "name", "orientation", "pages"],
+  "properties": {
+    "schema": { "const": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "orientation": { "enum": ["landscape", "portrait"] },
+    "pages": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/page" }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9_]{1,15}$" },
+    "text": { "type": "string", "minLength": 1 },
+    "title": { "type": "string", "minLength": 1, "maxLength": 24 },
+    "dimension": { "type": "integer", "minimum": 1, "maximum": 8 },
+    "modifier": { "enum": ["ctrl", "shift", "alt", "win"] },
+    "args": { "type": "array", "items": { "type": "string" } },
+    "page": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "title", "kind", "rows", "cols", "tiles"],
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "title": { "$ref": "#/$defs/title" },
+            "kind": { "const": "grid" },
+            "rows": { "$ref": "#/$defs/dimension" },
+            "cols": { "$ref": "#/$defs/dimension" },
+            "tiles": {
+              "type": "array",
+              "maxItems": 64,
+              "items": { "$ref": "#/$defs/tile" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "title", "kind", "source"],
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "title": { "$ref": "#/$defs/title" },
+            "kind": { "const": "dashboard" },
+            "source": { "$ref": "#/$defs/text" }
+          }
+        }
+      ]
+    },
+    "tile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "row", "col", "rowSpan", "colSpan", "icon", "action"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 16 },
+        "row": { "type": "integer", "minimum": 0, "maximum": 7 },
+        "col": { "type": "integer", "minimum": 0, "maximum": 7 },
+        "rowSpan": { "$ref": "#/$defs/dimension" },
+        "colSpan": { "$ref": "#/$defs/dimension" },
+        "icon": {
+          "oneOf": [
+            { "type": "null" },
+            { "enum": ["lv:prev", "lv:play_pause", "lv:next", "lv:mute", "lv:volume_mid", "lv:volume_max"] },
+            { "type": "string", "pattern": "^file:[0-9a-fA-F]{16}$" }
+          ]
+        },
+        "action": { "$ref": "#/$defs/action" }
+      }
+    },
+    "action": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "usage", "mods"],
+          "properties": {
+            "type": { "const": "key" },
+            "usage": { "type": "integer", "minimum": 1, "maximum": 255 },
+            "mods": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "$ref": "#/$defs/modifier" } }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "mod"],
+          "properties": {
+            "type": { "const": "mod" },
+            "mod": { "$ref": "#/$defs/modifier" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "usage"],
+          "properties": {
+            "type": { "const": "consumer" },
+            "usage": { "type": "integer", "minimum": 1, "maximum": 65535 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "page"],
+          "properties": {
+            "type": { "const": "page" },
+            "page": { "$ref": "#/$defs/id" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": { "type": { "const": "none" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "path", "args", "cwd"],
+          "properties": {
+            "type": { "const": "launch" },
+            "path": { "$ref": "#/$defs/text" },
+            "args": { "$ref": "#/$defs/args" },
+            "cwd": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "target"],
+          "properties": {
+            "type": { "const": "open" },
+            "target": { "$ref": "#/$defs/text" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "program", "args", "cwd", "shell"],
+          "properties": {
+            "type": { "const": "command" },
+            "program": { "$ref": "#/$defs/text" },
+            "args": { "$ref": "#/$defs/args" },
+            "cwd": { "type": "string" },
+            "shell": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "source", "field", "account"],
+          "properties": {
+            "type": { "const": "widget" },
+            "source": { "$ref": "#/$defs/text" },
+            "field": { "$ref": "#/$defs/text" },
+            "account": { "$ref": "#/$defs/text" }
+          }
+        }
+      ]
+    }
+  }
+}

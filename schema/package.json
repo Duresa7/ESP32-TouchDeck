@@ -1,0 +1,14 @@
+{
+  "name": "touchdeck-layout-schema",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./check-layouts.test.mjs",
+  "scripts": {
+    "check": "node check-layouts.mjs",
+    "test": "node --test check-layouts.test.mjs"
+  },
+  "dependencies": {
+    "ajv": "8.17.1"
+  }
+}
