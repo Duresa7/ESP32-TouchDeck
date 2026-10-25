@@ -5,6 +5,7 @@
 #include "esp_app_desc.h"
 #include "esp_check.h"
 #include "esp_console.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_stdio.h"
 #include "esp_system.h"
@@ -63,6 +64,10 @@ static int cmd_heap(int argc, char **argv)
     td_reply_begin(&r, buf, sizeof buf, "heap", true);
     td_reply_int(&r, "free_heap", esp_get_free_heap_size());
     td_reply_int(&r, "min_free_heap", esp_get_minimum_free_heap_size());
+    td_reply_int(&r, "free_internal", heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    td_reply_int(&r, "min_free_internal", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    td_reply_int(&r, "free_psram", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    td_reply_int(&r, "min_free_psram", heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM));
     emit(&r);
     return 0;
 }
