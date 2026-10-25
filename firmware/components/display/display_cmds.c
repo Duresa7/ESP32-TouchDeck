@@ -10,6 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "td_console.h"
+#include "test_screen.h"
 
 #define PERF_MAX_SECONDS 60
 #define PERF_TASK_STACK 4096
@@ -186,6 +187,28 @@ static int cmd_backlight(int argc, char **argv)
     return 0;
 }
 
+static int cmd_ui(int argc, char **argv)
+{
+    if (argc != 2 || strcmp(argv[1], "state") != 0) {
+        send_error("ui", "usage: ui state");
+        return 0;
+    }
+    if (!require_display("ui")) {
+        return 0;
+    }
+
+    char buf[TD_REPLY_MAX];
+    td_reply_t r;
+    td_reply_begin(&r, buf, sizeof buf, "ui", true);
+    td_reply_int(&r, "taps", test_screen_taps());
+    td_reply_int(&r, "button_x", TD_TEST_BUTTON_X);
+    td_reply_int(&r, "button_y", TD_TEST_BUTTON_Y);
+    td_reply_int(&r, "button_w", TD_TEST_BUTTON_W);
+    td_reply_int(&r, "button_h", TD_TEST_BUTTON_H);
+    send(&r);
+    return 0;
+}
+
 const esp_console_cmd_t *display_console_commands(size_t *count)
 {
     static const esp_console_cmd_t cmds[] = {
@@ -195,6 +218,8 @@ const esp_console_cmd_t *display_console_commands(size_t *count)
           .hint = "fps <seconds>", .func = cmd_perf },
         { .command = "backlight", .help = "turn the backlight on or off, no argument reports it",
           .hint = "[on|off]", .func = cmd_backlight },
+        { .command = "ui", .help = "report the test screen state, taps counts clicks on its button",
+          .hint = "state", .func = cmd_ui },
     };
     *count = sizeof cmds / sizeof cmds[0];
     return cmds;
