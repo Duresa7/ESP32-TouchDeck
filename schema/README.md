@@ -26,7 +26,7 @@ relative to the script, so the command also works from another directory.
 The command prints one `ok` line for each example, then a summary like this one:
 
 ```text
-2 valid, 36 invalid as expected, 0 problems
+2 valid, 38 invalid as expected, 0 problems
 ```
 
 The final line is the `wall time` in milliseconds. The time includes Node startup,
@@ -59,6 +59,12 @@ and the Rust validator in M2-10, rejects a file that breaks one of these rules.
   are the same name.
 - Every number is a JSON integer, written with no fraction and no exponent.
   `1.0`, `6.2e1`, and `1E0` are invalid even where JSON Schema calls them integers.
+  `-0` is invalid too, because `serde_json` rejects it. An integer is `0`, or an
+  optional minus followed by a nonzero digit and more digits.
+- JSON nests at most 16 levels deep, and a reader reports anything deeper as
+  `file.json`. M2-01 caps cJSON at 16 levels, and a valid layout nests 7 deep.
+  The check runs before any parsing, so a file nested thousands of levels deep
+  is rejected, never a crash.
 - No string contains U+0000 to U+001F or U+007F. That covers every field, including
   command arguments and working directories. The escape `"\u0000"` is invalid.
 
@@ -88,7 +94,8 @@ The upload limit is 32768 bytes of compact UTF-8 JSON. The size of a layout is
 the UTF-8 length of its canonical compact form, which is `JSON.stringify(layout)`
 with no spacing, or the same bytes from `serde_json::to_vec`. Compact JSON has no
 whitespace outside strings. The parsed layout fixes the form, so an escape like
-`F` counts as the one byte it stands for, and a repeated member cannot occur.
+`\u0046` counts as the one byte it stands for. A repeated member never reaches
+the size check, because the validator rejects it first as `json.duplicate-member`.
 Layouts hold no control characters or lone surrogates, so the only escapes the
 canonical form writes are `\"` and `\\`. Exactly 32768 canonical bytes is valid.
 The validator rejects 32769 or more and reports both the actual size and the limit.
@@ -233,9 +240,9 @@ keys. Rules whose key starts with `file.` or `json.` apply to the file's text, a
 | Key | Meaning |
 | --- | --- |
 | `file.utf8` | The file is not well-formed UTF-8. |
-| `file.json` | The file is not valid JSON, which includes a leading byte order mark. |
+| `file.json` | The file is not valid JSON, which includes a leading byte order mark and nesting deeper than 16 levels. |
 | `json.duplicate-member` | An object repeats a member name. |
-| `json.integer-form` | A number has a fraction or an exponent. |
+| `json.integer-form` | A number has a fraction or an exponent, or is `-0`. |
 | `string.malformed-unicode` | A string or member name contains a lone surrogate. |
 | `string.control-character` | A string contains U+0000 to U+001F or U+007F. |
 | `shape.type` | A value has the wrong JSON type, such as a string where an integer belongs. |
@@ -249,7 +256,7 @@ keys. Rules whose key starts with `file.` or `json.` apply to the file's text, a
 | `name.too-long` | `name` has more than 24 code points. |
 | `id.format` | A page ID, tile ID, or page target does not match `^[a-z0-9_]{1,15}$`. |
 | `id.duplicate` | Two pages or tiles share an ID. |
-| `page.kind` | A page `kind` is not `grid` or `dashboard`. |
+| `page.kind` | A page `kind` is missing, or is not `grid` or `dashboard`. |
 | `title.blank` | A page `title` has no character that is not whitespace, which includes being empty. |
 | `title.too-long` | A page `title` has more than 24 code points. |
 | `grid.size` | `rows` or `cols` is outside 1 to 8. |
@@ -261,7 +268,7 @@ keys. Rules whose key starts with `file.` or `json.` apply to the file's text, a
 | `tile.bounds` | A tile extends past its page's rows or columns. |
 | `tile.overlap` | Two tiles on one page occupy the same cell. |
 | `icon.format` | `icon` is not `null`, a known `lv:` name, or `file:` and 16 lowercase hexadecimal digits. |
-| `action.type` | An action `type` is not one of the nine types. |
+| `action.type` | An action `type` is missing, or is not one of the nine types. |
 | `action.page-missing` | A `page` action names a page that does not exist. |
 | `key.usage-range` | A `key` action `usage` is outside 1 to 255. |
 | `key.mods-duplicate` | A `key` action lists a modifier twice. |
@@ -278,8 +285,11 @@ A schema validator that lacks the annotation still rejects the same layouts.
 The message after a key names the place with a JSON Pointer and says what is wrong.
 Structural messages contain the schema keyword in parentheses. Missing or extra
 fields also include the quoted field name. Known page kinds and
-action types report errors from the selected branch. Unknown kinds or types report
-`page.kind` or `action.type`. Ajv is pinned by the lockfile.
+action types report errors from the selected branch only. A field the selected
+branch does not define is reported as `shape.unknown-field` and nothing else, so
+a dashboard page with a `tiles` array never reports errors about those tiles.
+A missing or unknown kind or type reports only `page.kind` or `action.type`, so
+a missing `kind` never reports `shape.missing-field`. Ajv is pinned by the lockfile.
 
 The text checks run first, then the structural checks. The semantic checks run
 only after structural validation succeeds. They report the compact byte limit

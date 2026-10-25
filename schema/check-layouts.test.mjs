@@ -239,6 +239,14 @@ for (const [name, mutate, key] of [
   ['numeric icon', (x) => { x.pages[0].tiles[0].icon = 5; }, 'shape.type'],
   ['dashboard with tiles', (x) => { x.pages[3].tiles = []; }, 'shape.unknown-field'],
   ['dashboard with grid size', (x) => { x.pages[3].rows = 1; }, 'shape.unknown-field'],
+  ['dashboard with invalid tiles', (x) => { x.pages[3].tiles = [{ id: 'x' }]; }, 'shape.unknown-field'],
+  ['grid with empty source', (x) => { x.pages[0].source = ''; }, 'shape.unknown-field'],
+  ['open action with empty launch path', (x) => { x.pages[1].tiles[1].action.path = ''; }, 'shape.unknown-field'],
+  ['missing grid kind', (x) => { delete x.pages[0].kind; }, 'page.kind'],
+  ['missing dashboard kind', (x) => { delete x.pages[3].kind; }, 'page.kind'],
+  ['unknown kind with invalid tiles', (x) => { x.pages[0].kind = 'carousel'; x.pages[0].tiles[0].label = ''; }, 'page.kind'],
+  ['missing action type', (x) => { delete x.pages[0].tiles[0].action.type; }, 'action.type'],
+  ['unknown action type with other fields invalid', (x) => { x.pages[0].tiles[0].action.type = 'macro'; x.pages[0].tiles[0].action.usage = 0; }, 'action.type'],
   ['dashboard without source', (x) => { delete x.pages[3].source; }, 'shape.missing-field'],
   ['empty dashboard source', (x) => { x.pages[3].source = ''; }, 'text.empty'],
   ['nonstring command argument', (x) => { x.pages[1].tiles[2].action.args = [1]; }, 'shape.type'],
@@ -354,6 +362,42 @@ test('rejects integers written with a fraction or an exponent', () => {
   const labelled = JSON.parse(text);
   labelled.pages[0].tiles[0].label = '1.5e3';
   assert.deepEqual(sourceKeys(JSON.stringify(labelled)), []);
+});
+
+test('rejects negative zero as an integer and accepts zero and other negatives as integers', () => {
+  const text = JSON.stringify(dev);
+  assert.ok(text.includes('"row":0,"col":0'));
+  assert.deepEqual(validateSource(Buffer.from(text.replace('"row":0,"col":0', '"row":-0,"col":0'))).map(({ key, message }) => [key, message.split(' ')[0]]), [['json.integer-form', '/pages/0/tiles/0/row']]);
+  assert.deepEqual(validateSource(Buffer.from(text.replace('"row":0,"col":0', '"row":0,"col":-0'))).map(({ key, message }) => [key, message.split(' ')[0]]), [['json.integer-form', '/pages/0/tiles/0/col']]);
+  assert.deepEqual(sourceKeys(text.replace('"row":0,"col":0', '"row":-1,"col":0')), ['tile.position']);
+  assert.deepEqual(sourceKeys(text.replace('"row":0,"col":0', '"row":-10,"col":0')), ['tile.position']);
+});
+
+const nestedName = (levels) => JSON.stringify(dev).replace(/"name":"[^"]*"/, `"name":${'['.repeat(levels)}${']'.repeat(levels)}`);
+
+test('rejects JSON nested deeper than 16 levels as file.json and never throws', () => {
+  const sixteen = validateSource(Buffer.from(nestedName(15)));
+  assert.ok(sixteen.length > 0);
+  assert.ok(!sixteen.some(({ key }) => key === 'file.json'), JSON.stringify(sixteen));
+  for (const levels of [16, 100, 1999, 100000]) {
+    const errors = validateSource(Buffer.from(nestedName(levels)));
+    assert.deepEqual(errors.map(({ key }) => key), ['file.json'], `${levels + 1} levels`);
+    assert.match(errors[0].message, /16 levels/);
+  }
+  assert.deepEqual(validateSource(Buffer.from('['.repeat(17) + ']'.repeat(17))).map(({ key }) => key), ['file.json']);
+  assert.ok(!validateSource(Buffer.from('['.repeat(16) + ']'.repeat(16))).some(({ message }) => /16 levels/.test(message)));
+  assert.deepEqual(sourceKeys(JSON.stringify({ ...dev, name: '[[[[[[[[[[[[[[[[[[[[' })), []);
+});
+
+test('validateLayout never throws on a deeply nested parsed value', () => {
+  let value = 'x';
+  for (let level = 0; level < 100000; level++) value = [value];
+  const layout = copy();
+  layout.name = value;
+  assert.ok(keys(layout).includes('shape.type'));
+  layout.name = 'Deep';
+  layout.pages[0].tiles[0].action = { type: 'none', extra: value };
+  assert.deepEqual(keys(layout), ['shape.unknown-field']);
 });
 
 const textFields = [

@@ -43,17 +43,24 @@ export const ruleKeys = new Set([
 const fail = (key, message) => ({ key, message });
 const escapePointer = (segment) => String(segment).toWellFormed().replaceAll('~', '~0').replaceAll('/', '~1');
 
+const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const selectBranch = (definition, property, value) => definition.oneOf.findIndex((candidate) => candidate.properties[property].const === value[property]);
+const ownsMember = (definition, selected, member) => Object.hasOwn(definition.oneOf[selected]?.properties ?? {}, member);
+
 function matchesDiscriminator(error, layout) {
-  const branch = error.schemaPath.match(/^#\/oneOf(?:\/(\d+))?(?:\/|$)/);
-  const pagePath = error.instancePath.match(/^\/pages\/(\d+)/);
-  if (!branch || !pagePath) return true;
+  const pagePath = error.instancePath.match(/^\/pages\/(\d+)(?:\/([^/]*))?/);
+  if (!pagePath) return true;
   const page = layout.pages[Number(pagePath[1])];
-  const actionPath = error.instancePath.match(/\/tiles\/(\d+)\/action(?:\/|$)/);
+  if (isObject(page) && pagePath[2] !== undefined && !ownsMember(schema.$defs.page, selectBranch(schema.$defs.page, 'kind', page), pagePath[2])) return false;
+  const branch = error.schemaPath.match(/^#\/oneOf(?:\/(\d+))?(?:\/|$)/);
+  const actionPath = error.instancePath.match(/^\/pages\/\d+\/tiles\/(\d+)\/action(?:\/([^/]*)|$)/);
   const definition = actionPath ? schema.$defs.action : schema.$defs.page;
   const property = actionPath ? 'type' : 'kind';
   const value = actionPath ? page.tiles[Number(actionPath[1])].action : page;
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return error.keyword === 'type' && branch[1] === '0';
-  const selected = definition.oneOf.findIndex((candidate) => candidate.properties[property].const === value[property]);
+  if (!isObject(value)) return !branch || (error.keyword === 'type' && branch[1] === '0');
+  const selected = selectBranch(definition, property, value);
+  if (actionPath && actionPath[2] !== undefined && !ownsMember(definition, selected, actionPath[2])) return false;
+  if (!branch) return true;
   if (selected < 0) return error.keyword === 'oneOf';
   return branch[1] !== undefined && Number(branch[1]) === selected;
 }
@@ -70,15 +77,21 @@ function structuralErrors(layout) {
   return [...errors.values()];
 }
 
-function malformedStrings(value, pointer = '', errors = []) {
-  if (typeof value === 'string') {
-    if (!value.isWellFormed()) errors.push(fail('string.malformed-unicode', `${pointer || '/'} is not well-formed Unicode`));
-  } else if (Array.isArray(value)) {
-    value.forEach((item, index) => malformedStrings(item, `${pointer}/${index}`, errors));
-  } else if (value !== null && typeof value === 'object') {
-    for (const [name, item] of Object.entries(value)) {
-      if (!name.isWellFormed()) errors.push(fail('string.malformed-unicode', `${pointer || '/'} has the member name ${JSON.stringify(name)}, which is not well-formed Unicode`));
-      malformedStrings(item, `${pointer}/${escapePointer(name)}`, errors);
+function malformedStrings(root) {
+  const errors = [];
+  const pending = [['', root]];
+  while (pending.length) {
+    const [pointer, value] = pending.pop();
+    if (typeof value === 'string') {
+      if (!value.isWellFormed()) errors.push(fail('string.malformed-unicode', `${pointer || '/'} is not well-formed Unicode`));
+    } else if (Array.isArray(value)) {
+      for (let index = value.length - 1; index >= 0; index--) pending.push([`${pointer}/${index}`, value[index]]);
+    } else if (value !== null && typeof value === 'object') {
+      const members = Object.entries(value);
+      for (const [name] of members) {
+        if (!name.isWellFormed()) errors.push(fail('string.malformed-unicode', `${pointer || '/'} has the member name ${JSON.stringify(name)}, which is not well-formed Unicode`));
+      }
+      for (let index = members.length - 1; index >= 0; index--) pending.push([`${pointer}/${escapePointer(members[index][0])}`, members[index][1]]);
     }
   }
   return errors;
@@ -140,6 +153,22 @@ export function validateLayout(layout) {
 
 const jsonToken = /[ \t\n\r]+|"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|[{}[\]:,]|true|false|null/y;
 
+const integerToken = /^(?:0|-?[1-9]\d*)$/;
+const maxNesting = 16;
+
+function nestsTooDeep(text) {
+  let depth = 0;
+  jsonToken.lastIndex = 0;
+  for (let match; (match = jsonToken.exec(text)); ) {
+    if (match[0] === '{' || match[0] === '[') {
+      if (++depth > maxNesting) return true;
+    } else if (match[0] === '}' || match[0] === ']') {
+      depth--;
+    }
+  }
+  return false;
+}
+
 function scanSource(text) {
   const errors = [];
   const containers = [];
@@ -168,7 +197,7 @@ function scanSource(text) {
         errors.push(fail('json.duplicate-member', `${top.pointer || '/'} repeats the member name ${JSON.stringify(top.member)}`));
       }
       top.members.add(top.member);
-    } else if (/^-?\d/.test(token) && !/^-?\d+$/.test(token)) {
+    } else if (/^-?\d/.test(token) && !integerToken.test(token)) {
       errors.push(fail('json.integer-form', `${valuePointer() || '/'} is written as ${token}; numbers must be JSON integers`));
     }
   }
@@ -182,6 +211,7 @@ export function validateSource(bytes) {
   } catch {
     return [fail('file.utf8', 'file is not well-formed UTF-8')];
   }
+  if (nestsTooDeep(text)) return [fail('file.json', `JSON nests deeper than ${maxNesting} levels`)];
   let layout;
   try {
     layout = JSON.parse(text);
