@@ -33,6 +33,20 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 1.2.1
+  espressif/esp_lcd_touch_gt911:
+    component_hash: 737bdf29e0823eacf041381e81db2aaf5d378f3b5417df7f415f83319e3e790b
+    dependencies:
+    - name: espressif/esp_lcd_touch
+      registry_url: https://components.espressif.com
+      require: public
+      version: ^1.2.0
+    - name: idf
+      require: private
+      version: '>=5.2'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.2.1
   espressif/esp_lv_decoder:
     component_hash: 331d23c304cea5d1aed0ad3cea7774874dbaeebb2217e8db6bf3cc8485ac9f9f
     dependencies:
@@ -244,8 +258,9 @@ dependencies:
       type: service
     version: 9.6.0~1
 direct_dependencies:
+- espressif/esp_lcd_touch_gt911
 - espressif/esp_lvgl_adapter
 - idf
-manifest_hash: ad53a1bbc596ffe173d4dc8b63a1c38627b1b3ac622236e13a4c363dde79ad6c
+manifest_hash: 4e5052244a1d3383172fb29dd67573672c7f90661d1f398ab5f13d30024fea58
 target: esp32s3
 version: 3.0.0
