@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fileId, iconUrls, loadIcon } from './icons.ts';
   import type { Action, Tile } from './validate.ts';
 
   interface Props {
@@ -10,6 +11,12 @@
   }
 
   let { tile, selected, moving, ongrab, onpick }: Props = $props();
+
+  const iconId = $derived(fileId(tile.icon));
+
+  $effect(() => {
+    if (iconId) loadIcon(iconId);
+  });
 
   function summary(action: Action): string {
     switch (action.type) {
@@ -56,7 +63,9 @@
   role="button"
   tabindex="-1"
 >
-  {#if tile.icon}
+  {#if iconId && $iconUrls[iconId]}
+    <img class="glyph" src={$iconUrls[iconId]} alt="" draggable="false" data-testid="tile-glyph" data-id={iconId} />
+  {:else if tile.icon}
     <span class="icon">{tile.icon.replace(/^lv:/, '')}</span>
   {/if}
   <span class="label">{tile.label}</span>
@@ -101,6 +110,13 @@
 
   .tile.moving {
     opacity: 0.45;
+  }
+
+  .glyph {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    pointer-events: none;
   }
 
   .label {
