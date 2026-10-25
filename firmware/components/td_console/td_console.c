@@ -27,7 +27,6 @@
 #define TD_RX_CHUNK 64
 #define TD_RX_QUEUE_BYTES 2048
 #define TD_RX_IDLE_MS 100
-#define TD_RX_FRAME_IDLE_MS 500
 #define TD_TX_DRAIN_MS 250
 
 static const char *TAG = "td_console";
@@ -241,6 +240,11 @@ static void receive_frame(const uint8_t *body, size_t len, void *context)
     }
 }
 
+static uint32_t now_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
 /*
  * The driver's RX interrupt copies each USB packet into a 256-byte ring and
  * discards the whole packet, without a trace, when the ring is full. Printing
@@ -248,27 +252,23 @@ static void receive_frame(const uint8_t *body, size_t len, void *context)
  * keeps it from reading for about 3 ms and a burst of short lines fills that
  * ring. This task outranks the console and drains the ring in reads of up to 64
  * bytes, handing frames to the link and text to s_rx_queue. When the queue is
- * full, td_rx_sync drops the read and
- * the rest of the line it cuts, and the loss is counted and reported instead of
- * hidden. It reads the driver directly because read() on stdin takes one byte
- * per ring operation, which is slower than back-to-back 64-byte packets.
+ * full, td_rx_sync drops the read and the rest of the line it cuts, and the
+ * loss is counted and reported instead of hidden. It reads the driver directly
+ * because read() on stdin takes one byte per ring operation, which is slower
+ * than back-to-back 64-byte packets.
  */
 static void rx_task(void *arg)
 {
     char chunk[TD_RX_CHUNK];
     for (;;) {
-        bool in_frame = s_rx_split.mode != TD_RX_TEXT;
+        uint32_t wait = td_rx_split_expire(&s_rx_split, now_ms(), receive_frame, NULL);
         int n = usb_serial_jtag_read_bytes(chunk, sizeof chunk,
-                                           in_frame ? pdMS_TO_TICKS(TD_RX_FRAME_IDLE_MS) : portMAX_DELAY);
-        if (n == 0 && in_frame) {
-            td_rx_split_idle(&s_rx_split, receive_frame, NULL);
-            continue;
-        }
-        if (n <= 0) {
+                                           wait == TD_RX_NO_DEADLINE ? portMAX_DELAY : pdMS_TO_TICKS(wait));
+        if (n > 0) {
+            td_rx_split(&s_rx_split, now_ms(), chunk, (size_t)n, receive_text, receive_frame, NULL);
+        } else if (n < 0 || wait == TD_RX_NO_DEADLINE) {
             vTaskDelay(pdMS_TO_TICKS(10));
-            continue;
         }
-        td_rx_split(&s_rx_split, chunk, (size_t)n, receive_text, receive_frame, NULL);
     }
 }
 
@@ -346,14 +346,16 @@ static void console_task(void *arg)
     for (;;) {
         report_dropped_input();
         td_console_write(TD_PROMPT, sizeof(TD_PROMPT) - 1);
-        switch (read_line(&rx, line, sizeof line)) {
+        const td_line_status_t status = read_line(&rx, line, sizeof line);
+        switch (status) {
         case TD_LINE_OK:
             run_line(line);
             break;
-        case TD_LINE_TOO_LONG: {
+        case TD_LINE_TOO_LONG:
+        case TD_LINE_CONTROL: {
             char word[TD_WORD_MAX];
             command_word(line, word, sizeof word);
-            emit_error(word, "line too long");
+            emit_error(word, status == TD_LINE_TOO_LONG ? "line too long" : "control character");
             break;
         }
         case TD_LINE_RESTART:
