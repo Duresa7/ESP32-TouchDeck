@@ -17,8 +17,10 @@ test('one spec can be picked by name', () => {
   assert.deepEqual(selectSpecs(files, 'linux', 'notepad'), []);
 });
 
-test('the bundled M2-10 specs are all shared', () => {
+test('the bundled specs are all shared', () => {
   const names = (platform: string) => specsFor(platform).map((file) => file.split(/[\\/]/).pop());
   assert.deepEqual(names('win32'), names('linux'));
-  assert.deepEqual(names('linux'), ['connect.spec.ts', 'console.spec.ts', 'disconnect.spec.ts', 'smoke.spec.ts', 'window.spec.ts']);
+  for (const name of ['connect', 'console', 'disconnect', 'smoke', 'window', 'sources', 'sources-cliproxy', 'sources-install']) {
+    assert.ok(names('linux').includes(`${name}.spec.ts`), name);
+  }
 });
