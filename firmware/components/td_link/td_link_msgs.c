@@ -4,6 +4,7 @@
 #include "esp_app_desc.h"
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
+#include "td_recovery.h"
 
 static void hello(const cJSON *request, cJSON *reply)
 {
@@ -22,7 +23,7 @@ static void hello(const cJSON *request, cJSON *reply)
     cJSON_AddStringToObject(reply, "running", running ? running->label : "unknown");
     const char *sinks[] = { "log" };
     cJSON_AddItemToObject(reply, "sinks", cJSON_CreateStringArray(sinks, 1));
-    cJSON_AddBoolToObject(reply, "recovery", false);
+    cJSON_AddBoolToObject(reply, "recovery", td_recovery_mode());
     cJSON_AddStringToObject(reply, "layout", "builtin");
 }
 

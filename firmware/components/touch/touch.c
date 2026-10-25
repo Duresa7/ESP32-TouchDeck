@@ -305,6 +305,17 @@ static esp_err_t register_pointer_device(void)
     return err;
 }
 
+static void recovery_info(td_recovery_info_t *out)
+{
+    portENTER_CRITICAL(&shared.lock);
+    *out = (td_recovery_info_t){
+        .watcher = td_recovery_state_name(shared.watch.state),
+        .held_ms = shared.watch.held_ms,
+        .armed_count = shared.watch.armed_count,
+    };
+    portEXIT_CRITICAL(&shared.lock);
+}
+
 esp_err_t touch_start(void)
 {
     if (atomic_load(&s.ready)) {
@@ -489,16 +500,6 @@ void touch_set_recovery_cb(touch_recovery_cb_t on_armed)
     atomic_store(&s_recovery_cb, on_armed);
 }
 
-static void recovery_info(td_recovery_info_t *out)
-{
-    portENTER_CRITICAL(&shared.lock);
-    *out = (td_recovery_info_t){
-        .watcher = td_recovery_state_name(shared.watch.state),
-        .held_ms = shared.watch.held_ms,
-        .armed_count = shared.watch.armed_count,
-    };
-    portEXIT_CRITICAL(&shared.lock);
-}
 
 void touch_set_log(bool on)
 {

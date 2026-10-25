@@ -5,11 +5,16 @@
 #include "display.h"
 #include "esp_log.h"
 #include "lvgl.h"
+#include "td_recovery.h"
+#include "touch.h"
 #include "ui_pager.h"
 #include "ui_theme.h"
 #include "ui_tile_keys.h"
 
 static const char *TAG = "ui";
+
+#define RECOVERY_BAND_COLOR UI_RGB565(176, 32, 32)
+#define RECOVERY_CAPTION_COLOR UI_RGB565(255, 176, 64)
 
 static const ui_pager_cfg_t k_pager_cfg = { .page_w = TD_LCD_H_RES, .slop = 16, .swipe = 96 };
 
@@ -235,6 +240,35 @@ static void on_release(lv_event_t *e)
     ESP_LOGI(TAG, "click taps=%u tile=%s", taps, tile_of(tile_obj)->id);
 }
 
+/* The 10-second hold armed. The band covers the screen on the top layer, above whichever page shows, and stays until
+ * the deck restarts. It takes no input. Runs in the LVGL read callback, so the adapter lock is held. */
+static void on_recovery_armed(void)
+{
+    lv_obj_t *band = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(band);
+    lv_obj_set_clickable(band, false);
+    lv_obj_set_scrollable(band, false);
+    lv_obj_set_pos(band, 0, 0);
+    lv_obj_set_size(band, TD_LCD_H_RES, TD_LCD_V_RES);
+    lv_obj_set_style_bg_color(band, ui_color(RECOVERY_BAND_COLOR), 0);
+    lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
+
+    lv_obj_t *label = lv_label_create(band);
+    lv_label_set_text_static(label, "Release to reset");
+    lv_obj_set_style_text_font(label, ui_theme.font_tile, 0);
+    lv_obj_set_style_text_color(label, ui_color(ui_theme.color.text), 0);
+    lv_obj_center(label);
+}
+
+static void build_recovery_caption(lv_obj_t *screen)
+{
+    lv_obj_t *caption = lv_label_create(screen);
+    lv_label_set_text_static(caption, "Recovery");
+    lv_obj_add_style(caption, &ui_styles()->title, 0);
+    lv_obj_set_style_text_color(caption, ui_color(RECOVERY_CAPTION_COLOR), 0);
+    lv_obj_align(caption, LV_ALIGN_TOP_RIGHT, -ui_theme.title_x, ui_theme.title_y);
+}
+
 static void build_stacked_label(lv_obj_t *obj, lv_obj_t *label, const char *glyph, int32_t tile_w)
 {
     const ui_styles_t *st = ui_styles();
@@ -371,6 +405,10 @@ void ui_build(void)
     lv_label_set_text_static(s.title, s.pages[0].title);
     lv_obj_add_style(s.title, &ui_styles()->title, 0);
     lv_obj_set_pos(s.title, ui_theme.title_x, ui_theme.title_y);
+    if (td_recovery_mode()) {
+        build_recovery_caption(screen);
+    }
+    touch_set_recovery_cb(on_recovery_armed);
 
     build_dots(screen);
     show_page(0);
