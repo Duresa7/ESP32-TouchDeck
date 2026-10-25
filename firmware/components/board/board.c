@@ -2,9 +2,9 @@
 #include "board_pins.h"
 #include "ch422g.h"
 #include "driver/gpio.h"
+#include <sys/lock.h>
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 #define I2C_XFER_TIMEOUT_MS 50
@@ -118,31 +118,16 @@ static esp_err_t bring_up(void)
     return ESP_OK;
 }
 
-/* Created on first use. The critical section keeps two first callers from creating it twice. */
-static SemaphoreHandle_t init_lock(void)
-{
-    static StaticSemaphore_t storage;
-    static SemaphoreHandle_t lock;
-    static portMUX_TYPE guard = portMUX_INITIALIZER_UNLOCKED;
-
-    portENTER_CRITICAL(&guard);
-    if (lock == NULL) {
-        lock = xSemaphoreCreateMutexStatic(&storage);
-    }
-    portEXIT_CRITICAL(&guard);
-    return lock;
-}
-
 esp_err_t board_init(void)
 {
-    SemaphoreHandle_t lock = init_lock();
-    xSemaphoreTake(lock, portMAX_DELAY);
+    static _lock_t lock;
+    _lock_acquire(&lock);
     if (!s_board.done) {
         s_board.result = bring_up();
         s_board.done = true;
     }
-    esp_err_t result = s_board.result;
-    xSemaphoreGive(lock);
+    const esp_err_t result = s_board.result;
+    _lock_release(&lock);
     return result;
 }
 
