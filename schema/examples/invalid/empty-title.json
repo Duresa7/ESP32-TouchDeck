@@ -1,0 +1,27 @@
+{"name": "expected: /pages/0/title must NOT have fewer than 1 characters (minLength)",
+  "schema": 1,
+  "orientation": "landscape",
+  "pages": [
+    {
+      "id": "main",
+      "title": "",
+      "kind": "grid",
+      "rows": 1,
+      "cols": 1,
+      "tiles": [
+        {
+          "id": "tile",
+          "label": "Tile",
+          "row": 0,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "none"
+          }
+        }
+      ]
+    }
+  ]
+}

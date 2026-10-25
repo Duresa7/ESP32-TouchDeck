@@ -73,16 +73,43 @@ test('dev exercises every action, both spanning directions, and all requested wi
   assert.ok(tiles.some((tile) => tile.colSpan > 1));
   assert.ok(actions.some((action) => action.type === 'key' && action.mods.length > 0));
   assert.ok(actions.some((action) => action.type === 'page' && action.page === dev.pages[3].id));
-  assert.equal(actions.filter((action) => action.type === 'widget' && action.source === 'claude-status').length, 2);
+  assert.equal(actions.filter((action) => action.type === 'widget' && action.source === 'claude-status').length, 3);
   assert.equal(actions.filter((action) => action.type === 'widget' && action.source === 'cliproxyapi').length, 1);
   assert.deepEqual(actions.find((action) => action.type === 'command'), { type: 'command', program: 'cmd', args: ['/c', 'echo', 'TouchDeck'], cwd: '', shell: false });
+});
+
+test('dev preserves the ids and roles used by later milestone lanes', () => {
+  const tiles = new Map(dev.pages.flatMap((page) => (page.tiles ?? []).map((tile) => [tile.id, { page: page.id, action: tile.action }])));
+  for (const id of ['f5', 'shift', 'chord', 'launch', 'command', 'open', 'context', 'cost', 'model', 'proxy']) {
+    assert.ok(tiles.has(id), `missing fixture tile ${id}`);
+  }
+  assert.deepEqual(tiles.get('f5').action, { type: 'key', usage: 62, mods: [] });
+  assert.deepEqual(tiles.get('shift').action, { type: 'mod', mod: 'shift' });
+  assert.equal(tiles.get('f5').page, tiles.get('shift').page);
+  assert.equal(tiles.get('chord').action.type, 'key');
+  assert.deepEqual(new Set(tiles.get('chord').action.mods), new Set(['ctrl', 'shift']));
+  assert.equal(tiles.get('launch').action.type, 'launch');
+  assert.equal(tiles.get('open').action.type, 'open');
+  assert.deepEqual(tiles.get('command').action, { type: 'command', program: 'cmd', args: ['/c', 'echo', 'TouchDeck'], cwd: '', shell: false });
+  for (const [id, source, field] of [
+    ['context', 'claude-status', 'context_pct'],
+    ['cost', 'claude-status', 'cost_usd'],
+    ['model', 'claude-status', 'model'],
+    ['proxy', 'cliproxyapi', 'status'],
+  ]) {
+    const action = tiles.get(id).action;
+    assert.deepEqual([action.type, action.source, action.field], ['widget', source, field]);
+  }
+  const accounts = dev.pages.find((page) => page.id === 'accounts');
+  assert.deepEqual(accounts, { id: 'accounts', title: 'Accounts', kind: 'dashboard', source: 'cliproxyapi' });
+  assert.ok([...tiles.values()].some(({ action }) => action.type === 'page' && action.page === 'accounts'));
 });
 
 test('overlap names both tiles once even when multiple cells overlap', () => {
   const layout = copy();
   const [first, second] = layout.pages[0].tiles;
   Object.assign(second, { row: first.row, col: first.col, colSpan: first.colSpan });
-  assert.deepEqual(validateLayout(layout), ['page "shortcuts" tiles "chord" and "arm_shift" overlap']);
+  assert.deepEqual(validateLayout(layout), ['page "shortcuts" tiles "chord" and "shift" overlap']);
 });
 
 test('overlap reports every pair when three tiles share a cell', () => {
@@ -91,9 +118,9 @@ test('overlap reports every pair when three tiles share a cell', () => {
   Object.assign(second, { row: first.row, col: first.col });
   Object.assign(third, { row: first.row, col: first.col });
   assert.deepEqual(validateLayout(layout), [
-    'page "shortcuts" tiles "chord" and "arm_shift" overlap',
+    'page "shortcuts" tiles "chord" and "shift" overlap',
     'page "shortcuts" tiles "chord" and "quiet" overlap',
-    'page "shortcuts" tiles "arm_shift" and "quiet" overlap',
+    'page "shortcuts" tiles "shift" and "quiet" overlap',
   ]);
 });
 
@@ -136,8 +163,13 @@ for (const [name, mutate, message] of [
   ['nine pages', (x) => { x.pages = Array.from({ length: 9 }, (_, n) => ({ id: `p_${n}`, title: 'Page', kind: 'grid', rows: 1, cols: 1, tiles: [] })); }, '(maxItems)'],
   ['invalid id', (x) => { x.pages[0].id = 'Upper-Case'; }, '(pattern)'],
   ['16-character id', (x) => { x.pages[0].tiles[0].id = 'a'.repeat(16); }, '(pattern)'],
+  ['empty grid title', (x) => { x.pages[0].title = ''; }, '(minLength)'],
+  ['empty dashboard title', (x) => { x.pages[3].title = ''; }, '(minLength)'],
+  ['empty tile label', (x) => { x.pages[0].tiles[0].label = ''; }, '(minLength)'],
   ['17-character label', (x) => { x.pages[0].tiles[0].label = 'a'.repeat(17); }, '(maxLength)'],
+  ['17-code-point label', (x) => { x.pages[0].tiles[0].label = '😀'.repeat(17); }, '(maxLength)'],
   ['25-character title', (x) => { x.pages[0].title = 'a'.repeat(25); }, '(maxLength)'],
+  ['25-code-point title', (x) => { x.pages[0].title = '😀'.repeat(25); }, '(maxLength)'],
   ['zero rows', (x) => { x.pages[0].rows = 0; }, '(minimum)'],
   ['nine cols', (x) => { x.pages[0].cols = 9; }, '(maximum)'],
   ['fractional coordinate', (x) => { x.pages[0].tiles[0].row = 0.5; }, '(type)'],
@@ -206,8 +238,45 @@ for (const layout of [null, [], 'layout', {}, { ...dev, pages: [null] }, { ...de
 test('default checker reports each fixture and the exact acceptance summary', () => {
   const lines = [];
   assert.equal(checkLayouts([], (line) => lines.push(line)), 0);
-  assert.equal(lines.filter((line) => line.startsWith('ok ')).length, 11);
-  assert.equal(lines.at(-1), '2 valid, 9 invalid as expected, 0 problems');
+  assert.equal(lines.filter((line) => line.startsWith('ok ')).length, 14);
+  assert.equal(lines.at(-1), '2 valid, 12 invalid as expected, 0 problems');
+});
+
+test('compact UTF-8 JSON accepts exactly 32768 bytes and rejects 32769 bytes', () => {
+  const layout = copy();
+  layout.name = '😀 "\n';
+  const initialBytes = Buffer.byteLength(JSON.stringify(layout), 'utf8');
+  layout.name += 'x'.repeat(32768 - initialBytes);
+  assert.equal(Buffer.byteLength(JSON.stringify(layout), 'utf8'), 32768);
+  assert.ok(JSON.stringify(layout).length < 32768);
+  assert.deepEqual(validateLayout(layout), []);
+  layout.name += 'x';
+  assert.equal(Buffer.byteLength(JSON.stringify(layout), 'utf8'), 32769);
+  assert.deepEqual(validateLayout(layout), ['layout compact UTF-8 JSON is 32769 bytes; maximum is 32768 bytes']);
+});
+
+test('CLI ignores formatting whitespace and counts whitespace inside strings', () => {
+  const temporary = mkdtempSync(join(tmpdir(), 'touchdeck-size-'));
+  const path = join(temporary, 'boundary.json');
+  const layout = copy();
+  layout.name = ' ';
+  layout.name += ' '.repeat(32768 - Buffer.byteLength(JSON.stringify(layout), 'utf8'));
+  const run = () => spawnSync(process.execPath, [resolve(directory, 'check-layouts.mjs'), path], { encoding: 'utf8' });
+  try {
+    const source = JSON.stringify(layout, null, 2) + '\n';
+    assert.ok(Buffer.byteLength(source, 'utf8') > 32768);
+    writeFileSync(path, source);
+    let result = run();
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /3 valid, 12 invalid as expected, 0 problems/);
+    layout.name += ' ';
+    writeFileSync(path, JSON.stringify(layout));
+    result = run();
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /layout compact UTF-8 JSON is 32769 bytes; maximum is 32768 bytes/);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
 });
 
 test('CLI checks extra paths, rejects JSON and file errors, and runs from another directory', () => {
@@ -218,7 +287,7 @@ test('CLI checks extra paths, rejects JSON and file errors, and runs from anothe
     writeFileSync(good, JSON.stringify(dev));
     let result = run(good);
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /3 valid, 9 invalid as expected, 0 problems/);
+    assert.match(result.stdout, /3 valid, 12 invalid as expected, 0 problems/);
     assert.match(result.stdout, /wall time: \d+\.\d+ ms/);
     const bad = join(temporary, 'bad.json');
     writeFileSync(bad, readFileSync(join(directory, 'examples/invalid/overlap.json')));
