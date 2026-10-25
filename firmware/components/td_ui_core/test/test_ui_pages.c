@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "unity.h"
+#include "td_layout.h"
 #include "ui_pages.h"
 
 #define GAP 16
@@ -28,10 +29,19 @@ static const char *const k_fkeys_labels[] = {
 static const char *const k_media_ids[] = { "prev", "playpause", "next", "mute", "voldown", "volup" };
 static const char *const k_media_labels[] = { "Prev", "Play/Pause", "Next", "Mute", "Vol -", "Vol +" };
 
+/* The built-in pages, as td_layout parses them from the embedded builtin.json. */
+static const ui_page_t *builtin_pages(size_t *count)
+{
+    const td_layout_t *layout = td_layout_builtin();
+    TEST_ASSERT_NOT_NULL(layout);
+    *count = layout->page_count;
+    return layout->pages;
+}
+
 static const ui_page_t *builtin_page(size_t index)
 {
     size_t count = 0;
-    const ui_page_t *pages = ui_builtin_pages(&count);
+    const ui_page_t *pages = builtin_pages(&count);
     TEST_ASSERT_TRUE(index < count);
     return &pages[index];
 }
@@ -178,10 +188,10 @@ static void expect_empty_rect(const char *why, const ui_page_t *page, const ui_t
     TEST_ASSERT_EQUAL_INT16_MESSAGE(0, r.h, why);
 }
 
-TEST_CASE("the built-in table holds the F-Keys page then the Media page", "[ui_pages]")
+TEST_CASE("the built-in layout holds the F-Keys page then the Media page", "[ui_pages]")
 {
     size_t count = 0;
-    const ui_page_t *pages = ui_builtin_pages(&count);
+    const ui_page_t *pages = builtin_pages(&count);
     TEST_ASSERT_NOT_NULL(pages);
     TEST_ASSERT_EQUAL_UINT32(2, count);
 
@@ -195,23 +205,23 @@ TEST_CASE("the built-in table holds the F-Keys page then the Media page", "[ui_p
     TEST_ASSERT_EQUAL_UINT8(3, pages[1].cols);
 
     size_t again = 0;
-    TEST_ASSERT_EQUAL_PTR_MESSAGE(pages, ui_builtin_pages(&again), "the table must be the same one every call");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(pages, builtin_pages(&again), "the layout must be the same one every call");
     TEST_ASSERT_EQUAL_UINT32(2, again);
 }
 
 TEST_CASE("every built-in page passes ui_page_valid", "[ui_pages]")
 {
     size_t count = 0;
-    const ui_page_t *pages = ui_builtin_pages(&count);
+    const ui_page_t *pages = builtin_pages(&count);
     for (size_t i = 0; i < count; i++) {
         TEST_ASSERT_TRUE_MESSAGE(ui_page_valid(&pages[i]), pages[i].id);
     }
 }
 
-TEST_CASE("page ids and tile ids are non-empty lowercase ASCII and unique across the table", "[ui_pages]")
+TEST_CASE("page ids and tile ids are non-empty lowercase ASCII and unique across the layout", "[ui_pages]")
 {
     size_t count = 0;
-    const ui_page_t *pages = ui_builtin_pages(&count);
+    const ui_page_t *pages = builtin_pages(&count);
 
     const char *ids[MAX_IDS];
     size_t n = 0;
