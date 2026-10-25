@@ -1,0 +1,68 @@
+{
+  "files": [
+    {
+      "id": "claude-ada@example.com.json",
+      "auth_index": "a1",
+      "name": "claude-ada@example.com.json",
+      "type": "claude",
+      "provider": "claude",
+      "label": "ada@example.com",
+      "email": "ada@example.com",
+      "status": "active",
+      "disabled": false,
+      "unavailable": false,
+      "runtime_only": false,
+      "source": "file",
+      "size": 1204,
+      "success": 120,
+      "failed": 3,
+      "recent_requests": [
+        { "time": "11:40-11:50", "success": 9, "failed": 0 },
+        { "time": "11:50-12:00", "success": 4, "failed": 1 }
+      ]
+    },
+    {
+      "id": "codex-grace@example.com.json",
+      "auth_index": "b2",
+      "name": "codex-grace@example.com.json",
+      "type": "codex",
+      "provider": "codex",
+      "label": "grace@example.com",
+      "email": "grace@example.com",
+      "status": "active",
+      "disabled": false,
+      "unavailable": false,
+      "runtime_only": false,
+      "source": "file",
+      "size": 988,
+      "success": 80,
+      "failed": 0,
+      "recent_requests": [
+        { "time": "11:40-11:50", "success": 2, "failed": 0 },
+        { "time": "11:50-12:00", "success": 10, "failed": 2 }
+      ]
+    },
+    {
+      "id": "gemini-linus@example.com.json",
+      "auth_index": "c3",
+      "name": "gemini-linus@example.com.json",
+      "type": "gemini",
+      "provider": "gemini",
+      "label": "linus@example.com",
+      "email": "linus@example.com",
+      "status": "error",
+      "status_message": "token refresh failed",
+      "disabled": false,
+      "unavailable": true,
+      "runtime_only": false,
+      "source": "file",
+      "size": 1310,
+      "success": 5,
+      "failed": 9,
+      "recent_requests": [
+        { "time": "11:40-11:50", "success": 0, "failed": 3 },
+        { "time": "11:50-12:00", "success": 0, "failed": 0 }
+      ]
+    }
+  ]
+}
