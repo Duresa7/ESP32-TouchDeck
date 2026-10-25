@@ -30,7 +30,9 @@ static void ping(const cJSON *request, cJSON *reply)
 {
     const cJSON *n = cJSON_GetObjectItemCaseSensitive(request, "n");
     cJSON_AddNumberToObject(reply, "t", esp_timer_get_time() / 1000);
-    cJSON_AddItemToObject(reply, "n", n ? cJSON_Duplicate(n, true) : cJSON_CreateNull());
+    if (cJSON_IsNumber(n) || cJSON_IsString(n) || cJSON_IsBool(n) || cJSON_IsNull(n)) {
+        cJSON_AddItemToObject(reply, "n", cJSON_Duplicate(n, false));
+    }
 }
 
 static void state(const cJSON *request, cJSON *reply)
@@ -54,6 +56,22 @@ static const struct {
     { "link.state", state },
 };
 
+#define ECHO_CHARS_MAX 64
+
+static void echo_name(const char *name, char out[4 * ECHO_CHARS_MAX + 1])
+{
+    size_t len = 0;
+    size_t chars = 0;
+    while (name[len] && len < 4 * ECHO_CHARS_MAX) {
+        if (((unsigned char)name[len] & 0xc0) != 0x80 && chars++ == ECHO_CHARS_MAX) {
+            break;
+        }
+        len++;
+    }
+    memcpy(out, name, len);
+    out[len] = '\0';
+}
+
 cJSON *td_link_dispatch(const cJSON *request)
 {
     const cJSON *message = cJSON_GetObjectItemCaseSensitive(request, "m");
@@ -64,7 +82,9 @@ cJSON *td_link_dispatch(const cJSON *request)
     if (!reply) {
         return NULL;
     }
-    cJSON_AddStringToObject(reply, "m", message->valuestring);
+    char name[4 * ECHO_CHARS_MAX + 1];
+    echo_name(message->valuestring, name);
+    cJSON_AddStringToObject(reply, "m", name);
     for (size_t i = 0; i < sizeof s_messages / sizeof s_messages[0]; i++) {
         if (strcmp(message->valuestring, s_messages[i].name) == 0) {
             cJSON_AddBoolToObject(reply, "ok", true);

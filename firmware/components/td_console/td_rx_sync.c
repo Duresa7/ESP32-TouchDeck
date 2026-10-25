@@ -47,52 +47,71 @@ size_t td_rx_sync(td_rx_sync_t *s, char *buf, size_t n, size_t space, size_t *dr
     return 1;
 }
 
-/* Any other body lost bytes, so its closing delimiter is most likely the opener of the host's next frame. */
-static bool frame_complete(const td_rx_split_t *s)
+#define FRAME_VERSION 0x01
+
+static void end_frame(td_rx_split_t *s, td_rx_frame_fn frame, void *context)
 {
-    return s->mode == TD_RX_FRAME && s->frame_len >= 8
-        && s->frame_len == 8 + (s->frame[4] | ((size_t)s->frame[5] << 8));
+    if (s->mode == TD_RX_FRAME) {
+        frame(s->frame, s->frame_len, context);
+    } else if (s->mode == TD_RX_ESCAPE || s->mode == TD_RX_FRAME_DISCARD) {
+        frame(NULL, 0, context);
+    }
 }
 
-void td_rx_split(td_rx_split_t *s, char *buf, size_t n,
+static void store(td_rx_split_t *s, uint8_t c)
+{
+    if (s->frame_len == sizeof s->frame) {
+        s->mode = TD_RX_FRAME_DISCARD;
+    } else {
+        s->frame[s->frame_len++] = c;
+        s->mode = TD_RX_FRAME;
+    }
+}
+
+uint32_t td_rx_split_expire(td_rx_split_t *s, uint32_t now_ms, td_rx_frame_fn frame, void *context)
+{
+    if (s->mode == TD_RX_TEXT) {
+        return TD_RX_NO_DEADLINE;
+    }
+    uint32_t age = now_ms - s->opened_ms;
+    if (age < TD_RX_FRAME_DEADLINE_MS) {
+        return TD_RX_FRAME_DEADLINE_MS - age;
+    }
+    end_frame(s, frame, context);
+    s->mode = TD_RX_TEXT;
+    return TD_RX_NO_DEADLINE;
+}
+
+void td_rx_split(td_rx_split_t *s, uint32_t now_ms, char *buf, size_t n,
                  td_rx_text_fn text, td_rx_frame_fn frame, void *context)
 {
+    td_rx_split_expire(s, now_ms, frame, context);
     size_t text_len = 0;
     for (size_t i = 0; i < n; i++) {
         uint8_t c = (uint8_t)buf[i];
         if (c == 0xc0) {
-            if (s->mode == TD_RX_TEXT) {
-                if (text_len) {
-                    text(buf, text_len, context);
-                    text_len = 0;
-                }
-            } else if (frame_complete(s)) {
-                frame(s->frame, s->frame_len, context);
-                s->mode = TD_RX_TEXT;
-                continue;
-            } else if (s->frame_len || s->mode != TD_RX_FRAME) {
-                frame(NULL, 0, context);
+            if (text_len) {
+                text(buf, text_len, context);
+                text_len = 0;
             }
-            s->mode = TD_RX_FRAME;
+            end_frame(s, frame, context);
+            s->mode = TD_RX_OPEN;
+            s->opened_ms = now_ms;
             s->frame_len = 0;
-        } else if (s->mode == TD_RX_TEXT) {
+        } else if (s->mode == TD_RX_TEXT || (s->mode == TD_RX_OPEN && c != FRAME_VERSION)) {
+            s->mode = TD_RX_TEXT;
             buf[text_len++] = (char)c;
-        } else if (s->mode != TD_RX_FRAME_DISCARD) {
-            if (s->mode == TD_RX_ESCAPE) {
-                if (c != 0xdc && c != 0xdd) {
-                    s->mode = TD_RX_FRAME_DISCARD;
-                    continue;
-                }
-                c = c == 0xdc ? 0xc0 : 0xdb;
-                s->mode = TD_RX_FRAME;
-            } else if (c == 0xdb) {
-                s->mode = TD_RX_ESCAPE;
-                continue;
-            }
-            if (s->frame_len == sizeof s->frame) {
-                s->mode = TD_RX_FRAME_DISCARD;
+        } else if (s->mode == TD_RX_ESCAPE) {
+            if (c == 0xdc || c == 0xdd) {
+                store(s, c == 0xdc ? 0xc0 : 0xdb);
             } else {
-                s->frame[s->frame_len++] = c;
+                s->mode = TD_RX_FRAME_DISCARD;
+            }
+        } else if (s->mode != TD_RX_FRAME_DISCARD) {
+            if (c == 0xdb) {
+                s->mode = TD_RX_ESCAPE;
+            } else {
+                store(s, c);
             }
         }
     }
@@ -101,12 +120,14 @@ void td_rx_split(td_rx_split_t *s, char *buf, size_t n,
     }
 }
 
-void td_rx_split_idle(td_rx_split_t *s, td_rx_frame_fn frame, void *context)
+static bool has_control(const char *line, size_t len)
 {
-    if (s->mode != TD_RX_TEXT && (s->frame_len || s->mode != TD_RX_FRAME)) {
-        frame(NULL, 0, context);
+    for (size_t i = 0; i < len; i++) {
+        if ((unsigned char)line[i] < 0x20 && line[i] != '\t') {
+            return true;
+        }
     }
-    s->mode = TD_RX_TEXT;
+    return false;
 }
 
 td_line_status_t td_line_feed(td_line_t *s, int c, bool dropped,
@@ -127,7 +148,8 @@ td_line_status_t td_line_feed(td_line_t *s, int c, bool dropped,
         memcpy(echo, "\r\n", 2);
         *echo_len = 2;
         line[s->len] = '\0';
-        td_line_status_t status = s->too_long ? TD_LINE_TOO_LONG : TD_LINE_OK;
+        td_line_status_t status = s->too_long ? TD_LINE_TOO_LONG
+                                : has_control(line, s->len) ? TD_LINE_CONTROL : TD_LINE_OK;
         *s = (td_line_t){0};
         return status;
     }
