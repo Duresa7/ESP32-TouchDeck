@@ -22,6 +22,7 @@ static struct {
     lv_obj_t *title;
     lv_obj_t *dots[UI_PAGES_MAX];
     lv_obj_t *pressed_obj;
+    uint8_t title_page;
     bool caught;
     bool click_ok;
     bool slide_changes_page;
@@ -43,15 +44,28 @@ static const ui_tile_t *tile_of(lv_obj_t *obj)
     return lv_obj_get_user_data(obj);
 }
 
+/* The title belongs to whichever page is nearer the middle of the screen, so it changes halfway through a slide
+ * instead of naming the new page over the old one. */
+static void sync_title(int32_t track_x)
+{
+    int32_t nearest = (TD_LCD_H_RES / 2 - track_x) / TD_LCD_H_RES;
+    nearest = track_x > 0 ? 0 : nearest;
+    nearest = nearest >= s.page_count ? s.page_count - 1 : nearest;
+    if (nearest != s.title_page) {
+        s.title_page = (uint8_t)nearest;
+        lv_label_set_text_static(s.title, s.pages[nearest].title);
+    }
+}
+
 static void set_track_x(void *track, int32_t x)
 {
     lv_obj_set_x(track, x);
+    sync_title(x);
 }
 
 static void show_page(uint8_t index)
 {
     atomic_store(&s.page, index);
-    lv_label_set_text_static(s.title, s.pages[index].title);
     for (uint8_t i = 0; i < s.page_count; i++) {
         if (i == index) {
             lv_obj_add_state(s.dots[i], LV_STATE_CHECKED);
@@ -138,7 +152,7 @@ static void finish_slide(void)
         return;
     }
     lv_anim_delete(s.track, set_track_x);
-    lv_obj_set_x(s.track, ui_pager_rest_x(&s.pager));
+    set_track_x(s.track, ui_pager_rest_x(&s.pager));
     slide_done(true);
 }
 
@@ -308,6 +322,7 @@ void ui_build(void)
     }
 
     s.title = lv_label_create(screen);
+    lv_label_set_text_static(s.title, s.pages[0].title);
     lv_obj_add_style(s.title, &ui_styles()->title, 0);
     lv_obj_set_pos(s.title, ui_theme.title_x, ui_theme.title_y);
     lv_obj_set_clickable(s.title, false);
