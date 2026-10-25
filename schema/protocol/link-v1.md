@@ -6,9 +6,9 @@ VID `303a` and PID `1001`. Opening the port does not reset it.
 
 ## Frame layout
 
-A frame begins and ends with `0xC0`. Each frame has both delimiters, including
-when two frames are adjacent. An extra `0xC0` before a frame is ignored. Within
-the body, `0xC0` becomes `0xDB 0xDC` and
+A frame begins and ends with `0xC0`. An encoder writes both delimiters on every
+frame, including when two frames are adjacent. Within the body, `0xC0` becomes
+`0xDB 0xDC` and
 `0xDB` becomes `0xDB 0xDD`. No other escape is valid. `0xC0` is not a valid UTF-8
 byte, so the receiver recognizes frames without a text-mode command. A literal
 `0xDB` outside a frame remains text.
@@ -28,22 +28,58 @@ The decoded body has these fields in order.
 CRC-16/CCITT-FALSE uses polynomial `0x1021`, initial value `0xFFFF`, no
 reflection, and no final XOR. Its check value for ASCII `123456789` is `0x29B1`.
 
-A maximum decoded body is 1032 bytes. The receiver unescapes incrementally into
-a 1100-byte buffer. The encoder reserves up to 2066 wire bytes, including both
-delimiters, so a payload made entirely of `0xC0` and `0xDB` fits.
+A maximum decoded body is 1032 bytes. A receiver unescapes incrementally into a
+decoded buffer of at least 1032 bytes, and the deck's holds 1100. An encoder
+reserves 2066 wire bytes, twice the maximum body plus both delimiters. The
+largest frame a valid header produces is 2061 bytes, a 1024-byte payload whose
+`seq`, payload, and CRC bytes all need escapes, because `ver`, `type`, `flags`,
+and a `len` of 1024 never do.
 
-A delimiter ends a frame only when the decoded body's size equals `len` plus 8.
-The stream then returns to text. A complete body with a bad CRC, an unsupported
-version, or an invalid header increments `crc_errors` and gets no reply. After
-a body of any other size, a bad escape, or more than 1100 decoded bytes, the
-delimiter ends nothing. The receiver drops those bytes, increments
-`crc_errors`, and takes the delimiter as the opening of the next frame. A frame
-cut short by the host therefore costs one error, and the host's next frame
-resynchronises the stream without reaching the console as text. When 500 ms pass
-inside a frame with no byte from the host, the receiver drops the partial frame
-the same way and returns to text, so a host writes each frame without pausing.
-A host decoder applies the same rule. It may return dropped bytes to its text
-stream, because nothing on the host runs them.
+## Receiving
+
+The deck applies these rules to the bytes it reads. A host decoder applies them
+too, plus the host rules below.
+
+1. After a delimiter, the next byte decides. `0x01`, the only valid `ver`,
+   starts a frame body. Another `0xC0` changes nothing, so a run of delimiters
+   is harmless. Any other byte means no frame opened, and that byte goes to the
+   text path.
+2. A frame closes only when its body fully decodes. A delimiter ends the body in
+   progress and hands it to the decoder. A body that fails to decode, whatever
+   its length, increments `crc_errors` and gets no reply. So does a body with a
+   bad escape or more than 1100 decoded bytes.
+3. The delimiter that ends a body, decoded or not, also opens the next frame. A
+   closed frame followed at once by `0x01` therefore opens the next frame, as if
+   a delimiter came between, and a lost closing delimiter costs one frame at
+   most. Text right after a closed frame, or after a body that failed to
+   decode, reaches the console at once, because its first byte is not `0x01`.
+4. The frame deadline runs from the opening delimiter. A frame still open
+   500 ms after its opener goes back to text, however much text arrives
+   meanwhile, and increments `crc_errors` if it held a byte. The deck's read
+   timeout is the time left before that deadline. A host writes each frame
+   without pausing.
+5. The console refuses a text line that holds a control byte other than tab,
+   CR, LF, backspace, or DEL. It answers `ok:false` with
+   `error:"control character"` and runs nothing. The console's existing NUL
+   mapping stays, so a NUL from the host becomes `?` before this check.
+
+`crc_errors` counts every body these rules drop: a bad CRC, an invalid header,
+a wrong length, a bad escape, an overflow, and a deadline. A body whose first
+byte is not `0x01` is text and counts nothing.
+
+A host decoder also returns to text as soon as 6 decoded bytes are in and the
+header is invalid, meaning a `type` outside 1 to 3, `flags` outside 0 to 2, an
+event with a nonzero `seq`, a `len` over 1024, a chunk under 3 bytes, or an ack
+that is not 3 bytes. It does the same when the decoded size passes `len` plus 8,
+and on a bad escape. It gives the raw bytes of every dropped body back to its
+text stream, because nothing on the host runs them. An idle flush returns a held
+frame's bytes to text 500 ms after its opener, so no console reply waits behind
+a dead frame. Each counts one error, as rule 2 does on the deck.
+
+A host that stalls past the deadline inside a frame loses that frame, and the
+rest of its bytes reach the console as text. Rule 5 refuses a line that holds a
+header or CRC byte below `0x20`. A chunk whose data holds a whole printable line
+after the stall point, such as `\nreboot\n`, would still run that line.
 
 Only flags 0, 1, and 2 are valid. An event has `seq` 0. Requests may use any u8
 sequence, though clients normally cycle through 1 to 255. A client keeps a
@@ -77,17 +113,22 @@ since boot. Counters reset at boot.
 | Request | Successful response fields |
 |---|---|
 | `{"m":"hello"}` | `product:"touchdeck"`, `proto:1`, `elf_sha256`, `version`, `running`, `sinks:["log"]`, `recovery:false`, `layout:"builtin"` |
-| `{"m":"ping","n":N}` | `t` and `n`, with the supplied `n` echoed |
+| `{"m":"ping","n":N}` | `t`, and `n` echoed when it is a number, string, Boolean, or null |
 | `{"m":"link.state"}` | `online`, `frames_rx`, `frames_tx`, `crc_errors`, `dropped`, `last_rx_ms` |
 
 `elf_sha256` is the running app descriptor's 64-character lowercase hex hash.
 `version` is its build version. `running` is the OTA partition label, normally
-`ota_0` at this milestone. `ping` without `n` returns `n:null`.
+`ota_0` at this milestone. `ping` omits `n` when the request has none, or when
+it is an array or an object.
 
-An unknown `m` returns `ok:false` and `error:"unknown message"`. A payload that
-cannot be parsed as one object with a string `m` produces no response and
-increments `dropped`. An unsupported incoming frame type or flags, a full frame
-queue, or a failed response also increments `dropped`.
+A reply echoes at most the first 64 characters of `m`. An unknown `m` returns
+`ok:false` and `error:"unknown message"`. A payload that cannot be parsed as one
+object with a string `m` produces no response and increments `dropped`. JSON
+nested deeper than 16 levels does not parse, so a frame of 1024 `[` bytes is
+dropped this way. An unsupported incoming frame type or flags, a full frame
+queue, or a response that does not fit one 1024-byte payload also increments
+`dropped`. A `ping` whose string `n` nears 1000 bytes gets no reply for that
+reason.
 
 `frames_rx` counts valid frames before dispatch, including frames later dropped.
 `frames_tx` counts complete response writes. A `link.state` reply therefore
