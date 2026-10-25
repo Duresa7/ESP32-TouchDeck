@@ -8,5 +8,5 @@ rust-version.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-serialport = { version = "4.10", default-features = false }
+serialport = "4.10"
 td-core.workspace = true

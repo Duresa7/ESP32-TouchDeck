@@ -4,7 +4,7 @@ members = ["crates/td-core", "crates/td-link", "src-tauri"]
 
 [workspace.package]
 edition = "2024"
-license = "MIT"
+license = "Apache-2.0"
 rust-version = "1.88"
 
 [workspace.dependencies]

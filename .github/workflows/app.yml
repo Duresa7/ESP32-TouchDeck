@@ -1,0 +1,83 @@
+name: app
+
+on:
+  push:
+    branches: [main, "m2-*"]
+    paths: ["app/**", "schema/**", ".github/workflows/app.yml"]
+  pull_request:
+    paths: ["app/**", "schema/**", ".github/workflows/app.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: app
+    env:
+      CARGO_TERM_COLOR: always
+      TOUCHDECK_MOCK: "1"
+      TD_E2E_OUT: ${{ github.workspace }}/app/target/e2e
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Tauri Linux prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libudev-dev xvfb
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: app/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm test
+      - name: Build the frontend that tauri embeds
+        run: pnpm build
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace -- -D warnings
+      - run: cargo test --workspace
+      - run: pnpm tauri build --features e2e
+
+      - name: Run the e2e specs on the mock deck
+        if: runner.os == 'Windows'
+        run: pnpm e2e
+      - name: Run the shared e2e specs on the mock deck under xvfb
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm e2e
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-${{ matrix.os }}
+          path: app/target/e2e
+          if-no-files-found: ignore
