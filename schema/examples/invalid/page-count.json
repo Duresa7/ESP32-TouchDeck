@@ -1,4 +1,6 @@
-{"name": "expected: must NOT have more than 8 items (maxItems)",
+expected: layout.page-count
+{
+  "name": "Invalid example",
   "schema": 1,
   "orientation": "landscape",
   "pages": [

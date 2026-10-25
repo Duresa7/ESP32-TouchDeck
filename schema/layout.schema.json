@@ -6,23 +6,29 @@
   "additionalProperties": false,
   "required": ["schema", "name", "orientation", "pages"],
   "properties": {
-    "schema": { "const": 1 },
-    "name": { "type": "string", "minLength": 1 },
-    "orientation": { "enum": ["landscape", "portrait"] },
+    "schema": { "const": 1, "x-rules": { "const": "layout.schema-version" } },
+    "name": { "$ref": "#/$defs/name" },
+    "orientation": { "enum": ["landscape", "portrait"], "x-rules": { "enum": "layout.orientation" } },
     "pages": {
       "type": "array",
       "minItems": 1,
       "maxItems": 8,
-      "items": { "$ref": "#/$defs/page" }
+      "items": { "$ref": "#/$defs/page" },
+      "x-rules": { "minItems": "layout.page-count", "maxItems": "layout.page-count" }
     }
   },
   "$defs": {
-    "id": { "type": "string", "pattern": "^[a-z0-9_]{1,15}$" },
-    "text": { "type": "string", "minLength": 1 },
-    "title": { "type": "string", "minLength": 1, "maxLength": 24 },
-    "dimension": { "type": "integer", "minimum": 1, "maximum": 8 },
-    "modifier": { "enum": ["ctrl", "shift", "alt", "win"] },
-    "args": { "type": "array", "items": { "type": "string" } },
+    "id": { "type": "string", "pattern": "^[a-z0-9_]{1,15}$", "x-rules": { "pattern": "id.format" } },
+    "string": { "type": "string", "pattern": "^[^\\u0000-\\u001f\\u007f]*$", "x-rules": { "pattern": "string.control-character" } },
+    "text": { "type": "string", "$ref": "#/$defs/string", "minLength": 1, "x-rules": { "minLength": "text.empty" } },
+    "name": { "type": "string", "$ref": "#/$defs/string", "maxLength": 24, "pattern": "[^\\p{White_Space}]", "x-rules": { "maxLength": "name.too-long", "pattern": "name.blank" } },
+    "title": { "type": "string", "$ref": "#/$defs/string", "maxLength": 24, "pattern": "[^\\p{White_Space}]", "x-rules": { "maxLength": "title.too-long", "pattern": "title.blank" } },
+    "label": { "type": "string", "$ref": "#/$defs/string", "maxLength": 16, "pattern": "[^\\p{White_Space}]", "x-rules": { "maxLength": "label.too-long", "pattern": "label.blank" } },
+    "gridSize": { "type": "integer", "minimum": 1, "maximum": 8, "x-rules": { "minimum": "grid.size", "maximum": "grid.size" } },
+    "span": { "type": "integer", "minimum": 1, "maximum": 8, "x-rules": { "minimum": "tile.span", "maximum": "tile.span" } },
+    "position": { "type": "integer", "minimum": 0, "maximum": 7, "x-rules": { "minimum": "tile.position", "maximum": "tile.position" } },
+    "modifier": { "enum": ["ctrl", "shift", "alt", "win"], "x-rules": { "enum": "modifier.unknown" } },
+    "args": { "type": "array", "items": { "$ref": "#/$defs/string" } },
     "page": {
       "oneOf": [
         {
@@ -33,12 +39,13 @@
             "id": { "$ref": "#/$defs/id" },
             "title": { "$ref": "#/$defs/title" },
             "kind": { "const": "grid" },
-            "rows": { "$ref": "#/$defs/dimension" },
-            "cols": { "$ref": "#/$defs/dimension" },
+            "rows": { "$ref": "#/$defs/gridSize" },
+            "cols": { "$ref": "#/$defs/gridSize" },
             "tiles": {
               "type": "array",
               "maxItems": 64,
-              "items": { "$ref": "#/$defs/tile" }
+              "items": { "$ref": "#/$defs/tile" },
+              "x-rules": { "maxItems": "page.tile-count" }
             }
           }
         },
@@ -53,7 +60,8 @@
             "source": { "$ref": "#/$defs/text" }
           }
         }
-      ]
+      ],
+      "x-rules": { "oneOf": "page.kind" }
     },
     "tile": {
       "type": "object",
@@ -61,17 +69,15 @@
       "required": ["id", "label", "row", "col", "rowSpan", "colSpan", "icon", "action"],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
-        "label": { "type": "string", "minLength": 1, "maxLength": 16 },
-        "row": { "type": "integer", "minimum": 0, "maximum": 7 },
-        "col": { "type": "integer", "minimum": 0, "maximum": 7 },
-        "rowSpan": { "$ref": "#/$defs/dimension" },
-        "colSpan": { "$ref": "#/$defs/dimension" },
+        "label": { "$ref": "#/$defs/label" },
+        "row": { "$ref": "#/$defs/position" },
+        "col": { "$ref": "#/$defs/position" },
+        "rowSpan": { "$ref": "#/$defs/span" },
+        "colSpan": { "$ref": "#/$defs/span" },
         "icon": {
-          "oneOf": [
-            { "type": "null" },
-            { "enum": ["lv:prev", "lv:play_pause", "lv:next", "lv:mute", "lv:volume_mid", "lv:volume_max"] },
-            { "type": "string", "pattern": "^file:[0-9a-fA-F]{16}$" }
-          ]
+          "type": ["string", "null"],
+          "pattern": "^(?:lv:(?:prev|play_pause|next|mute|volume_mid|volume_max)|file:[0-9a-f]{16})$",
+          "x-rules": { "pattern": "icon.format" }
         },
         "action": { "$ref": "#/$defs/action" }
       }
@@ -84,8 +90,8 @@
           "required": ["type", "usage", "mods"],
           "properties": {
             "type": { "const": "key" },
-            "usage": { "type": "integer", "minimum": 1, "maximum": 255 },
-            "mods": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "$ref": "#/$defs/modifier" } }
+            "usage": { "type": "integer", "minimum": 1, "maximum": 255, "x-rules": { "minimum": "key.usage-range", "maximum": "key.usage-range" } },
+            "mods": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/modifier" }, "x-rules": { "uniqueItems": "key.mods-duplicate" } }
           }
         },
         {
@@ -103,7 +109,7 @@
           "required": ["type", "usage"],
           "properties": {
             "type": { "const": "consumer" },
-            "usage": { "type": "integer", "minimum": 1, "maximum": 65535 }
+            "usage": { "type": "integer", "minimum": 1, "maximum": 65535, "x-rules": { "minimum": "consumer.usage-range", "maximum": "consumer.usage-range" } }
           }
         },
         {
@@ -129,7 +135,7 @@
             "type": { "const": "launch" },
             "path": { "$ref": "#/$defs/text" },
             "args": { "$ref": "#/$defs/args" },
-            "cwd": { "type": "string" }
+            "cwd": { "$ref": "#/$defs/string" }
           }
         },
         {
@@ -149,7 +155,7 @@
             "type": { "const": "command" },
             "program": { "$ref": "#/$defs/text" },
             "args": { "$ref": "#/$defs/args" },
-            "cwd": { "type": "string" },
+            "cwd": { "$ref": "#/$defs/string" },
             "shell": { "type": "boolean" }
           }
         },
@@ -161,10 +167,11 @@
             "type": { "const": "widget" },
             "source": { "$ref": "#/$defs/text" },
             "field": { "$ref": "#/$defs/text" },
-            "account": { "$ref": "#/$defs/text" }
+            "account": { "$ref": "#/$defs/string" }
           }
         }
-      ]
+      ],
+      "x-rules": { "oneOf": "action.type" }
     }
   }
 }

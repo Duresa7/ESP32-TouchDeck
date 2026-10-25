@@ -1,4 +1,6 @@
-{"name": "expected: must NOT have more than 64 items (maxItems)",
+expected: page.tile-count
+{
+  "name": "Invalid example",
   "schema": 1,
   "orientation": "landscape",
   "pages": [

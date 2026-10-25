@@ -1,4 +1,6 @@
-{"name": "expected: /pages/0/title must NOT have fewer than 1 characters (minLength)",
+expected: title.blank
+{
+  "name": "Invalid example",
   "schema": 1,
   "orientation": "landscape",
   "pages": [
