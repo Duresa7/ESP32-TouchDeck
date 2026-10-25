@@ -148,12 +148,13 @@ static atomic_uint s_rx_dropped;
 
 /*
  * The driver's RX interrupt copies each USB packet into a 256-byte ring and
- * discards the whole packet, without a trace, when the ring is full. The
- * console task blocks on USB TX while it prints a reply, so a burst of lines
- * filled that ring. This task outranks the console and drains the ring into
- * s_rx_queue, where a full queue is counted and reported instead of hidden.
- * It reads the driver directly because read() on stdin takes one byte per
- * ring operation, which is slower than back-to-back 64-byte packets.
+ * discards the whole packet, without a trace, when the ring is full. Printing
+ * costs the console task about 13 us per output byte, so a 220-byte reply
+ * keeps it from reading for about 3 ms and a burst of short lines fills that
+ * ring. This task outranks the console and drains the ring into s_rx_queue,
+ * where a full queue is counted and reported instead of hidden. It reads the
+ * driver directly because read() on stdin takes one byte per ring operation,
+ * which is slower than back-to-back 64-byte packets.
  */
 static void rx_task(void *arg)
 {
