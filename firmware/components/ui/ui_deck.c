@@ -519,12 +519,14 @@ static void describe_error(char *buf, size_t cap, const td_layout_error_t *err)
     snprintf(buf, cap, "%s: %s", err->key, err->message);
 }
 
-static int64_t s_boot_started_us;
+/* The boot layout is read before display_start and built inside it, so its load_ms adds the two parts and leaves out
+ * the display's own start-up between them. */
+static int64_t s_boot_prepare_us;
 
 void ui_layout_boot(const char *orientation)
 {
     make_locks();
-    s_boot_started_us = esp_timer_get_time();
+    const int64_t started = esp_timer_get_time();
     snprintf(s.orientation, sizeof s.orientation, "%s", orientation != NULL ? orientation : "landscape");
 
     char path[48];
@@ -547,22 +549,24 @@ void ui_layout_boot(const char *orientation)
     const ui_icon_counts_t icons = ui_icon_prepare(s.boot, NULL);
     fill_info(&s.boot_info, s.boot, stored != NULL, bytes, icons);
     snprintf(s.boot_info.error, sizeof s.boot_info.error, "%s", reason);
+    s_boot_prepare_us = esp_timer_get_time() - started;
 }
 
 void ui_build(void)
 {
     make_locks();
     if (s.boot == NULL) {
-        s_boot_started_us = esp_timer_get_time();
+        const int64_t started = esp_timer_get_time();
         s.boot = td_layout_builtin();
         if (s.boot == NULL) {
             ESP_LOGE(LAYOUT_TAG, "the built-in layout does not parse, so the deck shows nothing");
             return;
         }
         fill_info(&s.boot_info, s.boot, false, 0, ui_icon_prepare(s.boot, NULL));
+        s_boot_prepare_us = esp_timer_get_time() - started;
     }
     xSemaphoreTake(s.reload_lock, portMAX_DELAY);
-    load_locked(s.boot, &s.boot_info, s_boot_started_us);
+    load_locked(s.boot, &s.boot_info, esp_timer_get_time() - s_boot_prepare_us);
     xSemaphoreGive(s.reload_lock);
 }
 
