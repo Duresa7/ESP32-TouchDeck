@@ -7,6 +7,7 @@
 #include "lvgl.h"
 #include "ui_pager.h"
 #include "ui_theme.h"
+#include "ui_tile_keys.h"
 
 static const char *TAG = "ui";
 
@@ -67,7 +68,11 @@ static void set_track_x(void *track, int32_t x)
 
 static void show_page(uint8_t index)
 {
+    const bool changed = index != atomic_load(&s.page);
     atomic_store(&s.page, index);
+    if (changed) {
+        ui_tile_keys_page_changed();
+    }
     for (uint8_t i = 0; i < s.page_count; i++) {
         if (i == index) {
             lv_obj_add_state(s.dots[i], LV_STATE_CHECKED);
@@ -225,6 +230,7 @@ static void on_release(lv_event_t *e)
     if (!tap || tile_obj == NULL || lv_event_get_code(e) != LV_EVENT_RELEASED) {
         return;
     }
+    ui_tile_keys_click(tile_of(tile_obj));
     const unsigned taps = atomic_fetch_add(&s.taps, 1) + 1;
     ESP_LOGI(TAG, "click taps=%u tile=%s", taps, tile_of(tile_obj)->id);
 }
@@ -248,6 +254,8 @@ static void build_tile(lv_obj_t *parent, const ui_page_t *page, const ui_tile_t 
     lv_label_set_text_static(label, tile->label);
     lv_obj_add_style(label, &st->tile_label, 0);
     lv_obj_center(label);
+
+    ui_tile_keys_dress(obj, tile);
 }
 
 static void build_page(uint8_t index)
@@ -304,6 +312,7 @@ void ui_build(void)
         return;
     }
     ui_styles();
+    ui_tile_keys_start();
     ui_pager_init(&s.pager, &k_pager_cfg, s.page_count);
     atomic_store(&s.pressed, "");
 

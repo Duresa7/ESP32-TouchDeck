@@ -56,6 +56,7 @@ static void cmd_state(void)
     td_reply_begin(&r, buf, sizeof buf, "ui", true);
     td_reply_int(&r, "page", st.page);
     td_reply_int(&r, "pages", st.pages);
+    td_reply_int(&r, "tile_count", ui_builtin_pages(NULL)[st.page].tile_count);
     td_reply_str(&r, "title", st.title);
     td_reply_str(&r, "pressed_tile", st.pressed_tile);
     td_reply_int(&r, "taps", st.taps);
@@ -118,6 +119,7 @@ static void cmd_tile(int argc, char **argv)
     td_reply_begin(&r, buf, sizeof buf, "ui", true);
     td_reply_str(&r, "op", "tile");
     td_reply_str(&r, "id", argv[2]);
+    td_reply_str(&r, "name", ui_page_find_tile(&ui_builtin_pages(NULL)[page], argv[2])->label);
     td_reply_int(&r, "page", page);
     td_reply_int(&r, "x", rect.x);
     td_reply_int(&r, "y", rect.y);

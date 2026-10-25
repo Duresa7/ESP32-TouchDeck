@@ -11,12 +11,27 @@ const ui_theme_t ui_theme = {
         .dot_idle = UI_RGB565(64, 72, 88),
         .dot_active = UI_RGB565(72, 160, 255),
         .glow = UI_RGB565(72, 160, 255),
+        .mod_locked = UI_RGB565(32, 96, 192),
+        .lock = UI_RGB565(232, 236, 248),
     },
     .tile_radius = 20,
     .tile_down_border = 3,
     .glow_width = 28,
     .glow_spread = 2,
     .glow_opa = 120,
+    .mod_outline_width = 4,
+    .mod_outline_pad = 2,
+    .lock = {
+        .w = 26,
+        .h = 32,
+        .shackle_w = 18,
+        .shackle_h = 20,
+        .stroke = 4,
+        .body_h = 20,
+        .radius = 4,
+        .inset = 18,
+    },
+    .mod_poll_ms = 50,
     /* Only this band slides, so a slide redraws the band and leaves the strips above and below it alone. It is
      * taller than the grid by 20 px each side, and a pressed tile's glow reaches 17 px (glow_width / 2 + 1 +
      * glow_spread). */
@@ -110,11 +125,43 @@ static void init_text_and_dot_styles(ui_styles_t *st)
     lv_style_set_transform_width(&st->dot_on, t->dot_active_extra);
 }
 
+/* LVGL ranks a state's styles by the state's value, CHECKED 4, PRESSED 128, USER_1 4096, so a press still shows the
+ * pressed fill over a locked tile. The outline is not in the tile's transition list, so the ring appears in one
+ * frame. */
+static void init_mod_styles(ui_styles_t *st)
+{
+    const ui_theme_t *t = &ui_theme;
+
+    lv_style_init(&st->mod_one_shot);
+    lv_style_set_outline_width(&st->mod_one_shot, t->mod_outline_width);
+    lv_style_set_outline_pad(&st->mod_one_shot, t->mod_outline_pad);
+    lv_style_set_outline_color(&st->mod_one_shot, ui_color(t->color.glow));
+    lv_style_set_outline_opa(&st->mod_one_shot, LV_OPA_COVER);
+
+    lv_style_init(&st->mod_locked);
+    lv_style_set_bg_color(&st->mod_locked, ui_color(t->color.mod_locked));
+
+    lv_style_init(&st->lock_shackle);
+    lv_style_set_radius(&st->lock_shackle, LV_RADIUS_CIRCLE);
+    lv_style_set_bg_opa(&st->lock_shackle, LV_OPA_TRANSP);
+    lv_style_set_border_opa(&st->lock_shackle, LV_OPA_COVER);
+    lv_style_set_border_width(&st->lock_shackle, t->lock.stroke);
+    lv_style_set_border_color(&st->lock_shackle, ui_color(t->color.lock));
+    lv_style_set_border_side(&st->lock_shackle, LV_BORDER_SIDE_TOP | LV_BORDER_SIDE_LEFT | LV_BORDER_SIDE_RIGHT);
+
+    lv_style_init(&st->lock_body);
+    lv_style_set_radius(&st->lock_body, t->lock.radius);
+    lv_style_set_bg_opa(&st->lock_body, LV_OPA_COVER);
+    lv_style_set_bg_color(&st->lock_body, ui_color(t->color.lock));
+    lv_style_set_border_width(&st->lock_body, 0);
+}
+
 const ui_styles_t *ui_styles(void)
 {
     if (!s_styles_ready) {
         init_tile_styles(&s_styles);
         init_text_and_dot_styles(&s_styles);
+        init_mod_styles(&s_styles);
         s_styles_ready = true;
     }
     return &s_styles;

@@ -22,12 +22,30 @@ typedef struct {
         uint16_t dot_idle;
         uint16_t dot_active;
         uint16_t glow;
+        uint16_t mod_locked;
+        uint16_t lock;
     } color;
     int16_t tile_radius;
     int16_t tile_down_border;
     int16_t glow_width;
     int16_t glow_spread;
     uint8_t glow_opa;
+    int16_t mod_outline_width;
+    int16_t mod_outline_pad;
+    /* The lock glyph on a locked modifier tile. It fills a box of w by h, `inset` from the tile's right edge and
+     * centred vertically. A shackle of shackle_w by shackle_h, drawn with a `stroke` wide line, sits at the top of
+     * the box over a body of w by body_h at the bottom. */
+    struct {
+        int16_t w;
+        int16_t h;
+        int16_t shackle_w;
+        int16_t shackle_h;
+        int16_t stroke;
+        int16_t body_h;
+        int16_t radius;
+        int16_t inset;
+    } lock;
+    uint16_t mod_poll_ms;
     ui_rect_t band;
     ui_rect_t grid;
     int16_t gap;
@@ -56,6 +74,10 @@ typedef struct {
     lv_style_t title;
     lv_style_t dot;
     lv_style_t dot_on;
+    lv_style_t mod_one_shot;
+    lv_style_t mod_locked;
+    lv_style_t lock_shackle;
+    lv_style_t lock_body;
 } ui_styles_t;
 
 lv_color_t ui_color(uint16_t rgb565);
