@@ -9,6 +9,7 @@
 #include "esp_stdio.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "driver/usb_serial_jtag.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -17,6 +18,7 @@
 #define TD_WORD_MAX 64
 #define TD_TASK_STACK 6144
 #define TD_TASK_PRIORITY 2
+#define TD_TX_DRAIN_MS 250
 
 static const char *TAG = "td_console";
 
@@ -84,7 +86,7 @@ static int cmd_reboot(int argc, char **argv)
     td_reply_begin(&r, buf, sizeof buf, "reboot", true);
     emit(&r);
     fflush(stdout);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(TD_TX_DRAIN_MS));
     esp_restart();
     return 0;
 }
