@@ -21,15 +21,22 @@ can customize to fit the way I work.
 ## Building
 
 The firmware is an [ESP-IDF](https://docs.espressif.com/projects/esp-idf/)
-project, tested with ESP-IDF v6.1. Install ESP-IDF with the
+project in the `firmware/` folder, tested with ESP-IDF v6.1. Install ESP-IDF
+with the
 [ESP-IDF Installation Manager](https://docs.espressif.com/projects/idf-im-ui/),
-then either use the ESP-IDF VS Code extension (open this folder and click
-Build, Flash and Monitor) or run these from an ESP-IDF terminal:
+then either use the ESP-IDF VS Code extension (open the `firmware/` folder and
+click Build, Flash and Monitor) or run these from an ESP-IDF terminal:
 
 ```sh
+cd firmware
 idf.py set-target esp32s3   # first time only
 idf.py -p COM3 flash monitor
 ```
 
 Replace `COM3` with your board's serial port. Press `Ctrl+]` to exit the
-monitor. Board defaults (flash size, PSRAM) live in `sdkconfig.defaults`.
+monitor. Board defaults (flash size, PSRAM) live in
+`firmware/sdkconfig.defaults`.
+
+## License
+
+TouchDeck is licensed under the [Apache License 2.0](LICENSE).

@@ -1,11 +1,19 @@
 # Agent instructions
 AGENTS.md
 
+# Local agent skills and installation metadata
+/.agents/
+/.claude/
+/skills-lock.json
+
 # Build output
 .pio/
 build/
 out/
 dist/
+
+# Hardware verification evidence
+/.verify/
 
 # ESP-IDF generated files
 sdkconfig.old
