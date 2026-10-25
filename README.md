@@ -50,8 +50,18 @@ td> version
 @td {"cmd":"version","ok":true,"project_name":"touchdeck",...}
 ```
 
-The commands are `help`, `version`, `heap`, `uptime`, and `reboot`. An unknown
-command answers with `"ok":false` and an `error`.
+The commands are `help`, `version`, `heap`, `uptime`, and `reboot`, plus the
+three the display adds, which `help` lists too. An unknown command answers with
+`"ok":false` and an `error`.
+
+A component adds commands with `td_console_register`, which takes an array of
+`esp_console_cmd_t`. `app_main` calls it for every component before
+`td_console_start`, which seals the list. A registration after that fails with
+`ESP_ERR_INVALID_STATE`.
+
+Replies leave through the USB driver and wait for the host when its buffer is
+full, so a redrawing display cannot drop them. Log lines and the `td> ` prompt
+still go through stdio and can be dropped.
 
 Input waits in a 2048-byte queue while a command runs. The queue accepts 2047
 bytes, which holds about 250 short lines or seven full-length ones. When a burst
@@ -105,8 +115,9 @@ label, drawn with LVGL 9. The display component adds three console commands:
   frames per second when the time is up.
 - `backlight on|off` switches the backlight through the CH422G expander.
 
-These three are registered by the display component and do not appear in
-`help`.
+The display component hands its commands to `td_console_register`, so `help`
+lists them. Until the display has started, `screenshot` and `perf` answer
+`display not ready`.
 
 ## Unit tests
 

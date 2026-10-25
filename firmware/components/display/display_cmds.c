@@ -1,11 +1,9 @@
 #include "display_priv.h"
 #include <stdatomic.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "board_pins.h"
 #include "ch422g.h"
-#include "driver/usb_serial_jtag.h"
 #include "esp_console.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -15,45 +13,27 @@
 #define PERF_MAX_SECONDS 60
 #define PERF_TASK_STACK 4096
 #define PERF_TASK_PRIORITY 2
-/* The driver's TX ring holds 256 bytes, and a single write larger than the ring never fits. */
-#define SINK_CHUNK_BYTES 128
-#define SINK_TIMEOUT_MS 1000
 
 static atomic_bool s_perf_busy;
 
 static void send(td_reply_t *r)
 {
     td_reply_end(r);
-    printf("%s\n", r->buf);
-    fflush(stdout);
+    td_console_write_line(r->buf);
 }
 
 static void send_error(const char *cmd, const char *message)
 {
     char buf[TD_REPLY_MAX];
     td_reply_error(buf, sizeof buf, cmd, message);
-    printf("%s\n", buf);
-    fflush(stdout);
+    td_console_write_line(buf);
 }
 
-/* The stdio path writes one byte per driver call and drops everything after a 50 ms host stall, which
- * loses the tail of a long stream. Writing in driver-sized chunks waits for the host instead.
- * Holding the stdout lock keeps other tasks' log lines out of the middle of an image line. */
+/* An image line must not lose bytes, and the stdio path would drop it while the display runs. */
 static bool stdout_sink(void *ctx, const char *line, size_t len)
 {
     (void)ctx;
-    flockfile(stdout);
-    fflush(stdout);
-    size_t done = 0;
-    while (done < len) {
-        const size_t n = len - done < SINK_CHUNK_BYTES ? len - done : SINK_CHUNK_BYTES;
-        if (usb_serial_jtag_write_bytes(line + done, n, pdMS_TO_TICKS(SINK_TIMEOUT_MS)) != (int)n) {
-            break;
-        }
-        done += n;
-    }
-    funlockfile(stdout);
-    return done == len;
+    return td_console_write(line, len);
 }
 
 /* The console starts before the display does, so a command can arrive while the display is still coming up, or
@@ -101,7 +81,6 @@ static int cmd_screenshot(int argc, char **argv)
 
     uint32_t crc = 0;
     err = td_shot_stream(&img, scale, stdout_sink, NULL, &crc);
-    fflush(stdout);
 
     td_reply_begin(&r, buf, sizeof buf, "screenshot", err == ESP_OK);
     td_reply_str(&r, "phase", "end");
