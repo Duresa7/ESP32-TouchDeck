@@ -36,7 +36,7 @@ static const char *TAG = "power";
 static struct {
     contact_t contact;
     bool prev_lit;
-    bool unsure;
+    bool chip_in_doubt;
     td_touch_sample_t shown;
     int64_t last_touch_us;
     int64_t guard_until_us;
@@ -87,7 +87,7 @@ esp_err_t power_start(int64_t now_us)
     return started ? ESP_OK : ESP_ERR_INVALID_STATE;
 }
 
-/* Decides this sample's fate and the one write it calls for. It touches only `s`, so it runs under the lock. */
+/* Runs under the lock, so it touches only `s`. */
 static action_t step(bool lit, bool touching, bool finger_down, int64_t now_us, bool *swallow)
 {
     action_t act = ACT_NONE;
@@ -98,7 +98,7 @@ static action_t step(bool lit, bool touching, bool finger_down, int64_t now_us, 
     }
     s.prev_lit = lit;
 
-    const bool dark = !lit || s.unsure;
+    const bool dark = !lit || s.chip_in_doubt;
     if (touching && s.contact == CONTACT_NONE) {
         const bool wake_resumed = finger_down && now_us < s.guard_until_us;
         s.contact = dark || wake_resumed ? CONTACT_EATEN : CONTACT_PASSED;
@@ -124,10 +124,8 @@ static action_t step(bool lit, bool touching, bool finger_down, int64_t now_us, 
     return act;
 }
 
-/* Modifiers clear before the write, so a dark screen never holds an armed key, and the write failing costs nothing. A
- * failed dark write may still have landed, because a timed-out I2C transfer gives no answer, so it is followed by an
- * absolute lit write. If that fails too, the chip may be dark under a byte that says lit, and `unsure` makes the next
- * contact eat and rewrite it. */
+/* Modifiers clear before the write, so a dark screen never holds an armed key. A failed dark write may still have
+ * landed, because a timed-out I2C transfer gives no answer, so it is followed by an absolute lit write. */
 static void run(action_t act, int64_t entered_us, int64_t now_us)
 {
     if (act == ACT_NONE) {
@@ -161,9 +159,9 @@ static void run(action_t act, int64_t entered_us, int64_t now_us)
         s.retry_dark_us = now_us + DARK_RETRY_US;
     }
     if (byte_matches_chip) {
-        s.unsure = false;
+        s.chip_in_doubt = false;
     } else if (healed) {
-        s.unsure = true;
+        s.chip_in_doubt = true;
     }
     s.errors += (err != ESP_OK) + (heal_err != ESP_OK);
     portEXIT_CRITICAL(&s_lock);

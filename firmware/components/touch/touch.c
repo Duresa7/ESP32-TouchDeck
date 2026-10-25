@@ -121,7 +121,7 @@ static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     portEXIT_CRITICAL(&shared.lock);
 
     /* The idle gate comes after the queue, so an injected tap is swallowed like a finger. It sits outside the spinlock
-     * because a wake writes the CH422G over I2C. What it returns is what LVGL takes. */
+     * because a wake writes the CH422G over I2C. */
     const td_touch_sample_t seen = power_filter(out, held.pressed, now);
     portENTER_CRITICAL(&shared.lock);
     shared.last = seen;

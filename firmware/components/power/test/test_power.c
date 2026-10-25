@@ -38,15 +38,13 @@
         TEST_ASSERT_EQUAL_MESSAGE((want_pressed), (got).pressed, (msg)); \
     } while (0)
 
-/* ---- a CH422G whose bus the test controls ---- */
-
 typedef struct {
     uint8_t addr;
     uint8_t value;
-    uint8_t before;   /* the physical IO byte just before this write */
-    bool acked;       /* the driver saw success */
+    uint8_t before;
+    bool acked;
     bool landed;      /* the byte reached the chip: acked, or failed but latched */
-    bool mods_clear;  /* every key modifier was OFF when this write reached the bus */
+    bool mods_clear;
 } write_rec_t;
 
 typedef struct {
@@ -54,14 +52,14 @@ typedef struct {
     size_t count;
     bool overflow;
     uint8_t physical;       /* the IO byte the chip really holds, so the real backlight: bit DISP clear is dark */
-    unsigned fail_next;     /* writes still to NACK */
+    unsigned fail_next;
     /* A bit mask over the failing writes still to come, bit 0 for the next one: a set bit means that failed write still
      * lands on the chip, as a timed-out transfer can. The driver sees the failure and keeps its cached byte. */
     uint32_t latch_on_fail;
-    bool fail_random;       /* NACK about 1 write in fail_one_in */
+    bool fail_random;
     uint32_t fail_one_in;
-    bool latch_random;      /* a random failing write lands, half of them */
-    bool external;          /* the write comes from the test, not the gate: it never fails and always lands */
+    bool latch_random;
+    bool external;
     uint32_t fail_rng;
 } fake_t;
 
@@ -129,7 +127,6 @@ static esp_err_t fake_write(void *ctx, uint8_t addr, uint8_t value)
             .mods_clear = mods_all_off(&ks),
         };
     }
-    /* A real bus write takes time, which gives wake_us something to measure. */
     esp_rom_delay_us(200);
     return fail ? ESP_ERR_INVALID_RESPONSE : ESP_OK;
 }
@@ -188,8 +185,6 @@ static void external_backlight(bool on)
     writes_clear();
 }
 
-/* ---- the key engine: one real one, with a sink of the test's own ---- */
-
 static unsigned s_sink_reports;
 
 static void count_report(void *ctx, const key_report_t *report)
@@ -220,8 +215,6 @@ static void expect_mods_off(void)
     const key_engine_state_t ks = keys_get_state();
     TEST_ASSERT_TRUE_MESSAGE(mods_all_off(&ks), "a modifier is still armed");
 }
-
-/* ---- the sample stream ---- */
 
 /* What power_filter returned last. The gate keeps its own copy; this one only lets the test state what an eaten sample
  * must equal: the previous return, released. */
@@ -280,7 +273,6 @@ static void expect_counters(const power_info_t *i, uint32_t swallowed, uint32_t 
     TEST_ASSERT_EQUAL_UINT32(errors, i->errors);
 }
 
-/* The wake was made through a write that takes at least 200 us, and the board is nowhere near 150 ms. */
 static void expect_wake_us_sane(const power_info_t *i)
 {
     TEST_ASSERT_GREATER_OR_EQUAL_UINT32(200, i->wake_us);
@@ -304,7 +296,6 @@ static void fresh(void)
     expect_write_count(0);
 }
 
-/* Sets the timeout at `now` and lets one released sample find it expired. Returns that sample's time. */
 static int64_t go_dark(int64_t now, uint32_t timeout_s)
 {
     TEST_ASSERT_EQUAL(ESP_OK, power_set_idle_timeout_s(timeout_s, now));
@@ -316,7 +307,6 @@ static int64_t go_dark(int64_t now, uint32_t timeout_s)
     return at;
 }
 
-/* Released samples every 10 ms from `from` up to, not including, `until`. Each passes and none writes. */
 static void idle_passes(int64_t from, int64_t until)
 {
     for (int64_t t = from; t < until; t += 10 * MS) {
@@ -344,8 +334,6 @@ static int64_t eaten_real_tap(int64_t at)
     expect_eaten_f(sample(false), false, at + 10 * MS);
     return at + 10 * MS;
 }
-
-/* ---- directed tests ---- */
 
 TEST_CASE("a started gate is active with the default timeout and every counter at zero", "[power]")
 {
@@ -607,7 +595,6 @@ TEST_CASE("a real finger down across an injected release keeps the contact eaten
     TEST_ASSERT_FALSE(info.swallowing);
     expect_counters(&info, 6, 1, 1, 0);
 
-    /* 300 ms after the closing sample the real finger is a new contact, which passes. */
     expect_passes_f(sample(true), true, t + 300 * MS);
     expect_passes_f(sample(false), false, t + 310 * MS);
 }
@@ -678,7 +665,6 @@ TEST_CASE("an external backlight on restarts the idle clock of a dark screen", "
     const int64_t t = go_dark(T0, 5);
     external_backlight(true);
 
-    /* The first sample after the external write is when the gate notices it. */
     const int64_t noticed = t + 95 * SEC;
     expect_goes_dark_at(noticed, noticed + 5 * SEC);
     expect_write_count(1);
@@ -687,8 +673,6 @@ TEST_CASE("an external backlight on restarts the idle clock of a dark screen", "
     TEST_ASSERT_EQUAL(POWER_OFF, info.state);
     expect_counters(&info, 0, 2, 0, 0);
 }
-
-/* ---- the real finger that comes back within 250 ms of an eaten contact ---- */
 
 TEST_CASE("a real finger that drops for one read mid-touch on the dark screen is eaten whole and wakes the screen once",
           "[power]")
@@ -701,13 +685,11 @@ TEST_CASE("a real finger that drops for one read mid-touch on the dark screen is
     expect_write_count(1);
     expect_write(0, LIT, true);
     expect_eaten_f(sample(true), true, at + 10 * MS);
-    /* The controller loses the finger for one read: a lift. */
     expect_eaten_f(sample(false), false, at + 20 * MS);
     TEST_ASSERT_FALSE(info_at(at + 20 * MS).swallowing);
     expect_passes(sample(false), at + 30 * MS);
     expect_passes(sample(false), at + 40 * MS);
 
-    /* It comes back 30 ms after the closing sample: a new press, eaten too. */
     expect_eaten_f(sample(true), true, at + 50 * MS);
     TEST_ASSERT_TRUE(info_at(at + 50 * MS).swallowing);
     expect_eaten_f(sample(true), true, at + 60 * MS);
@@ -798,8 +780,6 @@ TEST_CASE("a contact eaten by the guard extends it, and a finger 260 ms after th
     expect_counters(&info, 8, 1, 1, 0);
 }
 
-/* ---- failed writes ---- */
-
 TEST_CASE("a failed dark write leaves the screen lit, heals it and retries after five seconds", "[power]")
 {
     fresh();
@@ -820,7 +800,7 @@ TEST_CASE("a failed dark write leaves the screen lit, heals it and retries after
     TEST_ASSERT_EQUAL_HEX8(LIT, info.output);
     TEST_ASSERT_EQUAL_UINT32(1, info.errors);
     TEST_ASSERT_EQUAL_UINT32(0, info.off_count);
-    TEST_ASSERT_EQUAL_UINT32(0, info.wake_count);  /* the lit write that heals a failed dark write is not a wake */
+    TEST_ASSERT_EQUAL_UINT32(0, info.wake_count);
 
     writes_clear();
     idle_passes(T0 + 5 * SEC + 10 * MS, T0 + 10 * SEC);
@@ -953,7 +933,7 @@ static int64_t doubt_setup(void)
     const power_info_t info = info_at(T0 + 5 * SEC);
     TEST_ASSERT_EQUAL(POWER_ACTIVE, info.state);
     TEST_ASSERT_EQUAL_HEX8(LIT, info.output);
-    expect_counters(&info, 0, 0, 0, 2);  /* the failed heal counts as an error and, like any heal, not as a wake */
+    expect_counters(&info, 0, 0, 0, 2);
     writes_clear();
     return T0 + 5 * SEC;
 }
@@ -1098,7 +1078,6 @@ TEST_CASE("the idle timeout accepts 1 to 86400 s, refuses the rest and leaves th
     TEST_ASSERT_EQUAL(ESP_OK, power_set_idle_timeout_s(86400, T0 + 5 * SEC));
     TEST_ASSERT_EQUAL_UINT32(86400, info_at(T0 + 5 * SEC).idle_timeout_s);
 
-    /* The refused call at T0 + 3 s did not restart the clock that the 5 s timeout counts from. */
     fresh();
     TEST_ASSERT_EQUAL(ESP_OK, power_set_idle_timeout_s(5, T0));
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, power_set_idle_timeout_s(0, T0 + 3 * SEC));
@@ -1146,14 +1125,11 @@ TEST_CASE("idle_ms counts from the later of the last touching sample and the mom
     TEST_ASSERT_EQUAL_UINT32(1000, info_at(T0 + 21 * SEC).idle_ms);
 }
 
-/* ---- the fuzz test ---- */
-
 typedef struct {
     bool on;
     uint32_t left;
 } run_t;
 
-/* Runs of 1 to 30 steps, alternating. */
 static bool run_step(run_t *r, uint32_t *rng)
 {
     if (r->left == 0) {
@@ -1171,8 +1147,8 @@ static uint32_t stream(uint32_t seed, uint32_t k)
 }
 
 typedef struct {
-    unsigned latched_dark;  /* dark writes that failed and still reached the chip */
-    unsigned healed;        /* acknowledged lit writes that found the chip dark while the gate was in doubt */
+    unsigned latched_dark;
+    unsigned healed;
 } fuzz_stats_t;
 
 #define GUARD_US (250 * MS)
@@ -1209,12 +1185,12 @@ static void fuzz_one(uint32_t seed, uint32_t fail_one_in, fuzz_stats_t *stats)
     int64_t now = T0;
     TEST_ASSERT_EQUAL(ESP_OK, power_set_idle_timeout_s(1 + xorshift(&r_timeout) % 3, now));
 
-    bool in_contact = false;  /* the previous step had a finger */
+    bool in_contact = false;
     bool fate_dark = false;
-    bool doubt = false;       /* a heal write failed and no write has been acknowledged since */
-    bool unsettled = false;   /* doubt arose and no lit write has been acknowledged since */
+    bool doubt = false;
+    bool awaiting_lit_ack = false;
     bool have_close = false;
-    int64_t last_close = 0;   /* the closing step of the last eaten contact */
+    int64_t last_close = 0;
     uint32_t eaten = 0;
     uint32_t want_errors = 0;
     uint32_t want_off = 0;
@@ -1229,7 +1205,7 @@ static void fuzz_one(uint32_t seed, uint32_t fail_one_in, fuzz_stats_t *stats)
         }
         if (xorshift(&r_ext) % 100 == 0) {
             const bool on = (xorshift(&r_ext) & 1) != 0;
-            if (!unsettled) {
+            if (!awaiting_lit_ack) {
                 s_fake.external = true;
                 const esp_err_t err = ch422g_set_backlight(on);
                 s_fake.external = false;
@@ -1283,7 +1259,7 @@ static void fuzz_one(uint32_t seed, uint32_t fail_one_in, fuzz_stats_t *stats)
                 }
                 if (lit_write && after_failed_dark) {
                     doubt = true;
-                    unsettled = true;
+                    awaiting_lit_ack = true;
                 }
             } else {
                 if (lit_write && !after_failed_dark) {
@@ -1296,7 +1272,7 @@ static void fuzz_one(uint32_t seed, uint32_t fail_one_in, fuzz_stats_t *stats)
                 }
                 doubt = false;
                 if (lit_write) {
-                    unsettled = false;
+                    awaiting_lit_ack = false;
                 }
             }
             if (!lit_write) {
