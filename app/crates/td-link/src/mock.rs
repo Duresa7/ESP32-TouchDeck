@@ -16,6 +16,7 @@ use crate::{READ_TICK, Transport};
 pub const MOCK_PORT: &str = "mock";
 pub const MOCK_ELF_SHA256: &str =
     "6d6f636b6465636b6d6f636b6465636b6d6f636b6465636b6d6f636b6465636b";
+const DASHBOARD_ROWS: usize = 8;
 const ONLINE_FOR: Duration = Duration::from_secs(5);
 const HEARTBEAT: Duration = Duration::from_secs(2);
 
@@ -25,6 +26,8 @@ struct State {
     settings: Settings,
     icons: BTreeSet<String>,
     widgets: BTreeMap<String, Value>,
+    dashboards: BTreeMap<String, Value>,
+    sets: Vec<Value>,
     received: Vec<Value>,
     lines: Vec<String>,
     silent: bool,
@@ -34,9 +37,21 @@ struct State {
     dropped: u64,
     last_rx: Option<Instant>,
     online_since_hello: bool,
+    presses: u32,
     booted: Instant,
     link: Option<Sender<Vec<u8>>>,
     generation: u64,
+}
+
+impl State {
+    fn record_set(&mut self, request: &Map<String, Value>) {
+        let mut set = request.clone();
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis() as u64);
+        set.insert("at_ms".into(), json!(at));
+        self.sets.push(Value::Object(set));
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +83,8 @@ impl MockDeck {
                 settings: Settings::default(),
                 icons: BTreeSet::new(),
                 widgets: BTreeMap::new(),
+                dashboards: BTreeMap::new(),
+                sets: Vec::new(),
                 received: Vec::new(),
                 lines: Vec::new(),
                 silent: false,
@@ -77,6 +94,7 @@ impl MockDeck {
                 dropped: 0,
                 last_rx: None,
                 online_since_hello: false,
+                presses: 0,
                 booted: Instant::now(),
                 link: None,
                 generation: 0,
@@ -147,8 +165,36 @@ impl MockDeck {
         self.state().settings
     }
 
+    /// The latest `widget.set` per tile.
     pub fn widgets(&self) -> BTreeMap<String, Value> {
         self.state().widgets.clone()
+    }
+
+    /// The latest `dashboard.set` per page.
+    pub fn dashboards(&self) -> BTreeMap<String, Value> {
+        self.state().dashboards.clone()
+    }
+
+    /// Every `widget.set` and `dashboard.set` in arrival order, each with `at_ms`, the unix
+    /// milliseconds at which the mock received it.
+    pub fn sets(&self) -> Vec<Value> {
+        self.state().sets.clone()
+    }
+
+    /// Emits the `press` event a tap on a tile makes.
+    pub fn press(&self, page: &str, tile: &str, kind: &str) {
+        let (seq, t) = {
+            let mut state = self.state();
+            state.presses += 1;
+            (state.presses, state.booted.elapsed().as_millis() as u64)
+        };
+        self.emit(&Event::Press {
+            page: page.to_owned(),
+            tile: tile.to_owned(),
+            kind: kind.to_owned(),
+            seq,
+            t,
+        });
     }
 
     fn run(&self, from_host: &Receiver<Vec<u8>>, to_host: &Sender<Vec<u8>>, generation: u64) {
@@ -325,9 +371,30 @@ impl MockDeck {
                     .get("tile")
                     .and_then(Value::as_str)
                     .ok_or("widget.set needs a tile")?;
-                self.state()
+                let mut state = self.state();
+                state
                     .widgets
                     .insert(tile.to_owned(), Value::Object(request.clone()));
+                state.record_set(request);
+                Ok(Map::new())
+            }
+            "dashboard.set" => {
+                let page = request
+                    .get("page")
+                    .and_then(Value::as_str)
+                    .ok_or("dashboard.set needs a page")?;
+                let rows = request
+                    .get("rows")
+                    .and_then(Value::as_array)
+                    .ok_or("dashboard.set needs rows")?;
+                if rows.len() > DASHBOARD_ROWS {
+                    return Err("a dashboard holds 8 rows");
+                }
+                let mut state = self.state();
+                state
+                    .dashboards
+                    .insert(page.to_owned(), Value::Object(request.clone()));
+                state.record_set(request);
                 Ok(Map::new())
             }
             _ => Err("unknown message"),
@@ -455,6 +522,96 @@ mod tests {
             (state.frames_rx, state.frames_tx, state.online),
             (3, 2, true)
         );
+    }
+
+    #[test]
+    fn widget_and_dashboard_sets_are_recorded_in_order_with_arrival_times() {
+        let deck = MockDeck::new();
+        let (session, _events) = Session::open(
+            Box::new(deck.connect()),
+            SessionConfig {
+                ping_every: None,
+                ..SessionConfig::default()
+            },
+        )
+        .unwrap();
+        let widget = td_core::Request::WidgetSet {
+            tile: "context".into(),
+            value: "42%".into(),
+            caption: "Context".into(),
+            bar: 0.42,
+            stale: false,
+        };
+        let dashboard = td_core::Request::DashboardSet {
+            page: "accounts".into(),
+            rows: vec![td_core::DashboardRow {
+                label: "a@b.c".into(),
+                value: "active".into(),
+                bar: -1.0,
+            }],
+        };
+        assert!(session.request(&widget, Duration::from_secs(1)).unwrap().ok);
+        assert!(
+            session
+                .request(&dashboard, Duration::from_secs(1))
+                .unwrap()
+                .ok
+        );
+        let sets = deck.sets();
+        assert_eq!(
+            sets.iter().map(|set| set["m"].clone()).collect::<Vec<_>>(),
+            [json!("widget.set"), json!("dashboard.set")]
+        );
+        assert_eq!(sets[0]["tile"], "context");
+        assert_eq!(sets[0]["value"], "42%");
+        assert!(sets[0]["at_ms"].as_u64().unwrap() <= sets[1]["at_ms"].as_u64().unwrap());
+        assert_eq!(deck.widgets()["context"]["stale"], false);
+        assert_eq!(deck.dashboards()["accounts"]["rows"][0]["label"], "a@b.c");
+    }
+
+    #[test]
+    fn a_ninth_dashboard_row_is_refused() {
+        let deck = MockDeck::new();
+        let rows: Vec<Value> = (0..9)
+            .map(|n| json!({"label": n.to_string(), "value": "x", "bar": -1}))
+            .collect();
+        let request = json!({"m": "dashboard.set", "page": "p", "rows": rows});
+        assert_eq!(
+            deck.dispatch("dashboard.set", request.as_object().unwrap()),
+            Err("a dashboard holds 8 rows")
+        );
+        assert!(deck.sets().is_empty());
+    }
+
+    #[test]
+    fn a_press_reaches_the_host_as_an_event() {
+        let deck = MockDeck::new();
+        let (_session, events) = Session::open(
+            Box::new(deck.connect()),
+            SessionConfig {
+                ping_every: None,
+                ..SessionConfig::default()
+            },
+        )
+        .unwrap();
+        deck.press("usage", "proxy", "widget");
+        let event = until_event(&events);
+        assert_eq!(event["m"], "press");
+        assert_eq!(
+            (event["page"].as_str(), event["tile"].as_str()),
+            (Some("usage"), Some("proxy"))
+        );
+        assert_eq!(event["kind"], "widget");
+    }
+
+    fn until_event(events: &Receiver<crate::Incoming>) -> Value {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+            if let Ok(crate::Incoming::Event(event)) = events.recv_timeout(left) {
+                return event;
+            }
+        }
+        panic!("no event within 5 s");
     }
 
     #[test]
