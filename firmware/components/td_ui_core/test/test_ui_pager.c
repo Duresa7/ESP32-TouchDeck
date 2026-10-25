@@ -60,6 +60,15 @@ TEST_CASE("a pager starts on page 0 at rest with no finger down", "[ui_pager]")
     TEST_ASSERT_EQUAL_INT16(0, ui_pager_rest_x(&p));
 }
 
+TEST_CASE("the rest position uses the configured page width", "[ui_pager]")
+{
+    const ui_pager_cfg_t narrow = { .page_w = 800, .slop = 16, .swipe = 96 };
+    ui_pager_t p;
+    ui_pager_init(&p, &narrow, 3);
+    TEST_ASSERT_TRUE(ui_pager_goto(&p, 2));
+    TEST_ASSERT_EQUAL_INT16(-1600, ui_pager_rest_x(&p));
+}
+
 TEST_CASE("a leftward swipe goes to the next page and a rightward swipe goes back", "[ui_pager]")
 {
     ui_pager_t p = pager_on_page(3, 0);
