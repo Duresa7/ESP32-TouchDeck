@@ -9,6 +9,7 @@
 #include "esp_psram.h"
 #include "esp_system.h"
 #include "esp_log.h"
+#include "td_console.h"
 
 static const char *TAG = "touchdeck";
 
@@ -34,6 +35,11 @@ void app_main(void)
                  running->label, running->address);
     } else {
         ESP_LOGW(TAG, "Running partition not found in the partition table");
+    }
+
+    esp_err_t console_err = td_console_start();
+    if (console_err != ESP_OK) {
+        ESP_LOGE(TAG, "Console failed to start: %s", esp_err_to_name(console_err));
     }
 
     int ticks = 0;

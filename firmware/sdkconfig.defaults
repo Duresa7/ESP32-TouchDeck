@@ -8,6 +8,10 @@ CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
+# The debug console reads input from USB-Serial/JTAG, so it must be the primary
+# console. UART0 is wired to the RS485 transceiver on this board, not to USB.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
 # 8 MB octal PSRAM, needed for the 1024x600 RGB display frame buffers.
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y

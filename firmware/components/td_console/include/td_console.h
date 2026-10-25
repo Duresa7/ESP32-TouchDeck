@@ -26,6 +26,8 @@ void td_reply_strs(td_reply_t *r, const char *key, const char *const *values, si
 bool td_reply_end(td_reply_t *r);
 bool td_reply_error(char *buf, size_t cap, const char *cmd, const char *message);
 
+esp_err_t td_console_start(void);
+
 #ifdef __cplusplus
 }
 #endif

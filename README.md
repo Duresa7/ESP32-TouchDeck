@@ -37,6 +37,35 @@ Replace `COM3` with your board's serial port. Press `Ctrl+]` to exit the
 monitor. Board defaults (flash size, PSRAM) live in
 `firmware/sdkconfig.defaults`.
 
+## Serial console
+
+The firmware runs a debug console on the board's USB port with the prompt
+`td> `. Each command answers with one line, `@td ` followed by a JSON object
+that holds `cmd`, `ok`, and the command's own fields:
+
+```
+td> version
+@td {"cmd":"version","ok":true,"project_name":"touchdeck",...}
+```
+
+The commands are `help`, `version`, `heap`, `uptime`, and `reboot`. An unknown
+command answers with `"ok":false` and an `error`.
+
+## Unit tests
+
+`firmware/test_app` is an ESP-IDF project that runs the [Unity](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/system/unity.html)
+tests of every component. A component adds tests in its own `test/` folder. List
+the test sources in `test/CMakeLists.txt` as `set(TD_TEST_SOURCES test_x.c)`.
+Run them on the board from an ESP-IDF terminal:
+
+```sh
+cd firmware/test_app
+idf.py -p COM3 flash monitor
+```
+
+The monitor ends with Unity's summary, for example `8 Tests 0 Failures 0 Ignored`
+and `OK`. Flash `firmware/` again afterwards to get the deck firmware back.
+
 ## License
 
 TouchDeck is licensed under the [Apache License 2.0](LICENSE).
