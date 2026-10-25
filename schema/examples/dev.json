@@ -108,7 +108,7 @@
           "col": 0,
           "rowSpan": 2,
           "colSpan": 1,
-          "icon": "file:0123456789abcdef",
+          "icon": null,
           "action": {
             "type": "launch",
             "path": "wt.exe",
@@ -170,7 +170,7 @@
             "type": "widget",
             "source": "claude-status",
             "field": "context_pct",
-            "account": "current"
+            "account": ""
           }
         },
         {
@@ -185,7 +185,7 @@
             "type": "widget",
             "source": "claude-status",
             "field": "cost_usd",
-            "account": "current"
+            "account": ""
           }
         },
         {
@@ -200,7 +200,7 @@
             "type": "widget",
             "source": "cliproxyapi",
             "field": "status",
-            "account": "default"
+            "account": ""
           }
         },
         {
@@ -215,7 +215,7 @@
             "type": "widget",
             "source": "claude-status",
             "field": "model",
-            "account": "current"
+            "account": ""
           }
         }
       ]

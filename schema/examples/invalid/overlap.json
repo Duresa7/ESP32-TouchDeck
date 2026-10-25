@@ -1,4 +1,6 @@
-{"name": "expected: tiles \"alpha\" and \"beta\" overlap",
+expected: tile.overlap
+{
+  "name": "Invalid example",
   "schema": 1,
   "orientation": "landscape",
   "pages": [

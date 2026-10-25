@@ -1,4 +1,6 @@
-{"name": "expected: duplicate id \"alpha\"",
+expected: id.duplicate
+{
+  "name": "Invalid example",
   "schema": 1,
   "orientation": "landscape",
   "pages": [

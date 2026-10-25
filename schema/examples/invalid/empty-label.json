@@ -1,4 +1,6 @@
-{"name": "expected: /pages/0/tiles/0/label must NOT have fewer than 1 characters (minLength)",
+expected: label.blank
+{
+  "name": "Invalid example",
   "schema": 1,
   "orientation": "landscape",
   "pages": [

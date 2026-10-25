@@ -1,4 +1,6 @@
-{"name": "expected: references missing page \"missing\"",
+expected: action.page-missing
+{
+  "name": "Invalid example",
   "schema": 1,
   "orientation": "landscape",
   "pages": [
