@@ -7,7 +7,8 @@ VID `303a` and PID `1001`. Opening the port does not reset it.
 ## Frame layout
 
 A frame begins and ends with `0xC0`. Each frame has both delimiters, including
-when two frames are adjacent. Within the body, `0xC0` becomes `0xDB 0xDC` and
+when two frames are adjacent. An extra `0xC0` before a frame is ignored. Within
+the body, `0xC0` becomes `0xDB 0xDC` and
 `0xDB` becomes `0xDB 0xDD`. No other escape is valid. `0xC0` is not a valid UTF-8
 byte, so the receiver recognizes frames without a text-mode command. A literal
 `0xDB` outside a frame remains text.
@@ -29,10 +30,20 @@ reflection, and no final XOR. Its check value for ASCII `123456789` is `0x29B1`.
 
 A maximum decoded body is 1032 bytes. The receiver unescapes incrementally into
 a 1100-byte buffer. The encoder reserves up to 2066 wire bytes, including both
-delimiters, so a payload made entirely of `0xC0` and `0xDB` fits. A bad escape,
-oversized body, invalid header, unsupported version, length mismatch, or CRC
-mismatch increments `crc_errors` and produces no reply. The receiver discards
-a malformed SLIP frame through its closing delimiter, then resumes text input.
+delimiters, so a payload made entirely of `0xC0` and `0xDB` fits.
+
+A delimiter ends a frame only when the decoded body's size equals `len` plus 8.
+The stream then returns to text. A complete body with a bad CRC, an unsupported
+version, or an invalid header increments `crc_errors` and gets no reply. After
+a body of any other size, a bad escape, or more than 1100 decoded bytes, the
+delimiter ends nothing. The receiver drops those bytes, increments
+`crc_errors`, and takes the delimiter as the opening of the next frame. A frame
+cut short by the host therefore costs one error, and the host's next frame
+resynchronises the stream without reaching the console as text. When 500 ms pass
+inside a frame with no byte from the host, the receiver drops the partial frame
+the same way and returns to text, so a host writes each frame without pausing.
+A host decoder applies the same rule. It may return dropped bytes to its text
+stream, because nothing on the host runs them.
 
 Only flags 0, 1, and 2 are valid. An event has `seq` 0. Requests may use any u8
 sequence, though clients normally cycle through 1 to 255. A client keeps a
@@ -97,6 +108,11 @@ its own input order. There is no cross-channel reply-order guarantee. For
 example, a ping may answer before an earlier long console line is rejected.
 Asynchronous console commands such as `perf fps` retain their existing delayed
 reply behavior.
+
+The console never waits for a link handler. The RX task hands each frame to the
+link's 8192-byte stream buffer without blocking and counts a frame that does
+not fit in `dropped`. The two tasks share only the stdout lock, and each holds
+it for one complete write, so a slow link handler cannot stall a text command.
 
 Frames, console replies, prompts, and echo use `td_console_write` or its line
 variant under the stdout lock. ESP-IDF log formatting uses that same lock.

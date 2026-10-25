@@ -393,28 +393,31 @@ TEST_CASE("carriage return input never runs a glued line and accounts for every 
     fuzz(10, 128, "\r");
 }
 
+/* ver 1, message, seq 7, len 2, payload C0 DB, then CRC bytes the splitter never checks. */
+#define FRAME "\xc0\x01\x01\x07\x00\x02\x00\xdb\xdc\xdb\xdd\x33\x44\xc0"
+#define FRAME_BODY "\x01\x01\x07\x00\x02\x00\xc0\xdb\x33\x44"
+
 TEST_CASE("a frame between text lines reaches only the frame receiver", "[td_rx_sync]")
 {
     model_reset(QUEUE_MAX);
-    FEED("heap\n\xc0\x01\x00\xdb\xdc\xdb\xdd\xc0version\n", 100);
+    FEED("heap\n" FRAME "version\n", 100);
     drain(QUEUE_MAX);
     TEST_ASSERT_EQUAL_STRING("heap\nversion\n", s_model.ran);
     TEST_ASSERT_EQUAL_UINT(1, s_model.frames);
-    TEST_ASSERT_EQUAL_UINT(4, s_model.frame_len);
-    TEST_ASSERT_EQUAL_MEMORY("\x01\x00\xc0\xdb", s_model.frame, 4);
+    TEST_ASSERT_EQUAL_UINT(sizeof FRAME_BODY - 1, s_model.frame_len);
+    TEST_ASSERT_EQUAL_MEMORY(FRAME_BODY, s_model.frame, sizeof FRAME_BODY - 1);
     TEST_ASSERT_EQUAL_UINT(0, s_model.dropped);
 }
 
 TEST_CASE("a frame and its escape survive separate USB reads", "[td_rx_sync]")
 {
     model_reset(QUEUE_MAX);
-    FEED("he\xc0\x01\xdb", 100);
-    FEED("\xdd\x00\xc0" "ap\n", 100);
+    FEED("he\xc0\x01\x01\x07\x00\x02\x00\xdb", 100);
+    FEED("\xdc\xdb\xdd\x33\x44\xc0" "ap\n", 100);
     drain(QUEUE_MAX);
     TEST_ASSERT_EQUAL_STRING("heap\n", s_model.ran);
     TEST_ASSERT_EQUAL_UINT(1, s_model.frames);
-    TEST_ASSERT_EQUAL_UINT(3, s_model.frame_len);
-    TEST_ASSERT_EQUAL_MEMORY("\x01\xdb\x00", s_model.frame, 3);
+    TEST_ASSERT_EQUAL_MEMORY(FRAME_BODY, s_model.frame, sizeof FRAME_BODY - 1);
 }
 
 TEST_CASE("SLIP escape without a frame delimiter stays text", "[td_rx_sync]")
@@ -428,9 +431,9 @@ TEST_CASE("SLIP escape without a frame delimiter stays text", "[td_rx_sync]")
 
 TEST_CASE("a frame boundary follows earlier text and precedes later text for every USB read size", "[td_rx_sync]")
 {
-    char input[320];
+    char input[340];
     memset(input, 'x', 300);
-    const char suffix[] = "\n\xc0\x01\x00\xc0version\n";
+    const char suffix[] = "\n" FRAME "version\n";
     memcpy(input + 300, suffix, sizeof suffix - 1);
     const size_t len = 300 + sizeof suffix - 1;
     for (size_t width = 1; width <= 64; width++) {
@@ -452,39 +455,97 @@ TEST_CASE("frames still arrive while text overflow discards a line", "[td_rx_syn
     model_reset(QUEUE_MAX);
     FEED("he", 100);
     FEED("ap", 2);
-    FEED("\xc0\x01\x00\xc0\nversion\n", 100);
+    FEED(FRAME "\nversion\n", 100);
     drain(QUEUE_MAX);
     TEST_ASSERT_EQUAL_STRING("version\n", s_model.ran);
     TEST_ASSERT_EQUAL_UINT(1, s_model.frames);
     TEST_ASSERT_EQUAL_UINT(5, s_model.dropped);
 }
 
-TEST_CASE("oversized and malformed frames drop through their closing delimiter", "[td_rx_sync]")
+TEST_CASE("a complete frame with any CRC hands the port back to text", "[td_rx_sync]")
+{
+    model_reset(QUEUE_MAX);
+    FEED("\xc0\x01\x01\x07\x00\x00\x00\xff\xff\xc0version\n", 100);
+    drain(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_UINT(1, s_model.frames);
+    TEST_ASSERT_EQUAL_UINT(0, s_model.bad_frames);
+    TEST_ASSERT_EQUAL_STRING("version\n", s_model.ran);
+}
+
+TEST_CASE("a truncated frame resynchronises on the next frame without leaking it as text", "[td_rx_sync]")
+{
+    model_reset(QUEUE_MAX);
+    FEED("\xc0\x01\x01\x05\x00\x10\x00{\"m\":", 100);
+    FEED("version\n", 100);
+    FEED(FRAME "heap\n", 100);
+    FEED(FRAME FRAME "help\n", 100);
+    drain(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_UINT(1, s_model.bad_frames);
+    TEST_ASSERT_EQUAL_UINT(3, s_model.frames);
+    TEST_ASSERT_EQUAL_MEMORY(FRAME_BODY, s_model.frame, sizeof FRAME_BODY - 1);
+    TEST_ASSERT_EQUAL_STRING("heap\nhelp\n", s_model.ran);
+}
+
+TEST_CASE("a doubled opening delimiter still frames", "[td_rx_sync]")
+{
+    model_reset(QUEUE_MAX);
+    FEED("\xc0\xc0\xc0" FRAME "heap\n", 100);
+    drain(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_UINT(1, s_model.frames);
+    TEST_ASSERT_EQUAL_UINT(0, s_model.bad_frames);
+    TEST_ASSERT_EQUAL_STRING("heap\n", s_model.ran);
+}
+
+TEST_CASE("oversized and malformed frames resynchronise on the next frame", "[td_rx_sync]")
 {
     model_reset(QUEUE_MAX);
     FEED("\xc0", 100);
     for (size_t i = 0; i < TD_RX_FRAME_MAX + 1; i++) {
         FEED("x", 100);
     }
-    FEED("\xc0version\n\xc0\xdb\xc0heap\n\xc0\xdbx\xc0", 100);
+    FEED("\xc0" FRAME "version\n\xc0\xdb\xc0" FRAME "heap\n", 100);
+    FEED("\xc0\xdbx\xc0" FRAME "help\n", 100);
     drain(QUEUE_MAX);
     TEST_ASSERT_EQUAL_UINT(3, s_model.bad_frames);
-    TEST_ASSERT_EQUAL_UINT(0, s_model.frames);
+    TEST_ASSERT_EQUAL_UINT(3, s_model.frames);
     TEST_ASSERT_EQUAL_UINT(0, s_model.dropped);
-    TEST_ASSERT_EQUAL_STRING("version\nheap\n", s_model.ran);
+    TEST_ASSERT_EQUAL_STRING("version\nheap\nhelp\n", s_model.ran);
+}
+
+TEST_CASE("an abandoned frame gives the port back to text once the host goes idle", "[td_rx_sync]")
+{
+    model_reset(QUEUE_MAX);
+    td_rx_split_idle(&s_model.split, frame_received, &s_model);
+    FEED("\xc0", 100);
+    td_rx_split_idle(&s_model.split, frame_received, &s_model);
+    TEST_ASSERT_EQUAL_UINT(0, s_model.bad_frames);
+    FEED("\xc0\x01\x01\x05", 100);
+    td_rx_split_idle(&s_model.split, frame_received, &s_model);
+    FEED("heap\n", 100);
+    FEED("\xc0\xdb", 100);
+    td_rx_split_idle(&s_model.split, frame_received, &s_model);
+    FEED("help\n", 100);
+    drain(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_UINT(2, s_model.bad_frames);
+    TEST_ASSERT_EQUAL_UINT(0, s_model.frames);
+    TEST_ASSERT_EQUAL_STRING("heap\nhelp\n", s_model.ran);
 }
 
 TEST_CASE("a fully escaped maximum body fits the decoded receive buffer", "[td_rx_sync]")
 {
     model_reset(QUEUE_MAX);
-    FEED("\xc0", 100);
-    for (size_t i = 0; i < 1032; i++) {
-        FEED("\xdb\xdc", 100);
+    FEED("\xc0\x01\x02\xdb\xdc\x00\x00\x04", 100);
+    for (size_t i = 0; i < 1024 + 2; i++) {
+        feed_with_space(i % 2 ? "\xdb\xdd" : "\xdb\xdc", 2, 100);
     }
-    FEED("\xc0\xc0x\xc0version\n", 100);
+    FEED("\xc0version\n", 100);
     drain(QUEUE_MAX);
-    TEST_ASSERT_EQUAL_UINT(2, s_model.frames);
+    TEST_ASSERT_EQUAL_UINT(1, s_model.frames);
     TEST_ASSERT_EQUAL_UINT(0, s_model.bad_frames);
+    TEST_ASSERT_EQUAL_UINT(1032, s_model.frame_len);
+    TEST_ASSERT_EQUAL_HEX8(0xc0, s_model.frame[2]);
+    TEST_ASSERT_EQUAL_HEX8(0xc0, s_model.frame[6]);
+    TEST_ASSERT_EQUAL_HEX8(0xdb, s_model.frame[1031]);
     TEST_ASSERT_EQUAL_STRING("version\n", s_model.ran);
 }
 

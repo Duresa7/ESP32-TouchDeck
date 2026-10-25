@@ -34,9 +34,15 @@ typedef struct {
     uint8_t frame[TD_RX_FRAME_MAX];
 } td_rx_split_t;
 
-/* Emits text and unescaped frame bodies in wire order. NULL reports malformed SLIP. */
+/*
+ * Emits text and unescaped frame bodies in wire order. NULL reports malformed
+ * SLIP, and the delimiter that ended it opens the next frame.
+ */
 void td_rx_split(td_rx_split_t *s, char *buf, size_t n,
                  td_rx_text_fn text, td_rx_frame_fn frame, void *context);
+
+/* Abandons a frame the host stopped sending, so the bytes that follow are text again. */
+void td_rx_split_idle(td_rx_split_t *s, td_rx_frame_fn frame, void *context);
 
 /* Register before td_console_start. NULL bodies report malformed SLIP. */
 void td_console_set_frame_handler(td_rx_frame_fn handler, void *context);

@@ -47,6 +47,18 @@ size_t td_rx_sync(td_rx_sync_t *s, char *buf, size_t n, size_t space, size_t *dr
     return 1;
 }
 
+/*
+ * Only a body whose length field matches its size ends at a delimiter. After a
+ * frame lost bytes, the next delimiter is usually the opening one of the host's
+ * next frame, so taking it as an opener resynchronises on that frame instead of
+ * passing its body to the console as text.
+ */
+static bool frame_complete(const td_rx_split_t *s)
+{
+    return s->mode == TD_RX_FRAME && s->frame_len >= 8
+        && s->frame_len == 8 + (s->frame[4] | ((size_t)s->frame[5] << 8));
+}
+
 void td_rx_split(td_rx_split_t *s, char *buf, size_t n,
                  td_rx_text_fn text, td_rx_frame_fn frame, void *context)
 {
@@ -59,15 +71,15 @@ void td_rx_split(td_rx_split_t *s, char *buf, size_t n,
                     text(buf, text_len, context);
                     text_len = 0;
                 }
-                s->mode = TD_RX_FRAME;
-                s->frame_len = 0;
-            } else {
-                if (s->frame_len || s->mode != TD_RX_FRAME) {
-                    bool valid = s->mode == TD_RX_FRAME;
-                    frame(valid ? s->frame : NULL, valid ? s->frame_len : 0, context);
-                }
+            } else if (frame_complete(s)) {
+                frame(s->frame, s->frame_len, context);
                 s->mode = TD_RX_TEXT;
+                continue;
+            } else if (s->frame_len || s->mode != TD_RX_FRAME) {
+                frame(NULL, 0, context);
             }
+            s->mode = TD_RX_FRAME;
+            s->frame_len = 0;
         } else if (s->mode == TD_RX_TEXT) {
             buf[text_len++] = (char)c;
         } else if (s->mode != TD_RX_FRAME_DISCARD) {
@@ -92,6 +104,14 @@ void td_rx_split(td_rx_split_t *s, char *buf, size_t n,
     if (text_len) {
         text(buf, text_len, context);
     }
+}
+
+void td_rx_split_idle(td_rx_split_t *s, td_rx_frame_fn frame, void *context)
+{
+    if (s->mode != TD_RX_TEXT && (s->frame_len || s->mode != TD_RX_FRAME)) {
+        frame(NULL, 0, context);
+    }
+    s->mode = TD_RX_TEXT;
 }
 
 td_line_status_t td_line_feed(td_line_t *s, int c, bool dropped,

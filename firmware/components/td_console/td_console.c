@@ -27,6 +27,7 @@
 #define TD_RX_CHUNK 64
 #define TD_RX_QUEUE_BYTES 2048
 #define TD_RX_IDLE_MS 100
+#define TD_RX_FRAME_IDLE_MS 500
 #define TD_TX_DRAIN_MS 250
 
 static const char *TAG = "td_console";
@@ -255,7 +256,13 @@ static void rx_task(void *arg)
 {
     char chunk[TD_RX_CHUNK];
     for (;;) {
-        int n = usb_serial_jtag_read_bytes(chunk, sizeof chunk, portMAX_DELAY);
+        bool in_frame = s_rx_split.mode != TD_RX_TEXT;
+        int n = usb_serial_jtag_read_bytes(chunk, sizeof chunk,
+                                           in_frame ? pdMS_TO_TICKS(TD_RX_FRAME_IDLE_MS) : portMAX_DELAY);
+        if (n == 0 && in_frame) {
+            td_rx_split_idle(&s_rx_split, receive_frame, NULL);
+            continue;
+        }
         if (n <= 0) {
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
