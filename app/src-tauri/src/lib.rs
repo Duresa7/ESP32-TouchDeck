@@ -19,7 +19,13 @@ pub fn run() {
             commands::disconnect,
             commands::deck_info,
             commands::console_send,
-            commands::e2e_mock
+            commands::push_layout,
+            commands::pull_layout,
+            commands::settings_get,
+            commands::settings_put,
+            commands::reboot_deck,
+            commands::e2e_mock,
+            commands::e2e_mock_record
         ]);
     #[cfg(not(feature = "e2e"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
@@ -27,7 +33,12 @@ pub fn run() {
         commands::connect,
         commands::disconnect,
         commands::deck_info,
-        commands::console_send
+        commands::console_send,
+        commands::push_layout,
+        commands::pull_layout,
+        commands::settings_get,
+        commands::settings_put,
+        commands::reboot_deck
     ]);
     builder
         .setup(|app| {

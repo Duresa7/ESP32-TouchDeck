@@ -4,13 +4,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
+use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
-use td_core::Hello;
+use td_core::{Hello, Layout, Orientation, Request, Settings};
 use td_link::discover::{Candidate, Probe, discover, probe_transport};
 use td_link::mock::MOCK_PORT;
+use td_link::xfer::{PutReport, get_layout, put_layout};
 use td_link::{Incoming, MockDeck, Serial, Session, SessionConfig, Transport};
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(1);
+const SETTINGS_TIMEOUT: Duration = Duration::from_secs(2);
 
 struct Link {
     id: u64,
@@ -212,6 +215,98 @@ pub async fn console_send(app: AppHandle, line: String) -> Result<(), String> {
         session.send_line(&line).map_err(|error| error.to_string())
     })
     .await?
+}
+
+fn session(app: &AppHandle) -> Result<Arc<Session>, String> {
+    app.state::<AppState>()
+        .connected()
+        .map(|(_, session)| session)
+        .ok_or_else(|| "no deck is connected".to_owned())
+}
+
+/// Validates a layout with the schema rules and pushes its canonical form into the deck's
+/// slot for its own orientation.
+#[tauri::command]
+pub async fn push_layout(app: AppHandle, layout: String) -> Result<PutReport, String> {
+    blocking(move || {
+        let parsed = Layout::parse(layout.as_bytes()).map_err(|errors| {
+            let all: Vec<String> = errors.iter().map(ToString::to_string).collect();
+            all.join("; ")
+        })?;
+        put_layout(&*session(&app)?, parsed.orientation, &parsed).map_err(|error| error.to_string())
+    })
+    .await?
+}
+
+/// Pulls the layout the deck stores for `orientation` and returns its text.
+#[tauri::command]
+pub async fn pull_layout(app: AppHandle, orientation: Orientation) -> Result<String, String> {
+    blocking(move || {
+        let report =
+            get_layout(&*session(&app)?, orientation).map_err(|error| error.to_string())?;
+        String::from_utf8(report.data).map_err(|_| "the deck's layout is not UTF-8".to_owned())
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn settings_get(app: AppHandle) -> Result<Settings, String> {
+    blocking(move || {
+        session(&app)?
+            .request(&Request::SettingsGet, SETTINGS_TIMEOUT)
+            .map_err(|error| error.to_string())?
+            .fields()
+            .map_err(|error| error.to_string())
+    })
+    .await?
+}
+
+/// Stores the settings and returns the deck's reply fields, `reboot_required` included.
+#[tauri::command]
+pub async fn settings_put(app: AppHandle, settings: Settings) -> Result<Value, String> {
+    blocking(move || {
+        session(&app)?
+            .request(&Request::SettingsPut(settings), SETTINGS_TIMEOUT)
+            .map_err(|error| error.to_string())?
+            .fields()
+            .map_err(|error| error.to_string())
+    })
+    .await?
+}
+
+/// Restarts the deck with the console's `reboot` command.
+#[tauri::command]
+pub async fn reboot_deck(app: AppHandle) -> Result<(), String> {
+    blocking(move || {
+        session(&app)?
+            .send_line("reboot")
+            .map_err(|error| error.to_string())
+    })
+    .await?
+}
+
+/// What the mock deck recorded, for the e2e specs to assert on.
+#[cfg(feature = "e2e")]
+#[tauri::command]
+pub fn e2e_mock_record(state: State<'_, AppState>) -> Result<Value, String> {
+    let mock = state
+        .mock
+        .as_ref()
+        .ok_or("the app is not running the mock deck")?;
+    let layout = |orientation| {
+        mock.layout(orientation)
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+    };
+    Ok(serde_json::json!({
+        "received": mock.received(),
+        "lines": mock.lines(),
+        "settings": mock.settings(),
+        "reboots": mock.reboots(),
+        "layouts": {
+            "landscape": layout(Orientation::Landscape),
+            "portrait": layout(Orientation::Portrait),
+        },
+    }))
 }
 
 #[cfg(feature = "e2e")]
