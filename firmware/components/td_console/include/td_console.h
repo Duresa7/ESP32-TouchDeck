@@ -35,6 +35,18 @@ bool td_reply_error(char *buf, size_t cap, const char *cmd, const char *message)
  */
 esp_err_t td_console_register(const esp_console_cmd_t *cmds, size_t count);
 
+/*
+ * Sends bytes to the host, and waits for the USB driver's TX ring when it is full, up to a second for each 128
+ * bytes, instead of dropping them. Replies go out this way, not through stdio. The stdio path drops a whole write
+ * while usb_serial_jtag_is_connected() reads false, which it does for a tick at a time while the display redraws,
+ * with the host attached and reading. Holds the stdout lock, so log lines stay whole around the bytes.
+ * Returns false when the host did not take every byte.
+ */
+bool td_console_write(const char *s, size_t len);
+
+/* td_console_write of the line and then CR LF, under one lock, so no log line can land between them. */
+bool td_console_write_line(const char *line);
+
 esp_err_t td_console_start(void);
 
 #ifdef __cplusplus

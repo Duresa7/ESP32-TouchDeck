@@ -31,17 +31,52 @@
 
 static const char *TAG = "td_console";
 
+/* The driver's TX ring holds 256 bytes, and a single write larger than the ring never fits. */
+#define TD_TX_CHUNK 128
+#define TD_TX_WAIT_MS 1000
+
+static bool write_locked(const char *s, size_t len)
+{
+    size_t done = 0;
+    while (done < len) {
+        const size_t n = len - done < TD_TX_CHUNK ? len - done : TD_TX_CHUNK;
+        if (usb_serial_jtag_write_bytes(s + done, n, pdMS_TO_TICKS(TD_TX_WAIT_MS)) != (int)n) {
+            break;
+        }
+        done += n;
+    }
+    return done == len;
+}
+
+bool td_console_write(const char *s, size_t len)
+{
+    flockfile(stdout);
+    fflush(stdout);
+    const bool ok = write_locked(s, len);
+    funlockfile(stdout);
+    return ok;
+}
+
+bool td_console_write_line(const char *line)
+{
+    flockfile(stdout);
+    fflush(stdout);
+    const bool ok = write_locked(line, strlen(line)) && write_locked("\r\n", 2);
+    funlockfile(stdout);
+    return ok;
+}
+
 static void emit(td_reply_t *r)
 {
     td_reply_end(r);
-    printf("%s\n", r->buf);
+    td_console_write_line(r->buf);
 }
 
 static void emit_error(const char *cmd, const char *message)
 {
     char buf[TD_REPLY_MAX];
     td_reply_error(buf, sizeof buf, cmd, message);
-    printf("%s\n", buf);
+    td_console_write_line(buf);
 }
 
 static int cmd_help(int argc, char **argv);
