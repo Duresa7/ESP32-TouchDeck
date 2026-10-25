@@ -25,7 +25,11 @@ typedef struct {
     uint32_t last_frames;
 } ui_state_t;
 
-/* Reads the deck's state without the LVGL lock. Valid once ui_build() has run. */
+/* True once ui_build() has drawn a deck. A table with no valid page draws nothing. */
+bool ui_ready(void);
+
+/* Reads the deck's state without the LVGL lock. Valid once ui_ready() is true. The totals are whole when
+ * `animating` is false. */
 void ui_get_state(ui_state_t *out);
 
 /* Slides to a page, as a swipe would. False when the page does not exist. The caller holds the LVGL lock. */

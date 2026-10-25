@@ -82,7 +82,8 @@ static bool tiles_overlap(const ui_tile_t *a, const ui_tile_t *b)
 
 bool ui_page_valid(const ui_page_t *page)
 {
-    if (page == NULL || !has_text(page->id) || !grid_size_ok(page->rows) || !grid_size_ok(page->cols)) {
+    if (page == NULL || !has_text(page->id) || !has_text(page->title) || !grid_size_ok(page->rows) ||
+        !grid_size_ok(page->cols)) {
         return false;
     }
     if (page->tile_count > 0 && page->tiles == NULL) {

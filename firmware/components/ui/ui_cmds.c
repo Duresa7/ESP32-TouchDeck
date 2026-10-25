@@ -81,22 +81,20 @@ static void cmd_goto(int argc, char **argv)
         send_error("usage: ui goto <page>");
         return;
     }
-    ui_state_t st;
-    ui_get_state(&st);
-    if (page >= st.pages) {
-        send_error("out of range");
-        return;
-    }
     if (esp_lv_adapter_lock(LOCK_TIMEOUT_MS) != ESP_OK) {
         send_error("display busy");
         return;
     }
-    const bool moved = ui_goto((uint8_t)page);
+    const bool exists = ui_goto((uint8_t)page);
     esp_lv_adapter_unlock();
+    if (!exists) {
+        send_error("out of range");
+        return;
+    }
 
     char buf[TD_REPLY_MAX];
     td_reply_t r;
-    td_reply_begin(&r, buf, sizeof buf, "ui", moved);
+    td_reply_begin(&r, buf, sizeof buf, "ui", true);
     td_reply_str(&r, "op", "goto");
     td_reply_int(&r, "page", page);
     send(&r);
@@ -137,6 +135,8 @@ static const char *hold_error(esp_err_t err)
         return "touch not ready";
     case ESP_ERR_NOT_ALLOWED:
         return "finger down";
+    case ESP_ERR_NOT_FINISHED:
+        return "hold queued";
     case ESP_ERR_NO_MEM:
         return "queue full";
     default:
@@ -156,23 +156,24 @@ static void cmd_hold(int argc, char **argv)
         send_error("usage: ui hold <x 0-1023> <y 0-599> <ms 1-2000>");
         return;
     }
-    const esp_err_t err = touch_hold((uint16_t)v[0], (uint16_t)v[1], (uint32_t)v[2]);
+    const esp_err_t err = touch_inject_hold((uint16_t)v[0], (uint16_t)v[1], (uint32_t)v[2]);
     if (err != ESP_OK) {
         send_error(hold_error(err));
         return;
     }
 
     /* The console runs one command at a time, so a screenshot sent behind this line is taken after the pressed look
-     * has finished its transition, and the reply names the tile LVGL pressed. */
+     * has finished its transition. The reply names the tile that the press registered on. A hold shorter than the
+     * wait can end before that, and then the tile is the empty string. */
     ui_state_t st;
     ui_get_state(&st);
     for (int waited = 0; st.pressed_tile[0] == '\0' && waited < HOLD_REGISTER_MAX_MS; waited += HOLD_REGISTER_POLL_MS) {
         vTaskDelay(pdMS_TO_TICKS(HOLD_REGISTER_POLL_MS));
         ui_get_state(&st);
     }
-    if (st.pressed_tile[0] != '\0') {
+    const char *pressed = st.pressed_tile;
+    if (pressed[0] != '\0') {
         vTaskDelay(pdMS_TO_TICKS(ui_theme.anim_press_ms + HOLD_SETTLE_SLACK_MS));
-        ui_get_state(&st);
     }
 
     char buf[TD_REPLY_MAX];
@@ -182,7 +183,7 @@ static void cmd_hold(int argc, char **argv)
     td_reply_int(&r, "x", v[0]);
     td_reply_int(&r, "y", v[1]);
     td_reply_int(&r, "ms", v[2]);
-    td_reply_str(&r, "pressed_tile", st.pressed_tile);
+    td_reply_str(&r, "pressed_tile", pressed);
     send(&r);
 }
 
@@ -195,7 +196,7 @@ static int cmd_ui(int argc, char **argv)
         send_error("usage: ui state | goto <page> | tile <id> | hold <x> <y> <ms>");
         return 0;
     }
-    if (!display_ready()) {
+    if (!display_ready() || !ui_ready()) {
         send_error("display not ready");
         return 0;
     }
