@@ -4,8 +4,8 @@
 const ui_theme_t ui_theme = {
     .color = {
         .bg = UI_RGB565(8, 8, 16),
-        .tile = UI_RGB565(24, 28, 40),
-        .tile_down = UI_RGB565(40, 56, 88),
+        .tile = UI_RGB565(24, 32, 48),
+        .tile_down = UI_RGB565(40, 64, 104),
         .text = UI_RGB565(232, 236, 248),
         .title = UI_RGB565(120, 132, 152),
         .dot_idle = UI_RGB565(64, 72, 88),
