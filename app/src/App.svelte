@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount, tick } from 'svelte';
+  import Approval from './lib/actions/Approval.svelte';
   import { append, classify, type ConsoleEntry } from './lib/console.ts';
   import {
     HELLO_FIELDS,
@@ -15,6 +16,7 @@
     type Candidate,
     type DeckInfo,
   } from './lib/deck.ts';
+  import Actions from './routes/Actions.svelte';
 
   let title = $state('TouchDeck');
   let decks = $state<Candidate[]>([]);
@@ -26,6 +28,7 @@
   let entries = $state<ConsoleEntry[]>([]);
   let line = $state('');
   let log = $state<HTMLOListElement>();
+  let view = $state<'console' | 'actions'>('console');
 
   const online = $derived(deck !== null && deck.online);
   const status = $derived(online && deck ? `Connected to ${deck.port}` : problem ? `Offline (${problem})` : 'Not connected');
@@ -117,6 +120,10 @@
     <span class="mark" aria-hidden="true"></span>
     <span data-testid="title">{title}</span>
   </div>
+  <nav class="views">
+    <button class:active={view === 'console'} onclick={() => (view = 'console')} data-testid="view-console">Console</button>
+    <button class:active={view === 'actions'} onclick={() => (view = 'actions')} data-testid="view-actions">Actions</button>
+  </nav>
   <div class="status" data-testid="link-status">
     <span class="dot" data-testid="status-dot" data-state={online ? 'online' : 'offline'}></span>
     <span>{status}</span>
@@ -166,6 +173,9 @@
     {/if}
   </section>
 
+  {#if view === 'actions'}
+    <Actions {online} />
+  {:else}
   <section class="panel console" data-testid="console">
     <div class="panel-head">
       <h2>Console</h2>
@@ -191,4 +201,27 @@
       <button class="primary" disabled={!online || !line.trim()} data-testid="console-send">Send</button>
     </form>
   </section>
+  {/if}
 </main>
+
+<Approval />
+
+<style>
+  .views {
+    display: flex;
+    gap: 4px;
+  }
+
+  .views button {
+    padding: 4px 12px;
+    border-color: transparent;
+    background: transparent;
+    color: var(--muted);
+  }
+
+  .views button.active {
+    border-color: var(--line);
+    background: var(--raised);
+    color: var(--text);
+  }
+</style>
