@@ -51,6 +51,26 @@ td> version
 The commands are `help`, `version`, `heap`, `uptime`, and `reboot`. An unknown
 command answers with `"ok":false` and an `error`.
 
+Input waits in a 2048-byte queue while a command runs. That holds about 250
+short lines or eight full-length ones. When a burst fills the queue, the
+firmware drops the next read of up to 64 bytes and then everything through the
+next CR or LF, so a line that a drop cut never runs. It reports the loss before
+the next prompt:
+
+```
+@td {"cmd":"console","ok":false,"error":"input overflow","dropped_bytes":N}
+```
+
+`dropped_bytes` counts every byte it threw away, the cut line included. When
+every line ends in a line feed, the bytes of the lines that got a reply plus
+`dropped_bytes` equal the bytes you sent. A script that sends a burst should
+wait for replies after about 250 short lines.
+
+The console reads the USB-Serial/JTAG driver, so it needs USB-Serial/JTAG as
+the primary console, which `firmware/sdkconfig.defaults` sets. With another
+primary console the firmware still boots, logs that the console is off, and
+does not start it.
+
 ## Unit tests
 
 `firmware/test_app` is an ESP-IDF project that runs the [Unity](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/system/unity.html)
@@ -63,8 +83,8 @@ cd firmware/test_app
 idf.py -p COM3 flash monitor
 ```
 
-The monitor ends with Unity's summary, for example `8 Tests 0 Failures 0 Ignored`
-and `OK`. Flash `firmware/` again afterwards to get the deck firmware back.
+The monitor ends with Unity's summary, `N Tests 0 Failures 0 Ignored`, and `OK`.
+Flash `firmware/` again afterwards to get the deck firmware back.
 
 ## License
 
