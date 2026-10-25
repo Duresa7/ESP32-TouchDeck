@@ -393,7 +393,7 @@ TEST_CASE("carriage return input never runs a glued line and accounts for every 
     fuzz(10, 128, "\r");
 }
 
-/* ver 1, message, seq 7, len 2, payload C0 DB, then CRC bytes the splitter never checks. */
+/* The splitter checks only the length field, so the last two body bytes stand in for a CRC. */
 #define FRAME "\xc0\x01\x01\x07\x00\x02\x00\xdb\xdc\xdb\xdd\x33\x44\xc0"
 #define FRAME_BODY "\x01\x01\x07\x00\x02\x00\xc0\xdb\x33\x44"
 

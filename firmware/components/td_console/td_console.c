@@ -246,8 +246,9 @@ static void receive_frame(const uint8_t *body, size_t len, void *context)
  * discards the whole packet, without a trace, when the ring is full. Printing
  * costs the console task about 13 us per output byte, so a 220-byte reply
  * keeps it from reading for about 3 ms and a burst of short lines fills that
- * ring. This task outranks the console and drains the ring into s_rx_queue in
- * reads of up to 64 bytes. When the queue is full, td_rx_sync drops the read and
+ * ring. This task outranks the console and drains the ring in reads of up to 64
+ * bytes, handing frames to the link and text to s_rx_queue. When the queue is
+ * full, td_rx_sync drops the read and
  * the rest of the line it cuts, and the loss is counted and reported instead of
  * hidden. It reads the driver directly because read() on stdin takes one byte
  * per ring operation, which is slower than back-to-back 64-byte packets.

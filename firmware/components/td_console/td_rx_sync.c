@@ -47,12 +47,7 @@ size_t td_rx_sync(td_rx_sync_t *s, char *buf, size_t n, size_t space, size_t *dr
     return 1;
 }
 
-/*
- * Only a body whose length field matches its size ends at a delimiter. After a
- * frame lost bytes, the next delimiter is usually the opening one of the host's
- * next frame, so taking it as an opener resynchronises on that frame instead of
- * passing its body to the console as text.
- */
+/* Any other body lost bytes, so its closing delimiter is most likely the opener of the host's next frame. */
 static bool frame_complete(const td_rx_split_t *s)
 {
     return s->mode == TD_RX_FRAME && s->frame_len >= 8
