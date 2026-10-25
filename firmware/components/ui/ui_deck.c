@@ -240,11 +240,12 @@ static void on_release(lv_event_t *e)
     ESP_LOGI(TAG, "click taps=%u tile=%s", taps, tile_of(tile_obj)->id);
 }
 
-/* The 10-second hold armed. The band covers the screen on the top layer, above whichever page shows, and stays until
- * the deck restarts. It takes no input. Runs in the LVGL read callback, so the adapter lock is held. */
+/* The 10-second hold armed. The band covers the screen as the last child of the active screen, above whichever page
+ * shows, and stays until the deck restarts. It sits on the screen and not on the top layer because the screenshot
+ * snapshots the active screen alone. It takes no input. Runs in the LVGL read callback, so the adapter lock is held. */
 static void on_recovery_armed(void)
 {
-    lv_obj_t *band = lv_obj_create(lv_layer_top());
+    lv_obj_t *band = lv_obj_create(lv_screen_active());
     lv_obj_remove_style_all(band);
     lv_obj_set_clickable(band, false);
     lv_obj_set_scrollable(band, false);
@@ -252,6 +253,7 @@ static void on_recovery_armed(void)
     lv_obj_set_size(band, TD_LCD_H_RES, TD_LCD_V_RES);
     lv_obj_set_style_bg_color(band, ui_color(RECOVERY_BAND_COLOR), 0);
     lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
+    lv_obj_move_foreground(band);
 
     lv_obj_t *label = lv_label_create(band);
     lv_label_set_text_static(label, "Release to reset");
