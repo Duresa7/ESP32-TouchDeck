@@ -34,7 +34,7 @@ idf.py -p COM3 flash monitor
 ```
 
 Replace `COM3` with your board's serial port. Press `Ctrl+]` to exit the
-monitor. Board defaults (flash size, PSRAM, display timing) live in
+monitor. Board defaults (flash size, PSRAM, CPU speed, LVGL options) live in
 `firmware/sdkconfig.defaults`. The first build downloads LVGL and the LVGL
 adapter from the ESP-IDF component registry, so it needs a network connection.
 `firmware/dependencies.lock` pins the versions.
