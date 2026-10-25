@@ -13,8 +13,12 @@
 #include "display.h"
 #include "touch.h"
 #include "ui.h"
+#include "key_sink_log.h"
+#include "keys.h"
 
 static const char *TAG = "touchdeck";
+
+static key_sink_log_t s_key_log;
 
 static void register_commands(const char *owner, const esp_console_cmd_t *cmds, size_t count)
 {
@@ -58,6 +62,17 @@ void app_main(void)
     size_t touch_cmd_count;
     const esp_console_cmd_t *touch_cmds = touch_console_commands(&touch_cmd_count);
     register_commands("Touch", touch_cmds, touch_cmd_count);
+    size_t keys_cmd_count;
+    const esp_console_cmd_t *keys_cmds = keys_console_commands(&s_key_log, &keys_cmd_count);
+    register_commands("Keys", keys_cmds, keys_cmd_count);
+
+    /* The engine exists before the console can run a keys command. Its only sink here is the console key log.
+     * The USB HID sink plugs in behind the same key_sink_t in the post-product update. */
+    key_sink_log_start(&s_key_log);
+    esp_err_t keys_err = keys_start(key_sink_log_sink(&s_key_log));
+    if (keys_err != ESP_OK) {
+        ESP_LOGE(TAG, "Keys failed to start: %s", esp_err_to_name(keys_err));
+    }
 
     esp_err_t console_err = td_console_start();
     if (console_err != ESP_OK) {
