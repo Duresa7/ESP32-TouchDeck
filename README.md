@@ -119,6 +119,48 @@ and link tasks reply independently, so callers match each channel separately.
 `link selftest` checks the [golden frames](schema/protocol/golden-frames.json)
 without a board. Live checks still require the board.
 
+## Storage and settings
+
+The `storage` partition holds one [LittleFS](https://github.com/joltwallet/esp_littlefs)
+volume, mounted at `/storage` before the console starts. The first boot after the
+partition was erased formats it and logs `store: formatted`, and every boot logs
+`store: mounted, <used>/<total> bytes`. Flashing the firmware leaves the volume
+alone. The paths the firmware uses are `/storage/settings.json`,
+`/storage/layouts/<orientation>.json`, `/storage/icons/<id>.bin`, and
+`/storage/recovery`.
+
+A write goes to `<path>.tmp`, is flushed with `fsync`, and is renamed over the
+target. LittleFS makes the rename atomic across power loss, so a reader sees the
+whole old file or the whole new one. A temporary file that a power cut left behind
+is removed at the next mount.
+
+Settings are `{"idle_timeout_s": 600, "orientation": "landscape"}`. The deck reads
+them before the display starts and logs `settings: idle_timeout_s=<n>
+orientation=<o>`. An unknown field is ignored, a missing field takes its default,
+a timeout outside 1 to 86400 takes 600, and an unknown orientation takes
+`landscape`. The idle timeout reaches the power gate at boot. The orientation is
+stored and reported, and the display applies it in a later milestone.
+
+The `store` and `settings` console commands work on the volume:
+
+- `store stat [path]` reports the volume (`total`, `used`, `files`, `dirs`), a
+  directory's counts, or a file's size.
+- `store ls <dir>` lists a directory, `store rm <path>` removes a file or an empty
+  directory.
+- `store put <path> <bytes> <crc32>` takes the file from the host as `@tds ` base64
+  lines of 180 raw bytes, up to 65536 bytes. The deck holds the file in memory and
+  swaps it in atomically after its last line. It acknowledges every 6 lines, so the
+  host never sends more than one window ahead.
+- `store get <path>` streams a file as `@tds ` lines between a `start` and an `end`
+  reply that carries its CRC-32.
+- `settings get` and `settings set idle_timeout_s <n>` or
+  `settings set orientation landscape|portrait` read and write the file. A new
+  timeout applies at once.
+
+The local verification harness wraps the transfers as `serial store put <path>
+--from <file>` and `serial store get <path> --out <file>`, checking the CRC-32
+both ways.
+
 ## Display
 
 On boot the panel shows the deck, drawn with LVGL 9: dark rounded tiles on a
