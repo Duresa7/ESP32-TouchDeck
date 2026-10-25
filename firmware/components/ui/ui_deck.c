@@ -295,6 +295,10 @@ static void on_release(lv_event_t *e)
     const ui_tile_t *tile = tile_of(tile_obj);
     const unsigned taps = atomic_fetch_add(&s.taps, 1) + 1;
     ESP_LOGI(TAG, "click taps=%u tile=%s", taps, tile->id);
+    if (ui_widget_tap_blocked(tile)) {
+        ESP_LOGI(TAG, "offline %s", tile->id);
+        return;
+    }
     const int ref = tile_ref(tile);
     ui_tile_keys_click(ref >= 0 ? &s.pages[ref / 256] : NULL, tile);
 }
@@ -328,6 +332,11 @@ static void build_tile(lv_obj_t *parent, const ui_page_t *page, const ui_tile_t 
     lv_obj_set_scrollable(obj, false);
     lv_obj_set_event_bubble(obj, true);
     lv_obj_set_user_data(obj, (void *)tile);
+    ui_widget_track(obj, tile);
+    if (tile->action.type == TD_ACTION_WIDGET) {
+        ui_widget_build(obj, tile, r);
+        return;
+    }
 
     lv_obj_t *label = lv_label_create(obj);
     lv_label_set_text_static(label, tile->label);
@@ -360,6 +369,9 @@ static void build_page(uint8_t index)
     lv_obj_set_scrollable(obj, false);
     lv_obj_set_event_bubble(obj, true);
 
+    if (page->kind == UI_PAGE_DASHBOARD) {
+        ui_dashboard_build(obj, page);
+    }
     for (uint8_t i = 0; i < page->tile_count; i++) {
         build_tile(obj, page, &page->tiles[i]);
     }
@@ -472,6 +484,7 @@ static void load_locked(const td_layout_t *layout, const ui_layout_info_t *info,
     set_up_screen();
     tear_down();
     ui_tile_keys_start();
+    ui_widget_begin();
 
     const uint8_t count = count_valid_pages(layout->pages, layout->page_count);
     layout_lock();
@@ -648,6 +661,8 @@ void ui_get_state(ui_state_t *out)
     out->transition_frames = atomic_load(&s.transition_frames);
     out->last_ms = atomic_load(&s.last_ms);
     out->last_frames = atomic_load(&s.last_frames);
+    out->online = ui_link_online();
+    out->dimmed = ui_widget_dimmed();
 }
 
 bool ui_goto(uint8_t page)

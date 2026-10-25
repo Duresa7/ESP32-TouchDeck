@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include "esp_console.h"
 #include "td_layout.h"
+#include "ui_widget_state.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -54,6 +55,22 @@ const char *ui_layout_slot(void);
  * "launch", "open", "command" or "widget". The hook must not block. */
 typedef void (*ui_press_hook_t)(const char *page, const char *tile, const char *kind);
 void ui_set_press_hook(ui_press_hook_t hook);
+
+/* Tells the deck how to ask whether the app is connected. Until a source is set the deck counts as offline. While
+ * it is offline, every app and widget tile draws at the theme's dim_opa and a tap on one sends nothing. The deck asks
+ * on its widget redraw timer, so a change shows within one redraw. */
+void ui_set_link_online(bool (*online)(void));
+
+/* True when the online source says the app is connected. */
+bool ui_link_online(void);
+
+/* Writes a widget tile's state and marks it for the next redraw, from any task and without the LVGL lock. Returns
+ * NULL and the stored state in *stored (when not NULL), or the refusal: "unknown tile", "display not ready". */
+const char *ui_widget_update(const char *tile, const char *value, const char *caption, float bar, bool stale,
+                             ui_widget_state_t *stored);
+
+/* Replaces a dashboard page's rows the same way. Refusals: "unknown page", "too many rows", "display not ready". */
+const char *ui_dashboard_update(const char *page, const ui_dash_row_t *rows, size_t count);
 
 /* The ui console commands, for td_console_register(). Before the display has started, a well-formed command
  * answers "display not ready". */
