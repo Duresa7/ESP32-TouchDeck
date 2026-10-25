@@ -441,7 +441,9 @@ const covers = (tile: Tile, row: number, col: number) =>
 
 /** Checks that `tile` fits the grid and overlaps no other tile, naming the first one it hits. */
 function fits(grid: GridPage, tile: Tile, skip: number): string | null {
-  if (tile.row + tile.rowSpan > grid.rows || tile.col + tile.colSpan > grid.cols) return `outside the ${grid.rows}x${grid.cols} grid`;
+  if (tile.row < 0 || tile.col < 0 || tile.row + tile.rowSpan > grid.rows || tile.col + tile.colSpan > grid.cols) {
+    return `outside the ${grid.rows}x${grid.cols} grid`;
+  }
   const hit = grid.tiles.find((other, index) => {
     if (index === skip) return false;
     for (let row = tile.row; row < tile.row + tile.rowSpan; row++) {
