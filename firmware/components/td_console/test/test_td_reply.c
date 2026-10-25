@@ -1,5 +1,9 @@
+#include <limits.h>
+#include <string.h>
 #include "unity.h"
 #include "td_console.h"
+
+#define GUARD 0x5a
 
 TEST_CASE("plain reply carries cmd, ok and fields in order", "[td_reply]")
 {
@@ -66,6 +70,52 @@ TEST_CASE("reply that does not fit becomes a valid error reply", "[td_reply]")
     td_reply_str(&r, "text", "this value is far too long to fit in the sixty-four byte buffer");
     TEST_ASSERT_FALSE(td_reply_end(&r));
     TEST_ASSERT_EQUAL_STRING("@td {\"cmd\":\"heap\",\"ok\":false,\"error\":\"reply too long\"}", buf);
+}
+
+TEST_CASE("reply that exactly fills the buffer is kept", "[td_reply]")
+{
+    char storage[65];
+    storage[64] = GUARD;
+    td_reply_t r;
+    td_reply_begin(&r, storage, 64, "x", true);
+    td_reply_str(&r, "k", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    TEST_ASSERT_TRUE(td_reply_end(&r));
+    TEST_ASSERT_EQUAL_STRING("@td {\"cmd\":\"x\",\"ok\":true,\"k\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}", storage);
+    TEST_ASSERT_EQUAL_UINT(63, strlen(storage));
+    TEST_ASSERT_EQUAL_UINT8(GUARD, storage[64]);
+}
+
+TEST_CASE("reply one byte past the buffer becomes the reply too long error", "[td_reply]")
+{
+    char storage[65];
+    storage[64] = GUARD;
+    td_reply_t r;
+    td_reply_begin(&r, storage, 64, "x", true);
+    td_reply_str(&r, "k", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    TEST_ASSERT_FALSE(td_reply_end(&r));
+    TEST_ASSERT_EQUAL_STRING("@td {\"cmd\":\"x\",\"ok\":false,\"error\":\"reply too long\"}", storage);
+    TEST_ASSERT_EQUAL_UINT8(GUARD, storage[64]);
+}
+
+TEST_CASE("reply escapes a carriage return", "[td_reply]")
+{
+    char buf[TD_REPLY_MAX];
+    td_reply_t r;
+    td_reply_begin(&r, buf, sizeof buf, "echo", true);
+    td_reply_str(&r, "text", "line\r\n");
+    TEST_ASSERT_TRUE(td_reply_end(&r));
+    TEST_ASSERT_EQUAL_STRING("@td {\"cmd\":\"echo\",\"ok\":true,\"text\":\"line\\r\\n\"}", buf);
+}
+
+TEST_CASE("reply renders negative integers", "[td_reply]")
+{
+    char buf[TD_REPLY_MAX];
+    td_reply_t r;
+    td_reply_begin(&r, buf, sizeof buf, "x", true);
+    td_reply_int(&r, "small", -42);
+    td_reply_int(&r, "min", LLONG_MIN);
+    TEST_ASSERT_TRUE(td_reply_end(&r));
+    TEST_ASSERT_EQUAL_STRING("@td {\"cmd\":\"x\",\"ok\":true,\"small\":-42,\"min\":-9223372036854775808}", buf);
 }
 
 TEST_CASE("buffer too small for any reply is left empty", "[td_reply]")

@@ -1,7 +1,8 @@
 #include "td_console.h"
+#include "td_rx_sync.h"
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 #include "esp_app_desc.h"
 #include "esp_check.h"
 #include "esp_console.h"
@@ -10,7 +11,9 @@
 #include "esp_stdio.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "driver/usb_serial_jtag.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 
 #define TD_PROMPT "td> "
@@ -18,6 +21,12 @@
 #define TD_WORD_MAX 64
 #define TD_TASK_STACK 6144
 #define TD_TASK_PRIORITY 2
+#define TD_RX_TASK_STACK 2048
+#define TD_RX_TASK_PRIORITY 10
+#define TD_RX_CHUNK 64
+#define TD_RX_QUEUE_BYTES 2048
+#define TD_RX_IDLE_MS 100
+#define TD_TX_DRAIN_MS 250
 
 static const char *TAG = "td_console";
 
@@ -89,7 +98,7 @@ static int cmd_reboot(int argc, char **argv)
     td_reply_begin(&r, buf, sizeof buf, "reboot", true);
     emit(&r);
     fflush(stdout);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(TD_TX_DRAIN_MS));
     esp_restart();
     return 0;
 }
@@ -141,58 +150,127 @@ static void echo_add(rx_t *rx, const char *s, size_t n)
     rx->echo_len += n;
 }
 
-static char next_char(rx_t *rx)
+static StreamBufferHandle_t s_rx_queue;
+static atomic_uint s_rx_dropped;
+
+/*
+ * The driver's RX interrupt copies each USB packet into a 256-byte ring and
+ * discards the whole packet, without a trace, when the ring is full. Printing
+ * costs the console task about 13 us per output byte, so a 220-byte reply
+ * keeps it from reading for about 3 ms and a burst of short lines fills that
+ * ring. This task outranks the console and drains the ring into s_rx_queue in
+ * reads of up to 64 bytes. When the queue is full, td_rx_sync drops the read and
+ * the rest of the line it cuts, and the loss is counted and reported instead of
+ * hidden. It reads the driver directly because read() on stdin takes one byte
+ * per ring operation, which is slower than back-to-back 64-byte packets.
+ */
+static void rx_task(void *arg)
+{
+    td_rx_sync_t sync = { 0 };
+    char chunk[TD_RX_CHUNK];
+    for (;;) {
+        int n = usb_serial_jtag_read_bytes(chunk, sizeof chunk, portMAX_DELAY);
+        if (n <= 0) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
+        }
+        size_t lost = 0;
+        size_t m = td_rx_sync(&sync, chunk, (size_t)n, xStreamBufferSpacesAvailable(s_rx_queue), &lost);
+        if (m > 0) {
+            xStreamBufferSend(s_rx_queue, chunk, m, 0);
+        }
+        if (lost > 0) {
+            atomic_fetch_add(&s_rx_dropped, (unsigned)lost);
+        }
+    }
+}
+
+static void report_dropped_input(void)
+{
+    unsigned dropped = atomic_exchange(&s_rx_dropped, 0);
+    if (dropped == 0) {
+        return;
+    }
+    char buf[TD_REPLY_MAX];
+    td_reply_t r;
+    td_reply_begin(&r, buf, sizeof buf, "console", false);
+    td_reply_str(&r, "error", "input overflow");
+    td_reply_int(&r, "dropped_bytes", dropped);
+    emit(&r);
+}
+
+typedef enum {
+    LINE_OK,
+    LINE_TOO_LONG,
+    LINE_RESTART,
+} line_status_t;
+
+static int next_char(rx_t *rx)
 {
     while (rx->pos == rx->len) {
         echo_flush(rx);
-        ssize_t n = read(STDIN_FILENO, rx->in, sizeof rx->in);
-        if (n > 0) {
-            rx->pos = 0;
-            rx->len = (size_t)n;
-        } else {
-            vTaskDelay(pdMS_TO_TICKS(10));
+        rx->len = xStreamBufferReceive(s_rx_queue, rx->in, sizeof rx->in, pdMS_TO_TICKS(TD_RX_IDLE_MS));
+        rx->pos = 0;
+        if (rx->len == 0) {
+            return -1;
         }
     }
-    return rx->in[rx->pos++];
+    return (unsigned char)rx->in[rx->pos++];
 }
 
-static bool read_line(rx_t *rx, char *line, size_t cap)
+static line_status_t restart_line(rx_t *rx)
+{
+    echo_add(rx, "\n", 1);
+    echo_flush(rx);
+    return LINE_RESTART;
+}
+
+/*
+ * LINE_RESTART makes the caller report dropped input and print a fresh prompt.
+ * It comes when td_rx_sync abandons the line being read, and when the console
+ * has sat idle with a dropped-input count nobody has printed yet.
+ */
+static line_status_t read_line(rx_t *rx, char *line, size_t cap)
 {
     size_t len = 0;
     bool too_long = false;
     for (;;) {
-        char c = next_char(rx);
-        if (c == '\r' || c == '\n') {
+        int c = next_char(rx);
+        if (c < 0) {
+            if (len == 0 && atomic_load(&s_rx_dropped) > 0) {
+                return restart_line(rx);
+            }
+        } else if (c == TD_RX_ABANDON) {
+            return restart_line(rx);
+        } else if (c == '\r' || c == '\n') {
             echo_add(rx, "\n", 1);
             echo_flush(rx);
             line[len] = '\0';
-            return !too_long;
-        }
-        if (c == '\b' || c == 0x7f) {
+            return too_long ? LINE_TOO_LONG : LINE_OK;
+        } else if (c == '\b' || c == 0x7f) {
             if (len > 0 && !too_long) {
                 len--;
                 echo_add(rx, "\b \b", 3);
             }
         } else if (len + 1 < cap) {
-            line[len++] = c;
-            echo_add(rx, &c, 1);
+            char ch = (char)c;
+            line[len++] = ch;
+            echo_add(rx, &ch, 1);
         } else {
             too_long = true;
         }
     }
 }
 
-static void first_word(const char *line, char *word, size_t cap)
+static void command_word(const char *line, char *word, size_t cap)
 {
-    while (*line == ' ' || *line == '\t') {
-        line++;
+    char copy[TD_LINE_MAX];
+    char *argv[2];
+    strlcpy(copy, line, sizeof copy);
+    word[0] = '\0';
+    if (esp_console_split_argv(copy, argv, 2) > 0) {
+        strlcpy(word, argv[0], cap);
     }
-    size_t n = strcspn(line, " \t");
-    if (n >= cap) {
-        n = cap - 1;
-    }
-    memcpy(word, line, n);
-    word[n] = '\0';
 }
 
 static void run_line(const char *line)
@@ -203,7 +281,7 @@ static void run_line(const char *line)
         return;
     }
     char word[TD_WORD_MAX];
-    first_word(line, word, sizeof word);
+    command_word(line, word, sizeof word);
     emit_error(word, err == ESP_ERR_NOT_FOUND ? "unknown command" : "internal error");
 }
 
@@ -212,14 +290,21 @@ static void console_task(void *arg)
     rx_t rx = { 0 };
     char line[TD_LINE_MAX];
     for (;;) {
+        report_dropped_input();
         printf(TD_PROMPT);
         fflush(stdout);
-        if (read_line(&rx, line, sizeof line)) {
+        switch (read_line(&rx, line, sizeof line)) {
+        case LINE_OK:
             run_line(line);
-        } else {
+            break;
+        case LINE_TOO_LONG: {
             char word[TD_WORD_MAX];
-            first_word(line, word, sizeof word);
+            command_word(line, word, sizeof word);
             emit_error(word, "line too long");
+            break;
+        }
+        case LINE_RESTART:
+            break;
         }
     }
 }
@@ -227,6 +312,10 @@ static void console_task(void *arg)
 esp_err_t td_console_start(void)
 {
     ESP_RETURN_ON_ERROR(esp_stdio_install_io_driver(), TAG, "stdio driver");
+    if (!usb_serial_jtag_is_driver_installed()) {
+        ESP_LOGW(TAG, "console is off: its input task reads the USB-Serial/JTAG driver, which only the USB-Serial/JTAG primary console installs");
+        return ESP_ERR_NOT_SUPPORTED;
+    }
 
     esp_console_config_t config = ESP_CONSOLE_CONFIG_DEFAULT();
     config.max_cmdline_length = TD_LINE_MAX;
@@ -235,8 +324,11 @@ esp_err_t td_console_start(void)
         ESP_RETURN_ON_ERROR(esp_console_cmd_register(&s_cmds[i]), TAG, "register %s", s_cmds[i].command);
     }
 
-    if (xTaskCreate(console_task, "td_console", TD_TASK_STACK, NULL, TD_TASK_PRIORITY, NULL) != pdPASS) {
-        return ESP_FAIL;
-    }
+    s_rx_queue = xStreamBufferCreate(TD_RX_QUEUE_BYTES, 1);
+    ESP_RETURN_ON_FALSE(s_rx_queue, ESP_ERR_NO_MEM, TAG, "rx queue");
+    ESP_RETURN_ON_FALSE(xTaskCreate(rx_task, "td_rx", TD_RX_TASK_STACK, NULL, TD_RX_TASK_PRIORITY, NULL) == pdPASS,
+                        ESP_FAIL, TAG, "rx task");
+    ESP_RETURN_ON_FALSE(xTaskCreate(console_task, "td_console", TD_TASK_STACK, NULL, TD_TASK_PRIORITY, NULL) == pdPASS,
+                        ESP_FAIL, TAG, "console task");
     return ESP_OK;
 }
