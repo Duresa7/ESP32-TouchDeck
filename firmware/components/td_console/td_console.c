@@ -172,7 +172,8 @@ static void rx_task(void *arg)
         size_t lost = 0;
         size_t m = td_rx_sync(&sync, chunk, (size_t)n, xStreamBufferSpacesAvailable(s_rx_queue), &lost);
         if (m > 0) {
-            xStreamBufferSend(s_rx_queue, chunk, m, 0);
+            /* td_rx_sync leaves one byte free, so a short send means that guarantee broke. Count what did not fit. */
+            lost += m - xStreamBufferSend(s_rx_queue, chunk, m, 0);
         }
         if (lost > 0) {
             atomic_fetch_add(&s_rx_dropped, (unsigned)lost);
