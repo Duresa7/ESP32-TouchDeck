@@ -798,12 +798,27 @@ fn the_shim_command_names_a_sibling_binary_or_falls_back_to_the_bare_name() {
 struct Recorder(Mutex<Vec<(Instant, Request)>>);
 
 impl Sink for Recorder {
-    fn send(&self, request: &Request) -> Result<(), String> {
+    fn send(&self, request: &Request) -> Result<Option<String>, String> {
         self.0
             .lock()
             .unwrap()
             .push((Instant::now(), request.clone()));
-        Ok(())
+        Ok(None)
+    }
+}
+
+struct Flaky {
+    fail: AtomicBool,
+    taken: Mutex<Vec<Request>>,
+}
+
+impl Sink for Flaky {
+    fn send(&self, request: &Request) -> Result<Option<String>, String> {
+        if self.fail.load(Ordering::Relaxed) {
+            return Err("link closed".into());
+        }
+        self.taken.lock().unwrap().push(request.clone());
+        Ok(None)
     }
 }
 
@@ -913,6 +928,42 @@ fn the_hub_sends_stale_true_for_every_claude_tile_when_the_file_is_old() {
             .iter()
             .all(|r| !matches!(r, Request::WidgetSet { stale: false, .. }))
     );
+    hub.stop();
+}
+
+#[test]
+fn a_failed_send_loses_nothing_and_every_tile_arrives_once_the_link_is_back() {
+    let dir = scratch("hub-flaky");
+    fs::write(dir.join("s.json"), fixture("statusline.json")).unwrap();
+    let hub = Hub::start(claude_config(&dir), Arc::new(MemoryKeys::default()));
+    let sink = Arc::new(Flaky {
+        fail: AtomicBool::new(true),
+        taken: Mutex::new(Vec::new()),
+    });
+    hub.set_sink(Some(sink.clone()));
+    let started = Instant::now();
+    while hub.status().send_error.is_none() && started.elapsed() < Duration::from_secs(2) {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(hub.status().send_error.as_deref(), Some("link closed"));
+    assert!(sink.taken.lock().unwrap().is_empty());
+    sink.fail.store(false, Ordering::Relaxed);
+    let started = Instant::now();
+    while sink.taken.lock().unwrap().len() < 3 && started.elapsed() < Duration::from_secs(3) {
+        thread::sleep(Duration::from_millis(20));
+    }
+    thread::sleep(Duration::from_millis(300));
+    let taken = sink.taken.lock().unwrap().clone();
+    let mut tiles: Vec<_> = taken
+        .iter()
+        .filter_map(|r| match r {
+            Request::WidgetSet { tile, .. } => Some(tile.clone()),
+            _ => None,
+        })
+        .collect();
+    tiles.sort();
+    assert_eq!(tiles, ["context", "cost", "model"]);
+    assert_eq!(hub.status().send_error, None);
     hub.stop();
 }
 

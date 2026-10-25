@@ -90,7 +90,9 @@ pub trait Source: Send {
 
 /// Where the requests go. The app implements it over the connected session.
 pub trait Sink: Send + Sync {
-    fn send(&self, request: &Request) -> Result<(), String>;
+    /// `Ok(None)` is a deck that took the request and `Ok(Some(reason))` one that refused
+    /// it, which is not retried. `Err` is a link that failed, which is retried.
+    fn send(&self, request: &Request) -> Result<Option<String>, String>;
 }
 
 /// Holds the CLIProxyAPI management key. The app backs it with the OS credential store.
@@ -484,18 +486,21 @@ impl Core {
             return;
         }
         self.retry_at = None;
-        for request in self.scheduler.due(now) {
-            let result = sink.send(&request);
+        let due = self.scheduler.due(now);
+        for (done, request) in due.iter().enumerate() {
+            let result = sink.send(request);
             let mut status = self.status.lock().unwrap();
             match result {
-                Ok(()) => {
+                Ok(refused) => {
                     status.sent += 1;
-                    status.send_error = None;
+                    status.send_error = refused;
                 }
                 Err(error) => {
                     status.send_error = Some(error);
                     drop(status);
-                    self.scheduler.forget(&request);
+                    for request in &due[done..] {
+                        self.scheduler.forget(request);
+                    }
                     self.retry_at = Some(now + Duration::from_secs(1));
                     return;
                 }
