@@ -154,25 +154,19 @@ static void on_gesture(lv_event_t *e)
 }
 
 /* GPIO4 is both the GT911 interrupt line and its address select. Holding it low while TP_RST releases picks 0x5D.
- * It floats afterwards, because the controller drives that line itself once it runs and polled mode never uses it. */
+ * It floats afterwards, because the controller drives that line itself once it runs and polled mode never uses it.
+ * The board already claimed the pin with gpio_config, and a second gpio_config on it logs a conflict warning, so this
+ * only changes its direction. */
 static esp_err_t reset_to_address_5d(void)
 {
-    const gpio_config_t low = {
-        .pin_bit_mask = 1ULL << TD_TOUCH_PIN_INT,
-        .mode = GPIO_MODE_OUTPUT,
-    };
-    ESP_RETURN_ON_ERROR(gpio_config(&low), TAG, "int pin as output");
+    ESP_RETURN_ON_ERROR(gpio_set_direction(TD_TOUCH_PIN_INT, GPIO_MODE_OUTPUT), TAG, "int pin as output");
     ESP_RETURN_ON_ERROR(gpio_set_level(TD_TOUCH_PIN_INT, 0), TAG, "int pin low");
     ESP_RETURN_ON_ERROR(ch422g_touch_reset(true), TAG, "assert touch reset");
     vTaskDelay(pdMS_TO_TICKS(RESET_HOLD_MS));
     ESP_RETURN_ON_ERROR(ch422g_touch_reset(false), TAG, "release touch reset");
     vTaskDelay(pdMS_TO_TICKS(ADDRESS_LATCH_MS));
 
-    const gpio_config_t floating = {
-        .pin_bit_mask = 1ULL << TD_TOUCH_PIN_INT,
-        .mode = GPIO_MODE_INPUT,
-    };
-    ESP_RETURN_ON_ERROR(gpio_config(&floating), TAG, "int pin as input");
+    ESP_RETURN_ON_ERROR(gpio_set_direction(TD_TOUCH_PIN_INT, GPIO_MODE_INPUT), TAG, "int pin as input");
     vTaskDelay(pdMS_TO_TICKS(CONFIG_LOAD_MS));
     return ESP_OK;
 }
