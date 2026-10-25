@@ -7,11 +7,6 @@
 #define LOG_MAX 8192
 #define RAN_MAX 16384
 
-/*
- * Stands in for the console: bytes queued by td_rx_sync go into a ring, and a
- * reader pops them the way read_line does. `ran` collects each line it would
- * run, newline terminated, so a test asserts which commands the board executes.
- */
 static struct {
     td_rx_sync_t sync;
     char ring[QUEUE_MAX];
@@ -24,16 +19,34 @@ static struct {
     char queued[LOG_MAX];
     size_t queued_len;
     char line[64];
-    size_t line_len;
+    td_line_t line_state;
+    uint8_t frame[TD_RX_FRAME_MAX];
+    size_t frame_len;
+    size_t frames;
+    size_t bad_frames;
     char ran[RAN_MAX];
     size_t ran_len;
 } s_model;
+
+static void frame_received(const uint8_t *body, size_t len, void *context)
+{
+    TEST_ASSERT_EQUAL_PTR(&s_model, context);
+    if (!body) {
+        s_model.bad_frames++;
+        return;
+    }
+    memcpy(s_model.frame, body, len);
+    s_model.frame_len = len;
+    s_model.frames++;
+}
 
 static void model_reset(size_t cap)
 {
     memset(&s_model, 0, sizeof s_model);
     s_model.cap = cap;
     s_model.queued_last_read = true;
+    s_model.sync.on_frame = frame_received;
+    s_model.sync.context = &s_model;
 }
 
 static size_t feed_with_space(const char *s, size_t n, size_t space)
@@ -64,20 +77,18 @@ static size_t feed(const char *s, size_t n)
 
 static void console_byte(char c)
 {
-    if (c == TD_RX_ABANDON) {
-        s_model.line_len = 0;
-    } else if (c == '\r' || c == '\n') {
-        if (s_model.line_len > 0) {
-            TEST_ASSERT_TRUE(s_model.ran_len + s_model.line_len + 1 < RAN_MAX);
-            memcpy(s_model.ran + s_model.ran_len, s_model.line, s_model.line_len);
-            s_model.ran_len += s_model.line_len;
-            s_model.ran[s_model.ran_len++] = '\n';
-            s_model.ran[s_model.ran_len] = '\0';
-        }
-        s_model.line_len = 0;
-    } else {
-        TEST_ASSERT_TRUE(s_model.line_len < sizeof s_model.line);
-        s_model.line[s_model.line_len++] = c;
+    char echo[3];
+    size_t echo_len;
+    td_line_status_t status = td_line_feed(&s_model.line_state, (unsigned char)c, false,
+                                          s_model.line, sizeof s_model.line, echo, &echo_len);
+    TEST_ASSERT_NOT_EQUAL(TD_LINE_TOO_LONG, status);
+    if (status == TD_LINE_OK && s_model.line[0]) {
+        size_t len = strlen(s_model.line);
+        TEST_ASSERT_TRUE(s_model.ran_len + len + 1 < RAN_MAX);
+        memcpy(s_model.ran + s_model.ran_len, s_model.line, len);
+        s_model.ran_len += len;
+        s_model.ran[s_model.ran_len++] = '\n';
+        s_model.ran[s_model.ran_len] = '\0';
     }
 }
 
@@ -326,7 +337,7 @@ static void fuzz(uint32_t seed, size_t cap, const char *eol)
 
     TEST_ASSERT_TRUE(s_model.dropped > 0);
     TEST_ASSERT_TRUE(s_model.ran_len > 0);
-    TEST_ASSERT_EQUAL_UINT(0, s_model.line_len);
+    TEST_ASSERT_EQUAL_UINT(0, s_model.line_state.len);
 
     size_t next = 0;
     size_t ran_bytes = 0;
@@ -370,4 +381,141 @@ TEST_CASE("carriage return input never runs a glued line and accounts for every 
     fuzz(8, 2048, "\r");
     fuzz(9, 512, "\r");
     fuzz(10, 128, "\r");
+}
+
+TEST_CASE("a frame between text lines reaches only the frame receiver", "[td_rx_sync]")
+{
+    model_reset(QUEUE_MAX);
+    FEED("heap\n\xc0\x01\x00\xdb\xdc\xdb\xdd\xc0version\n", 100);
+    drain(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_STRING("heap\nversion\n", s_model.ran);
+    TEST_ASSERT_EQUAL_UINT(1, s_model.frames);
+    TEST_ASSERT_EQUAL_UINT(4, s_model.frame_len);
+    TEST_ASSERT_EQUAL_MEMORY("\x01\x00\xc0\xdb", s_model.frame, 4);
+    TEST_ASSERT_EQUAL_UINT(0, s_model.dropped);
+}
+
+TEST_CASE("a frame and its escape survive separate USB reads", "[td_rx_sync]")
+{
+    model_reset(QUEUE_MAX);
+    FEED("he\xc0\x01\xdb", 100);
+    FEED("\xdd\x00\xc0" "ap\n", 100);
+    drain(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_STRING("heap\n", s_model.ran);
+    TEST_ASSERT_EQUAL_UINT(1, s_model.frames);
+    TEST_ASSERT_EQUAL_UINT(3, s_model.frame_len);
+    TEST_ASSERT_EQUAL_MEMORY("\x01\xdb\x00", s_model.frame, 3);
+}
+
+TEST_CASE("SLIP escape without a frame delimiter stays text", "[td_rx_sync]")
+{
+    model_reset(QUEUE_MAX);
+    FEED("a\xdb\xdd\n", 100);
+    drain(QUEUE_MAX);
+    EXPECT_QUEUED("a\xdb\xdd\n");
+    TEST_ASSERT_EQUAL_UINT(0, s_model.frames);
+}
+
+TEST_CASE("frames still arrive while text overflow discards a line", "[td_rx_sync]")
+{
+    model_reset(QUEUE_MAX);
+    FEED("he", 100);
+    FEED("ap", 2);
+    FEED("\xc0\x01\x00\xc0\nversion\n", 100);
+    drain(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_STRING("version\n", s_model.ran);
+    TEST_ASSERT_EQUAL_UINT(1, s_model.frames);
+    TEST_ASSERT_EQUAL_UINT(5, s_model.dropped);
+}
+
+TEST_CASE("oversized and malformed frames drop through their closing delimiter", "[td_rx_sync]")
+{
+    model_reset(QUEUE_MAX);
+    FEED("\xc0", 100);
+    for (size_t i = 0; i < TD_RX_FRAME_MAX + 1; i++) {
+        FEED("x", 100);
+    }
+    FEED("\xc0version\n\xc0\xdb\xc0heap\n\xc0\xdbx\xc0", 100);
+    drain(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_UINT(3, s_model.bad_frames);
+    TEST_ASSERT_EQUAL_UINT(0, s_model.frames);
+    TEST_ASSERT_EQUAL_UINT(0, s_model.dropped);
+    TEST_ASSERT_EQUAL_STRING("version\nheap\n", s_model.ran);
+}
+
+TEST_CASE("a fully escaped maximum body fits the decoded receive buffer", "[td_rx_sync]")
+{
+    model_reset(QUEUE_MAX);
+    FEED("\xc0", 100);
+    for (size_t i = 0; i < 1032; i++) {
+        FEED("\xdb\xdc", 100);
+    }
+    FEED("\xc0\xc0x\xc0version\n", 100);
+    drain(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_UINT(2, s_model.frames);
+    TEST_ASSERT_EQUAL_UINT(0, s_model.bad_frames);
+    TEST_ASSERT_EQUAL_STRING("version\n", s_model.ran);
+}
+
+static struct {
+    td_line_t state;
+    char line[8];
+    char echo[128];
+    size_t echo_len;
+} s_line;
+
+static td_line_status_t line_byte(int c, bool dropped)
+{
+    char echo[3];
+    size_t len;
+    td_line_status_t result = td_line_feed(&s_line.state, c, dropped,
+                                          s_line.line, sizeof s_line.line, echo, &len);
+    TEST_ASSERT_TRUE(s_line.echo_len + len < sizeof s_line.echo);
+    memcpy(s_line.echo + s_line.echo_len, echo, len);
+    s_line.echo_len += len;
+    return result;
+}
+
+TEST_CASE("line editing echoes typed bytes deletion and CR LF", "[td_rx_sync]")
+{
+    memset(&s_line, 0, sizeof s_line);
+    const char input[] = "\baX\bY\x7fz\r";
+    for (size_t i = 0; i < sizeof input - 2; i++) {
+        TEST_ASSERT_EQUAL(TD_LINE_MORE, line_byte(input[i], false));
+    }
+    TEST_ASSERT_EQUAL(TD_LINE_OK, line_byte('\r', false));
+    TEST_ASSERT_EQUAL_STRING("az", s_line.line);
+    TEST_ASSERT_EQUAL_STRING("aX\b \bY\b \bz\r\n", s_line.echo);
+    TEST_ASSERT_EQUAL(TD_LINE_OK, line_byte('\n', false));
+    TEST_ASSERT_EQUAL_STRING("", s_line.line);
+}
+
+TEST_CASE("long lines reject backspace recovery and reset for the next line", "[td_rx_sync]")
+{
+    memset(&s_line, 0, sizeof s_line);
+    const char input[] = "12345678\b9";
+    for (size_t i = 0; i < sizeof input - 1; i++) {
+        TEST_ASSERT_EQUAL(TD_LINE_MORE, line_byte(input[i], false));
+    }
+    TEST_ASSERT_EQUAL(TD_LINE_TOO_LONG, line_byte('\n', false));
+    TEST_ASSERT_EQUAL_STRING("1234567", s_line.line);
+    TEST_ASSERT_EQUAL_STRING("1234567\r\n", s_line.echo);
+    line_byte('x', false);
+    TEST_ASSERT_EQUAL(TD_LINE_OK, line_byte('\n', false));
+    TEST_ASSERT_EQUAL_STRING("x", s_line.line);
+}
+
+TEST_CASE("abandon and idle overflow restart without executing a partial line", "[td_rx_sync]")
+{
+    memset(&s_line, 0, sizeof s_line);
+    TEST_ASSERT_EQUAL(TD_LINE_MORE, line_byte(-1, false));
+    TEST_ASSERT_EQUAL(TD_LINE_RESTART, line_byte(-1, true));
+    line_byte('h', false);
+    TEST_ASSERT_EQUAL(TD_LINE_MORE, line_byte(-1, true));
+    TEST_ASSERT_EQUAL(TD_LINE_RESTART, line_byte(TD_RX_ABANDON, false));
+    TEST_ASSERT_EQUAL_STRING("", s_line.line);
+    line_byte('v', false);
+    TEST_ASSERT_EQUAL(TD_LINE_OK, line_byte('\n', false));
+    TEST_ASSERT_EQUAL_STRING("v", s_line.line);
+    TEST_ASSERT_EQUAL_STRING("\r\nh\r\nv\r\n", s_line.echo);
 }

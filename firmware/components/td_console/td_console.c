@@ -194,8 +194,7 @@ typedef struct {
 static void echo_flush(rx_t *rx)
 {
     if (rx->echo_len > 0) {
-        fwrite(rx->echo, 1, rx->echo_len, stdout);
-        fflush(stdout);
+        td_console_write(rx->echo, rx->echo_len);
         rx->echo_len = 0;
     }
 }
@@ -208,6 +207,13 @@ static void echo_add(rx_t *rx, const char *s, size_t n)
 
 static StreamBufferHandle_t s_rx_queue;
 static atomic_uint s_rx_dropped;
+static td_rx_sync_t s_rx_sync;
+
+void td_console_set_frame_handler(td_rx_frame_fn handler, void *context)
+{
+    s_rx_sync.on_frame = handler;
+    s_rx_sync.context = context;
+}
 
 /*
  * The driver's RX interrupt copies each USB packet into a 256-byte ring and
@@ -222,7 +228,6 @@ static atomic_uint s_rx_dropped;
  */
 static void rx_task(void *arg)
 {
-    td_rx_sync_t sync = { 0 };
     char chunk[TD_RX_CHUNK];
     for (;;) {
         int n = usb_serial_jtag_read_bytes(chunk, sizeof chunk, portMAX_DELAY);
@@ -231,7 +236,7 @@ static void rx_task(void *arg)
             continue;
         }
         size_t lost = 0;
-        size_t m = td_rx_sync(&sync, chunk, (size_t)n, xStreamBufferSpacesAvailable(s_rx_queue), &lost);
+        size_t m = td_rx_sync(&s_rx_sync, chunk, (size_t)n, xStreamBufferSpacesAvailable(s_rx_queue), &lost);
         if (m > 0) {
             /* td_rx_sync leaves one byte free, so a short send means that guarantee broke. Count what did not fit. */
             lost += m - xStreamBufferSend(s_rx_queue, chunk, m, 0);
@@ -256,12 +261,6 @@ static void report_dropped_input(void)
     emit(&r);
 }
 
-typedef enum {
-    LINE_OK,
-    LINE_TOO_LONG,
-    LINE_RESTART,
-} line_status_t;
-
 static int next_char(rx_t *rx)
 {
     while (rx->pos == rx->len) {
@@ -275,46 +274,19 @@ static int next_char(rx_t *rx)
     return (unsigned char)rx->in[rx->pos++];
 }
 
-static line_status_t restart_line(rx_t *rx)
+static td_line_status_t read_line(rx_t *rx, char *line, size_t cap)
 {
-    echo_add(rx, "\n", 1);
-    echo_flush(rx);
-    return LINE_RESTART;
-}
-
-/*
- * LINE_RESTART makes the caller report dropped input and print a fresh prompt.
- * It comes when td_rx_sync abandons the line being read, and when the console
- * has sat idle with a dropped-input count nobody has printed yet.
- */
-static line_status_t read_line(rx_t *rx, char *line, size_t cap)
-{
-    size_t len = 0;
-    bool too_long = false;
+    td_line_t state = {0};
     for (;;) {
         int c = next_char(rx);
-        if (c < 0) {
-            if (len == 0 && atomic_load(&s_rx_dropped) > 0) {
-                return restart_line(rx);
-            }
-        } else if (c == TD_RX_ABANDON) {
-            return restart_line(rx);
-        } else if (c == '\r' || c == '\n') {
-            echo_add(rx, "\n", 1);
+        char echo[3];
+        size_t echo_len;
+        td_line_status_t status = td_line_feed(&state, c, atomic_load(&s_rx_dropped) > 0,
+                                               line, cap, echo, &echo_len);
+        echo_add(rx, echo, echo_len);
+        if (status != TD_LINE_MORE) {
             echo_flush(rx);
-            line[len] = '\0';
-            return too_long ? LINE_TOO_LONG : LINE_OK;
-        } else if (c == '\b' || c == 0x7f) {
-            if (len > 0 && !too_long) {
-                len--;
-                echo_add(rx, "\b \b", 3);
-            }
-        } else if (len + 1 < cap) {
-            char ch = (char)c;
-            line[len++] = ch;
-            echo_add(rx, &ch, 1);
-        } else {
-            too_long = true;
+            return status;
         }
     }
 }
@@ -348,19 +320,19 @@ static void console_task(void *arg)
     char line[TD_LINE_MAX];
     for (;;) {
         report_dropped_input();
-        printf(TD_PROMPT);
-        fflush(stdout);
+        td_console_write(TD_PROMPT, sizeof(TD_PROMPT) - 1);
         switch (read_line(&rx, line, sizeof line)) {
-        case LINE_OK:
+        case TD_LINE_OK:
             run_line(line);
             break;
-        case LINE_TOO_LONG: {
+        case TD_LINE_TOO_LONG: {
             char word[TD_WORD_MAX];
             command_word(line, word, sizeof word);
             emit_error(word, "line too long");
             break;
         }
-        case LINE_RESTART:
+        case TD_LINE_RESTART:
+        case TD_LINE_MORE:
             break;
         }
     }

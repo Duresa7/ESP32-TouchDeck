@@ -1,0 +1,198 @@
+{
+  "protocol": 1,
+  "crc": "CRC-16/CCITT-FALSE",
+  "frames": [
+    {
+      "name": "hello-request",
+      "valid": true,
+      "hex": "c0010101000d007b226d223a2268656c6c6f227dbe5fc0",
+      "decoded": {
+        "ver": 1,
+        "type": 1,
+        "seq": 1,
+        "flags": 0,
+        "len": 13,
+        "payload_hex": "7b226d223a2268656c6c6f227d"
+      }
+    },
+    {
+      "name": "hello-response",
+      "valid": true,
+      "hex": "c00101010137007b226d223a2268656c6c6f222c226f6b223a747275652c2270726f64756374223a22746f7563686465636b222c2270726f746f223a317d12ecc0",
+      "decoded": {
+        "ver": 1,
+        "type": 1,
+        "seq": 1,
+        "flags": 1,
+        "len": 55,
+        "payload_hex": "7b226d223a2268656c6c6f222c226f6b223a747275652c2270726f64756374223a22746f7563686465636b222c2270726f746f223a317d"
+      }
+    },
+    {
+      "name": "ping-zero",
+      "valid": true,
+      "hex": "c00101020012007b226d223a2270696e67222c226e223a307de94dc0",
+      "decoded": {
+        "ver": 1,
+        "type": 1,
+        "seq": 2,
+        "flags": 0,
+        "len": 18,
+        "payload_hex": "7b226d223a2270696e67222c226e223a307d"
+      }
+    },
+    {
+      "name": "ping-response",
+      "valid": true,
+      "hex": "c00101020125007b226d223a2270696e67222c226f6b223a747275652c226e223a302c2274223a313233347df2dac0",
+      "decoded": {
+        "ver": 1,
+        "type": 1,
+        "seq": 2,
+        "flags": 1,
+        "len": 37,
+        "payload_hex": "7b226d223a2270696e67222c226f6b223a747275652c226e223a302c2274223a313233347d"
+      }
+    },
+    {
+      "name": "state-request",
+      "valid": true,
+      "hex": "c00101030012007b226d223a226c696e6b2e7374617465227d0418c0",
+      "decoded": {
+        "ver": 1,
+        "type": 1,
+        "seq": 3,
+        "flags": 0,
+        "len": 18,
+        "payload_hex": "7b226d223a226c696e6b2e7374617465227d"
+      }
+    },
+    {
+      "name": "utf8-message",
+      "valid": true,
+      "hex": "c0010104001d007b226d223a2270696e67222c226e223a2264c3a9636b20f09f8e9b227db5a6c0",
+      "decoded": {
+        "ver": 1,
+        "type": 1,
+        "seq": 4,
+        "flags": 0,
+        "len": 29,
+        "payload_hex": "7b226d223a2270696e67222c226e223a2264c3a9636b20f09f8e9b227d"
+      }
+    },
+    {
+      "name": "all-escapes",
+      "valid": true,
+      "hex": "c00102dbdc000800dbdddbdcdbdd00dbdcdbdd0a0d898cc0",
+      "decoded": {
+        "ver": 1,
+        "type": 2,
+        "seq": 192,
+        "flags": 0,
+        "len": 8,
+        "payload_hex": "dbc0db00c0db0a0d"
+      }
+    },
+    {
+      "name": "maximum-chunk",
+      "valid": true,
+      "hex": "c00102dbdd000004070001000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfdbdcc1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdddcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfdbdcc1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdddcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfdbdcc1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdddcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfdbdcc1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdddcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcb969c0",
+      "decoded": {
+        "ver": 1,
+        "type": 2,
+        "seq": 219,
+        "flags": 0,
+        "len": 1024,
+        "payload_hex": "070001000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfc"
+      }
+    },
+    {
+      "name": "maximum-escaped-chunk",
+      "valid": true,
+      "hex": "c00102ff000004dbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdddbdcdbdd25e1c0",
+      "decoded": {
+        "ver": 1,
+        "type": 2,
+        "seq": 255,
+        "flags": 0,
+        "len": 1024,
+        "payload_hex": "c0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0dbc0db"
+      }
+    },
+    {
+      "name": "ack-next-four",
+      "valid": true,
+      "hex": "c0010305010300070400a5a0c0",
+      "decoded": {
+        "ver": 1,
+        "type": 3,
+        "seq": 5,
+        "flags": 1,
+        "len": 3,
+        "payload_hex": "070400"
+      }
+    },
+    {
+      "name": "chunk-event",
+      "valid": true,
+      "hex": "c0010200020500010000dbdddbdc0d9ec0",
+      "decoded": {
+        "ver": 1,
+        "type": 2,
+        "seq": 0,
+        "flags": 2,
+        "len": 5,
+        "payload_hex": "010000dbc0"
+      }
+    },
+    {
+      "name": "empty-message-body",
+      "valid": true,
+      "hex": "c00101ff00000042aac0",
+      "decoded": {
+        "ver": 1,
+        "type": 1,
+        "seq": 255,
+        "flags": 0,
+        "len": 0,
+        "payload_hex": ""
+      }
+    },
+    {
+      "name": "bad-crc",
+      "valid": false,
+      "hex": "c0010101000d007b226d223a2268656c6c6f227dbe5ec0",
+      "error": "crc"
+    },
+    {
+      "name": "wrong-version",
+      "valid": false,
+      "hex": "c0020101000d007b226d223a2268656c6c6f227dbe2dc0",
+      "error": "version"
+    },
+    {
+      "name": "short-body",
+      "valid": false,
+      "hex": "c0010101c0",
+      "error": "length"
+    },
+    {
+      "name": "payload-1025",
+      "valid": false,
+      "hex": "c00102060001040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000434cc0",
+      "error": "length"
+    },
+    {
+      "name": "escape-at-last-byte",
+      "valid": false,
+      "hex": "c001dbc0",
+      "error": "escape"
+    },
+    {
+      "name": "unknown-escape",
+      "valid": false,
+      "hex": "c001db01c0",
+      "error": "escape"
+    }
+  ]
+}
