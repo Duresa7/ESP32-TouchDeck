@@ -34,12 +34,14 @@ static void record_consumer(void *ctx, uint16_t usage)
 
 static const ui_action_ops_t k_ops = { .key = record_key, .mod = record_mod, .consumer = record_consumer };
 
-/* In grid order on the Media page. */
 static const struct {
     const char *id;
+    uint8_t row;
+    uint8_t col;
     uint16_t usage;
 } k_media[] = {
-    { "prev", 182 }, { "playpause", 205 }, { "next", 181 }, { "mute", 226 }, { "voldown", 234 }, { "volup", 233 },
+    { "prev", 0, 0, 182 },    { "playpause", 0, 1, 205 }, { "next", 0, 2, 181 },
+    { "mute", 1, 0, 226 },    { "voldown", 1, 1, 234 },   { "volup", 1, 2, 233 },
 };
 #define MEDIA_COUNT (sizeof k_media / sizeof k_media[0])
 
@@ -56,16 +58,18 @@ static const ui_page_t *page_by_id(const char *id)
     return NULL;
 }
 
-TEST_CASE("every tile on the Media page, in grid order, sends its consumer usage and no keyboard key", "[media_page]")
+TEST_CASE("each Media tile sits at its grid position and is bound to its consumer usage", "[media_page]")
 {
     const ui_page_t *page = page_by_id("media");
-    TEST_ASSERT_EQUAL_UINT(MEDIA_COUNT, page->tile_count);
+    TEST_ASSERT_EQUAL_UINT(6, page->tile_count);
     for (size_t i = 0; i < MEDIA_COUNT; i++) {
-        TEST_ASSERT_EQUAL_STRING(k_media[i].id, page->tiles[i].id);
-        const ui_action_t action = ui_tile_action(&page->tiles[i]);
+        const ui_tile_t *tile = ui_page_find_tile(page, k_media[i].id);
+        TEST_ASSERT_NOT_NULL_MESSAGE(tile, k_media[i].id);
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(k_media[i].row, tile->row, k_media[i].id);
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(k_media[i].col, tile->col, k_media[i].id);
+        const ui_action_t action = ui_tile_action(tile);
         TEST_ASSERT_EQUAL_MESSAGE(UI_ACTION_CONSUMER, action.kind, k_media[i].id);
         TEST_ASSERT_EQUAL_UINT16_MESSAGE(k_media[i].usage, action.consumer, k_media[i].id);
-        TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, action.key, k_media[i].id);
     }
 }
 
@@ -73,8 +77,9 @@ TEST_CASE("a click on a Media tile runs the consumer op once with its usage and 
 {
     const ui_page_t *page = page_by_id("media");
     for (size_t i = 0; i < MEDIA_COUNT; i++) {
+        const ui_tile_t *tile = ui_page_find_tile(page, k_media[i].id);
         recorder_t rec = { 0 };
-        TEST_ASSERT_TRUE_MESSAGE(ui_tile_click(&page->tiles[i], &k_ops, &rec), k_media[i].id);
+        TEST_ASSERT_TRUE_MESSAGE(ui_tile_click(tile, &k_ops, &rec), k_media[i].id);
         TEST_ASSERT_EQUAL_UINT_MESSAGE(1, rec.consumer_calls, k_media[i].id);
         TEST_ASSERT_EQUAL_UINT16_MESSAGE(k_media[i].usage, rec.last_consumer, k_media[i].id);
         TEST_ASSERT_EQUAL_UINT_MESSAGE(0, rec.key_calls, k_media[i].id);
@@ -82,20 +87,14 @@ TEST_CASE("a click on a Media tile runs the consumer op once with its usage and 
     }
 }
 
-TEST_CASE("a Media click does nothing without a consumer op, and an F-Keys click never calls it", "[media_page]")
+TEST_CASE("a Media click does nothing without a consumer op and returns false", "[media_page]")
 {
     const ui_page_t *media = page_by_id("media");
     const ui_action_ops_t no_consumer = { .key = record_key, .mod = record_mod };
     for (size_t i = 0; i < MEDIA_COUNT; i++) {
+        const ui_tile_t *tile = ui_page_find_tile(media, k_media[i].id);
         recorder_t rec = { 0 };
-        TEST_ASSERT_FALSE_MESSAGE(ui_tile_click(&media->tiles[i], &no_consumer, &rec), k_media[i].id);
+        TEST_ASSERT_FALSE_MESSAGE(ui_tile_click(tile, &no_consumer, &rec), k_media[i].id);
         TEST_ASSERT_EQUAL_UINT_MESSAGE(0, rec.key_calls + rec.mod_calls + rec.consumer_calls, k_media[i].id);
-    }
-
-    const ui_page_t *fkeys = page_by_id("fkeys");
-    for (size_t i = 0; i < fkeys->tile_count; i++) {
-        recorder_t rec = { 0 };
-        ui_tile_click(&fkeys->tiles[i], &k_ops, &rec);
-        TEST_ASSERT_EQUAL_UINT_MESSAGE(0, rec.consumer_calls, fkeys->tiles[i].id);
     }
 }

@@ -10,6 +10,15 @@
 extern "C" {
 #endif
 
+enum {
+    UI_CONSUMER_NEXT = 181,
+    UI_CONSUMER_PREV = 182,
+    UI_CONSUMER_PLAY_PAUSE = 205,
+    UI_CONSUMER_MUTE = 226,
+    UI_CONSUMER_VOLUME_UP = 233,
+    UI_CONSUMER_VOLUME_DOWN = 234,
+};
+
 typedef enum {
     UI_ACTION_NONE = 0,
     UI_ACTION_KEY,
