@@ -11,6 +11,9 @@ void ui_tile_keys_start(void);
 /* After a tile is built: a modifier tile gets its three looks and the lock glyph. Other tiles are left alone. */
 void ui_tile_keys_dress(lv_obj_t *obj, const ui_tile_t *tile);
 
+/* The icon glyph of a consumer tile, or NULL when the tile has none. */
+const char *ui_tile_keys_icon(const ui_tile_t *tile);
+
 /* The tile was tapped: runs its action through the engine, then syncs the looks. */
 void ui_tile_keys_click(const ui_tile_t *tile);
 

@@ -57,6 +57,32 @@ void ui_tile_keys_start(void)
     lv_timer_create(on_poll, ui_theme.mod_poll_ms, NULL);
 }
 
+static const struct {
+    uint16_t usage;
+    const char *glyph;
+} k_icons[] = {
+    { UI_CONSUMER_PREV, LV_SYMBOL_PREV },
+    { UI_CONSUMER_PLAY_PAUSE, LV_SYMBOL_PLAY LV_SYMBOL_PAUSE },
+    { UI_CONSUMER_NEXT, LV_SYMBOL_NEXT },
+    { UI_CONSUMER_MUTE, LV_SYMBOL_MUTE },
+    { UI_CONSUMER_VOLUME_DOWN, LV_SYMBOL_VOLUME_MID },
+    { UI_CONSUMER_VOLUME_UP, LV_SYMBOL_VOLUME_MAX },
+};
+
+const char *ui_tile_keys_icon(const ui_tile_t *tile)
+{
+    const ui_action_t action = ui_tile_action(tile);
+    if (action.kind != UI_ACTION_CONSUMER) {
+        return NULL;
+    }
+    for (size_t i = 0; i < sizeof k_icons / sizeof k_icons[0]; i++) {
+        if (k_icons[i].usage == action.consumer) {
+            return k_icons[i].glyph;
+        }
+    }
+    return NULL;
+}
+
 void ui_tile_keys_dress(lv_obj_t *obj, const ui_tile_t *tile)
 {
     const ui_action_t action = ui_tile_action(tile);
@@ -89,9 +115,15 @@ static void click_mod(void *ctx, key_mod_t mod)
     keys_mod(mod);
 }
 
+static void click_consumer(void *ctx, uint16_t usage)
+{
+    (void)ctx;
+    keys_consumer(usage);
+}
+
 void ui_tile_keys_click(const ui_tile_t *tile)
 {
-    static const ui_action_ops_t ops = { .key = click_key, .mod = click_mod };
+    static const ui_action_ops_t ops = { .key = click_key, .mod = click_mod, .consumer = click_consumer };
     if (ui_tile_click(tile, &ops, NULL)) {
         sync_mods();
     }

@@ -8,6 +8,7 @@ const ui_theme_t ui_theme = {
         .tile_down = UI_RGB565(40, 64, 104),
         .text = UI_RGB565(232, 236, 248),
         .title = UI_RGB565(120, 132, 152),
+        .caption = UI_RGB565(160, 172, 192),
         .dot_idle = UI_RGB565(64, 72, 88),
         .dot_active = UI_RGB565(72, 160, 255),
         .glow = UI_RGB565(72, 160, 255),
@@ -31,6 +32,10 @@ const ui_theme_t ui_theme = {
         .radius = 4,
         .inset = 18,
     },
+    .media = {
+        .gap = 14,
+        .label_inset = 16,
+    },
     .mod_poll_ms = 50,
     /* Only this band slides, so a slide redraws the band and leaves the strips above and below it alone. It is
      * taller than the grid by 20 px each side, and a pressed tile's glow reaches 17 px (glow_width / 2 + 1 +
@@ -52,6 +57,7 @@ const ui_theme_t ui_theme = {
     .anim_dot_ms = 160,
     .font_tile = &lv_font_montserrat_48,
     .font_title = &lv_font_montserrat_28,
+    .font_caption = &lv_font_montserrat_28,
 };
 
 static const lv_style_prop_t k_tile_transition_props[] = {
@@ -101,6 +107,11 @@ static void init_tile_styles(ui_styles_t *st)
     lv_style_init(&st->tile_label);
     lv_style_set_text_font(&st->tile_label, t->font_tile);
     lv_style_set_text_color(&st->tile_label, ui_color(t->color.text));
+
+    lv_style_init(&st->tile_caption);
+    lv_style_set_text_font(&st->tile_caption, t->font_caption);
+    lv_style_set_text_color(&st->tile_caption, ui_color(t->color.caption));
+    lv_style_set_text_align(&st->tile_caption, LV_TEXT_ALIGN_CENTER);
 }
 
 static void init_text_and_dot_styles(ui_styles_t *st)
