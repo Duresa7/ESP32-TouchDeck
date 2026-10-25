@@ -7,20 +7,26 @@
 #include "key_engine.h"
 #include "ui_pager.h"
 #include "ui_pages.h"
-#include "ui_tile_action.h"
+#include "td_layout.h"
+
+/* A tile with no icon and no action, as the page geometry tests need. */
+#define TILE(id, label, row, col, row_span, col_span) \
+    { id, label, row, col, row_span, col_span, NULL, { .type = TD_ACTION_NONE } }
 
 typedef struct {
     unsigned key_calls;
     unsigned mod_calls;
     uint8_t last_key;
+    uint8_t last_mods;
     key_mod_t last_mod;
 } recorder_t;
 
-static void record_key(void *ctx, uint8_t usage)
+static void record_key(void *ctx, uint8_t usage, uint8_t mods)
 {
     recorder_t *rec = ctx;
     rec->key_calls++;
     rec->last_key = usage;
+    rec->last_mods = mods;
 }
 
 static void record_mod(void *ctx, key_mod_t mod)
@@ -47,10 +53,19 @@ static const struct {
     { "win", KEY_MOD_WIN },
 };
 
+/* The built-in pages, as td_layout parses them from the embedded builtin.json. */
+static const ui_page_t *builtin_pages(size_t *count)
+{
+    const td_layout_t *layout = td_layout_builtin();
+    TEST_ASSERT_NOT_NULL(layout);
+    *count = layout->page_count;
+    return layout->pages;
+}
+
 static const ui_page_t *page_by_id(const char *id)
 {
     size_t count = 0;
-    const ui_page_t *pages = ui_builtin_pages(&count);
+    const ui_page_t *pages = builtin_pages(&count);
     for (size_t i = 0; i < count; i++) {
         if (strcmp(pages[i].id, id) == 0) {
             return &pages[i];
@@ -73,10 +88,11 @@ TEST_CASE("every F tile on the F-Keys page sends its usage, F1 as 58 up to F12 a
     for (unsigned n = 1; n <= 12; n++) {
         char id[8];
         snprintf(id, sizeof id, "f%u", n);
-        const ui_action_t action = ui_tile_action(tile_by_id(page, id));
-        TEST_ASSERT_EQUAL_MESSAGE(UI_ACTION_KEY, action.kind, id);
-        TEST_ASSERT_EQUAL_UINT8_MESSAGE(57 + n, action.key, id);
-        TEST_ASSERT_EQUAL_UINT8_MESSAGE(key_usage_f(n), action.key, id);
+        const td_action_t action = tile_by_id(page, id)->action;
+        TEST_ASSERT_EQUAL_MESSAGE(TD_ACTION_KEY, action.type, id);
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(57 + n, action.key.usage, id);
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(key_usage_f(n), action.key.usage, id);
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, action.key.mods, id);
     }
 }
 
@@ -84,9 +100,9 @@ TEST_CASE("every modifier tile on the F-Keys page toggles its own modifier", "[f
 {
     const ui_page_t *page = page_by_id("fkeys");
     for (size_t i = 0; i < sizeof k_mods / sizeof k_mods[0]; i++) {
-        const ui_action_t action = ui_tile_action(tile_by_id(page, k_mods[i].id));
-        TEST_ASSERT_EQUAL_MESSAGE(UI_ACTION_MOD, action.kind, k_mods[i].id);
-        TEST_ASSERT_EQUAL_MESSAGE(k_mods[i].mod, action.mod, k_mods[i].id);
+        const td_action_t action = tile_by_id(page, k_mods[i].id)->action;
+        TEST_ASSERT_EQUAL_MESSAGE(TD_ACTION_MOD, action.type, k_mods[i].id);
+        TEST_ASSERT_EQUAL_MESSAGE(k_mods[i].mod, action.mod.mod, k_mods[i].id);
     }
 }
 
@@ -99,6 +115,7 @@ TEST_CASE("a click on a bound tile runs exactly one op with the tile's argument"
     TEST_ASSERT_EQUAL_UINT(1, rec.key_calls);
     TEST_ASSERT_EQUAL_UINT(0, rec.mod_calls);
     TEST_ASSERT_EQUAL_UINT8(62, rec.last_key);
+    TEST_ASSERT_EQUAL_UINT8(0, rec.last_mods);
 
     rec = (recorder_t){ 0 };
     TEST_ASSERT_TRUE(ui_tile_click(tile_by_id(page, "shift"), &k_ops, &rec));
@@ -109,12 +126,12 @@ TEST_CASE("a click on a bound tile runs exactly one op with the tile's argument"
 
 TEST_CASE("a click calls no op for an unbound tile, a missing argument or a missing op", "[fkey_page]")
 {
-    const ui_tile_t unbound = { "unbound", "Unbound", 0, 0, 1, 1 };
+    const ui_tile_t unbound = TILE("unbound", "Unbound", 0, 0, 1, 1);
     const ui_tile_t *f5 = tile_by_id(page_by_id("fkeys"), "f5");
     const ui_tile_t *shift = tile_by_id(page_by_id("fkeys"), "shift");
     recorder_t rec = { 0 };
 
-    TEST_ASSERT_EQUAL(UI_ACTION_NONE, ui_tile_action(&unbound).kind);
+    TEST_ASSERT_EQUAL(TD_ACTION_NONE, unbound.action.type);
     TEST_ASSERT_FALSE_MESSAGE(ui_tile_click(&unbound, &k_ops, &rec), "a tile with no binding");
     TEST_ASSERT_FALSE_MESSAGE(ui_tile_click(NULL, &k_ops, &rec), "no tile");
     TEST_ASSERT_FALSE_MESSAGE(ui_tile_click(f5, NULL, &rec), "no ops");
@@ -156,7 +173,7 @@ static const gesture_t k_gestures[] = {
 static unsigned calls_after(const ui_page_t *page, const ui_tile_t *tile, const gesture_t *gesture)
 {
     size_t page_count = 0;
-    ui_builtin_pages(&page_count);
+    builtin_pages(&page_count);
     ui_pager_t pager;
     ui_pager_init(&pager, &k_pager_cfg, (uint8_t)page_count);
 
@@ -190,44 +207,20 @@ TEST_CASE("a press that starts on a tile and turns into a swipe, a drag or a mov
     }
 }
 
-TEST_CASE("the binding table and the built-in pages agree", "[fkey_page]")
+TEST_CASE("a tile does only what its own action says, whatever its id", "[fkey_page]")
 {
-    size_t binding_count = 0;
-    const ui_binding_t *bindings = ui_builtin_bindings(&binding_count);
-    size_t page_count = 0;
-    const ui_page_t *pages = ui_builtin_pages(&page_count);
-    TEST_ASSERT_NOT_NULL(bindings);
-    TEST_ASSERT_TRUE(binding_count > 0);
-
-    for (size_t i = 0; i < binding_count; i++) {
-        const char *id = bindings[i].tile_id;
-        bool on_a_page = false;
-        for (size_t p = 0; p < page_count; p++) {
-            on_a_page = on_a_page || ui_page_find_tile(&pages[p], id) != NULL;
-        }
-        TEST_ASSERT_TRUE_MESSAGE(on_a_page, id);
-
-        for (size_t j = i + 1; j < binding_count; j++) {
-            TEST_ASSERT_TRUE_MESSAGE(strcmp(id, bindings[j].tile_id) != 0, id);
-        }
-
-        switch (bindings[i].action.kind) {
-        case UI_ACTION_KEY:
-            TEST_ASSERT_TRUE_MESSAGE(bindings[i].action.key >= 1, id);
-            break;
-        case UI_ACTION_MOD:
-            TEST_ASSERT_TRUE_MESSAGE((unsigned)bindings[i].action.mod < KEY_MOD_COUNT, id);
-            break;
-        case UI_ACTION_CONSUMER:
-            TEST_ASSERT_TRUE_MESSAGE(bindings[i].action.consumer >= 1, id);
-            break;
-        case UI_ACTION_NONE:
-            TEST_FAIL_MESSAGE(id);
-        }
-    }
+    const ui_tile_t shift_as_key = {
+        "shift", "Shift", 0, 0, 1, 1, NULL, { .type = TD_ACTION_KEY, .key = { .usage = 62, .mods = 1 | 2 } },
+    };
+    recorder_t rec = { 0 };
+    TEST_ASSERT_TRUE(ui_tile_click(&shift_as_key, &k_ops, &rec));
+    TEST_ASSERT_EQUAL_UINT(1, rec.key_calls);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(0, rec.mod_calls, "a tile named shift with a key action toggles no modifier");
+    TEST_ASSERT_EQUAL_UINT8(62, rec.last_key);
+    TEST_ASSERT_EQUAL_UINT8(1 | 2, rec.last_mods);
 
     const ui_page_t *fkeys = page_by_id("fkeys");
     for (size_t t = 0; t < fkeys->tile_count; t++) {
-        TEST_ASSERT_TRUE_MESSAGE(ui_tile_action(&fkeys->tiles[t]).kind != UI_ACTION_NONE, fkeys->tiles[t].id);
+        TEST_ASSERT_TRUE_MESSAGE(fkeys->tiles[t].action.type != TD_ACTION_NONE, fkeys->tiles[t].id);
     }
 }

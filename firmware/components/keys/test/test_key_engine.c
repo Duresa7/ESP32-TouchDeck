@@ -26,6 +26,11 @@ static key_event_t consumer_tap(uint16_t usage)
     return (key_event_t){ .type = KEY_EV_CONSUMER_TAP, .usage = usage };
 }
 
+static key_event_t chord(uint16_t usage, uint8_t mods)
+{
+    return (key_event_t){ .type = KEY_EV_CHORD, .usage = usage, .mods = mods };
+}
+
 static key_event_t plain(key_event_type_t type)
 {
     return (key_event_t){ .type = type };
@@ -196,6 +201,41 @@ TEST_CASE("a one-shot and a locked modifier apply together and only the one-shot
     expect_key_pair(8 | 4, F15);
     expect_mod(KEY_MOD_WIN, KEY_MOD_LOCKED);
     expect_mod(KEY_MOD_ALT, KEY_MOD_OFF);
+}
+
+TEST_CASE("a chord with no active modifier emits its own modifiers with the key, then the release", "[key_engine]")
+{
+    reset();
+    step(chord(F15, 1 | 2), 100);
+    expect_key_pair(1 | 2, F15);
+    expect_all_off();
+    step(key_tap(F16), 200);
+    expect_key_pair(0, F16);
+}
+
+TEST_CASE("a chord adds a locked modifier and keeps it locked", "[key_engine]")
+{
+    reset();
+    step(mod_tap(KEY_MOD_SHIFT), 100);
+    step(mod_tap(KEY_MOD_SHIFT), 200);
+    step(chord(F15, 1), 1000);
+    expect_key_pair(2 | 1, F15);
+    expect_mod(KEY_MOD_SHIFT, KEY_MOD_LOCKED);
+    step(chord(F16, 2), 1100);
+    expect_key_pair(2, F16);
+}
+
+TEST_CASE("a chord takes a one-shot modifier along and clears it", "[key_engine]")
+{
+    reset();
+    step(mod_tap(KEY_MOD_ALT), 100);
+    step(chord(F15, 1 | 2), 1000);
+    expect_key_pair(4 | 2 | 1, F15);
+    expect_mod(KEY_MOD_ALT, KEY_MOD_OFF);
+    step(chord(F16, 0x30 | 8), 1100);
+    expect_key_pair(8, F16);
+    step(chord(0, 1), 1200);
+    TEST_ASSERT_EQUAL_UINT8(0, s_out.count);
 }
 
 TEST_CASE("the modifier byte maps ctrl shift alt win to 1 2 4 8", "[key_engine]")

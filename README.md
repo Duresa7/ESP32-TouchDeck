@@ -112,6 +112,14 @@ echo a request, and report the connection state. The text command `link state`
 reports the same counters. The port stays available for the debug console and
 ROM flashing.
 
+The link also moves files and mirrors input. `layout.put` and `layout.get` copy a
+layout in chunks, `icon.put`, `icon.list`, and `icon.rm` manage the icons, and
+`settings.get`, `settings.put`, and `store.stat` read and change the deck. A put
+is checked and validated before it replaces the stored file, and a layout for the
+orientation on screen is shown without a reboot. While the app is connected, the
+deck sends a `press` event for each app or widget tap and a `key.report` event
+for each key report the engine emits, so the app can type the keys on the PC.
+
 The local verification harness provides `link hello`, `link ping --count 100`,
 `link state`, `link raw --hex <frame>`, and `link selftest`. `link scenario <file>`
 sends timed console lines and binary frames through one port handle. Console
@@ -246,6 +254,28 @@ for reading a layout file. Send the deck the compact form of a layout, because
 it rejects files over 32768 bytes without parsing them first.
 
 App-side actions and widgets dim on the deck while the app is offline.
+
+### Layouts on the deck
+
+The firmware embeds `builtin.json` and draws its pages from it, so the deck has
+no page table in C. At boot it loads `/storage/layouts/<orientation>.json`. When
+that file is missing or invalid, the deck logs `layout: <reason>, using builtin`
+and starts on the built-in layout. Its parser accepts and rejects the same files
+as `check-layouts.mjs`, and it reports the same rule key.
+
+- `layout state` reports the layout on screen: `source` (`storage` or `builtin`),
+  `name`, `orientation`, `pages`, `tiles`, `icons_loaded`, `icons_missing`,
+  `bytes`, `load_ms`, and `error`.
+- `layout reload` and `layout use storage` load the stored file again.
+  `layout use builtin` switches to the built-in layout. A file that fails
+  validation never replaces the layout on screen. `layout state` reports why in
+  `error`.
+- `ui tile <id>` also reports the tile's `action` type and its `icon`.
+
+A `key` tile with `mods` sends its modifiers together with any active ones. A
+`page` tile slides to its page. App and widget tiles send a `press` event over
+the app link, and log `ui: press <page>/<tile> <kind>` when no link hook is set.
+A `file:<id>` icon is a 64 by 64 bitmap in [schema/icon-format.md](schema/icon-format.md).
 
 ## Unit tests
 

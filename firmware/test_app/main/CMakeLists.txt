@@ -8,13 +8,16 @@ endif()
 
 set(td_test_srcs)
 set(td_test_requires)
+set(td_test_embeds)
 foreach(manifest IN LISTS td_test_manifests)
     get_filename_component(test_dir "${manifest}" DIRECTORY)
     get_filename_component(component_dir "${test_dir}" DIRECTORY)
     get_filename_component(component "${component_dir}" NAME)
     set(TD_TEST_SOURCES)
     set(TD_TEST_REQUIRES)
+    set(TD_TEST_EMBED_TXTFILES)
     include("${manifest}")
+    list(APPEND td_test_embeds ${TD_TEST_EMBED_TXTFILES})
     foreach(src IN LISTS TD_TEST_SOURCES)
         list(APPEND td_test_srcs "${test_dir}/${src}")
     endforeach()
@@ -23,5 +26,6 @@ endforeach()
 
 idf_component_register(SRCS "test_main.c"
                        PRIV_REQUIRES unity ${td_test_requires}
+                       EMBED_TXTFILES ${td_test_embeds}
                        WHOLE_ARCHIVE)
 target_sources(${COMPONENT_LIB} PRIVATE ${td_test_srcs})
