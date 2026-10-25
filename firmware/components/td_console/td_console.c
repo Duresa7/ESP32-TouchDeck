@@ -1,7 +1,7 @@
 #include "td_console.h"
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 #include "esp_app_desc.h"
 #include "esp_check.h"
 #include "esp_console.h"
@@ -11,6 +11,7 @@
 #include "esp_timer.h"
 #include "driver/usb_serial_jtag.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 
 #define TD_PROMPT "td> "
@@ -18,6 +19,10 @@
 #define TD_WORD_MAX 64
 #define TD_TASK_STACK 6144
 #define TD_TASK_PRIORITY 2
+#define TD_RX_TASK_STACK 2048
+#define TD_RX_TASK_PRIORITY 10
+#define TD_RX_CHUNK 64
+#define TD_RX_QUEUE_BYTES 2048
 #define TD_TX_DRAIN_MS 250
 
 static const char *TAG = "td_console";
@@ -138,17 +143,53 @@ static void echo_add(rx_t *rx, const char *s, size_t n)
     rx->echo_len += n;
 }
 
+static StreamBufferHandle_t s_rx_queue;
+static atomic_uint s_rx_dropped;
+
+/*
+ * The driver's RX interrupt copies each USB packet into a 256-byte ring and
+ * discards the whole packet, without a trace, when the ring is full. The
+ * console task blocks on USB TX while it prints a reply, so a burst of lines
+ * filled that ring. This task outranks the console and drains the ring into
+ * s_rx_queue, where a full queue is counted and reported instead of hidden.
+ * It reads the driver directly because read() on stdin takes one byte per
+ * ring operation, which is slower than back-to-back 64-byte packets.
+ */
+static void rx_task(void *arg)
+{
+    char chunk[TD_RX_CHUNK];
+    for (;;) {
+        int n = usb_serial_jtag_read_bytes(chunk, sizeof chunk, portMAX_DELAY);
+        if (n <= 0) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        } else if (xStreamBufferSpacesAvailable(s_rx_queue) < (size_t)n) {
+            atomic_fetch_add(&s_rx_dropped, (unsigned)n);
+        } else {
+            xStreamBufferSend(s_rx_queue, chunk, (size_t)n, 0);
+        }
+    }
+}
+
+static void report_dropped_input(void)
+{
+    unsigned dropped = atomic_exchange(&s_rx_dropped, 0);
+    if (dropped == 0) {
+        return;
+    }
+    char buf[TD_REPLY_MAX];
+    td_reply_t r;
+    td_reply_begin(&r, buf, sizeof buf, "console", false);
+    td_reply_str(&r, "error", "input overflow");
+    td_reply_int(&r, "dropped_bytes", dropped);
+    emit(&r);
+}
+
 static char next_char(rx_t *rx)
 {
     while (rx->pos == rx->len) {
         echo_flush(rx);
-        ssize_t n = read(STDIN_FILENO, rx->in, sizeof rx->in);
-        if (n > 0) {
-            rx->pos = 0;
-            rx->len = (size_t)n;
-        } else {
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
+        rx->len = xStreamBufferReceive(s_rx_queue, rx->in, sizeof rx->in, portMAX_DELAY);
+        rx->pos = 0;
     }
     return rx->in[rx->pos++];
 }
@@ -207,6 +248,7 @@ static void console_task(void *arg)
     rx_t rx = { 0 };
     char line[TD_LINE_MAX];
     for (;;) {
+        report_dropped_input();
         printf(TD_PROMPT);
         fflush(stdout);
         if (read_line(&rx, line, sizeof line)) {
@@ -230,8 +272,11 @@ esp_err_t td_console_start(void)
         ESP_RETURN_ON_ERROR(esp_console_cmd_register(&s_cmds[i]), TAG, "register %s", s_cmds[i].command);
     }
 
-    if (xTaskCreate(console_task, "td_console", TD_TASK_STACK, NULL, TD_TASK_PRIORITY, NULL) != pdPASS) {
-        return ESP_FAIL;
-    }
+    s_rx_queue = xStreamBufferCreate(TD_RX_QUEUE_BYTES, 1);
+    ESP_RETURN_ON_FALSE(s_rx_queue, ESP_ERR_NO_MEM, TAG, "rx queue");
+    ESP_RETURN_ON_FALSE(xTaskCreate(rx_task, "td_rx", TD_RX_TASK_STACK, NULL, TD_RX_TASK_PRIORITY, NULL) == pdPASS,
+                        ESP_FAIL, TAG, "rx task");
+    ESP_RETURN_ON_FALSE(xTaskCreate(console_task, "td_console", TD_TASK_STACK, NULL, TD_TASK_PRIORITY, NULL) == pdPASS,
+                        ESP_FAIL, TAG, "console task");
     return ESP_OK;
 }
