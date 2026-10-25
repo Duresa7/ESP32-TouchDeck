@@ -32,6 +32,10 @@ export function validateLayout(layout) {
   }
 
   const errors = [];
+  const compactBytes = Buffer.byteLength(JSON.stringify(layout), 'utf8');
+  if (compactBytes > 32768) {
+    errors.push(`layout compact UTF-8 JSON is ${compactBytes} bytes; maximum is 32768 bytes`);
+  }
   const ids = new Map();
   const pageIds = new Set(layout.pages.map((page) => page.id));
   const addId = (id, location) => {

@@ -26,7 +26,7 @@ relative to the script, so the command also works from another directory.
 The default successful summary is:
 
 ```text
-2 valid, 9 invalid as expected, 0 problems
+2 valid, 12 invalid as expected, 0 problems
 ```
 
 The command prints one `ok` line for each example and a final `wall time` in
@@ -57,6 +57,23 @@ Unicode code points for length limits, as JSON Schema specifies.
 Page and tile IDs share one namespace across the entire layout. Every ID matches
 `^[a-z0-9_]{1,15}$`. An action's page target refers to a page ID in that layout.
 The first page is the initial page.
+
+### Upload and string limits
+
+The upload limit is 32768 bytes of compact UTF-8 JSON. Compact JSON has no
+whitespace outside strings, as `JSON.stringify(layout)` with no spacing produces.
+The byte count is `Buffer.byteLength(JSON.stringify(layout), 'utf8')`.
+Formatting whitespace in an input file does not count. Whitespace inside strings
+and JSON escape sequences do count. Exactly 32768 compact bytes is valid.
+The validator rejects 32769 or more and reports both the actual size and the limit.
+The app always uploads compact JSON.
+
+These limits are the shared contract for the Rust validator in M2-10, the editor's
+**Push** in M2-11, and the firmware parser in M2-04. Each must reject layouts above
+the compact byte limit and enforce 1 to 8 pages. Every page title and grid tile
+label must be nonempty. Titles allow at most 24 Unicode code points, and labels
+allow at most 16. `maxLength` counts code points, not UTF-8 bytes or UTF-16 code
+units. The firmware must store whatever UTF-8 the schema allows.
 
 ## Pages
 
@@ -138,7 +155,7 @@ It covers all nine action types, a horizontal span, a vertical span, a key chord
 a dashboard jump, two Claude status widgets, and one CLIProxyAPI widget.
 Its command tile describes `cmd /c echo TouchDeck` on Windows.
 
-The nine [invalid examples](examples/invalid/) each break one rejection rule.
+The twelve [invalid examples](examples/invalid/) each break one rejection rule.
 Each is strict JSON. Its first line has the form:
 
 ```json
@@ -159,9 +176,11 @@ Ajv is pinned by the lockfile. Known page kinds and action types report errors
 from the selected branch. Unknown kinds or types report `oneOf`.
 
 The semantic checks run only after structural validation succeeds. They report
-in page and tile order with these stable message forms:
+the compact byte limit first, then page and tile errors in order with these
+stable message forms:
 
 ```text
+layout compact UTF-8 JSON is <actual> bytes; maximum is 32768 bytes
 duplicate id "<id>" at <location>; first used at <location>
 page "<page>" tile "<tile>" references missing page "<target>"
 page "<page>" tile "<tile>" exceeds grid bounds <rows>x<cols>

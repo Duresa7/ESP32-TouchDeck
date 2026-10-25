@@ -136,8 +136,13 @@ for (const [name, mutate, message] of [
   ['nine pages', (x) => { x.pages = Array.from({ length: 9 }, (_, n) => ({ id: `p_${n}`, title: 'Page', kind: 'grid', rows: 1, cols: 1, tiles: [] })); }, '(maxItems)'],
   ['invalid id', (x) => { x.pages[0].id = 'Upper-Case'; }, '(pattern)'],
   ['16-character id', (x) => { x.pages[0].tiles[0].id = 'a'.repeat(16); }, '(pattern)'],
+  ['empty grid title', (x) => { x.pages[0].title = ''; }, '(minLength)'],
+  ['empty dashboard title', (x) => { x.pages[3].title = ''; }, '(minLength)'],
+  ['empty tile label', (x) => { x.pages[0].tiles[0].label = ''; }, '(minLength)'],
   ['17-character label', (x) => { x.pages[0].tiles[0].label = 'a'.repeat(17); }, '(maxLength)'],
+  ['17-code-point label', (x) => { x.pages[0].tiles[0].label = '😀'.repeat(17); }, '(maxLength)'],
   ['25-character title', (x) => { x.pages[0].title = 'a'.repeat(25); }, '(maxLength)'],
+  ['25-code-point title', (x) => { x.pages[0].title = '😀'.repeat(25); }, '(maxLength)'],
   ['zero rows', (x) => { x.pages[0].rows = 0; }, '(minimum)'],
   ['nine cols', (x) => { x.pages[0].cols = 9; }, '(maximum)'],
   ['fractional coordinate', (x) => { x.pages[0].tiles[0].row = 0.5; }, '(type)'],
@@ -206,8 +211,45 @@ for (const layout of [null, [], 'layout', {}, { ...dev, pages: [null] }, { ...de
 test('default checker reports each fixture and the exact acceptance summary', () => {
   const lines = [];
   assert.equal(checkLayouts([], (line) => lines.push(line)), 0);
-  assert.equal(lines.filter((line) => line.startsWith('ok ')).length, 11);
-  assert.equal(lines.at(-1), '2 valid, 9 invalid as expected, 0 problems');
+  assert.equal(lines.filter((line) => line.startsWith('ok ')).length, 14);
+  assert.equal(lines.at(-1), '2 valid, 12 invalid as expected, 0 problems');
+});
+
+test('compact UTF-8 JSON accepts exactly 32768 bytes and rejects 32769 bytes', () => {
+  const layout = copy();
+  layout.name = '😀 "\n';
+  const initialBytes = Buffer.byteLength(JSON.stringify(layout), 'utf8');
+  layout.name += 'x'.repeat(32768 - initialBytes);
+  assert.equal(Buffer.byteLength(JSON.stringify(layout), 'utf8'), 32768);
+  assert.ok(JSON.stringify(layout).length < 32768);
+  assert.deepEqual(validateLayout(layout), []);
+  layout.name += 'x';
+  assert.equal(Buffer.byteLength(JSON.stringify(layout), 'utf8'), 32769);
+  assert.deepEqual(validateLayout(layout), ['layout compact UTF-8 JSON is 32769 bytes; maximum is 32768 bytes']);
+});
+
+test('CLI ignores formatting whitespace and counts whitespace inside strings', () => {
+  const temporary = mkdtempSync(join(tmpdir(), 'touchdeck-size-'));
+  const path = join(temporary, 'boundary.json');
+  const layout = copy();
+  layout.name = ' ';
+  layout.name += ' '.repeat(32768 - Buffer.byteLength(JSON.stringify(layout), 'utf8'));
+  const run = () => spawnSync(process.execPath, [resolve(directory, 'check-layouts.mjs'), path], { encoding: 'utf8' });
+  try {
+    const source = JSON.stringify(layout, null, 2) + '\n';
+    assert.ok(Buffer.byteLength(source, 'utf8') > 32768);
+    writeFileSync(path, source);
+    let result = run();
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /3 valid, 12 invalid as expected, 0 problems/);
+    layout.name += ' ';
+    writeFileSync(path, JSON.stringify(layout));
+    result = run();
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /layout compact UTF-8 JSON is 32769 bytes; maximum is 32768 bytes/);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
 });
 
 test('CLI checks extra paths, rejects JSON and file errors, and runs from another directory', () => {
@@ -218,7 +260,7 @@ test('CLI checks extra paths, rejects JSON and file errors, and runs from anothe
     writeFileSync(good, JSON.stringify(dev));
     let result = run(good);
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /3 valid, 9 invalid as expected, 0 problems/);
+    assert.match(result.stdout, /3 valid, 12 invalid as expected, 0 problems/);
     assert.match(result.stdout, /wall time: \d+\.\d+ ms/);
     const bad = join(temporary, 'bad.json');
     writeFileSync(bad, readFileSync(join(directory, 'examples/invalid/overlap.json')));
