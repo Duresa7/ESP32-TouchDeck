@@ -307,6 +307,10 @@ static void console_task(void *arg)
 esp_err_t td_console_start(void)
 {
     ESP_RETURN_ON_ERROR(esp_stdio_install_io_driver(), TAG, "stdio driver");
+    if (!usb_serial_jtag_is_driver_installed()) {
+        ESP_LOGW(TAG, "console is off: its input task reads the USB-Serial/JTAG driver, which only the USB-Serial/JTAG primary console installs");
+        return ESP_ERR_NOT_SUPPORTED;
+    }
 
     esp_console_config_t config = ESP_CONSOLE_CONFIG_DEFAULT();
     config.max_cmdline_length = TD_LINE_MAX;
