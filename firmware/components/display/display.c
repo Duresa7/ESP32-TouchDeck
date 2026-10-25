@@ -12,7 +12,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "lvgl.h"
-#include "test_screen.h"
 
 #define LVGL_TASK_STACK (12 * 1024)
 /* Espressif's LCD FAQ says to run the LVGL task on the core that created the panel, so the bounce buffer
@@ -67,7 +66,12 @@ bool display_ready(void)
     return atomic_load(&s.ready);
 }
 
-esp_err_t display_start(void)
+uint32_t display_frame_count(void)
+{
+    return atomic_load(&s.frames);
+}
+
+esp_err_t display_start(display_build_fn build)
 {
     s.first_frame = xSemaphoreCreateBinary();
     s.snap_done = xSemaphoreCreateBinary();
@@ -102,7 +106,9 @@ esp_err_t display_start(void)
 
     ESP_RETURN_ON_ERROR(esp_lv_adapter_lock(-1), TAG, "adapter lock");
     lv_display_add_event_cb(s.lv, on_flush_finish, LV_EVENT_FLUSH_FINISH, NULL);
-    test_screen_build();
+    if (build != NULL) {
+        build();
+    }
     esp_lv_adapter_unlock();
 
     ESP_RETURN_ON_ERROR(esp_lv_adapter_start(), TAG, "adapter start");

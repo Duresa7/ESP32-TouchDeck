@@ -12,6 +12,7 @@
 #include "td_console.h"
 #include "display.h"
 #include "touch.h"
+#include "ui.h"
 #include "key_sink_log.h"
 #include "keys.h"
 
@@ -55,6 +56,9 @@ void app_main(void)
     size_t display_cmd_count;
     const esp_console_cmd_t *display_cmds = display_console_commands(&display_cmd_count);
     register_commands("Display", display_cmds, display_cmd_count);
+    size_t ui_cmd_count;
+    const esp_console_cmd_t *ui_cmds = ui_console_commands(&ui_cmd_count);
+    register_commands("UI", ui_cmds, ui_cmd_count);
     size_t touch_cmd_count;
     const esp_console_cmd_t *touch_cmds = touch_console_commands(&touch_cmd_count);
     register_commands("Touch", touch_cmds, touch_cmd_count);
@@ -75,7 +79,7 @@ void app_main(void)
         ESP_LOGE(TAG, "Console failed to start: %s", esp_err_to_name(console_err));
     }
 
-    esp_err_t display_err = display_start();
+    esp_err_t display_err = display_start(ui_build);
     if (display_err != ESP_OK) {
         ESP_LOGE(TAG, "Display failed to start: %s", esp_err_to_name(display_err));
     }

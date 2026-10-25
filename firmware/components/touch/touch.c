@@ -300,6 +300,26 @@ esp_err_t touch_inject(const td_touch_sample_t *samples, size_t n, uint32_t time
     return ESP_ERR_TIMEOUT;
 }
 
+esp_err_t touch_hold(uint16_t x, uint16_t y, uint32_t ms)
+{
+    if (!atomic_load(&s.ready)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    static td_touch_sample_t samples[TD_TOUCH_QUEUE_CAP];
+    const size_t n = td_touch_swipe(x, y, x, y, ms, samples, TD_TOUCH_QUEUE_CAP);
+    if (n == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* A zero timeout queues the samples and returns ESP_ERR_TIMEOUT without waiting for LVGL to take them. */
+    uint32_t unused_us = 0;
+    const esp_err_t err = touch_inject(samples, n, 0, &unused_us);
+    if (err == ESP_ERR_TIMEOUT) {
+        return ESP_OK;
+    }
+    return err == ESP_ERR_INVALID_STATE ? ESP_ERR_NOT_ALLOWED : err;
+}
+
 void touch_get_stats(touch_stats_t *out)
 {
     portENTER_CRITICAL(&shared.lock);
