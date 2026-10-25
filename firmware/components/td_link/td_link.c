@@ -4,6 +4,7 @@
 #include <string.h>
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 
@@ -11,6 +12,9 @@
 #define TD_LINK_IDLE_MS 5000
 
 static StreamBufferHandle_t s_frames;
+static SemaphoreHandle_t s_dispatch;
+static SemaphoreHandle_t s_done;
+static unsigned s_pending;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static td_link_state_t s_state;
 static uint8_t s_rx_packet[2 + TD_FRAME_BODY_MAX];
@@ -39,7 +43,7 @@ static void drop_frame(void)
     portEXIT_CRITICAL(&s_lock);
 }
 
-static void receive_frame(const uint8_t *body, size_t len, void *context)
+static bool receive_frame(const uint8_t *body, size_t len, void *context)
 {
     (void)context;
     td_frame_t frame;
@@ -47,7 +51,7 @@ static void receive_frame(const uint8_t *body, size_t len, void *context)
         portENTER_CRITICAL(&s_lock);
         s_state.crc_errors++;
         portEXIT_CRITICAL(&s_lock);
-        return;
+        return false;
     }
     int64_t now = esp_timer_get_time() / 1000;
     portENTER_CRITICAL(&s_lock);
@@ -56,17 +60,29 @@ static void receive_frame(const uint8_t *body, size_t len, void *context)
     }
     s_state.last_rx_ms = now;
     s_state.frames_rx++;
+    bool full = s_pending == TD_RX_PENDING_FRAMES;
     portEXIT_CRITICAL(&s_lock);
 
-    if (xStreamBufferSpacesAvailable(s_frames) < len + 2) {
+    if (full || xStreamBufferSpacesAvailable(s_frames) < len + 2) {
         drop_frame();
-        return;
+        return false;
     }
     s_rx_packet[0] = len & 0xff;
     s_rx_packet[1] = len >> 8;
     memcpy(s_rx_packet + 2, body, len);
-    /* Only td_rx writes this stream, so the space check reserves the whole record. */
-    xStreamBufferSend(s_frames, s_rx_packet, len + 2, 0);
+    size_t sent = xStreamBufferSend(s_frames, s_rx_packet, len + 2, 0);
+    configASSERT(sent == len + 2);
+    portENTER_CRITICAL(&s_lock);
+    s_pending++;
+    portEXIT_CRITICAL(&s_lock);
+    return true;
+}
+
+static void dispatch_frame(void *context)
+{
+    (void)context;
+    xSemaphoreGive(s_dispatch);
+    xSemaphoreTake(s_done, portMAX_DELAY);
 }
 
 static void read_bytes(uint8_t *buf, size_t len)
@@ -77,52 +93,62 @@ static void read_bytes(uint8_t *buf, size_t len)
     }
 }
 
-static void link_task(void *arg)
+static void handle_frame(void)
 {
-    (void)arg;
     static uint8_t body[TD_FRAME_BODY_MAX];
     static char payload[TD_FRAME_PAYLOAD_MAX + 1];
     static uint8_t wire[TD_FRAME_WIRE_MAX];
-    for (;;) {
-        uint8_t header[2];
-        read_bytes(header, sizeof header);
-        size_t len = header[0] | ((size_t)header[1] << 8);
-        read_bytes(body, len);
-        td_frame_t frame;
-        if (td_frame_decode(body, len, &frame) != TD_FRAME_OK
-            || frame.type != TD_FRAME_MESSAGE || frame.flags != 0) {
-            drop_frame();
-            continue;
-        }
-        memcpy(payload, frame.payload, frame.len);
-        payload[frame.len] = '\0';
-        const char *end = NULL;
-        cJSON *request = cJSON_ParseWithLengthOpts(payload, frame.len + 1, &end, true);
-        if (!cJSON_IsObject(request) || end != payload + frame.len) {
-            cJSON_Delete(request);
-            drop_frame();
-            continue;
-        }
-        cJSON *reply = td_link_dispatch(request);
+    uint8_t header[2];
+    read_bytes(header, sizeof header);
+    size_t len = header[0] | ((size_t)header[1] << 8);
+    read_bytes(body, len);
+    td_frame_t frame;
+    if (td_frame_decode(body, len, &frame) != TD_FRAME_OK
+        || frame.type != TD_FRAME_MESSAGE || frame.flags != 0) {
+        drop_frame();
+        return;
+    }
+    memcpy(payload, frame.payload, frame.len);
+    payload[frame.len] = '\0';
+    const char *end = NULL;
+    cJSON *request = cJSON_ParseWithLengthOpts(payload, frame.len + 1, &end, true);
+    if (!cJSON_IsObject(request) || end != payload + frame.len) {
         cJSON_Delete(request);
-        bool printed = reply && cJSON_PrintPreallocated(reply, payload, sizeof payload, false);
-        cJSON_Delete(reply);
-        if (!printed) {
-            drop_frame();
-            continue;
-        }
-        td_frame_t response = {
-            .type = TD_FRAME_MESSAGE, .seq = frame.seq, .flags = TD_FRAME_RESPONSE,
-            .len = (uint16_t)strlen(payload), .payload = (const uint8_t *)payload,
-        };
-        size_t wire_len = td_frame_encode(&response, wire, sizeof wire);
-        if (!wire_len || !td_console_write((const char *)wire, wire_len)) {
-            drop_frame();
-            continue;
-        }
+        drop_frame();
+        return;
+    }
+    cJSON *reply = td_link_dispatch(request);
+    cJSON_Delete(request);
+    bool printed = reply && cJSON_PrintPreallocated(reply, payload, sizeof payload, false);
+    cJSON_Delete(reply);
+    if (!printed) {
+        drop_frame();
+        return;
+    }
+    td_frame_t response = {
+        .type = TD_FRAME_MESSAGE, .seq = frame.seq, .flags = TD_FRAME_RESPONSE,
+        .len = (uint16_t)strlen(payload), .payload = (const uint8_t *)payload,
+    };
+    size_t wire_len = td_frame_encode(&response, wire, sizeof wire);
+    if (!wire_len || !td_console_write((const char *)wire, wire_len)) {
+        drop_frame();
+        return;
+    }
+    portENTER_CRITICAL(&s_lock);
+    s_state.frames_tx++;
+    portEXIT_CRITICAL(&s_lock);
+}
+
+static void link_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        xSemaphoreTake(s_dispatch, portMAX_DELAY);
+        handle_frame();
         portENTER_CRITICAL(&s_lock);
-        s_state.frames_tx++;
+        s_pending--;
         portEXIT_CRITICAL(&s_lock);
+        xSemaphoreGive(s_done);
     }
 }
 
@@ -132,14 +158,22 @@ esp_err_t td_link_start(void)
         return ESP_ERR_INVALID_STATE;
     }
     s_frames = xStreamBufferCreate(TD_LINK_STREAM_BYTES, 1);
-    if (!s_frames) {
-        return ESP_ERR_NO_MEM;
-    }
-    if (xTaskCreate(link_task, "td_link", 6144, NULL, 3, NULL) != pdPASS) {
-        vStreamBufferDelete(s_frames);
+    s_dispatch = xSemaphoreCreateBinary();
+    s_done = xSemaphoreCreateBinary();
+    if (!s_frames || !s_dispatch || !s_done
+        || xTaskCreate(link_task, "td_link", 6144, NULL, 3, NULL) != pdPASS) {
+        if (s_frames) {
+            vStreamBufferDelete(s_frames);
+        }
+        if (s_dispatch) {
+            vSemaphoreDelete(s_dispatch);
+        }
+        if (s_done) {
+            vSemaphoreDelete(s_done);
+        }
         s_frames = NULL;
         return ESP_ERR_NO_MEM;
     }
-    td_console_set_frame_handler(receive_frame, NULL);
+    td_console_set_frame_handler(receive_frame, dispatch_frame, NULL);
     return ESP_OK;
 }

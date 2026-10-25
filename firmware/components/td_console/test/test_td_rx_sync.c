@@ -9,6 +9,8 @@
 
 static struct {
     td_rx_sync_t sync;
+    td_rx_split_t split;
+    size_t space;
     char ring[QUEUE_MAX];
     size_t cap;
     size_t rd;
@@ -23,6 +25,7 @@ static struct {
     uint8_t frame[TD_RX_FRAME_MAX];
     size_t frame_len;
     size_t frames;
+    size_t frame_after_text;
     size_t bad_frames;
     char ran[RAN_MAX];
     size_t ran_len;
@@ -38,6 +41,7 @@ static void frame_received(const uint8_t *body, size_t len, void *context)
     memcpy(s_model.frame, body, len);
     s_model.frame_len = len;
     s_model.frames++;
+    s_model.frame_after_text = s_model.queued_len;
 }
 
 static void model_reset(size_t cap)
@@ -45,8 +49,25 @@ static void model_reset(size_t cap)
     memset(&s_model, 0, sizeof s_model);
     s_model.cap = cap;
     s_model.queued_last_read = true;
-    s_model.sync.on_frame = frame_received;
-    s_model.sync.context = &s_model;
+}
+
+static void text_received(char *buf, size_t n, void *context)
+{
+    TEST_ASSERT_EQUAL_PTR(&s_model, context);
+    size_t dropped_before = s_model.dropped;
+    size_t m = td_rx_sync(&s_model.sync, buf, n, s_model.space, &s_model.dropped);
+    if (s_model.dropped > dropped_before && s_model.queued_last_read) {
+        s_model.overflows++;
+    }
+    s_model.queued_last_read = m > 0;
+    TEST_ASSERT_TRUE_MESSAGE(m <= s_model.space, "queued more than the free space");
+    s_model.space -= m;
+    for (size_t i = 0; i < m; i++) {
+        s_model.ring[(s_model.rd + s_model.used) % QUEUE_MAX] = buf[i];
+        s_model.used++;
+        TEST_ASSERT_TRUE(s_model.queued_len < LOG_MAX);
+        s_model.queued[s_model.queued_len++] = buf[i];
+    }
 }
 
 static size_t feed_with_space(const char *s, size_t n, size_t space)
@@ -54,20 +75,9 @@ static size_t feed_with_space(const char *s, size_t n, size_t space)
     char buf[64];
     TEST_ASSERT_TRUE(n <= sizeof buf);
     memcpy(buf, s, n);
-    size_t dropped_before = s_model.dropped;
-    size_t m = td_rx_sync(&s_model.sync, buf, n, space, &s_model.dropped);
-    if (s_model.dropped > dropped_before && s_model.queued_last_read) {
-        s_model.overflows++;
-    }
-    s_model.queued_last_read = m > 0;
-    TEST_ASSERT_TRUE_MESSAGE(m <= space, "queued more than the free space");
-    for (size_t i = 0; i < m; i++) {
-        s_model.ring[(s_model.rd + s_model.used) % QUEUE_MAX] = buf[i];
-        s_model.used++;
-        TEST_ASSERT_TRUE(s_model.queued_len < LOG_MAX);
-        s_model.queued[s_model.queued_len++] = buf[i];
-    }
-    return m;
+    s_model.space = space;
+    td_rx_split(&s_model.split, buf, n, text_received, frame_received, &s_model);
+    return space - s_model.space;
 }
 
 static size_t feed(const char *s, size_t n)
@@ -414,6 +424,27 @@ TEST_CASE("SLIP escape without a frame delimiter stays text", "[td_rx_sync]")
     drain(QUEUE_MAX);
     EXPECT_QUEUED("a\xdb\xdd\n");
     TEST_ASSERT_EQUAL_UINT(0, s_model.frames);
+}
+
+TEST_CASE("a frame boundary follows earlier text and precedes later text for every USB read size", "[td_rx_sync]")
+{
+    char input[320];
+    memset(input, 'x', 300);
+    const char suffix[] = "\n\xc0\x01\x00\xc0version\n";
+    memcpy(input + 300, suffix, sizeof suffix - 1);
+    const size_t len = 300 + sizeof suffix - 1;
+    for (size_t width = 1; width <= 64; width++) {
+        model_reset(QUEUE_MAX);
+        for (size_t offset = 0; offset < len; offset += width) {
+            size_t n = len - offset < width ? len - offset : width;
+            feed(input + offset, n);
+        }
+        TEST_ASSERT_EQUAL_UINT(1, s_model.frames);
+        TEST_ASSERT_EQUAL_UINT(301, s_model.frame_after_text);
+        TEST_ASSERT_EQUAL_UINT(309, s_model.queued_len);
+        TEST_ASSERT_EQUAL_MEMORY("\nversion\n", s_model.queued + 300, 9);
+        TEST_ASSERT_EQUAL_UINT(0, s_model.dropped);
+    }
 }
 
 TEST_CASE("frames still arrive while text overflow discards a line", "[td_rx_sync]")

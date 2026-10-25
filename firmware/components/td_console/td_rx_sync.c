@@ -6,7 +6,7 @@ static bool is_eol(char c)
     return c == '\r' || c == '\n';
 }
 
-static size_t text_sync(td_rx_sync_t *s, char *buf, size_t n, size_t space, size_t *dropped)
+size_t td_rx_sync(td_rx_sync_t *s, char *buf, size_t n, size_t space, size_t *dropped)
 {
     size_t from = 0;
     if (s->discarding) {
@@ -47,19 +47,24 @@ static size_t text_sync(td_rx_sync_t *s, char *buf, size_t n, size_t space, size
     return 1;
 }
 
-size_t td_rx_sync(td_rx_sync_t *s, char *buf, size_t n, size_t space, size_t *dropped)
+void td_rx_split(td_rx_split_t *s, char *buf, size_t n,
+                 td_rx_text_fn text, td_rx_frame_fn frame, void *context)
 {
     size_t text_len = 0;
     for (size_t i = 0; i < n; i++) {
         uint8_t c = (uint8_t)buf[i];
         if (c == 0xc0) {
             if (s->mode == TD_RX_TEXT) {
+                if (text_len) {
+                    text(buf, text_len, context);
+                    text_len = 0;
+                }
                 s->mode = TD_RX_FRAME;
                 s->frame_len = 0;
             } else {
-                if (s->on_frame && (s->frame_len || s->mode != TD_RX_FRAME)) {
+                if (s->frame_len || s->mode != TD_RX_FRAME) {
                     bool valid = s->mode == TD_RX_FRAME;
-                    s->on_frame(valid ? s->frame : NULL, valid ? s->frame_len : 0, s->context);
+                    frame(valid ? s->frame : NULL, valid ? s->frame_len : 0, context);
                 }
                 s->mode = TD_RX_TEXT;
             }
@@ -84,7 +89,9 @@ size_t td_rx_sync(td_rx_sync_t *s, char *buf, size_t n, size_t space, size_t *dr
             }
         }
     }
-    return text_sync(s, buf, text_len, space, dropped);
+    if (text_len) {
+        text(buf, text_len, context);
+    }
 }
 
 td_line_status_t td_line_feed(td_line_t *s, int c, bool dropped,
