@@ -5,6 +5,7 @@
 #include <string.h>
 #include "board_pins.h"
 #include "ch422g.h"
+#include "driver/usb_serial_jtag.h"
 #include "esp_console.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -14,6 +15,9 @@
 #define PERF_MAX_SECONDS 60
 #define PERF_TASK_STACK 4096
 #define PERF_TASK_PRIORITY 2
+/* The driver's TX ring holds 256 bytes, and a single write larger than the ring never fits. */
+#define SINK_CHUNK_BYTES 128
+#define SINK_TIMEOUT_MS 1000
 
 static const char *TAG = "display";
 
@@ -23,6 +27,7 @@ static void send(td_reply_t *r)
 {
     td_reply_end(r);
     printf("%s\n", r->buf);
+    fflush(stdout);
 }
 
 static void send_error(const char *cmd, const char *message)
@@ -30,12 +35,27 @@ static void send_error(const char *cmd, const char *message)
     char buf[TD_REPLY_MAX];
     td_reply_error(buf, sizeof buf, cmd, message);
     printf("%s\n", buf);
+    fflush(stdout);
 }
 
+/* The stdio path writes one byte per driver call and drops everything after a 50 ms host stall, which
+ * loses the tail of a long stream. Writing in driver-sized chunks waits for the host instead.
+ * Holding the stdout lock keeps other tasks' log lines out of the middle of an image line. */
 static bool stdout_sink(void *ctx, const char *line, size_t len)
 {
     (void)ctx;
-    return fwrite(line, 1, len, stdout) == len;
+    flockfile(stdout);
+    fflush(stdout);
+    size_t done = 0;
+    while (done < len) {
+        const size_t n = len - done < SINK_CHUNK_BYTES ? len - done : SINK_CHUNK_BYTES;
+        if (usb_serial_jtag_write_bytes(line + done, n, pdMS_TO_TICKS(SINK_TIMEOUT_MS)) != (int)n) {
+            break;
+        }
+        done += n;
+    }
+    funlockfile(stdout);
+    return done == len;
 }
 
 static int cmd_screenshot(int argc, char **argv)
@@ -49,8 +69,7 @@ static int cmd_screenshot(int argc, char **argv)
     td_shot_image_t img;
     esp_err_t err = display_snapshot(&img);
     if (err != ESP_OK) {
-        send_error("screenshot", err == ESP_ERR_INVALID_STATE ? "busy" :
-                                 err == ESP_ERR_TIMEOUT ? "snapshot timed out" : "snapshot failed");
+        send_error("screenshot", err == ESP_ERR_TIMEOUT ? "display busy" : "snapshot failed");
         return 0;
     }
 

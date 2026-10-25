@@ -1,13 +1,11 @@
 #include "display.h"
 #include "display_priv.h"
 #include <stdatomic.h>
-#include <string.h>
 #include "board.h"
 #include "board_pins.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_ops.h"
-#include "esp_lcd_panel_rgb.h"
 #include "esp_log.h"
 #include "esp_lv_adapter.h"
 #include "esp_timer.h"
@@ -17,11 +15,11 @@
 #include "test_screen.h"
 
 #define LVGL_TASK_STACK (12 * 1024)
+/* Espressif's LCD FAQ says to run the LVGL task on the core that created the panel, so the bounce buffer
+ * interrupt and the renderer do not fight over PSRAM. app_main runs on core 0. */
 #define LVGL_TASK_CORE 0
 #define LOCK_TIMEOUT_MS 3000
-#define SNAPSHOT_TIMEOUT_MS 5000
 #define FIRST_FRAME_TIMEOUT_MS 1500
-#define FB_COUNT 3
 #define SNAPSHOT_ALIGN 64
 #define PERF_TICK_MS 1
 
@@ -32,9 +30,6 @@ static struct {
     lv_draw_buf_t shot;
     atomic_uint frames;
     SemaphoreHandle_t first_frame;
-    SemaphoreHandle_t snap_done;
-    atomic_bool snap_busy;
-    bool snap_ok;
 } s;
 
 /* Runs on the LVGL task after the adapter's flush callback returned. The last flush of a refresh
@@ -51,19 +46,7 @@ static void on_flush_finish(lv_event_t *e)
     }
 }
 
-/* The adapter's frame buffers hold whatever PSRAM held at power-up, and the CH422G turns the backlight
- * on before LVGL draws, so clear them first. */
-static esp_err_t clear_frame_buffers(esp_lcd_panel_handle_t panel)
-{
-    void *fb[FB_COUNT] = { NULL };
-    ESP_RETURN_ON_ERROR(esp_lcd_rgb_panel_get_frame_buffer(panel, FB_COUNT, &fb[0], &fb[1], &fb[2]), TAG,
-                        "frame buffers");
-    for (int i = 0; i < FB_COUNT; i++) {
-        memset(fb[i], 0, TD_LCD_FRAME_BYTES);
-    }
-    return ESP_OK;
-}
-
+/* The one buffer screenshots render into. It sits in PSRAM, and lv_draw_buf_init needs lv_init to have run. */
 static esp_err_t alloc_snapshot_buffer(void)
 {
     void *data = heap_caps_aligned_alloc(SNAPSHOT_ALIGN, TD_LCD_FRAME_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -77,21 +60,18 @@ static esp_err_t alloc_snapshot_buffer(void)
 esp_err_t display_start(void)
 {
     s.first_frame = xSemaphoreCreateBinary();
-    s.snap_done = xSemaphoreCreateBinary();
-    ESP_RETURN_ON_FALSE(s.first_frame != NULL && s.snap_done != NULL, ESP_ERR_NO_MEM, TAG, "semaphores");
+    ESP_RETURN_ON_FALSE(s.first_frame != NULL, ESP_ERR_NO_MEM, TAG, "first frame semaphore");
 
     const esp_lv_adapter_rotation_t rotation = ESP_LV_ADAPTER_ROTATE_0;
     const esp_lv_adapter_tear_avoid_mode_t tear_mode = ESP_LV_ADAPTER_TEAR_AVOID_MODE_DEFAULT_RGB;
     const size_t fbs = esp_lv_adapter_get_required_frame_buffer_count(tear_mode, rotation);
-    ESP_RETURN_ON_FALSE(fbs == FB_COUNT, ESP_ERR_INVALID_SIZE, TAG, "adapter wants %u frame buffers", (unsigned)fbs);
 
     esp_lcd_panel_handle_t panel = NULL;
     ESP_RETURN_ON_ERROR(panel_rgb_create(fbs, &panel), TAG, "rgb panel");
-    ESP_RETURN_ON_ERROR(clear_frame_buffers(panel), TAG, "clear frame buffers");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_init(panel), TAG, "panel init");
-    ESP_RETURN_ON_ERROR(alloc_snapshot_buffer(), TAG, "snapshot buffer");
 
-    esp_err_t board_err = board_init();
+    /* Without the expander the backlight stays off, but the panel and screenshots still work. */
+    const esp_err_t board_err = board_init();
     if (board_err != ESP_OK) {
         ESP_LOGE(TAG, "board init failed, the backlight may stay off: %s", esp_err_to_name(board_err));
     }
@@ -101,6 +81,7 @@ esp_err_t display_start(void)
     adapter.stack_in_psram = true;
     adapter.task_core_id = LVGL_TASK_CORE;
     ESP_RETURN_ON_ERROR(esp_lv_adapter_init(&adapter), TAG, "adapter init");
+    ESP_RETURN_ON_ERROR(alloc_snapshot_buffer(), TAG, "snapshot buffer");
 
     esp_lv_adapter_display_config_t config =
         ESP_LV_ADAPTER_DISPLAY_RGB_DEFAULT_CONFIG(panel, NULL, TD_LCD_H_RES, TD_LCD_V_RES, rotation);
@@ -115,7 +96,7 @@ esp_err_t display_start(void)
 
     ESP_RETURN_ON_ERROR(esp_lv_adapter_start(), TAG, "adapter start");
 
-    esp_err_t result = ESP_OK;
+    esp_err_t result = board_err;
     if (xSemaphoreTake(s.first_frame, pdMS_TO_TICKS(FIRST_FRAME_TIMEOUT_MS)) != pdTRUE) {
         ESP_LOGE(TAG, "no frame reached the panel within %d ms", FIRST_FRAME_TIMEOUT_MS);
         result = ESP_ERR_TIMEOUT;
@@ -124,37 +105,12 @@ esp_err_t display_start(void)
     return result;
 }
 
-/* Runs on the LVGL task with the adapter lock held. */
-static void snapshot_job(void *arg)
-{
-    (void)arg;
-    s.snap_ok = lv_snapshot_take_to_draw_buf(lv_screen_active(), LV_COLOR_FORMAT_RGB565, &s.shot) == LV_RESULT_OK;
-    atomic_store(&s.snap_busy, false);
-    xSemaphoreGive(s.snap_done);
-}
-
 esp_err_t display_snapshot(td_shot_image_t *out)
 {
-    if (atomic_exchange(&s.snap_busy, true)) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    xSemaphoreTake(s.snap_done, 0);
-
-    esp_err_t err = esp_lv_adapter_lock(LOCK_TIMEOUT_MS);
-    if (err == ESP_OK) {
-        err = lv_async_call(snapshot_job, NULL) == LV_RESULT_OK ? ESP_OK : ESP_FAIL;
-        esp_lv_adapter_unlock();
-    }
-    if (err != ESP_OK) {
-        atomic_store(&s.snap_busy, false);
-        return err;
-    }
-    if (xSemaphoreTake(s.snap_done, pdMS_TO_TICKS(SNAPSHOT_TIMEOUT_MS)) != pdTRUE) {
-        return ESP_ERR_TIMEOUT;
-    }
-    if (!s.snap_ok) {
-        return ESP_FAIL;
-    }
+    ESP_RETURN_ON_ERROR(esp_lv_adapter_lock(LOCK_TIMEOUT_MS), TAG, "adapter lock");
+    const lv_result_t res = lv_snapshot_take_to_draw_buf(lv_screen_active(), LV_COLOR_FORMAT_RGB565, &s.shot);
+    esp_lv_adapter_unlock();
+    ESP_RETURN_ON_FALSE(res == LV_RESULT_OK, ESP_FAIL, TAG, "snapshot");
 
     const lv_image_header_t *h = &s.shot.header;
     *out = (td_shot_image_t){ .px = s.shot.data, .width = (uint16_t)h->w, .height = (uint16_t)h->h, .stride = h->stride };
