@@ -2,6 +2,7 @@
 #include "touch_hold.h"
 #include "touch_priv.h"
 #include "touch_rate.h"
+#include "touch_recovery.h"
 #include <stdatomic.h>
 #include "board.h"
 #include "board_pins.h"
@@ -9,6 +10,7 @@
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "esp_check.h"
+#include "esp_cpu.h"
 #include "esp_lcd_io_i2c.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_touch.h"
@@ -20,6 +22,8 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "power.h"
+#include "sdkconfig.h"
+#include "td_recovery.h"
 
 #define GT911_STATUS_REG 0x814E
 #define GT911_STATUS_REPORT_READY 0x80
@@ -32,6 +36,7 @@
 #define CONFIG_LOAD_MS 100
 #define LOCK_TIMEOUT_MS 3000
 #define INJECT_POLL_MS 1
+#define HOLD_MAX_US (TD_TOUCH_HOLD_MAX_MS * 1000LL)
 
 static const char *TAG = "touch";
 
@@ -51,6 +56,14 @@ static struct {
     td_touch_queue_t queue;
     td_touch_rate_t rate;
     td_touch_sample_t last;
+    td_recovery_watch_t watch;
+    uint32_t watch_samples;
+    uint64_t watch_ns_total;
+    uint32_t watch_ns_max;
+    td_touch_sample_t hold;
+    bool hold_on;
+    bool hold_release;
+    int64_t hold_start_us;
     int64_t drained_us;
     uint32_t polls;
     uint32_t frames;
@@ -59,6 +72,8 @@ static struct {
     uint32_t injected;
     uint32_t rejected;
 } shared = { .lock = portMUX_INITIALIZER_UNLOCKED };
+
+static _Atomic(touch_recovery_cb_t) s_recovery_cb;
 
 static uint16_t clamp(uint16_t v, uint16_t size)
 {
@@ -87,9 +102,34 @@ static td_touch_poll_t poll_controller(td_touch_sample_t *report)
     return TD_TOUCH_POLL_REPORT;
 }
 
+/* A held contact stands in for the real sample while the queue is empty, from `touch begin` to `touch end` or to
+ * HOLD_MAX_US, so a lane that crashes cannot leave a finger down for good. Its release carries the point it pressed
+ * at. Runs under shared.lock. */
+static bool take_hold(int64_t now, td_touch_sample_t *out)
+{
+    if (shared.hold_on && now - shared.hold_start_us >= HOLD_MAX_US) {
+        shared.hold_on = false;
+        shared.hold_release = true;
+    }
+    if (shared.hold_on) {
+        *out = shared.hold;
+        return true;
+    }
+    if (shared.hold_release) {
+        shared.hold_release = false;
+        *out = (td_touch_sample_t){ .x = shared.hold.x, .y = shared.hold.y, .pressed = false };
+        return true;
+    }
+    return false;
+}
+
+static uint32_t cycles_to_ns(uint32_t cycles)
+{
+    return (uint32_t)((uint64_t)cycles * 1000 / CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ);
+}
+
 static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
-    (void)indev;
     atomic_fetch_add(&s.reads, 1);
 
     td_touch_sample_t report = { 0 };
@@ -99,6 +139,7 @@ static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     bool injected;
     td_touch_sample_t out;
     td_touch_sample_t held;
+    td_recovery_step_t watch;
     portENTER_CRITICAL(&shared.lock);
     td_touch_held_poll(&shared.held, poll, report);
     shared.polls++;
@@ -111,21 +152,53 @@ static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     }
     held = shared.held.sample;
     out = td_touch_next(&shared.queue, held, &injected);
-    if (injected) {
+    const bool queued = injected;
+    if (queued) {
         shared.injected++;
         if (td_touch_queue_count(&shared.queue) == 0) {
             shared.drained_us = now;
         }
+    } else if (take_hold(now, &out)) {
+        injected = true;
+        shared.injected++;
     }
-    const bool release_follows = injected && out.pressed && td_touch_release_follows(&shared.queue);
+    const bool release_follows = queued && out.pressed && td_touch_release_follows(&shared.queue);
+
+    /* The recovery watcher takes the raw contact, after the queue and before the idle gate, because the gate eats a
+     * contact that starts on a dark screen and the hold must count from its first sample. */
+    const uint32_t cycles_before = esp_cpu_get_cycle_count();
+    watch = td_recovery_watch_step(&shared.watch, out, (uint32_t)(now / 1000));
+    const uint32_t watch_ns = cycles_to_ns(esp_cpu_get_cycle_count() - cycles_before);
+    shared.watch_samples++;
+    shared.watch_ns_total += watch_ns;
+    if (watch_ns > shared.watch_ns_max) {
+        shared.watch_ns_max = watch_ns;
+    }
     portEXIT_CRITICAL(&shared.lock);
 
     /* The idle gate comes after the queue, so an injected tap is swallowed like a finger. It sits outside the spinlock
-     * because a wake writes the CH422G over I2C. */
-    const td_touch_sample_t seen = power_filter(out, held.pressed, now);
+     * because a wake writes the CH422G over I2C. It still sees the contact of a hold, so a hold on a dark screen wakes
+     * the panel. */
+    td_touch_sample_t seen = power_filter(out, held.pressed, now);
+
+    /* An armed contact never reaches the UI again. LVGL gets the press it already took as lost, and not as a click. */
+    if (watch.swallow) {
+        seen.pressed = false;
+    }
     portENTER_CRITICAL(&shared.lock);
     shared.last = seen;
     portEXIT_CRITICAL(&shared.lock);
+    if (watch.armed) {
+        lv_indev_wait_release(indev);
+        const touch_recovery_cb_t on_armed = atomic_load(&s_recovery_cb);
+        if (on_armed != NULL) {
+            on_armed();
+        }
+        td_recovery_armed();
+    }
+    if (watch.released) {
+        td_recovery_released();
+    }
 
     if (poll == TD_TOUCH_POLL_REPORT && atomic_load(&s.log)) {
         ESP_LOGI(TAG, "x=%u y=%u pressed=%d", held.x, held.y, held.pressed);
@@ -252,6 +325,7 @@ esp_err_t touch_start(void)
 
     ESP_RETURN_ON_ERROR(start_driver(bus, s.address), TAG, "driver");
     ESP_RETURN_ON_ERROR(register_pointer_device(), TAG, "pointer device");
+    td_recovery_set_info_fn(recovery_info);
     atomic_store(&s.ready, true);
     return ESP_OK;
 }
@@ -268,6 +342,8 @@ static esp_err_t queue_samples(const td_touch_sample_t *samples, size_t n)
     portENTER_CRITICAL(&shared.lock);
     if (shared.held.sample.pressed) {
         err = ESP_ERR_INVALID_STATE;
+    } else if (shared.hold_on || shared.hold_release) {
+        err = ESP_ERR_NOT_FINISHED;
     } else if (!td_touch_queue_push(&shared.queue, samples, n)) {
         shared.rejected++;
         err = ESP_ERR_NO_MEM;
@@ -351,6 +427,75 @@ void touch_get_stats(touch_stats_t *out)
         .contact_frames = shared.rate.frames,
         .contact_ms = td_touch_rate_span_ms(&shared.rate),
         .contact_hz = td_touch_rate_hz(&shared.rate),
+        .watch_samples = shared.watch_samples,
+        .watch_ns_avg = shared.watch_samples == 0 ? 0 : (uint32_t)(shared.watch_ns_total / shared.watch_samples),
+        .watch_ns_max = shared.watch_ns_max,
+        .hold = shared.hold_on,
+    };
+    portEXIT_CRITICAL(&shared.lock);
+}
+
+esp_err_t touch_hold_begin(uint16_t x, uint16_t y)
+{
+    if (!atomic_load(&s.ready)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    esp_err_t err = ESP_OK;
+    portENTER_CRITICAL(&shared.lock);
+    if (shared.held.sample.pressed) {
+        err = ESP_ERR_NOT_ALLOWED;
+    } else if (shared.hold_on || shared.hold_release || td_touch_queue_count(&shared.queue) != 0) {
+        err = ESP_ERR_NOT_FINISHED;
+    } else {
+        shared.hold = (td_touch_sample_t){ .x = x, .y = y, .pressed = true };
+        shared.hold_on = true;
+        shared.hold_start_us = esp_timer_get_time();
+    }
+    portEXIT_CRITICAL(&shared.lock);
+    return err;
+}
+
+esp_err_t touch_hold_move(uint16_t x, uint16_t y)
+{
+    esp_err_t err = ESP_OK;
+    portENTER_CRITICAL(&shared.lock);
+    if (shared.hold_on) {
+        shared.hold.x = x;
+        shared.hold.y = y;
+    } else {
+        err = ESP_ERR_NOT_FOUND;
+    }
+    portEXIT_CRITICAL(&shared.lock);
+    return err;
+}
+
+esp_err_t touch_hold_end(uint32_t *held_ms)
+{
+    esp_err_t err = ESP_OK;
+    portENTER_CRITICAL(&shared.lock);
+    if (shared.hold_on) {
+        shared.hold_on = false;
+        shared.hold_release = true;
+        *held_ms = (uint32_t)((esp_timer_get_time() - shared.hold_start_us) / 1000);
+    } else {
+        err = ESP_ERR_NOT_FOUND;
+    }
+    portEXIT_CRITICAL(&shared.lock);
+    return err;
+}
+
+void touch_set_recovery_cb(touch_recovery_cb_t on_armed)
+{
+    atomic_store(&s_recovery_cb, on_armed);
+}
+
+static void recovery_info(td_recovery_info_t *out)
+{
+    portENTER_CRITICAL(&shared.lock);
+    *out = (td_recovery_info_t){
+        .watcher = td_recovery_state_name(shared.watch.state),
+        .held_ms = shared.watch.held_ms,
+        .armed_count = shared.watch.armed_count,
     };
     portEXIT_CRITICAL(&shared.lock);
 }
