@@ -39,6 +39,11 @@
   }
 
   async function bringToFront() {
+    // Refocusing the webview fires this handler again, so only ask when the window lacks focus.
+    if (document.hasFocus()) {
+      front = true;
+      return;
+    }
     front = null;
     front = await invoke<boolean>('focus_window');
   }
