@@ -117,8 +117,8 @@ since boot. Counters reset at boot.
 | `{"m":"link.state"}` | `online`, `frames_rx`, `frames_tx`, `crc_errors`, `dropped`, `last_rx_ms` |
 
 `elf_sha256` is the running app descriptor's 64-character lowercase hex hash.
-`version` is its build version. `running` is the OTA partition label, normally
-`ota_0` at this milestone. `ping` omits `n` when the request has none, or when
+`version` is its build version. `running` is the OTA partition label, `ota_0` or
+`ota_1`. `ping` omits `n` when the request has none, or when
 it is an array or an object.
 
 A reply echoes at most the first 64 characters of `m`. An unknown `m` returns
@@ -182,6 +182,41 @@ throws them away otherwise.
 The link sink queues reports without blocking, 64 deep, and never loses a release. When the queue is full it throws the
 queued reports away and sends one `key.resync` before anything newer. A consumer releases every key it holds on a `seq`
 gap, then applies the next report, and sets its state exactly on a `key.resync`.
+
+## Firmware update (M2-09)
+
+| Request | Successful response fields |
+|---|---|
+| `{"m":"update.begin","bytes":N,"sha256":"<64 hex>"}` | `xfer`, the id of the transfer it opened, and `slot`, the OTA slot the image is written to. `bytes` is 1 to 4194304, the size of a slot. |
+| `{"m":"update.end","xfer":X}` | `slot`, the new boot slot. The deck restarts 250 ms after the reply. |
+
+An update is a transfer like a layout put: the app sends the image as chunk frames and the deck acks each one. The deck
+writes every chunk into the slot the running image does not occupy as it arrives, and hashes it, so it holds no copy. At
+`update.end` it checks that every byte arrived and that the SHA-256 of the written bytes equals the one in `update.begin`,
+validates the image, checks that it is a `touchdeck` image, sets the new slot as the boot slot, replies, and restarts.
+
+A refusal is `ok:false` with an `error` sentence and a `reason` word, and it leaves the boot slot as it was.
+
+| `reason` | Meaning |
+|---|---|
+| `args` | `bytes` or `sha256` is missing or not the right type |
+| `size` | `bytes` is 0 or larger than the slot |
+| `sha256-format` | `sha256` is not 64 hex digits |
+| `busy` | another update is receiving, verifying, or restarting |
+| `unconfirmed` | the running image has not confirmed itself yet |
+| `state` | `update.end` named a transfer that is not open |
+| `incomplete` | `update.end` came before every byte arrived |
+| `sha256` | the hash of the written bytes is not the expected one |
+| `flash` | the flash or the image check refused the write |
+| `project` | the image is for another project |
+
+`xfer.end` on an update's transfer is refused. A transfer that sees no chunk for 2 seconds is dropped and the update
+returns to `IDLE`. The text command `update state` reports the machine as `state`: `IDLE`, `RECEIVING`, `VERIFYING`,
+`REBOOTING`, or `FAILED` with a `reason`, and the two slots' `esp_ota_img_states_t` names.
+
+The new image boots as `PENDING_VERIFY` and confirms itself after the first frame, a layout load, and 10 seconds of
+uptime. A reset before that rolls back to the previous slot, and the bootloader marks the new one `ABORTED`.
+`update.begin` is refused while the running image waits to confirm.
 
 ## Concurrency and discovery
 

@@ -8,6 +8,7 @@
 #include "td_frame.h"
 #include "td_layout.h"
 #include "td_store.h"
+#include "td_update.h"
 #include "td_xfer.h"
 #include "ui.h"
 
@@ -23,10 +24,12 @@ typedef enum {
     KIND_LAYOUT_PUT,
     KIND_ICON_PUT,
     KIND_GET,
+    KIND_UPDATE,
 } kind_t;
 
 /* One transfer at a time. A put holds the whole file in PSRAM and writes it with td_store_write_atomic at xfer.end,
- * so a cut transfer leaves nothing on the volume. A get reads the file once and sends it from memory. */
+ * so a cut transfer leaves nothing on the volume. A get reads the file once and sends it from memory. A firmware
+ * update holds no buffer: td_update writes each chunk into the other OTA slot as it arrives. */
 static struct {
     kind_t kind;
     td_xfer_t x;
@@ -40,12 +43,22 @@ static struct {
     uint8_t tx_seq;
 } s;
 
-static void close_xfer(void)
+/* Frees the buffer and forgets the transfer, and leaves a running update alone. */
+static void drop_xfer(void)
 {
     heap_caps_free(s.buf);
     s.buf = NULL;
     s.fill = 0;
     s.kind = KIND_NONE;
+}
+
+/* A transfer that is replaced or cut. An update that was still receiving returns to IDLE. */
+static void close_xfer(void)
+{
+    if (s.kind == KIND_UPDATE) {
+        td_update_cancel();
+    }
+    drop_xfer();
 }
 
 static bool open_xfer(kind_t kind, uint32_t bytes)
@@ -70,6 +83,12 @@ static bool put_sink(void *ctx, const uint8_t *data, size_t len)
     memcpy(s.buf + s.fill, data, len);
     s.fill += len;
     return true;
+}
+
+static bool update_sink(void *ctx, const uint8_t *data, size_t len)
+{
+    (void)ctx;
+    return td_update_write(data, len);
 }
 
 static bool u32_arg(const cJSON *request, const char *name, uint32_t *out)
@@ -276,10 +295,67 @@ void td_link_xfer_end(const cJSON *request, cJSON *reply)
         td_link_fail(reply, "xfer.end needs xfer");
     } else if (s.kind == KIND_NONE || id != s.x.id) {
         td_link_fail(reply, "no transfer with that xfer");
+    } else if (s.kind == KIND_UPDATE) {
+        td_link_fail(reply, "end a firmware update with update.end");
+        return;
     } else if (s.kind != KIND_GET) {
         finish_put(reply);
     }
     close_xfer();
+}
+
+static void fail_update(cJSON *reply, td_update_reason_t reason)
+{
+    td_link_fail(reply, td_update_reason_text(reason));
+    cJSON_AddStringToObject(reply, "reason", td_update_reason_name(reason));
+}
+
+void td_link_update_begin(const cJSON *request, cJSON *reply)
+{
+    uint32_t bytes;
+    const cJSON *sha256 = cJSON_GetObjectItemCaseSensitive(request, "sha256");
+    if (!u32_arg(request, "bytes", &bytes) || !cJSON_IsString(sha256)) {
+        td_link_fail(reply, "update.begin needs bytes and sha256");
+        cJSON_AddStringToObject(reply, "reason", "args");
+        return;
+    }
+    /* The update decides first, because it refuses a second begin while one is receiving and that must not cancel it. */
+    const char *slot = NULL;
+    const td_update_reason_t reason = td_update_begin(bytes, sha256->valuestring, &slot);
+    if (reason != TD_UPDATE_OK) {
+        fail_update(reply, reason);
+        return;
+    }
+    drop_xfer();
+    s.kind = KIND_UPDATE;
+    s.last_id = s.last_id % 255 + 1;
+    s.last_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    td_xfer_init(&s.x, s.last_id, false, bytes, 0, update_sink, NULL);
+    cJSON_AddNumberToObject(reply, "xfer", s.x.id);
+    cJSON_AddStringToObject(reply, "slot", slot);
+}
+
+void td_link_update_end(const cJSON *request, cJSON *reply)
+{
+    uint32_t id;
+    if (!u32_arg(request, "xfer", &id)) {
+        td_link_fail(reply, "update.end needs xfer");
+        cJSON_AddStringToObject(reply, "reason", "args");
+        return;
+    }
+    if (s.kind != KIND_UPDATE || id != s.x.id) {
+        td_link_fail(reply, "no update with that xfer");
+        cJSON_AddStringToObject(reply, "reason", "state");
+        return;
+    }
+    const char *slot = NULL;
+    const td_update_reason_t reason = td_update_end(&slot);
+    if (reason == TD_UPDATE_OK) {
+        cJSON_AddStringToObject(reply, "slot", slot);
+    } else {
+        fail_update(reply, reason);
+    }
+    drop_xfer();
 }
 
 static void send_chunk(uint16_t idx)
@@ -300,7 +376,8 @@ static void send_chunk(uint16_t idx)
 
 void td_link_files_chunk(uint8_t seq, const uint8_t *payload, size_t len)
 {
-    if (len < TD_FRAME_CHUNK_HEADER || (s.kind != KIND_LAYOUT_PUT && s.kind != KIND_ICON_PUT) || payload[0] != s.x.id) {
+    if (len < TD_FRAME_CHUNK_HEADER || (s.kind != KIND_LAYOUT_PUT && s.kind != KIND_ICON_PUT && s.kind != KIND_UPDATE)
+        || payload[0] != s.x.id) {
         td_link_count_drop();
         return;
     }

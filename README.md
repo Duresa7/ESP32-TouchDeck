@@ -202,6 +202,46 @@ once. A contact that nobody ends lifts by itself after 60 seconds. `touch stats`
 adds `watch_samples`, `watch_ns_avg`, and `watch_ns_max`, which is what the watcher
 costs per sample.
 
+## Firmware updates
+
+The app updates the deck's firmware over the link, and the deck rolls back by
+itself when the new image does not come up. The flash holds two application slots,
+`ota_0` and `ota_1`, of 4 MB each. An update writes the slot the deck is not
+running, so the running image stays whole until the very end.
+
+`update.begin {bytes, sha256}` opens the other slot and `update.end` finishes it, with
+the image carried by the same chunk transfer as a layout. At `update.end` the deck
+checks the SHA-256 of the bytes it wrote, validates the image, sets the new slot as
+the boot slot, replies with its name, and restarts 250 ms later. A refusal replies
+with `reason` and leaves the boot slot alone: `size`, `sha256`, `incomplete`,
+`flash`, `busy`, `unconfirmed`, or `project`. A transfer that stops moving for 2
+seconds is dropped, and the update returns to `IDLE`.
+
+The new image boots as `PENDING_VERIFY`. It confirms itself after the first frame,
+a layout load, and 10 seconds of uptime, and logs `update: confirmed <slot>`. A
+reset before that, from a crash, a watchdog, or a power cut, makes the bootloader
+mark the slot `ABORTED` and boot the previous one. While an image waits to confirm,
+the deck refuses another update.
+
+The `update` console command has three forms:
+
+- `update state` replies with `running`, `boot`, the state of `ota_0` and `ota_1`
+  (`NEW`, `PENDING_VERIFY`, `VALID`, `INVALID`, `ABORTED`, `UNDEFINED`, or `NONE`
+  when the slot has no record), `confirmed`, and the update `state`.
+- `update confirm` confirms the running image at once. It is for tests.
+- `update invalidate` marks the running image invalid and reboots into the other slot,
+  when that slot holds a valid image. It is for tests.
+
+`firmware/tools/make_bundle.py` packs a build into `touchdeck-<version>.tdfw`, a zip
+with `bootloader.bin`, `partition-table.bin`, `touchdeck.bin`, and a `manifest.json`
+that names each file's flash offset, size, and SHA-256 with the image's version and
+`elf_sha256`. `python firmware/tools/make_bundle.py --check <bundle>` reads one back.
+
+A flash over the cable writes `ota_0` and resets the boot slot to it, so
+`idf.py flash` always recovers the deck. The local verification harness provides
+`link update <touchdeck.bin> --wait` and `idf build-crashing`, a build that aborts
+two seconds after start, for checking the rollback on the board.
+
 ## Display
 
 On boot the panel shows the deck, drawn with LVGL 9: dark rounded tiles on a
