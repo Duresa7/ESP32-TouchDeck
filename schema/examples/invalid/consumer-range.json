@@ -1,4 +1,6 @@
-{"name": "expected: must be >= 1 (minimum)",
+expected: consumer.usage-range
+{
+  "name": "Invalid example",
   "schema": 1,
   "orientation": "landscape",
   "pages": [

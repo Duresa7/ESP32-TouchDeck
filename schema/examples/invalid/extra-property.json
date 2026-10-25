@@ -1,4 +1,6 @@
-{"name": "expected: (additionalProperties) \"extra\"",
+expected: shape.unknown-field
+{
+  "name": "Invalid example",
   "schema": 1,
   "orientation": "landscape",
   "pages": [

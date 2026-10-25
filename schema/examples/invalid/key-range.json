@@ -1,4 +1,6 @@
-{"name": "expected: must be <= 255 (maximum)",
+expected: key.usage-range
+{
+  "name": "Invalid example",
   "schema": 1,
   "orientation": "landscape",
   "pages": [

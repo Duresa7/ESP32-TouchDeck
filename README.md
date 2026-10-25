@@ -165,6 +165,11 @@ node schema/check-layouts.mjs path/to/layout.json
 node --test schema/
 ```
 
+Every failure the validator prints starts with a stable rule key, such as
+`label.blank`. [schema/README.md](schema/README.md) lists the keys and the rules
+for reading a layout file. Send the deck the compact form of a layout, because
+it rejects files over 32768 bytes without parsing them first.
+
 App-side actions and widgets dim on the deck while the app is offline.
 
 ## Unit tests
