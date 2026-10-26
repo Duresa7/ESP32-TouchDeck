@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { checkLayouts, ruleKeys, schemaNodes, validateLayout, validateSource } from './check-layouts.mjs';
+import { checkLayouts, pathKey, ruleKeys, schemaNodes, validateLayout, validateSource } from './check-layouts.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const read = (path) => JSON.parse(readFileSync(join(directory, path), 'utf8'));
@@ -577,4 +577,20 @@ test('CLI checks extra paths, rejects JSON and file errors, and runs from anothe
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
+});
+
+test('path keys fold case only on Windows', () => {
+  assert.equal(pathKey('C:\Schema\Examples\Invalid\a.json', 'win32'), 'c:\schema\examples\invalid\a.json');
+  assert.equal(pathKey('/schema/Examples/Invalid/a.json', 'linux'), '/schema/Examples/Invalid/a.json');
+});
+
+test('CLI dedupes paths and finds invalid/ whatever the drive-letter and folder case', { skip: process.platform !== 'win32' }, () => {
+  const flipDrive = (path) => (path[0] === path[0].toLowerCase() ? path[0].toUpperCase() : path[0].toLowerCase()) + path.slice(1);
+  const result = spawnSync(
+    process.execPath,
+    [resolve(directory, 'check-layouts.mjs'), flipDrive(join(directory, 'EXAMPLES', 'Invalid', 'overlap.json')), flipDrive(join(directory, 'Examples', 'DEV.json'))],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, new RegExp(`2 valid, ${invalidFiles.length} invalid as expected, 0 problems`));
 });

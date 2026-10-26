@@ -50,6 +50,7 @@ TEST_CASE("every golden frame decodes and every valid fixture encodes exactly", 
     TEST_ASSERT_NOT_NULL(root);
     const cJSON *frames = cJSON_GetObjectItemCaseSensitive(root, "frames");
     TEST_ASSERT_GREATER_OR_EQUAL_INT(12, cJSON_GetArraySize(frames));
+    size_t longest = 0;
     const cJSON *entry;
     cJSON_ArrayForEach(entry, frames) {
         const char *name = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(entry, "name"));
@@ -82,7 +83,9 @@ TEST_CASE("every golden frame decodes and every valid fixture encodes exactly", 
         size_t encoded_len = td_frame_encode(&expected, s_encoded, sizeof s_encoded);
         TEST_ASSERT_EQUAL_UINT_MESSAGE(len, encoded_len, name);
         TEST_ASSERT_EQUAL_MEMORY_MESSAGE(s_wire, s_encoded, len, name);
+        longest = len > longest ? len : longest;
     }
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(2061, longest, "the largest escaped frame in link-v1.md");
     cJSON_Delete(root);
 }
 

@@ -234,18 +234,25 @@ function exampleFiles(directory) {
   });
 }
 
+// Windows paths are case-insensitive, including the drive letter, so compare them folded.
+export const pathKey = (path, platform = process.platform) => (platform === 'win32' ? path.toLowerCase() : path);
+
 const describeErrors = (errors) => (errors.length ? errors.map(({ key, message }) => `${key}: ${message}`).join('; ') : 'valid layout');
 
 export function checkLayouts(paths = [], write = console.log) {
   let valid = 0;
   let invalid = 0;
   let problems = 0;
-  const files = new Set([...exampleFiles(examplesDirectory), ...paths.map((path) => resolve(path))]);
-  for (const path of files) {
+  const files = new Map();
+  for (const path of [...exampleFiles(examplesDirectory), ...paths.map((path) => resolve(path))]) {
+    if (!files.has(pathKey(path))) files.set(pathKey(path), path);
+  }
+  const invalidPrefix = pathKey(invalidDirectory + sep);
+  for (const [key, path] of files) {
     const label = relative(process.cwd(), path);
     try {
       const bytes = readFileSync(path);
-      if (path.startsWith(invalidDirectory + sep)) {
+      if (key.startsWith(invalidPrefix)) {
         const { expected, body } = splitExpectation(bytes);
         const errors = validateSource(body);
         if (!ruleKeys.has(expected)) {

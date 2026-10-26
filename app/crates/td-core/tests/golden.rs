@@ -11,6 +11,15 @@ struct Golden {
     crc: String,
     limits: Limits,
     frames: Vec<Fixture>,
+    streams: Vec<StreamFixture>,
+}
+
+#[derive(Deserialize)]
+struct StreamFixture {
+    name: String,
+    hex: String,
+    frames: Vec<String>,
+    errors: u64,
 }
 
 #[derive(Deserialize)]
@@ -93,7 +102,7 @@ fn limits_and_crc_match_the_fixture_file() {
 #[test]
 fn every_valid_frame_decodes_and_encodes_byte_for_byte() {
     let golden = golden();
-    let mut valid = 0;
+    let (mut valid, mut longest) = (0, 0);
     for fixture in golden.frames.iter().filter(|f| f.valid) {
         let wire = unhex(&fixture.hex);
         let expected = fixture.decoded.as_ref().unwrap();
@@ -113,9 +122,11 @@ fn every_valid_frame_decodes_and_encodes_byte_for_byte() {
         );
         assert_eq!(frame.encode().unwrap(), wire, "{}", fixture.name);
         assert!(wire.len() <= WIRE_MAX, "{}", fixture.name);
+        longest = longest.max(wire.len());
         valid += 1;
     }
     assert!(valid >= 12);
+    assert_eq!(longest, 2061, "the largest escaped frame in link-v1.md");
 }
 
 #[test]
@@ -220,6 +231,33 @@ fn a_frame_cut_short_by_the_host_resynchronises() {
     );
     assert_eq!(frames, [Frame::decode_wire(&hello).unwrap()]);
     assert_eq!(decoder.errors(), 1);
+}
+
+#[test]
+fn every_stream_fixture_yields_its_frames_and_errors_at_any_read_size() {
+    let golden = golden();
+    assert!(!golden.streams.is_empty());
+    for fixture in &golden.streams {
+        let expected: Vec<Frame> = fixture
+            .frames
+            .iter()
+            .map(|name| {
+                let frame = golden.frames.iter().find(|f| &f.name == name).unwrap();
+                Frame::decode_wire(&unhex(&frame.hex)).unwrap()
+            })
+            .collect();
+        for width in [1, 3, 7, 64, 4096] {
+            let mut decoder = StreamDecoder::default();
+            let (_, frames) = split(&mut decoder, &unhex(&fixture.hex), width);
+            assert_eq!(frames, expected, "{} at {width}", fixture.name);
+            assert_eq!(
+                decoder.errors(),
+                fixture.errors,
+                "{} at {width}",
+                fixture.name
+            );
+        }
+    }
 }
 
 #[test]

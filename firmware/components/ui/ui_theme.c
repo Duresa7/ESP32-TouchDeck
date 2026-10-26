@@ -61,6 +61,7 @@ const ui_theme_t ui_theme = {
     .font_tile = &lv_font_montserrat_48,
     .font_title = &lv_font_montserrat_28,
     .font_caption = &lv_font_montserrat_28,
+    .font_small = &lv_font_montserrat_14,
 };
 
 static const lv_style_prop_t k_tile_transition_props[] = {

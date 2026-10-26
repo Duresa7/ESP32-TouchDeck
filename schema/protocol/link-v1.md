@@ -30,10 +30,12 @@ reflection, and no final XOR. Its check value for ASCII `123456789` is `0x29B1`.
 
 A maximum decoded body is 1032 bytes. A receiver unescapes incrementally into a
 decoded buffer of at least 1032 bytes, and the deck's holds 1100. An encoder
-reserves 2066 wire bytes, twice the maximum body plus both delimiters. The
-largest frame a valid header produces is 2061 bytes, a 1024-byte payload whose
-`seq`, payload, and CRC bytes all need escapes, because `ver`, `type`, `flags`,
-and a `len` of 1024 never do.
+reserves 2066 wire bytes, twice the maximum body plus both delimiters, but no
+valid frame fills them, because `ver`, `type`, `flags`, and a `len` of 1024
+never need escapes. The largest frame is 2061 bytes, a 1024-byte payload whose
+`seq`, payload, and both CRC bytes all need escapes. The
+`maximum-escaped-response` fixture is one. The `maximum-escaped-chunk` fixture
+is 2058 bytes, because its `seq` and CRC need none.
 
 ## Receiving
 
@@ -280,6 +282,15 @@ fixture's `valid` field describes framing, not message dispatch. For example,
 an empty message payload is a valid frame but not a dispatchable JSON object.
 
 The fixtures include every escape, a maximum chunk with 1021 data bytes, a
-maximum payload made entirely of `0xC0` and `0xDB`, a chunk with no data, and
+maximum payload made entirely of `0xC0` and `0xDB`, the largest escaped frame,
+a chunk with no data, and
 invalid CRC, version, length, and escape cases. Tests compare exact bytes in
 both codec directions and preserve frame state across fragmented reads.
+
+Each entry in `streams` is a run of wire bytes that a stream decoder reads at
+any read size. `frames` names, in order, the fixtures it must yield, and
+`errors` counts the bodies it must drop. `truncated-then-valid` is a frame cut
+off before its closing delimiter and followed at once by a valid frame, so the
+valid frame's opening delimiter ends the cut one. A stream holds no text, so the
+deck passes nothing to its console. A host decoder returns the dropped bytes as
+text, as the receive rules say.
