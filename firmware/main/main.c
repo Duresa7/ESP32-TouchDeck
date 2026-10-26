@@ -94,8 +94,8 @@ void app_main(void)
     const esp_console_cmd_t *store_cmds = td_store_console_commands(&store_cmd_count);
     register_commands("Store", store_cmds, store_cmd_count);
 
-    /* The volume mounts before the console starts, and the settings load before the display does. Orientation is read
-     * and reported here and applied when the deck builds in the orientation milestone. */
+    /* The volume mounts before the console starts, and the settings load before the display does, which sizes its
+     * frame buffers for the stored orientation. A change to it applies on the next boot. */
     td_settings_t settings;
     td_settings_defaults(&settings);
     esp_err_t store_err = td_store_mount(NULL);
@@ -131,7 +131,7 @@ void app_main(void)
 
     ui_set_press_hook(td_link_press);
     ui_layout_boot(td_settings_orientation_name(settings.orientation));
-    esp_err_t display_err = display_start(ui_build);
+    esp_err_t display_err = display_start(settings.orientation == TD_ORIENTATION_PORTRAIT, ui_build);
     if (display_err != ESP_OK) {
         ESP_LOGE(TAG, "Display failed to start: %s", esp_err_to_name(display_err));
     }

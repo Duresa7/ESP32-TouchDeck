@@ -6,6 +6,7 @@
 #include "board.h"
 #include "board_pins.h"
 #include "ch422g.h"
+#include "display.h"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "esp_check.h"
@@ -20,6 +21,7 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "power.h"
+#include "ui_geometry.h"
 
 #define GT911_STATUS_REG 0x814E
 #define GT911_STATUS_REPORT_READY 0x80
@@ -60,11 +62,6 @@ static struct {
     uint32_t rejected;
 } shared = { .lock = portMUX_INITIALIZER_UNLOCKED };
 
-static uint16_t clamp(uint16_t v, uint16_t size)
-{
-    return v < size ? v : size - 1;
-}
-
 /* One status read tells a fresh report from a poll that found nothing new. The driver would read the same byte
  * and clear it, so a poll with no report skips the driver and costs one transfer. */
 static td_touch_poll_t poll_controller(td_touch_sample_t *report)
@@ -82,8 +79,9 @@ static td_touch_poll_t poll_controller(td_touch_sample_t *report)
     if (esp_lcd_touch_read_data(s.tp) != ESP_OK || esp_lcd_touch_get_data(s.tp, &point, &count, 1) != ESP_OK) {
         return TD_TOUCH_POLL_ERROR;
     }
-    *report = (td_touch_sample_t){ .x = clamp(point.x, TD_LCD_H_RES), .y = clamp(point.y, TD_LCD_V_RES),
-                                   .pressed = count > 0 };
+    /* The GT911 reports on the landscape panel. LVGL draws the rotated screen, so a finger's point turns with it. */
+    const ui_point_t p = ui_touch_to_screen(display_portrait() ? UI_PORTRAIT : UI_LANDSCAPE, point.x, point.y);
+    *report = (td_touch_sample_t){ .x = (uint16_t)p.x, .y = (uint16_t)p.y, .pressed = count > 0 };
     return TD_TOUCH_POLL_REPORT;
 }
 

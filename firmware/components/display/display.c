@@ -34,6 +34,7 @@ static struct {
     atomic_bool snap_pending;
     bool snap_ok;
     atomic_bool ready;
+    bool portrait;
 } s;
 
 /* Runs on the LVGL task after the adapter's flush callback returned. The last flush of a refresh
@@ -50,13 +51,14 @@ static void on_flush_finish(lv_event_t *e)
     }
 }
 
-/* The one buffer screenshots render into. It sits in PSRAM, and lv_draw_buf_init needs lv_init to have run. */
+/* The one buffer screenshots render into, the size of the rotated screen. It sits in PSRAM, and lv_draw_buf_init
+ * needs lv_init to have run. */
 static esp_err_t alloc_snapshot_buffer(void)
 {
     void *data = heap_caps_aligned_alloc(SNAPSHOT_ALIGN, TD_LCD_FRAME_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     ESP_RETURN_ON_FALSE(data != NULL, ESP_ERR_NO_MEM, TAG, "snapshot buffer");
-    lv_result_t res = lv_draw_buf_init(&s.shot, TD_LCD_H_RES, TD_LCD_V_RES, LV_COLOR_FORMAT_RGB565, LV_STRIDE_AUTO,
-                                       data, TD_LCD_FRAME_BYTES);
+    lv_result_t res = lv_draw_buf_init(&s.shot, display_width(), display_height(), LV_COLOR_FORMAT_RGB565,
+                                       LV_STRIDE_AUTO, data, TD_LCD_FRAME_BYTES);
     ESP_RETURN_ON_FALSE(res == LV_RESULT_OK, ESP_FAIL, TAG, "snapshot buffer init");
     return ESP_OK;
 }
@@ -71,13 +73,31 @@ uint32_t display_frame_count(void)
     return atomic_load(&s.frames);
 }
 
-esp_err_t display_start(display_build_fn build)
+bool display_portrait(void)
 {
+    return s.portrait;
+}
+
+uint16_t display_width(void)
+{
+    return s.portrait ? TD_LCD_V_RES : TD_LCD_H_RES;
+}
+
+uint16_t display_height(void)
+{
+    return s.portrait ? TD_LCD_H_RES : TD_LCD_V_RES;
+}
+
+esp_err_t display_start(bool portrait, display_build_fn build)
+{
+    s.portrait = portrait;
     s.first_frame = xSemaphoreCreateBinary();
     s.snap_done = xSemaphoreCreateBinary();
     ESP_RETURN_ON_FALSE(s.first_frame != NULL && s.snap_done != NULL, ESP_ERR_NO_MEM, TAG, "semaphores");
 
-    const esp_lv_adapter_rotation_t rotation = ESP_LV_ADAPTER_ROTATE_0;
+    /* The adapter rotates in software as it copies each flushed area into the panel's frame buffer, because the
+     * ESP32-S3 has no PPA. LVGL draws the rotated screen, so a snapshot sees it the way the user does. */
+    const esp_lv_adapter_rotation_t rotation = portrait ? ESP_LV_ADAPTER_ROTATE_90 : ESP_LV_ADAPTER_ROTATE_0;
     const esp_lv_adapter_tear_avoid_mode_t tear_mode = ESP_LV_ADAPTER_TEAR_AVOID_MODE_DEFAULT_RGB;
     const size_t fbs = esp_lv_adapter_get_required_frame_buffer_count(tear_mode, rotation);
 
@@ -103,6 +123,7 @@ esp_err_t display_start(display_build_fn build)
     config.profile.use_psram = true;
     s.lv = esp_lv_adapter_register_display(&config);
     ESP_RETURN_ON_FALSE(s.lv != NULL, ESP_FAIL, TAG, "register display");
+    ESP_LOGI(TAG, "%s %ux%u", portrait ? "portrait" : "landscape", display_width(), display_height());
 
     ESP_RETURN_ON_ERROR(esp_lv_adapter_lock(-1), TAG, "adapter lock");
     lv_display_add_event_cb(s.lv, on_flush_finish, LV_EVENT_FLUSH_FINISH, NULL);
