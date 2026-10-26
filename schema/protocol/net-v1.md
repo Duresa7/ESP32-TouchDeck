@@ -20,6 +20,9 @@ An address change does not change the pairing identity.
 The deck admits one TCP owner, including a connection waiting for code entry.
 It sends the `busy` handshake error to a second connection, then closes that
 connection. The write is bounded to 100 ms and allocates no PAKE context.
+Terminal handshake replies use an orderly write-side shutdown, with at most
+100 ms to drain incoming bytes and close. An immediate TCP reset can discard
+the error before the app reads it. Invalid encrypted sessions close immediately.
 USB remains independent. Replies return on the request's transport. Events go
 to every online transport. One app uses one transport per deck and prefers USB
 when USB answers `hello`. Switching transport closes the old session, releases
@@ -128,7 +131,7 @@ transition, including before NVS commit.
 
 ### SRP arithmetic
 
-`N` is exactly the 3072-bit prime in RFC 5054 Appendix A, group 5. `g = 5`.
+`N` is exactly the 3072-bit prime in RFC 5054 Appendix A. `g = 5`.
 No group is supplied by a peer. `PAD(n)` is the unsigned 384-byte big-endian
 encoding. `MIN(n)` is its shortest nonempty unsigned big-endian encoding.
 `INT(bytes)` reads an unsigned big-endian integer.

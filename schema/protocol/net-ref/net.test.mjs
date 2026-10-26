@@ -10,6 +10,7 @@ import {
   RecordSender, RecordReceiver, PairingWindow,
 } from './protocol.mjs';
 import { inputs, pairing, session, buildVectors, readVectors } from './vectors.mjs';
+import './socket-tests.mjs';
 
 const fixture = readVectors();
 const pair = pairing();
@@ -252,11 +253,17 @@ test('human entry waits up to 120 seconds but each active attempt has only 10 se
 });
 
 test('cancellation and out-of-order pairing transitions cannot commit', () => {
+  for (const transition of ['proof', 'commit']) {
+    const invalid = new PairingWindow(0);
+    assert.throws(() => transition === 'proof' ? invalid.proof(true, 10) : invalid.commit(10));
+    assert.equal(invalid.state, 'closed');
+  }
+  const duplicate = new PairingWindow(0);
+  duplicate.start(20);
+  assert.throws(() => duplicate.start(21));
+  assert.equal(duplicate.state, 'closed');
   const window = new PairingWindow(0);
-  assert.throws(() => window.proof(true, 10));
-  assert.throws(() => window.commit(10));
   window.start(20);
-  assert.throws(() => window.start(21));
   window.cancel();
   assert.throws(() => window.proof(true, 22));
   assert.throws(() => window.commit(23));

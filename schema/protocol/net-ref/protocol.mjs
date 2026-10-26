@@ -354,16 +354,23 @@ export class PairingWindow {
     requireThat(this.state !== 'closed', 'pairing closed');
   }
 
+  expect(state) {
+    if (this.state !== state) {
+      this.state = 'closed';
+      throw new Error('unexpected pairing transition');
+    }
+  }
+
   start(now) {
     this.check(now);
-    requireThat(this.state === 'waiting', 'attempt already open');
+    this.expect('waiting');
     this.state = 'proving';
     this.attemptDeadline = now + 10000;
   }
 
   proof(valid, now) {
     this.check(now);
-    requireThat(this.state === 'proving', 'unexpected proof');
+    this.expect('proving');
     if (valid) this.state = 'committing';
     else {
       this.failures++;
@@ -374,7 +381,7 @@ export class PairingWindow {
 
   commit(now) {
     this.check(now);
-    requireThat(this.state === 'committing', 'unexpected commit');
+    this.expect('committing');
     this.state = 'closed';
   }
 
