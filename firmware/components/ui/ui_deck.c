@@ -1,22 +1,50 @@
 #include "ui.h"
 #include "ui_priv.h"
 #include <stdatomic.h>
+#include <stdio.h>
+#include <string.h>
 #include "board_pins.h"
 #include "display.h"
 #include "esp_log.h"
+#include "esp_lv_adapter.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "lvgl.h"
+#include "td_recovery.h"
+#include "touch.h"
 #include "ui_pager.h"
 #include "ui_theme.h"
 #include "ui_tile_keys.h"
 
 static const char *TAG = "ui";
+static const char *LAYOUT_TAG = "layout";
+
+#define LOCK_TIMEOUT_MS 3000
+
+#define RECOVERY_BAND_COLOR UI_RGB565(176, 32, 32)
+#define RECOVERY_CAPTION_COLOR UI_RGB565(255, 176, 64)
 
 static const ui_pager_cfg_t k_pager_cfg = { .page_w = TD_LCD_H_RES, .slop = 16, .swipe = 96 };
 
-/* The pager, the objects and the press bookkeeping belong to the LVGL task, and ui_goto() borrows them under the
- * adapter lock. The atomics are what the console task reads without that lock. track_x is the position last set,
- * because lv_obj_get_x reads coordinates that only change when LVGL next lays out the screen. */
+/*
+ * The pager, the objects and the press bookkeeping belong to the LVGL task, and ui_goto() and a reload borrow them
+ * under the adapter lock. The layout lock guards the layout pointer, the page table and `info`, which console
+ * readers copy without the adapter lock. A reload takes the adapter lock and then the layout lock, and nothing takes
+ * them the other way round. reload_lock lets one reload run at a time. The atomics are what the console task reads
+ * without either lock. track_x is the position last set, because lv_obj_get_x reads coordinates that only change when
+ * LVGL next lays out the screen.
+ */
 static struct {
+    SemaphoreHandle_t layout_lock;
+    SemaphoreHandle_t reload_lock;
+    const td_layout_t *layout;
+    ui_layout_info_t info;
+    const td_layout_t *boot;
+    ui_layout_info_t boot_info;
+    char orientation[12];
+    bool screen_set_up;
+    bool recovery_armed;
     ui_pager_t pager;
     const ui_page_t *pages;
     uint8_t page_count;
@@ -31,7 +59,7 @@ static struct {
     uint32_t slide_start_frames;
     atomic_bool built;
     atomic_uint page;
-    _Atomic(const char *) pressed;
+    atomic_int pressed;
     atomic_uint taps;
     atomic_bool animating;
     atomic_uint transitions;
@@ -39,11 +67,41 @@ static struct {
     atomic_uint transition_frames;
     atomic_uint last_ms;
     atomic_uint last_frames;
-} s;
+} s = { .pressed = -1 };
+
+static void make_locks(void)
+{
+    if (s.layout_lock == NULL) {
+        s.layout_lock = xSemaphoreCreateMutex();
+        s.reload_lock = xSemaphoreCreateMutex();
+    }
+}
+
+static void layout_lock(void)
+{
+    xSemaphoreTake(s.layout_lock, portMAX_DELAY);
+}
+
+static void layout_unlock(void)
+{
+    xSemaphoreGive(s.layout_lock);
+}
 
 static const ui_tile_t *tile_of(lv_obj_t *obj)
 {
     return lv_obj_get_user_data(obj);
+}
+
+/* The pressed tile as page * 256 + its index on the page, so a reader can name it under the layout lock. */
+static int tile_ref(const ui_tile_t *tile)
+{
+    for (uint8_t p = 0; p < s.page_count; p++) {
+        const ui_page_t *page = &s.pages[p];
+        if (page->tile_count > 0 && tile >= page->tiles && tile < page->tiles + page->tile_count) {
+            return p * 256 + (int)(tile - page->tiles);
+        }
+    }
+    return -1;
 }
 
 /* The title belongs to whichever page is nearer the middle of the screen, so it changes halfway through a slide
@@ -53,6 +111,7 @@ static void sync_title(int32_t track_x)
     const int32_t page_w = s.pager.cfg.page_w;
     int32_t nearest = (page_w / 2 - track_x) / page_w;
     nearest = nearest >= s.page_count ? s.page_count - 1 : nearest;
+    nearest = nearest < 0 ? 0 : nearest;
     if (nearest != s.title_page) {
         s.title_page = (uint8_t)nearest;
         lv_label_set_text_static(s.title, s.pages[nearest].title);
@@ -88,7 +147,7 @@ static void clear_pressed(void)
         lv_obj_remove_state(s.pressed_obj, LV_STATE_PRESSED);
         s.pressed_obj = NULL;
     }
-    atomic_store(&s.pressed, "");
+    atomic_store(&s.pressed, -1);
 }
 
 /* The totals go in before animating clears, so a reader that sees animating false reads them whole. */
@@ -180,6 +239,9 @@ static lv_point_t pointer_point(void)
  * not where it will end up. It can still swipe. */
 static void on_press(lv_event_t *e)
 {
+    if (s.page_count == 0) {
+        return;
+    }
     const bool caught = atomic_load(&s.animating);
     finish_slide();
     clear_pressed();
@@ -197,7 +259,7 @@ static void on_press(lv_event_t *e)
         return;
     }
     s.pressed_obj = target;
-    atomic_store(&s.pressed, tile->id);
+    atomic_store(&s.pressed, tile_ref(tile));
 }
 
 /* The pages slide on the move that makes the swipe, and not after the lift, so the deck answers while the finger
@@ -206,6 +268,9 @@ static void on_press(lv_event_t *e)
 static void on_pressing(lv_event_t *e)
 {
     (void)e;
+    if (s.page_count == 0) {
+        return;
+    }
     const lv_point_t p = pointer_point();
     const ui_press_t before = s.pager.press;
     const ui_pager_move_t m = ui_pager_move(&s.pager, (int16_t)p.x, (int16_t)p.y);
@@ -224,32 +289,72 @@ static void on_pressing(lv_event_t *e)
  * tap that lifts with it set is a click. */
 static void on_release(lv_event_t *e)
 {
+    if (s.page_count == 0) {
+        return;
+    }
     lv_obj_t *tile_obj = s.pressed_obj;
     const bool tap = ui_pager_release(&s.pager);
     clear_pressed();
     if (!tap || tile_obj == NULL || lv_event_get_code(e) != LV_EVENT_RELEASED) {
         return;
     }
-    ui_tile_keys_click(tile_of(tile_obj));
+    const ui_tile_t *tile = tile_of(tile_obj);
     const unsigned taps = atomic_fetch_add(&s.taps, 1) + 1;
-    ESP_LOGI(TAG, "click taps=%u tile=%s", taps, tile_of(tile_obj)->id);
+    ESP_LOGI(TAG, "click taps=%u tile=%s", taps, tile->id);
+    const int ref = tile_ref(tile);
+    ui_tile_keys_click(ref >= 0 ? &s.pages[ref / 256] : NULL, tile);
 }
 
-static void build_stacked_label(lv_obj_t *obj, lv_obj_t *label, const char *glyph, int32_t tile_w)
+/* The band covers the screen as the last child of the active screen, above whichever page shows. It sits on the screen
+ * and not on the top layer because the screenshot snapshots the active screen alone. It takes no input. */
+static void draw_recovery_band(void)
 {
-    const ui_styles_t *st = ui_styles();
-    const int32_t icon_h = lv_font_get_line_height(ui_theme.font_tile);
+    lv_obj_t *band = lv_obj_create(lv_screen_active());
+    lv_obj_remove_style_all(band);
+    lv_obj_set_clickable(band, false);
+    lv_obj_set_scrollable(band, false);
+    lv_obj_set_pos(band, 0, 0);
+    lv_obj_set_size(band, TD_LCD_H_RES, TD_LCD_V_RES);
+    lv_obj_set_style_bg_color(band, ui_color(RECOVERY_BAND_COLOR), 0);
+    lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
+    lv_obj_move_foreground(band);
+
+    lv_obj_t *label = lv_label_create(band);
+    lv_label_set_text_static(label, "Release to reset");
+    lv_obj_set_style_text_font(label, ui_theme.font_tile, 0);
+    lv_obj_set_style_text_color(label, ui_color(ui_theme.color.text), 0);
+    lv_obj_center(label);
+}
+
+/* The 10-second hold armed. The band stays until the deck restarts, so a layout rebuild draws it again. Runs in the
+ * LVGL read callback, so the adapter lock is held. */
+static void on_recovery_armed(void)
+{
+    s.recovery_armed = true;
+    draw_recovery_band();
+}
+
+static void build_recovery_caption(lv_obj_t *screen)
+{
+    lv_obj_t *caption = lv_label_create(screen);
+    lv_label_set_text_static(caption, "Recovery");
+    lv_obj_add_style(caption, &ui_styles()->title, 0);
+    lv_obj_set_style_text_color(caption, ui_color(RECOVERY_CAPTION_COLOR), 0);
+    lv_obj_align(caption, LV_ALIGN_TOP_RIGHT, -ui_theme.title_x, ui_theme.title_y);
+}
+
+/* An icon above the label, with the label in the caption font. */
+static void stack_icon(lv_obj_t *label, lv_obj_t *icon, int32_t icon_h, int32_t tile_w)
+{
     const int32_t caption_h = lv_font_get_line_height(ui_theme.font_caption);
     const int32_t gap = ui_theme.media.gap;
 
-    lv_obj_add_style(label, &st->tile_caption, 0);
+    lv_obj_add_style(label, &ui_styles()->tile_caption, 0);
     lv_obj_set_size(label, tile_w - 2 * ui_theme.media.label_inset, caption_h);
     lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_align(label, LV_ALIGN_CENTER, 0, (icon_h + gap) / 2);
 
-    lv_obj_t *icon = lv_label_create(obj);
-    lv_label_set_text_static(icon, glyph);
-    lv_obj_add_style(icon, &st->tile_label, 0);
+    lv_obj_set_clickable(icon, false);
     lv_obj_align(icon, LV_ALIGN_CENTER, 0, -(caption_h + gap) / 2);
 }
 
@@ -268,14 +373,22 @@ static void build_tile(lv_obj_t *parent, const ui_page_t *page, const ui_tile_t 
     lv_obj_set_event_bubble(obj, true);
     lv_obj_set_user_data(obj, (void *)tile);
 
-    const char *icon = ui_tile_keys_icon(tile);
     lv_obj_t *label = lv_label_create(obj);
     lv_label_set_text_static(label, tile->label);
-    if (icon == NULL) {
+    const char *glyph = ui_icon_symbol(tile->icon);
+    const lv_image_dsc_t *image = glyph == NULL ? ui_icon_image(tile->icon) : NULL;
+    if (glyph != NULL) {
+        lv_obj_t *icon = lv_label_create(obj);
+        lv_label_set_text_static(icon, glyph);
+        lv_obj_add_style(icon, &st->tile_label, 0);
+        stack_icon(label, icon, lv_font_get_line_height(ui_theme.font_tile), r.w);
+    } else if (image != NULL) {
+        lv_obj_t *icon = lv_image_create(obj);
+        lv_image_set_src(icon, image);
+        stack_icon(label, icon, image->header.h, r.w);
+    } else {
         lv_obj_add_style(label, &st->tile_label, 0);
         lv_obj_center(label);
-    } else {
-        build_stacked_label(obj, label, icon, r.w);
     }
 
     ui_tile_keys_dress(obj, tile);
@@ -312,7 +425,8 @@ static void build_dots(lv_obj_t *screen)
     }
 }
 
-/* A page that fails ui_page_valid ends the list there, so a bad table shows the pages before it. */
+/* A page that fails ui_page_valid ends the list there, so a bad table shows the pages before it. The parser already
+ * refuses such a layout, so this only guards the drawing. */
 static uint8_t count_valid_pages(const ui_page_t *pages, size_t count)
 {
     uint8_t valid = 0;
@@ -326,19 +440,14 @@ static uint8_t count_valid_pages(const ui_page_t *pages, size_t count)
     return valid;
 }
 
-void ui_build(void)
+/* The screen's own look and its input callbacks are set once. A rebuild only replaces the objects under it. */
+static void set_up_screen(void)
 {
-    size_t count = 0;
-    s.pages = ui_builtin_pages(&count);
-    s.page_count = count_valid_pages(s.pages, count);
-    if (s.page_count == 0) {
+    if (s.screen_set_up) {
         return;
     }
+    s.screen_set_up = true;
     ui_styles();
-    ui_tile_keys_start();
-    ui_pager_init(&s.pager, &k_pager_cfg, s.page_count);
-    atomic_store(&s.pressed, "");
-
     lv_obj_t *screen = lv_screen_active();
     lv_obj_set_scrollable(screen, false);
     lv_obj_set_press_lock(screen, true);
@@ -348,7 +457,27 @@ void ui_build(void)
     lv_obj_add_event_cb(screen, on_pressing, LV_EVENT_PRESSING, NULL);
     lv_obj_add_event_cb(screen, on_release, LV_EVENT_RELEASED, NULL);
     lv_obj_add_event_cb(screen, on_release, LV_EVENT_PRESS_LOST, NULL);
+}
 
+/* Cancels the press and the slide in flight and deletes every object of the old layout. */
+static void tear_down(void)
+{
+    lv_obj_t *screen = lv_screen_active();
+    if (s.track != NULL) {
+        lv_anim_delete(s.track, NULL);
+    }
+    atomic_store(&s.animating, false);
+    s.pressed_obj = NULL;
+    lv_indev_reset(NULL, NULL);
+    lv_obj_clean(screen);
+    s.track = NULL;
+    s.title = NULL;
+    memset(s.dots, 0, sizeof s.dots);
+}
+
+static void build_objects(void)
+{
+    lv_obj_t *screen = lv_screen_active();
     lv_obj_t *band = lv_obj_create(screen);
     lv_obj_remove_style_all(band);
     lv_obj_set_pos(band, ui_theme.band.x, ui_theme.band.y);
@@ -362,19 +491,184 @@ void ui_build(void)
     lv_obj_set_size(s.track, s.pager.cfg.page_w * s.page_count, ui_theme.band.h);
     lv_obj_set_scrollable(s.track, false);
     lv_obj_set_event_bubble(s.track, true);
+    s.track_x = 0;
 
     for (uint8_t i = 0; i < s.page_count; i++) {
         build_page(i);
     }
 
     s.title = lv_label_create(screen);
+    s.title_page = 0;
     lv_label_set_text_static(s.title, s.pages[0].title);
     lv_obj_add_style(s.title, &ui_styles()->title, 0);
     lv_obj_set_pos(s.title, ui_theme.title_x, ui_theme.title_y);
+    if (td_recovery_mode()) {
+        build_recovery_caption(screen);
+    }
+    touch_set_recovery_cb(on_recovery_armed);
 
     build_dots(screen);
-    show_page(0);
+    if (s.recovery_armed) {
+        draw_recovery_band();
+    }
+}
+
+/*
+ * Swaps a parsed layout onto the screen. The caller holds the adapter lock and the reload lock, and has run
+ * ui_icon_prepare for it. The old layout's arena is freed only after the new objects exist, and never when it is the
+ * built-in layout.
+ */
+static void load_locked(const td_layout_t *layout, const ui_layout_info_t *info, int64_t started_us)
+{
+    set_up_screen();
+    tear_down();
+    ui_tile_keys_start();
+
+    const uint8_t count = count_valid_pages(layout->pages, layout->page_count);
+    layout_lock();
+    td_layout_t *old = td_layout_replace(&s.layout, layout);
+    s.pages = layout->pages;
+    s.page_count = count;
+    s.info = *info;
+    atomic_store(&s.pressed, -1);
+    atomic_store(&s.page, 0);
+    layout_unlock();
+
+    ui_pager_init(&s.pager, &k_pager_cfg, count > 0 ? count : 1);
+    if (count > 0) {
+        build_objects();
+        show_page(0);
+    }
+    td_layout_free(old);
+
+    const uint32_t ms = (uint32_t)((esp_timer_get_time() - started_us) / 1000);
+    layout_lock();
+    s.info.load_ms = ms;
+    layout_unlock();
     atomic_store(&s.built, true);
+    ESP_LOGI(LAYOUT_TAG, "loaded %s %s pages=%u tiles=%u icons=%u/%u in %u ms", info->from_storage ? "storage" : "builtin",
+             layout->name, layout->page_count, layout->tile_count, info->icons_loaded, layout->icons_wanted,
+             (unsigned)ms);
+}
+
+static void fill_info(ui_layout_info_t *info, const td_layout_t *layout, bool from_storage, size_t bytes,
+                      ui_icon_counts_t icons)
+{
+    memset(info, 0, sizeof *info);
+    info->from_storage = from_storage;
+    snprintf(info->name, sizeof info->name, "%s", layout->name);
+    snprintf(info->orientation, sizeof info->orientation, "%s", layout->orientation);
+    info->pages = layout->page_count;
+    info->tiles = layout->tile_count;
+    info->icons_loaded = icons.loaded;
+    info->icons_missing = icons.missing;
+    info->bytes = (uint32_t)bytes;
+}
+
+static void describe_error(char *buf, size_t cap, const td_layout_error_t *err)
+{
+    snprintf(buf, cap, "%s: %s", err->key, err->message);
+}
+
+/* The boot layout is read before display_start and built inside it, so its load_ms adds the two parts and leaves out
+ * the display's own start-up between them. */
+static int64_t s_boot_prepare_us;
+
+void ui_layout_boot(const char *orientation)
+{
+    make_locks();
+    const int64_t started = esp_timer_get_time();
+    snprintf(s.orientation, sizeof s.orientation, "%s", orientation != NULL ? orientation : "landscape");
+
+    char path[48];
+    td_layout_path(s.orientation, path, sizeof path);
+    td_layout_t *stored = NULL;
+    size_t bytes = 0;
+    td_layout_error_t err;
+    char reason[UI_LAYOUT_ERROR_MAX] = "";
+    if (td_layout_load_file(path, &stored, &bytes, &err)) {
+        s.boot = stored;
+    } else {
+        describe_error(reason, sizeof reason, &err);
+        ESP_LOGW(LAYOUT_TAG, "%s, using builtin", reason);
+        s.boot = td_layout_builtin();
+        bytes = 0;
+    }
+    if (s.boot == NULL) {
+        return;
+    }
+    const ui_icon_counts_t icons = ui_icon_prepare(s.boot, NULL);
+    fill_info(&s.boot_info, s.boot, stored != NULL, bytes, icons);
+    snprintf(s.boot_info.error, sizeof s.boot_info.error, "%s", reason);
+    s_boot_prepare_us = esp_timer_get_time() - started;
+}
+
+void ui_build(void)
+{
+    make_locks();
+    if (s.boot == NULL) {
+        const int64_t started = esp_timer_get_time();
+        s.boot = td_layout_builtin();
+        if (s.boot == NULL) {
+            ESP_LOGE(LAYOUT_TAG, "the built-in layout does not parse, so the deck shows nothing");
+            return;
+        }
+        fill_info(&s.boot_info, s.boot, false, 0, ui_icon_prepare(s.boot, NULL));
+        s_boot_prepare_us = esp_timer_get_time() - started;
+    }
+    xSemaphoreTake(s.reload_lock, portMAX_DELAY);
+    load_locked(s.boot, &s.boot_info, esp_timer_get_time() - s_boot_prepare_us);
+    xSemaphoreGive(s.reload_lock);
+}
+
+bool ui_layout_reload(bool use_builtin, td_layout_error_t *err)
+{
+    make_locks();
+    xSemaphoreTake(s.reload_lock, portMAX_DELAY);
+    const int64_t started = esp_timer_get_time();
+    td_layout_t *stored = NULL;
+    const td_layout_t *next = NULL;
+    size_t bytes = 0;
+    if (use_builtin) {
+        next = td_layout_builtin();
+    } else {
+        char path[48];
+        td_layout_path(s.orientation[0] != '\0' ? s.orientation : "landscape", path, sizeof path);
+        if (td_layout_load_file(path, &stored, &bytes, err)) {
+            next = stored;
+        }
+    }
+    if (next == NULL) {
+        if (use_builtin) {
+            snprintf(err->key, sizeof err->key, "internal.no-memory");
+            snprintf(err->message, sizeof err->message, "the built-in layout is not available");
+        }
+        layout_lock();
+        describe_error(s.info.error, sizeof s.info.error, err);
+        layout_unlock();
+        ESP_LOGW(LAYOUT_TAG, "%s: %s, keeping %s", err->key, err->message, s.info.name);
+        xSemaphoreGive(s.reload_lock);
+        return false;
+    }
+
+    ui_layout_info_t info;
+    fill_info(&info, next, stored != NULL, bytes, ui_icon_prepare(next, s.layout));
+    if (esp_lv_adapter_lock(LOCK_TIMEOUT_MS) != ESP_OK) {
+        td_layout_free(stored);
+        snprintf(err->key, sizeof err->key, "display.busy");
+        snprintf(err->message, sizeof err->message, "the display stayed busy for %d ms", LOCK_TIMEOUT_MS);
+        xSemaphoreGive(s.reload_lock);
+        return false;
+    }
+    load_locked(next, &info, started);
+    esp_lv_adapter_unlock();
+    xSemaphoreGive(s.reload_lock);
+    return true;
+}
+
+const char *ui_layout_slot(void)
+{
+    return s.orientation[0] != '\0' ? s.orientation : "landscape";
 }
 
 bool ui_ready(void)
@@ -384,20 +678,27 @@ bool ui_ready(void)
 
 void ui_get_state(ui_state_t *out)
 {
+    memset(out, 0, sizeof *out);
+    layout_lock();
     const uint8_t page = (uint8_t)atomic_load(&s.page);
-    *out = (ui_state_t){
-        .page = page,
-        .pages = s.page_count,
-        .title = s.pages[page].title,
-        .pressed_tile = atomic_load(&s.pressed),
-        .taps = atomic_load(&s.taps),
-        .animating = atomic_load(&s.animating),
-        .transitions = atomic_load(&s.transitions),
-        .transition_ms = atomic_load(&s.transition_ms),
-        .transition_frames = atomic_load(&s.transition_frames),
-        .last_ms = atomic_load(&s.last_ms),
-        .last_frames = atomic_load(&s.last_frames),
-    };
+    out->page = page;
+    out->pages = s.page_count;
+    if (page < s.page_count) {
+        out->tile_count = s.pages[page].tile_count;
+        snprintf(out->title, sizeof out->title, "%s", s.pages[page].title);
+    }
+    const int pressed = atomic_load(&s.pressed);
+    if (pressed >= 0 && pressed / 256 < s.page_count && pressed % 256 < s.pages[pressed / 256].tile_count) {
+        snprintf(out->pressed_tile, sizeof out->pressed_tile, "%s", s.pages[pressed / 256].tiles[pressed % 256].id);
+    }
+    layout_unlock();
+    out->taps = atomic_load(&s.taps);
+    out->animating = atomic_load(&s.animating);
+    out->transitions = atomic_load(&s.transitions);
+    out->transition_ms = atomic_load(&s.transition_ms);
+    out->transition_frames = atomic_load(&s.transition_frames);
+    out->last_ms = atomic_load(&s.last_ms);
+    out->last_frames = atomic_load(&s.last_frames);
 }
 
 bool ui_goto(uint8_t page)
@@ -416,15 +717,30 @@ bool ui_goto(uint8_t page)
     return true;
 }
 
-bool ui_find_tile(const char *id, uint8_t *page, ui_rect_t *rect)
+bool ui_tile_info(const char *id, ui_tile_info_t *out)
 {
-    for (uint8_t i = 0; i < s.page_count; i++) {
-        const ui_tile_t *tile = ui_page_find_tile(&s.pages[i], id);
-        if (tile != NULL) {
-            *page = i;
-            *rect = ui_tile_rect(&s.pages[i], tile, ui_theme.grid, ui_theme.gap);
-            return true;
-        }
+    memset(out, 0, sizeof *out);
+    layout_lock();
+    uint8_t page = 0;
+    const ui_tile_t *tile = NULL;
+    for (uint8_t i = 0; tile == NULL && i < s.page_count; i++) {
+        tile = ui_page_find_tile(&s.pages[i], id);
+        page = i;
     }
-    return false;
+    if (tile != NULL) {
+        out->page = page;
+        out->rect = ui_tile_rect(&s.pages[page], tile, ui_theme.grid, ui_theme.gap);
+        snprintf(out->label, sizeof out->label, "%s", tile->label);
+        snprintf(out->action, sizeof out->action, "%s", td_action_name(&tile->action));
+        snprintf(out->icon, sizeof out->icon, "%s", tile->icon != NULL ? tile->icon : "");
+    }
+    layout_unlock();
+    return tile != NULL;
+}
+
+void ui_layout_info(ui_layout_info_t *out)
+{
+    layout_lock();
+    *out = s.info;
+    layout_unlock();
 }

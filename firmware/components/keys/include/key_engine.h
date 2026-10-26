@@ -45,12 +45,14 @@ typedef enum {
     KEY_EV_CLEAR_ONE_SHOT,
     KEY_EV_CLEAR_MODS,
     KEY_EV_RELEASE_ALL,
+    KEY_EV_CHORD,          /* usage: a keyboard usage, 1 to 255, mods: the HID modifier bits it adds */
 } key_event_type_t;
 
 typedef struct {
     key_event_type_t type;
     uint16_t usage;
     key_mod_t mod;
+    uint8_t mods;
 } key_event_t;
 
 #define KEY_ENGINE_OUT_MAX 2
@@ -68,7 +70,9 @@ typedef struct {
  * tap on ONE_SHOT after that or on LOCKED to OFF. CONSUMER_TAP emits the usage, then the empty consumer report,
  * and leaves every modifier as it is. CLEAR_ONE_SHOT returns ONE_SHOT modifiers to OFF and keeps LOCKED ones.
  * CLEAR_MODS returns every modifier to OFF. RELEASE_ALL emits the all-released report and then the empty
- * consumer report, for a sink that wants a clean slate. A tap with usage 0, a keyboard usage above 255, or a
+ * consumer report, for a sink that wants a clean slate. CHORD is KEY_TAP with `mods` added to the active modifiers,
+ * so it emits the key with mods | active, then the all-released report, and returns one-shot modifiers to OFF. Only
+ * the four modifier bits of `mods` count. A tap with usage 0, a keyboard usage above 255, or a
  * modifier out of range emits nothing and changes nothing.
  *
  * Every report that carries a key is followed in the same step by the release of its own type, and no report

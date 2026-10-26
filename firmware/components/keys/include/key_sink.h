@@ -33,7 +33,11 @@ typedef struct {
     };
 } key_report_t;
 
-/* Where reports go. The engine and keys.c never know which sink they have. */
+/*
+ * Where reports go. The engine and keys.c never know which sink they have. report() runs under the engine's lock, so
+ * it must not block and must not call back into keys_*. A sink that can lose reports, such as the link's bounded
+ * queue, must never lose a release: it recovers by sending the current state instead.
+ */
 typedef struct {
     void (*report)(void *ctx, const key_report_t *report);
     void *ctx;

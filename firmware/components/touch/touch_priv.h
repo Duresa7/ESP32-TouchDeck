@@ -19,6 +19,10 @@ typedef struct {
     uint32_t contact_frames;
     uint32_t contact_ms;
     uint32_t contact_hz;
+    uint32_t watch_samples; /* samples the recovery watcher has taken since boot */
+    uint32_t watch_ns_avg;  /* what one of them cost, from the CPU cycle counter */
+    uint32_t watch_ns_max;
+    bool hold;              /* a contact from touch_hold_begin() is down */
 } touch_stats_t;
 
 /* True once the GT911 answered and the LVGL pointer device is registered. */

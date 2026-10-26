@@ -56,7 +56,7 @@ static void cmd_state(void)
     td_reply_begin(&r, buf, sizeof buf, "ui", true);
     td_reply_int(&r, "page", st.page);
     td_reply_int(&r, "pages", st.pages);
-    td_reply_int(&r, "tile_count", ui_builtin_pages(NULL)[st.page].tile_count);
+    td_reply_int(&r, "tile_count", st.tile_count);
     td_reply_str(&r, "title", st.title);
     td_reply_str(&r, "pressed_tile", st.pressed_tile);
     td_reply_int(&r, "taps", st.taps);
@@ -107,26 +107,28 @@ static void cmd_tile(int argc, char **argv)
         send_error("usage: ui tile <id>");
         return;
     }
-    uint8_t page = 0;
-    ui_rect_t rect;
-    if (!ui_find_tile(argv[2], &page, &rect)) {
+    ui_tile_info_t tile;
+    if (!ui_tile_info(argv[2], &tile)) {
         send_error("no such tile");
         return;
     }
+    const ui_rect_t rect = tile.rect;
 
     char buf[TD_REPLY_MAX];
     td_reply_t r;
     td_reply_begin(&r, buf, sizeof buf, "ui", true);
     td_reply_str(&r, "op", "tile");
     td_reply_str(&r, "id", argv[2]);
-    td_reply_str(&r, "name", ui_page_find_tile(&ui_builtin_pages(NULL)[page], argv[2])->label);
-    td_reply_int(&r, "page", page);
+    td_reply_str(&r, "name", tile.label);
+    td_reply_int(&r, "page", tile.page);
     td_reply_int(&r, "x", rect.x);
     td_reply_int(&r, "y", rect.y);
     td_reply_int(&r, "w", rect.w);
     td_reply_int(&r, "h", rect.h);
     td_reply_int(&r, "cx", rect.x + rect.w / 2);
     td_reply_int(&r, "cy", rect.y + rect.h / 2);
+    td_reply_str(&r, "action", tile.action);
+    td_reply_str(&r, "icon", tile.icon);
     send(&r);
 }
 
@@ -220,6 +222,8 @@ const esp_console_cmd_t *ui_console_commands(size_t *count)
     static const esp_console_cmd_t cmds[] = {
         { .command = "ui", .help = "report the deck's state, go to a page, find a tile, or hold a press on the glass",
           .hint = "state | goto <page> | tile <id> | hold <x> <y> <ms>", .func = cmd_ui },
+        { .command = "layout", .help = "report the loaded layout, reload it from storage, or switch to the built-in one",
+          .hint = "state | reload | use builtin|storage", .func = ui_layout_cmd },
     };
     *count = sizeof cmds / sizeof cmds[0];
     return cmds;

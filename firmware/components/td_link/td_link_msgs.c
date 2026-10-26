@@ -1,9 +1,12 @@
 #include "td_link.h"
+#include "td_link_priv.h"
+#include "ui.h"
 #include <stdio.h>
 #include <string.h>
 #include "esp_app_desc.h"
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
+#include "td_recovery.h"
 
 static void hello(const cJSON *request, cJSON *reply)
 {
@@ -20,17 +23,23 @@ static void hello(const cJSON *request, cJSON *reply)
     cJSON_AddStringToObject(reply, "elf_sha256", sha);
     cJSON_AddStringToObject(reply, "version", app->version);
     cJSON_AddStringToObject(reply, "running", running ? running->label : "unknown");
-    const char *sinks[] = { "log" };
-    cJSON_AddItemToObject(reply, "sinks", cJSON_CreateStringArray(sinks, 1));
-    cJSON_AddBoolToObject(reply, "recovery", false);
-    cJSON_AddStringToObject(reply, "layout", "builtin");
+    const char *sinks[] = { "log", "link" };
+    cJSON_AddItemToObject(reply, "sinks", cJSON_CreateStringArray(sinks, 2));
+    cJSON_AddBoolToObject(reply, "recovery", td_recovery_mode());
+    ui_layout_info_t layout = { 0 };
+    if (ui_ready()) {
+        ui_layout_info(&layout);
+    }
+    cJSON_AddStringToObject(reply, "layout", layout.from_storage ? "storage" : "builtin");
 }
 
 static void ping(const cJSON *request, cJSON *reply)
 {
     const cJSON *n = cJSON_GetObjectItemCaseSensitive(request, "n");
     cJSON_AddNumberToObject(reply, "t", esp_timer_get_time() / 1000);
-    cJSON_AddItemToObject(reply, "n", n ? cJSON_Duplicate(n, true) : cJSON_CreateNull());
+    if (cJSON_IsNumber(n) || cJSON_IsString(n) || cJSON_IsBool(n) || cJSON_IsNull(n)) {
+        cJSON_AddItemToObject(reply, "n", cJSON_Duplicate(n, false));
+    }
 }
 
 static void state(const cJSON *request, cJSON *reply)
@@ -52,7 +61,34 @@ static const struct {
     { "hello", hello },
     { "ping", ping },
     { "link.state", state },
+    { "layout.put", td_link_layout_put },
+    { "layout.get", td_link_layout_get },
+    { "icon.put", td_link_icon_put },
+    { "icon.list", td_link_icon_list },
+    { "icon.rm", td_link_icon_rm },
+    { "settings.get", td_link_settings_get },
+    { "settings.put", td_link_settings_put },
+    { "store.stat", td_link_store_stat },
+    { "xfer.end", td_link_xfer_end },
+    { "update.begin", td_link_update_begin },
+    { "update.end", td_link_update_end },
 };
+
+#define ECHO_CHARS_MAX 64
+
+static void echo_name(const char *name, char out[4 * ECHO_CHARS_MAX + 1])
+{
+    size_t len = 0;
+    size_t chars = 0;
+    while (name[len] && len < 4 * ECHO_CHARS_MAX) {
+        if (((unsigned char)name[len] & 0xc0) != 0x80 && chars++ == ECHO_CHARS_MAX) {
+            break;
+        }
+        len++;
+    }
+    memcpy(out, name, len);
+    out[len] = '\0';
+}
 
 cJSON *td_link_dispatch(const cJSON *request)
 {
@@ -64,7 +100,9 @@ cJSON *td_link_dispatch(const cJSON *request)
     if (!reply) {
         return NULL;
     }
-    cJSON_AddStringToObject(reply, "m", message->valuestring);
+    char name[4 * ECHO_CHARS_MAX + 1];
+    echo_name(message->valuestring, name);
+    cJSON_AddStringToObject(reply, "m", name);
     for (size_t i = 0; i < sizeof s_messages / sizeof s_messages[0]; i++) {
         if (strcmp(message->valuestring, s_messages[i].name) == 0) {
             cJSON_AddBoolToObject(reply, "ok", true);
