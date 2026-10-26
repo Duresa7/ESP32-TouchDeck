@@ -112,6 +112,17 @@ echo a request, and report the connection state. The text command `link state`
 reports the same counters. The port stays available for the debug console and
 ROM flashing.
 
+The link also moves files and mirrors input. `layout.put` and `layout.get` copy a
+layout in chunks, `icon.put`, `icon.list`, and `icon.rm` manage the icons, and
+`settings.get`, `settings.put`, and `store.stat` read and change the deck. A put
+is checked and validated before it replaces the stored file, and a layout for the
+orientation on screen is shown without a reboot. While the app is connected, the
+deck sends a `press` event for each app or widget tap and a `key.report` event
+for each key report the engine emits, so the app can type the keys on the PC.
+`widget.set` fills a widget tile with a value, a caption, and a bar, and
+`dashboard.set` fills a dashboard page with up to 8 rows. The deck draws them on
+its next 100 ms redraw.
+
 The local verification harness provides `link hello`, `link ping --count 100`,
 `link state`, `link raw --hex <frame>`, and `link selftest`. `link scenario <file>`
 sends timed console lines and binary frames through one port handle. Console
@@ -138,8 +149,12 @@ Settings are `{"idle_timeout_s": 600, "orientation": "landscape"}`. The deck rea
 them before the display starts and logs `settings: idle_timeout_s=<n>
 orientation=<o>`. An unknown field is ignored, a missing field takes its default,
 a timeout outside 1 to 86400 takes 600, and an unknown orientation takes
-`landscape`. The idle timeout reaches the power gate at boot. The orientation is
-stored and reported, and the display applies it in a later milestone.
+`landscape`. The idle timeout reaches the power gate at boot. The orientation
+applies at boot. In `portrait` the screen is the panel turned 90 degrees
+clockwise, 600 by 1024, and the deck loads `/storage/layouts/portrait.json`, or
+the built-in layout when that file is missing. Touch points, `touch` and `ui hold`
+injection, and `screenshot` all use the rotated size. The adapter rotates each
+frame in software, so portrait draws much slower than landscape.
 
 The `store` and `settings` console commands work on the volume:
 
@@ -155,7 +170,8 @@ The `store` and `settings` console commands work on the volume:
   reply that carries its CRC-32.
 - `settings get` and `settings set idle_timeout_s <n>` or
   `settings set orientation landscape|portrait` read and write the file. A new
-  timeout applies at once.
+  timeout applies at once. A new orientation applies on the next boot, so its
+  reply, like `settings.put`'s, carries `reboot_required` true.
 
 The local verification harness wraps the transfers as `serial store put <path>
 --from <file>` and `serial store get <path> --out <file>`, checking the CRC-32
@@ -210,6 +226,9 @@ animation time of the look is a named token in `firmware/components/ui/ui_theme.
 The `ui` component adds the `ui` console command: `ui state` reports the page and
 the tile that is pressed, `ui goto <page>` changes the page, `ui tile <id>` gives a
 tile's box, and `ui hold <x> <y> <ms>` holds a press on the glass for a test.
+`ui state` also reports `online`, whether the app is connected, and `dimmed`, how
+many tiles are drawn dim. `ui widget <tile>` and `ui dashboard <page>` report what
+the app last sent to a widget tile or a dashboard page.
 
 The display component adds three console commands:
 
@@ -245,7 +264,31 @@ Every failure the validator prints starts with a stable rule key, such as
 for reading a layout file. Send the deck the compact form of a layout, because
 it rejects files over 32768 bytes without parsing them first.
 
-App-side actions and widgets dim on the deck while the app is offline.
+App-side actions and widgets dim on the deck while the app is offline. They
+draw at 40 percent opacity, and a tap on one logs `ui: offline <tile>` and sends
+nothing. Key, modifier, media, and page tiles never dim.
+
+### Layouts on the deck
+
+The firmware embeds `builtin.json` and draws its pages from it, so the deck has
+no page table in C. At boot it loads `/storage/layouts/<orientation>.json`. When
+that file is missing or invalid, the deck logs `layout: <reason>, using builtin`
+and starts on the built-in layout. Its parser accepts and rejects the same files
+as `check-layouts.mjs`, and it reports the same rule key.
+
+- `layout state` reports the layout on screen: `source` (`storage` or `builtin`),
+  `name`, `orientation`, `pages`, `tiles`, `icons_loaded`, `icons_missing`,
+  `bytes`, `load_ms`, and `error`.
+- `layout reload` and `layout use storage` load the stored file again.
+  `layout use builtin` switches to the built-in layout. A file that fails
+  validation never replaces the layout on screen. `layout state` reports why in
+  `error`.
+- `ui tile <id>` also reports the tile's `action` type and its `icon`.
+
+A `key` tile with `mods` sends its modifiers together with any active ones. A
+`page` tile slides to its page. App and widget tiles send a `press` event over
+the app link, and log `ui: press <page>/<tile> <kind>` when no link hook is set.
+A `file:<id>` icon is a 64 by 64 bitmap in [schema/icon-format.md](schema/icon-format.md).
 
 ## Unit tests
 

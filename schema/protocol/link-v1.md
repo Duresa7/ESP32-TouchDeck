@@ -94,8 +94,8 @@ sequence unique among outstanding requests and matches replies by sequence.
 | Ack, 3 | `xfer` u8, then `next` u16le, exactly 3 bytes |
 
 A maximum chunk has 1021 data bytes and a 1024-byte payload. The codec validates
-chunk and ack lengths. M2-01 dispatches only request messages. Chunk transfers,
-acks, and events have wire formats reserved for later milestones.
+chunk and ack lengths. Chunk transfers, acks, and events are described under
+Transfers, settings, and events below.
 
 Transfers use a window of four unacknowledged chunks. `idx` starts at zero, and
 `next` acknowledges every index below it and names the next contiguous index
@@ -112,7 +112,7 @@ since boot. Counters reset at boot.
 
 | Request | Successful response fields |
 |---|---|
-| `{"m":"hello"}` | `product:"touchdeck"`, `proto:1`, `elf_sha256`, `version`, `running`, `sinks:["log"]`, `recovery:false`, `layout:"builtin"` |
+| `{"m":"hello"}` | `product:"touchdeck"`, `proto:1`, `elf_sha256`, `version`, `running`, `sinks:["log","link"]`, `recovery:false`, `layout:"builtin"` or `"storage"` |
 | `{"m":"ping","n":N}` | `t`, and `n` echoed when it is a number, string, Boolean, or null |
 | `{"m":"link.state"}` | `online`, `frames_rx`, `frames_tx`, `crc_errors`, `dropped`, `last_rx_ms` |
 
@@ -139,6 +139,72 @@ another `hello` establishes the connection again.
 
 The text command `link state` returns the same state fields in the console's
 usual `{"cmd":"link","ok":true,...}` envelope.
+
+## Transfers, settings, and events (M2-05)
+
+Every message below follows the response rules above. A refusal is `ok:false` with an `error` string.
+
+| Request | Successful response fields |
+|---|---|
+| `{"m":"layout.put","orientation":"landscape"\|"portrait","bytes":N,"crc32":C}` | `xfer`, the id of the transfer it opened. `bytes` is 1 to 32768. |
+| `{"m":"layout.get","orientation":O}` | `xfer`, `bytes`, `crc32` of the stored file. `ok:false` with `no stored layout for <O>` when the slot is empty. The deck then sends the chunks. |
+| `{"m":"icon.put","id":"<16 lowercase hex>","bytes":12300,"crc32":C}` | `xfer`. The file is a `TDI1` icon, and its header is checked at `xfer.end`. |
+| `{"m":"icon.list","cursor":N}` | `ids`, at most 32 ids, and `next`, the cursor for the following page or `null` at the end. A missing `cursor` is 0. |
+| `{"m":"icon.rm","id":"<16 hex>"}` | no extra fields. `no such icon` when absent. |
+| `{"m":"settings.get"}` | `idle_timeout_s`, `orientation` |
+| `{"m":"settings.put","idle_timeout_s":S,"orientation":O}` | the stored `idle_timeout_s` and `orientation`, and `reboot_required`, true when the orientation changed. A field left out keeps its stored value. The idle timeout applies at once. |
+| `{"m":"store.stat"}` | `total_bytes`, `used_bytes`, `layouts` and `icons`, the file counts of `/storage/layouts` and `/storage/icons` |
+| `{"m":"xfer.end","xfer":X}` | After a layout put: the `layout state` fields `source`, `name`, `orientation`, `pages`, `tiles`, `icons_loaded`, `icons_missing`, `bytes`, `load_ms`, `error`. After an icon put: `id`. After a get: nothing extra. |
+
+One transfer is open at a time, and a new `put` or `get` replaces the open one. The deck holds a put in RAM
+and writes it only at `xfer.end`, so a transfer that is cut leaves nothing in storage. A put that sees no chunk for 2
+seconds is dropped. At `xfer.end` the deck checks the received size and CRC-32 (`received N of M bytes`, `crc32
+mismatch`), then parses and validates the file as a layout or checks an icon header. Only then does it swap the file in
+with `td_store_write_atomic`. A bad file never replaces a good one. A layout for the orientation the deck booted in is
+then loaded and shown without a reboot. A layout for the other orientation is stored and changes nothing on screen.
+`hello` now reports `sinks:["log","link"]` and the layout source in `layout`.
+
+**Chunks.** A put is a run of chunk frames from the app. Each is a request, type 2 with flags 0 and a fresh `seq`. The
+deck answers each with an ack, type 3 with flags 1 and the chunk's `seq`, naming the next index it wants. A duplicate, a
+gap, and a chunk past the window of four all get the same answer, with no data applied. A get runs the other way: the
+deck sends chunk requests with its own `seq`, and the app answers each with an ack that echoes it. The sender
+retransmits a chunk after 200 ms, five transmissions in all, then aborts.
+
+**Events.** An event is a message with flags 2 and `seq` 0. The deck sends events only while the link is online, and
+throws them away otherwise.
+
+| Event | Fields |
+|---|---|
+| `press` | `page`, `tile`, `kind` (`launch`, `open`, `command`, or `widget`), `seq`, `t`. `seq` counts presses since boot. |
+| `key.report` | `seq`, `t`, `type`, and `mods` and `keys` for `kbd`, or `usage` for `con`. `seq` is the key sink's count since boot, equal to the console key log's, so the app drops a duplicate and sees a gap. |
+| `key.resync` | `seq`, `t`, `mods`, `keys`, `usage`: the last state the sink saw. |
+
+The link sink queues reports without blocking, 64 deep, and never loses a release. When the queue is full it throws the
+queued reports away and sends one `key.resync` before anything newer. A consumer releases every key it holds on a `seq`
+gap, then applies the next report, and sets its state exactly on a `key.resync`.
+
+## Widgets and dashboards (M2-06)
+
+| Request | Successful response fields |
+|---|---|
+| `{"m":"widget.set","tile":T,"value":V,"caption":C,"bar":B,"stale":S}` | `tile`, and the stored `value`, `caption`, `bar`, and `stale` |
+| `{"m":"dashboard.set","page":P,"rows":[{"label":L,"value":V,"bar":B}]}` | `page`, `rows`, the number of rows stored |
+
+`tile` names a `widget` tile of the layout on screen, and `page` a `dashboard` page. Any other id is refused with
+`unknown tile` or `unknown page`. `value`, `caption`, `label`, and `bar` are optional. A missing string is empty, and
+a missing or null `bar` is -1, meaning no bar. A `bar` is a fraction from 0 to 1. The deck stores a negative bar as -1
+and a bar above 1 as 1. It keeps the first 24 bytes of `value`, 16 of `caption`, and 16 of each row's `label` and
+`value`, cut on a UTF-8 boundary. `stale` is false when missing, and the deck draws a stale value at 60 percent
+opacity. More than 8 rows are refused whole with `too many rows`. A field of the wrong type is refused. A set replaces
+the whole state of its tile or page.
+
+The link task writes a set into the deck's state table and marks the tile dirty. A 100 ms redraw timer draws each
+dirty tile once, so a burst of sets costs one redraw. A set is stored whether or not the link is online. The state
+table starts empty for every layout the deck loads.
+
+While the link is offline, the deck draws every `launch`, `open`, `command`, and `widget` tile at 40 percent opacity.
+A tap on a dimmed tile logs `ui: offline <tile>` and sends no `press` event. The deck checks the link on its redraw
+timer, so tiles brighten within 100 ms of `hello` and dim within 100 ms of the 5000 ms expiry.
 
 ## Concurrency and discovery
 

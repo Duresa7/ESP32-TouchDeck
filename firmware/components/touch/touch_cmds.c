@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "board_pins.h"
+#include "display.h"
 #include "esp_timer.h"
 #include "td_console.h"
 
@@ -89,7 +89,7 @@ static bool check_args(arg_t parsed, const char *usage)
 static void cmd_tap(int argc, char **argv)
 {
     static const uint32_t min[] = { 0, 0 };
-    static const uint32_t max[] = { TD_LCD_H_RES - 1, TD_LCD_V_RES - 1 };
+    const uint32_t max[] = { display_width() - 1U, display_height() - 1U };
     uint32_t v[2];
     if (!check_args(argc == 4 ? parse_args(argv + 2, min, max, v, 2) : ARG_BAD, "usage: touch tap <x> <y>") ||
         !require_touch()) {
@@ -119,8 +119,8 @@ static void cmd_tap(int argc, char **argv)
 static void cmd_swipe(int argc, char **argv)
 {
     static const uint32_t min[] = { 0, 0, 0, 0, 1 };
-    static const uint32_t max[] = { TD_LCD_H_RES - 1, TD_LCD_V_RES - 1, TD_LCD_H_RES - 1, TD_LCD_V_RES - 1,
-                                    TD_TOUCH_SWIPE_MAX_MS };
+    const uint32_t max[] = { display_width() - 1U, display_height() - 1U, display_width() - 1U,
+                             display_height() - 1U, TD_TOUCH_SWIPE_MAX_MS };
     uint32_t v[5];
     if (!check_args(argc == 7 ? parse_args(argv + 2, min, max, v, 5) : ARG_BAD,
                     "usage: touch swipe <x1> <y1> <x2> <y2> <ms>") ||

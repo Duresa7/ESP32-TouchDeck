@@ -37,10 +37,12 @@ key_engine_state_t key_engine_step(key_engine_state_t s, key_event_t ev, uint32_
     out->count = 0;
     switch (ev.type) {
     case KEY_EV_KEY_TAP:
+    case KEY_EV_CHORD:
         if (ev.usage == 0 || ev.usage > 255) {
             break;
         }
-        push(out, key_report_kbd(key_engine_mods_byte(&s), (uint8_t)ev.usage));
+        push(out, key_report_kbd(key_engine_mods_byte(&s) | (ev.type == KEY_EV_CHORD ? ev.mods & 0x0f : 0),
+                                 (uint8_t)ev.usage));
         push(out, key_report_kbd(0, 0));
         s = clear_one_shot(s);
         break;

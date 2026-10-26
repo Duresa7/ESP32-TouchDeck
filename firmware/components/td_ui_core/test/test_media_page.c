@@ -4,7 +4,7 @@
 #include "unity.h"
 #include "key_engine.h"
 #include "ui_pages.h"
-#include "ui_tile_action.h"
+#include "td_layout.h"
 
 typedef struct {
     unsigned key_calls;
@@ -13,9 +13,10 @@ typedef struct {
     uint16_t last_consumer;
 } recorder_t;
 
-static void record_key(void *ctx, uint8_t usage)
+static void record_key(void *ctx, uint8_t usage, uint8_t mods)
 {
     (void)usage;
+    (void)mods;
     ((recorder_t *)ctx)->key_calls++;
 }
 
@@ -39,16 +40,26 @@ static const struct {
     uint8_t row;
     uint8_t col;
     uint16_t usage;
+    const char *icon;
 } k_media[] = {
-    { "prev", 0, 0, 182 },    { "playpause", 0, 1, 205 }, { "next", 0, 2, 181 },
-    { "mute", 1, 0, 226 },    { "voldown", 1, 1, 234 },   { "volup", 1, 2, 233 },
+    { "prev", 0, 0, 182, "lv:prev" },  { "playpause", 0, 1, 205, "lv:play_pause" }, { "next", 0, 2, 181, "lv:next" },
+    { "mute", 1, 0, 226, "lv:mute" },  { "voldown", 1, 1, 234, "lv:volume_mid" },  { "volup", 1, 2, 233, "lv:volume_max" },
 };
 #define MEDIA_COUNT (sizeof k_media / sizeof k_media[0])
+
+/* The built-in pages, as td_layout parses them from the embedded builtin.json. */
+static const ui_page_t *builtin_pages(size_t *count)
+{
+    const td_layout_t *layout = td_layout_builtin();
+    TEST_ASSERT_NOT_NULL(layout);
+    *count = layout->page_count;
+    return layout->pages;
+}
 
 static const ui_page_t *page_by_id(const char *id)
 {
     size_t count = 0;
-    const ui_page_t *pages = ui_builtin_pages(&count);
+    const ui_page_t *pages = builtin_pages(&count);
     for (size_t i = 0; i < count; i++) {
         if (strcmp(pages[i].id, id) == 0) {
             return &pages[i];
@@ -67,9 +78,9 @@ TEST_CASE("each Media tile sits at its grid position and is bound to its consume
         TEST_ASSERT_NOT_NULL_MESSAGE(tile, k_media[i].id);
         TEST_ASSERT_EQUAL_UINT8_MESSAGE(k_media[i].row, tile->row, k_media[i].id);
         TEST_ASSERT_EQUAL_UINT8_MESSAGE(k_media[i].col, tile->col, k_media[i].id);
-        const ui_action_t action = ui_tile_action(tile);
-        TEST_ASSERT_EQUAL_MESSAGE(UI_ACTION_CONSUMER, action.kind, k_media[i].id);
-        TEST_ASSERT_EQUAL_UINT16_MESSAGE(k_media[i].usage, action.consumer, k_media[i].id);
+        TEST_ASSERT_EQUAL_MESSAGE(TD_ACTION_CONSUMER, tile->action.type, k_media[i].id);
+        TEST_ASSERT_EQUAL_UINT16_MESSAGE(k_media[i].usage, tile->action.consumer.usage, k_media[i].id);
+        TEST_ASSERT_EQUAL_STRING_MESSAGE(k_media[i].icon, tile->icon, k_media[i].id);
     }
 }
 

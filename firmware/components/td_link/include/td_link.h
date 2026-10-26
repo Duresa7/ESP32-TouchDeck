@@ -14,7 +14,13 @@ typedef struct {
     int64_t last_rx_ms;
 } td_link_state_t;
 
+#define TD_LINK_ID_MAX 16
+
 esp_err_t td_link_start(void);
+
+/* Queues a `press` event for a tap on an app or widget tile, from any task and without blocking. It is dropped when
+ * the queue is full or the app is not connected. */
+void td_link_press(const char *page, const char *tile, const char *kind);
 td_link_state_t td_link_state(void);
 void td_link_hello(void);
 cJSON *td_link_dispatch(const cJSON *request);

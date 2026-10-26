@@ -1,63 +1,6 @@
 #include <string.h>
 #include "ui_pages.h"
 
-#define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
-
-static const ui_tile_t k_fkeys_tiles[] = {
-    { "f1", "F1", 0, 0, 1, 1 },
-    { "f2", "F2", 0, 1, 1, 1 },
-    { "f3", "F3", 0, 2, 1, 1 },
-    { "f4", "F4", 0, 3, 1, 1 },
-    { "f5", "F5", 1, 0, 1, 1 },
-    { "f6", "F6", 1, 1, 1, 1 },
-    { "f7", "F7", 1, 2, 1, 1 },
-    { "f8", "F8", 1, 3, 1, 1 },
-    { "f9", "F9", 2, 0, 1, 1 },
-    { "f10", "F10", 2, 1, 1, 1 },
-    { "f11", "F11", 2, 2, 1, 1 },
-    { "f12", "F12", 2, 3, 1, 1 },
-    { "shift", "Shift", 3, 0, 1, 1 },
-    { "ctrl", "Ctrl", 3, 1, 1, 1 },
-    { "alt", "Alt", 3, 2, 1, 1 },
-    { "win", "Win", 3, 3, 1, 1 },
-};
-
-static const ui_tile_t k_media_tiles[] = {
-    { "prev", "Prev", 0, 0, 1, 1 },
-    { "playpause", "Play/Pause", 0, 1, 1, 1 },
-    { "next", "Next", 0, 2, 1, 1 },
-    { "mute", "Mute", 1, 0, 1, 1 },
-    { "voldown", "Vol -", 1, 1, 1, 1 },
-    { "volup", "Vol +", 1, 2, 1, 1 },
-};
-
-static const ui_page_t k_pages[] = {
-    {
-        .id = "fkeys",
-        .title = "F-Keys",
-        .rows = 4,
-        .cols = 4,
-        .tile_count = ARRAY_LEN(k_fkeys_tiles),
-        .tiles = k_fkeys_tiles,
-    },
-    {
-        .id = "media",
-        .title = "Media",
-        .rows = 2,
-        .cols = 3,
-        .tile_count = ARRAY_LEN(k_media_tiles),
-        .tiles = k_media_tiles,
-    },
-};
-
-const ui_page_t *ui_builtin_pages(size_t *count)
-{
-    if (count != NULL) {
-        *count = ARRAY_LEN(k_pages);
-    }
-    return k_pages;
-}
-
 static bool has_text(const char *s)
 {
     return s != NULL && s[0] != '\0';
@@ -138,4 +81,72 @@ const ui_tile_t *ui_page_find_tile(const ui_page_t *page, const char *id)
         }
     }
     return NULL;
+}
+
+const char *td_action_name(const td_action_t *action)
+{
+    if (action == NULL) {
+        return "none";
+    }
+    switch (action->type) {
+    case TD_ACTION_KEY:
+        return "key";
+    case TD_ACTION_MOD:
+        return "mod";
+    case TD_ACTION_CONSUMER:
+        return "consumer";
+    case TD_ACTION_PAGE:
+        return "page";
+    case TD_ACTION_APP:
+        return action->app.kind == TD_APP_LAUNCH ? "launch" : action->app.kind == TD_APP_OPEN ? "open" : "command";
+    case TD_ACTION_WIDGET:
+        return "widget";
+    case TD_ACTION_NONE:
+        break;
+    }
+    return "none";
+}
+
+bool ui_tile_click(const ui_tile_t *tile, const ui_action_ops_t *ops, void *ctx)
+{
+    if (tile == NULL || ops == NULL) {
+        return false;
+    }
+    const td_action_t *a = &tile->action;
+    switch (a->type) {
+    case TD_ACTION_KEY:
+        if (ops->key == NULL) {
+            return false;
+        }
+        ops->key(ctx, a->key.usage, a->key.mods);
+        return true;
+    case TD_ACTION_MOD:
+        if (ops->mod == NULL) {
+            return false;
+        }
+        ops->mod(ctx, a->mod.mod);
+        return true;
+    case TD_ACTION_CONSUMER:
+        if (ops->consumer == NULL) {
+            return false;
+        }
+        ops->consumer(ctx, a->consumer.usage);
+        return true;
+    case TD_ACTION_PAGE:
+        if (ops->page == NULL) {
+            return false;
+        }
+        ops->page(ctx, a->page.index);
+        return true;
+    case TD_ACTION_APP:
+    case TD_ACTION_WIDGET:
+        if (ops->press == NULL) {
+            return false;
+        }
+        ops->press(ctx, tile);
+        return true;
+    case TD_ACTION_NONE:
+        break;
+    }
+    return false;
 }

@@ -3,7 +3,9 @@
 #include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "cJSON.h"
 #include "esp_chip_info.h"
+#include "esp_heap_caps.h"
 #include "esp_flash.h"
 #include "esp_ota_ops.h"
 #include "esp_psram.h"
@@ -15,6 +17,8 @@
 #include "display.h"
 #include "touch.h"
 #include "ui.h"
+#include "key_sink_fanout.h"
+#include "key_sink_link.h"
 #include "key_sink_log.h"
 #include "keys.h"
 #include "power.h"
@@ -25,6 +29,7 @@ static const char *TAG = "touchdeck";
 static const char *SETTINGS_TAG = "settings";
 
 static key_sink_log_t s_key_log;
+static key_sink_fanout_t s_key_fanout;
 
 static void register_commands(const char *owner, const esp_console_cmd_t *cmds, size_t count)
 {
@@ -34,8 +39,17 @@ static void register_commands(const char *owner, const esp_console_cmd_t *cmds, 
     }
 }
 
+/* A layout of up to 32 KB parses into thousands of small cJSON nodes. Below 16 KB malloc prefers internal RAM, which
+ * the display and LVGL need, so cJSON takes PSRAM first and internal RAM only when PSRAM is full. */
+static void *cjson_malloc(size_t size)
+{
+    return heap_caps_malloc_prefer(size, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, MALLOC_CAP_8BIT);
+}
+
 void app_main(void)
 {
+    cJSON_InitHooks(&(cJSON_Hooks){ .malloc_fn = cjson_malloc, .free_fn = heap_caps_free });
+
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
 
@@ -84,8 +98,8 @@ void app_main(void)
     const esp_console_cmd_t *recovery_cmds = td_recovery_console_commands(&recovery_cmd_count);
     register_commands("Recovery", recovery_cmds, recovery_cmd_count);
 
-    /* The volume mounts before the console starts, and the settings load before the display does. Orientation is read
-     * and reported here and applied when the deck builds in the orientation milestone. */
+    /* The volume mounts before the console starts, and the settings load before the display does, which sizes its
+     * frame buffers for the stored orientation. A change to it applies on the next boot. */
     td_settings_t settings;
     td_settings_defaults(&settings);
     esp_err_t store_err = td_store_mount(NULL);
@@ -103,10 +117,11 @@ void app_main(void)
     ESP_LOGI(SETTINGS_TAG, "idle_timeout_s=%u orientation=%s", (unsigned)settings.idle_timeout_s,
              td_settings_orientation_name(settings.orientation));
 
-    /* The engine exists before the console can run a keys command. Its only sink here is the console key log.
-     * The USB HID sink plugs in behind the same key_sink_t in the post-product update. */
+    /* The engine exists before the console can run a keys command. Every report goes to the console key log and to the
+     * link, which mirrors it to the app. The USB HID sink takes the third slot in the post-product update. */
     key_sink_log_start(&s_key_log);
-    esp_err_t keys_err = keys_start(key_sink_log_sink(&s_key_log));
+    s_key_fanout = (key_sink_fanout_t){ .sinks = { key_sink_log_sink(&s_key_log), key_sink_link_sink() } };
+    esp_err_t keys_err = keys_start(key_sink_fanout_sink(&s_key_fanout));
     if (keys_err != ESP_OK) {
         ESP_LOGE(TAG, "Keys failed to start: %s", esp_err_to_name(keys_err));
     }
@@ -121,7 +136,9 @@ void app_main(void)
         ESP_LOGE(TAG, "Console failed to start: %s", esp_err_to_name(console_err));
     }
 
-    esp_err_t display_err = display_start(ui_build);
+    ui_set_press_hook(td_link_press);
+    ui_layout_boot(td_settings_orientation_name(settings.orientation));
+    esp_err_t display_err = display_start(settings.orientation == TD_ORIENTATION_PORTRAIT, ui_build);
     if (display_err != ESP_OK) {
         ESP_LOGE(TAG, "Display failed to start: %s", esp_err_to_name(display_err));
     }
