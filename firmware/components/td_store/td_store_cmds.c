@@ -423,7 +423,8 @@ static int cmd_store(int argc, char **argv)
     return 0;
 }
 
-static void settings_reply(const char *op, const td_settings_t *s, bool stored)
+/* reboot_required is true when a set changed the orientation, which the deck applies on its next boot. */
+static void settings_reply(const char *op, const td_settings_t *s, bool stored, bool reboot_required)
 {
     char buf[TD_REPLY_MAX];
     td_reply_t r;
@@ -432,6 +433,7 @@ static void settings_reply(const char *op, const td_settings_t *s, bool stored)
     td_reply_int(&r, "idle_timeout_s", s->idle_timeout_s);
     td_reply_str(&r, "orientation", td_settings_orientation_name(s->orientation));
     td_reply_bool(&r, "stored", stored);
+    td_reply_bool(&r, "reboot_required", reboot_required);
     send(&r);
 }
 
@@ -443,7 +445,7 @@ static void settings_get(void)
         send_error("settings", "store not mounted");
         return;
     }
-    settings_reply("get", &s, err != ESP_ERR_NOT_FOUND);
+    settings_reply("get", &s, err != ESP_ERR_NOT_FOUND, false);
 }
 
 static void settings_set(const char *field, const char *value)
@@ -457,6 +459,7 @@ static void settings_set(const char *field, const char *value)
     }
     td_store_lock();
     td_store_settings_load(&s);
+    const td_orientation_t before = s.orientation;
     if (idle) {
         uint32_t seconds;
         if (!parse_u32(value, &seconds)) {
@@ -485,7 +488,7 @@ static void settings_set(const char *field, const char *value)
         /* The gate may not be running, which a store that outlives power does not care about. */
         power_set_idle_timeout_s(s.idle_timeout_s, esp_timer_get_time());
     }
-    settings_reply("set", &s, true);
+    settings_reply("set", &s, true, s.orientation != before);
 }
 
 #define SETTINGS_USAGE "usage: settings get | set idle_timeout_s <seconds 1-86400> | set orientation landscape|portrait"

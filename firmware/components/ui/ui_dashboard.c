@@ -41,35 +41,36 @@ void ui_dashboard_build(lv_obj_t *page_obj, const ui_page_t *page)
         return;
     }
     const ui_theme_t *t = &ui_theme;
+    const ui_geometry_t *g = ui_geo();
     const ui_styles_t *st = ui_styles();
     const int32_t gap = t->dash.row_gap;
-    const int32_t row_h = (t->grid.h - (UI_DASH_ROWS_MAX - 1) * gap) / UI_DASH_ROWS_MAX;
-    const int32_t row_w = t->grid.w;
+    const int32_t row_h = (g->grid.h - (UI_DASH_ROWS_MAX - 1) * gap) / UI_DASH_ROWS_MAX;
+    const int32_t row_w = g->grid.w;
     row_objs_t *rows = s_rows[s_pages++];
     for (int i = 0; i < UI_DASH_ROWS_MAX; i++) {
         lv_obj_t *row = lv_obj_create(page_obj);
         lv_obj_remove_style_all(row);
         lv_obj_add_style(row, &st->dash_row, 0);
-        lv_obj_set_pos(row, t->grid.x, t->grid.y - t->band.y + i * (row_h + gap));
+        lv_obj_set_pos(row, g->grid.x, g->grid.y - g->band.y + i * (row_h + gap));
         lv_obj_set_size(row, row_w, row_h);
         lv_obj_set_scrollable(row, false);
         lv_obj_set_clickable(row, false);
         lv_obj_set_hidden(row, true);
 
         rows[i].row = row;
-        rows[i].label = row_label(row, t->dash.pad, t->dash.value_x - 2 * t->dash.pad);
-        rows[i].value = row_label(row, t->dash.value_x, t->dash.bar_x - t->dash.value_x - t->dash.pad);
+        rows[i].label = row_label(row, t->dash.pad, g->dash_value_x - 2 * t->dash.pad);
+        rows[i].value = row_label(row, g->dash_value_x, g->dash_bar_x - g->dash_value_x - t->dash.pad);
         lv_obj_set_style_text_color(rows[i].value, ui_color(t->color.text), 0);
 
         lv_obj_t *bar = lv_obj_create(row);
         lv_obj_remove_style_all(bar);
         lv_obj_add_style(bar, &st->widget_bar, 0);
         lv_obj_set_size(bar, 0, t->dash.bar_h);
-        lv_obj_align(bar, LV_ALIGN_LEFT_MID, t->dash.bar_x, 0);
+        lv_obj_align(bar, LV_ALIGN_LEFT_MID, g->dash_bar_x, 0);
         lv_obj_set_clickable(bar, false);
         lv_obj_set_hidden(bar, true);
         rows[i].bar = bar;
-        rows[i].bar_max = row_w - t->dash.bar_x - t->dash.pad;
+        rows[i].bar_max = row_w - g->dash_bar_x - t->dash.pad;
     }
 }
 

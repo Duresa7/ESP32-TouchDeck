@@ -3,7 +3,6 @@
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
-#include "board_pins.h"
 #include "display.h"
 #include "esp_log.h"
 #include "esp_lv_adapter.h"
@@ -19,8 +18,6 @@ static const char *TAG = "ui";
 static const char *LAYOUT_TAG = "layout";
 
 #define LOCK_TIMEOUT_MS 3000
-
-static const ui_pager_cfg_t k_pager_cfg = { .page_w = TD_LCD_H_RES, .slop = 16, .swipe = 96 };
 
 /*
  * The pager, the objects and the press bookkeeping belong to the LVGL task, and ui_goto() and a reload borrow them
@@ -202,7 +199,7 @@ static void start_bounce(int8_t direction)
     const int32_t rest = ui_pager_rest_x(&s.pager);
     lv_anim_t anim;
     lv_anim_init(&anim);
-    lv_anim_set_values(&anim, rest, rest + direction * ui_theme.bounce_px);
+    lv_anim_set_values(&anim, rest, rest + direction * ui_geo()->bounce_px);
     lv_anim_set_duration(&anim, ui_theme.anim_bounce_out_ms);
     lv_anim_set_reverse_duration(&anim, ui_theme.anim_bounce_back_ms);
     begin_slide(&anim, false);
@@ -321,13 +318,14 @@ static void stack_icon(lv_obj_t *label, lv_obj_t *icon, int32_t icon_h, int32_t 
 static void build_tile(lv_obj_t *parent, const ui_page_t *page, const ui_tile_t *tile)
 {
     const ui_styles_t *st = ui_styles();
-    const ui_rect_t r = ui_tile_rect(page, tile, ui_theme.grid, ui_theme.gap);
+    const ui_geometry_t *g = ui_geo();
+    const ui_rect_t r = ui_tile_rect(page, tile, g->grid, g->gap);
 
     lv_obj_t *obj = lv_obj_create(parent);
     lv_obj_remove_style_all(obj);
     lv_obj_add_style(obj, &st->tile, 0);
     lv_obj_add_style(obj, &st->tile_down, LV_STATE_PRESSED);
-    lv_obj_set_pos(obj, r.x, r.y - ui_theme.band.y);
+    lv_obj_set_pos(obj, r.x, r.y - g->band.y);
     lv_obj_set_size(obj, r.w, r.h);
     lv_obj_set_scrollable(obj, false);
     lv_obj_set_event_bubble(obj, true);
@@ -364,7 +362,7 @@ static void build_page(uint8_t index)
     const ui_page_t *page = &s.pages[index];
     lv_obj_t *obj = lv_obj_create(s.track);
     lv_obj_remove_style_all(obj);
-    lv_obj_set_size(obj, s.pager.cfg.page_w, ui_theme.band.h);
+    lv_obj_set_size(obj, s.pager.cfg.page_w, ui_geo()->band.h);
     lv_obj_set_pos(obj, index * s.pager.cfg.page_w, 0);
     lv_obj_set_scrollable(obj, false);
     lv_obj_set_event_bubble(obj, true);
@@ -380,13 +378,14 @@ static void build_page(uint8_t index)
 static void build_dots(lv_obj_t *screen)
 {
     const ui_styles_t *st = ui_styles();
+    const ui_geometry_t *g = ui_geo();
     for (uint8_t i = 0; i < s.page_count; i++) {
         lv_obj_t *dot = lv_obj_create(screen);
         lv_obj_remove_style_all(dot);
         lv_obj_add_style(dot, &st->dot, 0);
         lv_obj_add_style(dot, &st->dot_on, LV_STATE_CHECKED);
-        lv_obj_set_size(dot, ui_theme.dot_size, ui_theme.dot_size);
-        lv_obj_set_pos(dot, ui_dot_x(i, s.page_count) - ui_theme.dot_size / 2, ui_theme.dot_y - ui_theme.dot_size / 2);
+        lv_obj_set_size(dot, g->dot_size, g->dot_size);
+        lv_obj_set_pos(dot, ui_dot_x(i, s.page_count) - g->dot_size / 2, g->dot_y - g->dot_size / 2);
         lv_obj_set_scrollable(dot, false);
         lv_obj_set_clickable(dot, false);
         s.dots[i] = dot;
@@ -445,18 +444,19 @@ static void tear_down(void)
 
 static void build_objects(void)
 {
+    const ui_geometry_t *g = ui_geo();
     lv_obj_t *screen = lv_screen_active();
     lv_obj_t *band = lv_obj_create(screen);
     lv_obj_remove_style_all(band);
-    lv_obj_set_pos(band, ui_theme.band.x, ui_theme.band.y);
-    lv_obj_set_size(band, ui_theme.band.w, ui_theme.band.h);
+    lv_obj_set_pos(band, g->band.x, g->band.y);
+    lv_obj_set_size(band, g->band.w, g->band.h);
     lv_obj_set_scrollable(band, false);
     lv_obj_set_event_bubble(band, true);
 
     s.track = lv_obj_create(band);
     lv_obj_remove_style_all(s.track);
     lv_obj_set_pos(s.track, 0, 0);
-    lv_obj_set_size(s.track, s.pager.cfg.page_w * s.page_count, ui_theme.band.h);
+    lv_obj_set_size(s.track, s.pager.cfg.page_w * s.page_count, g->band.h);
     lv_obj_set_scrollable(s.track, false);
     lv_obj_set_event_bubble(s.track, true);
     s.track_x = 0;
@@ -469,7 +469,7 @@ static void build_objects(void)
     s.title_page = 0;
     lv_label_set_text_static(s.title, s.pages[0].title);
     lv_obj_add_style(s.title, &ui_styles()->title, 0);
-    lv_obj_set_pos(s.title, ui_theme.title_x, ui_theme.title_y);
+    lv_obj_set_pos(s.title, g->title_x, g->title_y);
 
     build_dots(screen);
 }
@@ -496,7 +496,9 @@ static void load_locked(const td_layout_t *layout, const ui_layout_info_t *info,
     atomic_store(&s.page, 0);
     layout_unlock();
 
-    ui_pager_init(&s.pager, &k_pager_cfg, count > 0 ? count : 1);
+    const ui_geometry_t *g = ui_geo();
+    const ui_pager_cfg_t cfg = { .page_w = g->screen.w, .slop = g->slop, .swipe = g->swipe };
+    ui_pager_init(&s.pager, &cfg, count > 0 ? count : 1);
     if (count > 0) {
         build_objects();
         show_page(0);
@@ -693,7 +695,7 @@ bool ui_tile_info(const char *id, ui_tile_info_t *out)
     }
     if (tile != NULL) {
         out->page = page;
-        out->rect = ui_tile_rect(&s.pages[page], tile, ui_theme.grid, ui_theme.gap);
+        out->rect = ui_tile_rect(&s.pages[page], tile, ui_geo()->grid, ui_geo()->gap);
         snprintf(out->label, sizeof out->label, "%s", tile->label);
         snprintf(out->action, sizeof out->action, "%s", td_action_name(&tile->action));
         snprintf(out->icon, sizeof out->icon, "%s", tile->icon != NULL ? tile->icon : "");

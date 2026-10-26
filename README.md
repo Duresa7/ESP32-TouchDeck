@@ -149,8 +149,12 @@ Settings are `{"idle_timeout_s": 600, "orientation": "landscape"}`. The deck rea
 them before the display starts and logs `settings: idle_timeout_s=<n>
 orientation=<o>`. An unknown field is ignored, a missing field takes its default,
 a timeout outside 1 to 86400 takes 600, and an unknown orientation takes
-`landscape`. The idle timeout reaches the power gate at boot. The orientation is
-stored and reported, and the display applies it in a later milestone.
+`landscape`. The idle timeout reaches the power gate at boot. The orientation
+applies at boot. In `portrait` the screen is the panel turned 90 degrees
+clockwise, 600 by 1024, and the deck loads `/storage/layouts/portrait.json`, or
+the built-in layout when that file is missing. Touch points, `touch` and `ui hold`
+injection, and `screenshot` all use the rotated size. The adapter rotates each
+frame in software, so portrait draws much slower than landscape.
 
 The `store` and `settings` console commands work on the volume:
 
@@ -166,7 +170,8 @@ The `store` and `settings` console commands work on the volume:
   reply that carries its CRC-32.
 - `settings get` and `settings set idle_timeout_s <n>` or
   `settings set orientation landscape|portrait` read and write the file. A new
-  timeout applies at once.
+  timeout applies at once. A new orientation applies on the next boot, so its
+  reply, like `settings.put`'s, carries `reboot_required` true.
 
 The local verification harness wraps the transfers as `serial store put <path>
 --from <file>` and `serial store get <path> --out <file>`, checking the CRC-32
