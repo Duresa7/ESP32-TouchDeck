@@ -212,7 +212,7 @@ static void cmd_stats(int argc)
 static void cmd_hold(int argc, char **argv)
 {
     static const uint32_t min[] = { 0, 0 };
-    static const uint32_t max[] = { TD_LCD_H_RES - 1, TD_LCD_V_RES - 1 };
+    const uint32_t max[] = { display_width() - 1U, display_height() - 1U };
     const bool begin = strcmp(argv[1], "begin") == 0;
     const bool move = strcmp(argv[1], "move") == 0;
     uint32_t v[2] = { 0, 0 };

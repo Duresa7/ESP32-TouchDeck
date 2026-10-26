@@ -194,8 +194,11 @@ after the lift.
 A boot that finds the marker deletes it and runs in recovery mode. The deck shows
 the built-in pages and the default settings from RAM, leaves every file in
 `/storage` as it was, logs `recovery: mode on, files kept`, and shows a `Recovery`
-caption in the title band. The link's `hello` reports `"recovery": true`. A
-layout or settings write by the app leaves recovery mode, and a restart does too.
+caption in the title band. The link's `hello` and `layout state` report
+`"recovery": true`, and `layout state` still names what is wrong with a stored
+layout that does not parse. A layout or settings write by the app, a
+`layout use storage`, or a restart leaves recovery mode. A plain `layout reload`
+in recovery mode reloads the built-in pages.
 
 The `recovery` console command has two forms:
 

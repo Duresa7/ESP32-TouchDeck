@@ -46,6 +46,7 @@ static struct {
     lv_obj_t *track;
     int32_t track_x;
     lv_obj_t *title;
+    lv_obj_t *recovery_caption;
     uint8_t title_page;
     lv_obj_t *dots[UI_PAGES_MAX];
     lv_obj_t *pressed_obj;
@@ -334,6 +335,7 @@ static void build_recovery_caption(lv_obj_t *screen, const ui_geometry_t *g)
     lv_obj_add_style(caption, &ui_styles()->title, 0);
     lv_obj_set_style_text_color(caption, ui_color(RECOVERY_CAPTION_COLOR), 0);
     lv_obj_align(caption, LV_ALIGN_TOP_RIGHT, -g->title_x, g->title_y);
+    s.recovery_caption = caption;
 }
 
 /* An icon above the label, with the label in the caption font. */
@@ -475,6 +477,7 @@ static void tear_down(void)
     lv_obj_clean(screen);
     s.track = NULL;
     s.title = NULL;
+    s.recovery_caption = NULL;
     memset(s.dots, 0, sizeof s.dots);
 }
 
@@ -590,7 +593,19 @@ void ui_layout_boot(const char *orientation)
     size_t bytes = 0;
     td_layout_error_t err;
     char reason[UI_LAYOUT_ERROR_MAX] = "";
-    if (td_layout_load_file(path, &stored, &bytes, &err)) {
+    if (td_recovery_mode()) {
+        /* Recovery runs the built-in pages. The stored file is still parsed, so `layout state` names what is wrong
+         * with it, and then dropped. */
+        if (td_layout_load_file(path, &stored, &bytes, &err)) {
+            td_layout_free(stored);
+            stored = NULL;
+        } else {
+            describe_error(reason, sizeof reason, &err);
+        }
+        ESP_LOGW(LAYOUT_TAG, "recovery mode, using builtin");
+        s.boot = td_layout_builtin();
+        bytes = 0;
+    } else if (td_layout_load_file(path, &stored, &bytes, &err)) {
         s.boot = stored;
     } else {
         describe_error(reason, sizeof reason, &err);
@@ -633,6 +648,8 @@ bool ui_layout_reload(bool use_builtin, td_layout_error_t *err)
     td_layout_t *stored = NULL;
     const td_layout_t *next = NULL;
     size_t bytes = 0;
+    /* Recovery keeps the built-in pages until a deliberate act leaves it, so a plain reload reloads them. */
+    use_builtin = use_builtin || td_recovery_mode();
     if (use_builtin) {
         next = td_layout_builtin();
     } else {
@@ -673,6 +690,22 @@ bool ui_layout_reload(bool use_builtin, td_layout_error_t *err)
 const char *ui_layout_slot(void)
 {
     return s.orientation[0] != '\0' ? s.orientation : "landscape";
+}
+
+void ui_leave_recovery(const char *why)
+{
+    if (!td_recovery_mode()) {
+        return;
+    }
+    td_recovery_leave(why);
+    if (!ui_ready() || esp_lv_adapter_lock(LOCK_TIMEOUT_MS) != ESP_OK) {
+        return;
+    }
+    if (s.recovery_caption != NULL) {
+        lv_obj_delete(s.recovery_caption);
+        s.recovery_caption = NULL;
+    }
+    esp_lv_adapter_unlock();
 }
 
 bool ui_ready(void)
