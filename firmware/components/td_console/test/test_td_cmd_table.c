@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include "unity.h"
 #include "td_cmd_table.h"
 
@@ -80,9 +81,10 @@ TEST_CASE("a command esp_console would refuse is refused up front", "[td_cmd_tab
 
 TEST_CASE("a full table refuses a batch that does not fit and adds none of it", "[td_cmd_table]")
 {
-    td_cmd_table_t t = { 0 };
-    char names_buf[TD_CMD_TABLE_MAX + 1][4];
-    esp_console_cmd_t cmds[TD_CMD_TABLE_MAX + 1];
+    static td_cmd_table_t t;
+    static char names_buf[TD_CMD_TABLE_MAX + 1][4];
+    static esp_console_cmd_t cmds[TD_CMD_TABLE_MAX + 1];
+    memset(&t, 0, sizeof t);
     for (size_t i = 0; i <= TD_CMD_TABLE_MAX; i++) {
         snprintf(names_buf[i], sizeof names_buf[i], "c%02u", (unsigned)i);
         cmds[i] = (esp_console_cmd_t)CMD(names_buf[i]);

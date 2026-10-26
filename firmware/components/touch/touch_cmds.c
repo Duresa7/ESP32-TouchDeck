@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "board_pins.h"
+#include "display.h"
 #include "esp_timer.h"
 #include "td_console.h"
 
@@ -69,6 +69,8 @@ static const char *injection_error(esp_err_t err)
         return "queue full";
     case ESP_ERR_TIMEOUT:
         return "not consumed in time";
+    case ESP_ERR_NOT_FINISHED:
+        return "busy";
     default:
         return "inject failed";
     }
@@ -87,7 +89,7 @@ static bool check_args(arg_t parsed, const char *usage)
 static void cmd_tap(int argc, char **argv)
 {
     static const uint32_t min[] = { 0, 0 };
-    static const uint32_t max[] = { TD_LCD_H_RES - 1, TD_LCD_V_RES - 1 };
+    const uint32_t max[] = { display_width() - 1U, display_height() - 1U };
     uint32_t v[2];
     if (!check_args(argc == 4 ? parse_args(argv + 2, min, max, v, 2) : ARG_BAD, "usage: touch tap <x> <y>") ||
         !require_touch()) {
@@ -117,8 +119,8 @@ static void cmd_tap(int argc, char **argv)
 static void cmd_swipe(int argc, char **argv)
 {
     static const uint32_t min[] = { 0, 0, 0, 0, 1 };
-    static const uint32_t max[] = { TD_LCD_H_RES - 1, TD_LCD_V_RES - 1, TD_LCD_H_RES - 1, TD_LCD_V_RES - 1,
-                                    TD_TOUCH_SWIPE_MAX_MS };
+    const uint32_t max[] = { display_width() - 1U, display_height() - 1U, display_width() - 1U,
+                             display_height() - 1U, TD_TOUCH_SWIPE_MAX_MS };
     uint32_t v[5];
     if (!check_args(argc == 7 ? parse_args(argv + 2, min, max, v, 5) : ARG_BAD,
                     "usage: touch swipe <x1> <y1> <x2> <y2> <ms>") ||
@@ -199,14 +201,63 @@ static void cmd_stats(int argc)
     td_reply_int(&r, "contact_frames", st.contact_frames);
     td_reply_int(&r, "contact_ms", st.contact_ms);
     td_reply_int(&r, "contact_hz", st.contact_hz);
+    td_reply_int(&r, "watch_samples", st.watch_samples);
+    td_reply_int(&r, "watch_ns_avg", st.watch_ns_avg);
+    td_reply_int(&r, "watch_ns_max", st.watch_ns_max);
+    td_reply_bool(&r, "hold", st.hold);
     td_reply_int(&r, "uptime_ms", esp_timer_get_time() / 1000);
+    send(&r);
+}
+
+static void cmd_hold(int argc, char **argv)
+{
+    static const uint32_t min[] = { 0, 0 };
+    const uint32_t max[] = { display_width() - 1U, display_height() - 1U };
+    const bool begin = strcmp(argv[1], "begin") == 0;
+    const bool move = strcmp(argv[1], "move") == 0;
+    uint32_t v[2] = { 0, 0 };
+    if (begin || move) {
+        if (!check_args(argc == 4 ? parse_args(argv + 2, min, max, v, 2) : ARG_BAD,
+                        begin ? "usage: touch begin <x> <y>" : "usage: touch move <x> <y>")) {
+            return;
+        }
+    } else if (argc != 2) {
+        send_error("usage: touch end");
+        return;
+    }
+    if (!require_touch()) {
+        return;
+    }
+
+    uint32_t held_ms = 0;
+    const esp_err_t err = begin ? touch_hold_begin((uint16_t)v[0], (uint16_t)v[1])
+                          : move ? touch_hold_move((uint16_t)v[0], (uint16_t)v[1])
+                                 : touch_hold_end(&held_ms);
+    if (err != ESP_OK) {
+        send_error(err == ESP_ERR_NOT_FOUND ? "no hold" : err == ESP_ERR_NOT_ALLOWED ? "finger down"
+                                                                                       : injection_error(err));
+        return;
+    }
+
+    char buf[TD_REPLY_MAX];
+    td_reply_t r;
+    td_reply_begin(&r, buf, sizeof buf, "touch", true);
+    td_reply_str(&r, "op", argv[1]);
+    if (!begin && !move) {
+        td_reply_int(&r, "held_ms", held_ms);
+    } else {
+        td_reply_int(&r, "x", v[0]);
+        td_reply_int(&r, "y", v[1]);
+    }
     send(&r);
 }
 
 static int cmd_touch(int argc, char **argv)
 {
     const char *sub = argc > 1 ? argv[1] : "";
-    if (strcmp(sub, "tap") == 0) {
+    if (strcmp(sub, "begin") == 0 || strcmp(sub, "move") == 0 || strcmp(sub, "end") == 0) {
+        cmd_hold(argc, argv);
+    } else if (strcmp(sub, "tap") == 0) {
         cmd_tap(argc, argv);
     } else if (strcmp(sub, "swipe") == 0) {
         cmd_swipe(argc, argv);
@@ -215,7 +266,8 @@ static int cmd_touch(int argc, char **argv)
     } else if (strcmp(sub, "stats") == 0) {
         cmd_stats(argc);
     } else {
-        send_error("usage: touch tap <x> <y> | swipe <x1> <y1> <x2> <y2> <ms> | log on|off | stats");
+        send_error("usage: touch tap <x> <y> | swipe <x1> <y1> <x2> <y2> <ms> | begin <x> <y> | move <x> <y> | end | "
+                   "log on|off | stats");
     }
     return 0;
 }
@@ -224,7 +276,8 @@ const esp_console_cmd_t *touch_console_commands(size_t *count)
 {
     static const esp_console_cmd_t cmds[] = {
         { .command = "touch", .help = "inject taps and swipes, log real touches, report touch statistics",
-          .hint = "tap <x> <y> | swipe <x1> <y1> <x2> <y2> <ms> | log on|off | stats", .func = cmd_touch },
+          .hint = "tap <x> <y> | swipe <x1> <y1> <x2> <y2> <ms> | begin <x> <y> | move <x> <y> | end | log on|off | stats",
+          .func = cmd_touch },
     };
     *count = sizeof cmds / sizeof cmds[0];
     return cmds;

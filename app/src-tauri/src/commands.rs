@@ -874,15 +874,20 @@ pub fn approval_answer(app: AppHandle, id: u64, answer: String) -> Result<(), St
 /// Brings the window to the front without sending a key, so mirrored keys reach the key
 /// monitor. Returns whether the window is in front.
 #[tauri::command]
-pub fn focus_window(window: tauri::WebviewWindow) -> bool {
+pub fn focus_window(window: tauri::WebviewWindow, webview: tauri::Webview) -> bool {
     #[cfg(windows)]
     {
-        window
+        let front = window
             .hwnd()
-            .is_ok_and(|hwnd| td_host::bring_to_front(hwnd.0 as isize))
+            .is_ok_and(|hwnd| td_host::bring_to_front(hwnd.0 as isize));
+        // Focus WebView2 itself. Focusing only the native frame leaves document.hasFocus()
+        // false after another window takes focus. Webview::set_focus sends no fallback key.
+        let focused = webview.set_focus().is_ok();
+        front && focused
     }
     #[cfg(not(windows))]
     {
+        let _ = webview;
         let _ = window.set_focus();
         window.is_focused().unwrap_or(false)
     }

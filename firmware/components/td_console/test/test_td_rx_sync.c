@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "unity.h"
+#include "td_frame.h"
 #include "td_rx_sync.h"
 
 #define QUEUE_MAX 2048
@@ -22,9 +23,12 @@ static struct {
     size_t queued_len;
     char line[64];
     td_line_t line_state;
+    uint32_t now;
     uint8_t frame[TD_RX_FRAME_MAX];
     size_t frame_len;
     size_t frames;
+    uint8_t seq;
+    size_t refused;
     size_t frame_after_text;
     size_t bad_frames;
     char ran[RAN_MAX];
@@ -34,13 +38,15 @@ static struct {
 static void frame_received(const uint8_t *body, size_t len, void *context)
 {
     TEST_ASSERT_EQUAL_PTR(&s_model, context);
-    if (!body) {
+    td_frame_t f;
+    if (td_frame_decode(body, len, &f) != TD_FRAME_OK) {
         s_model.bad_frames++;
         return;
     }
     memcpy(s_model.frame, body, len);
     s_model.frame_len = len;
     s_model.frames++;
+    s_model.seq = f.seq;
     s_model.frame_after_text = s_model.queued_len;
 }
 
@@ -76,13 +82,26 @@ static size_t feed_with_space(const char *s, size_t n, size_t space)
     TEST_ASSERT_TRUE(n <= sizeof buf);
     memcpy(buf, s, n);
     s_model.space = space;
-    td_rx_split(&s_model.split, buf, n, text_received, frame_received, &s_model);
+    td_rx_split(&s_model.split, s_model.now, buf, n, text_received, frame_received, &s_model);
     return space - s_model.space;
 }
 
 static size_t feed(const char *s, size_t n)
 {
     return feed_with_space(s, n, s_model.cap - s_model.used);
+}
+
+static void feed_bytes(const uint8_t *p, size_t n)
+{
+    for (size_t off = 0; off < n; off += 64) {
+        feed((const char *)p + off, n - off < 64 ? n - off : 64);
+    }
+}
+
+static uint32_t at(uint32_t now)
+{
+    s_model.now = now;
+    return td_rx_split_expire(&s_model.split, now, frame_received, &s_model);
 }
 
 static void console_byte(char c)
@@ -92,6 +111,7 @@ static void console_byte(char c)
     td_line_status_t status = td_line_feed(&s_model.line_state, (unsigned char)c, false,
                                           s_model.line, sizeof s_model.line, echo, &echo_len);
     TEST_ASSERT_NOT_EQUAL(TD_LINE_TOO_LONG, status);
+    s_model.refused += status == TD_LINE_CONTROL;
     if (status == TD_LINE_OK && s_model.line[0]) {
         size_t len = strlen(s_model.line);
         TEST_ASSERT_TRUE(s_model.ran_len + len + 1 < RAN_MAX);
@@ -393,9 +413,18 @@ TEST_CASE("carriage return input never runs a glued line and accounts for every 
     fuzz(10, 128, "\r");
 }
 
-/* The splitter checks only the length field, so the last two body bytes stand in for a CRC. */
-#define FRAME "\xc0\x01\x01\x07\x00\x02\x00\xdb\xdc\xdb\xdd\x33\x44\xc0"
-#define FRAME_BODY "\x01\x01\x07\x00\x02\x00\xc0\xdb\x33\x44"
+#define FRAME "\xc0\x01\x01\x07\x00\x02\x00\xdb\xdc\xdb\xdd\xe7\x87\xc0"
+#define FRAME_BODY "\x01\x01\x07\x00\x02\x00\xc0\xdb\xe7\x87"
+#define BAD_CRC_FRAME "\xc0\x01\x01\x07\x00\x02\x00\xdb\xdc\xdb\xdd\xe7\x86\xc0"
+
+static size_t message(uint8_t seq, const char *json, uint8_t *wire, size_t cap)
+{
+    td_frame_t f = { .type = TD_FRAME_MESSAGE, .seq = seq, .len = (uint16_t)strlen(json),
+                     .payload = (const uint8_t *)json };
+    size_t n = td_frame_encode(&f, wire, cap);
+    TEST_ASSERT_NOT_EQUAL(0, n);
+    return n;
+}
 
 TEST_CASE("a frame between text lines reaches only the frame receiver", "[td_rx_sync]")
 {
@@ -413,7 +442,7 @@ TEST_CASE("a frame and its escape survive separate USB reads", "[td_rx_sync]")
 {
     model_reset(QUEUE_MAX);
     FEED("he\xc0\x01\x01\x07\x00\x02\x00\xdb", 100);
-    FEED("\xdc\xdb\xdd\x33\x44\xc0" "ap\n", 100);
+    FEED("\xdc\xdb\xdd\xe7\x87\xc0" "ap\n", 100);
     drain(QUEUE_MAX);
     TEST_ASSERT_EQUAL_STRING("heap\n", s_model.ran);
     TEST_ASSERT_EQUAL_UINT(1, s_model.frames);
@@ -462,13 +491,13 @@ TEST_CASE("frames still arrive while text overflow discards a line", "[td_rx_syn
     TEST_ASSERT_EQUAL_UINT(5, s_model.dropped);
 }
 
-TEST_CASE("a complete frame with any CRC hands the port back to text", "[td_rx_sync]")
+TEST_CASE("a frame with a bad CRC counts one error and the text after it runs at once", "[td_rx_sync]")
 {
     model_reset(QUEUE_MAX);
-    FEED("\xc0\x01\x01\x07\x00\x00\x00\xff\xff\xc0version\n", 100);
+    FEED(BAD_CRC_FRAME "version\n", 100);
     drain(QUEUE_MAX);
-    TEST_ASSERT_EQUAL_UINT(1, s_model.frames);
-    TEST_ASSERT_EQUAL_UINT(0, s_model.bad_frames);
+    TEST_ASSERT_EQUAL_UINT(0, s_model.frames);
+    TEST_ASSERT_EQUAL_UINT(1, s_model.bad_frames);
     TEST_ASSERT_EQUAL_STRING("version\n", s_model.ran);
 }
 
@@ -499,12 +528,12 @@ TEST_CASE("a doubled opening delimiter still frames", "[td_rx_sync]")
 TEST_CASE("oversized and malformed frames resynchronise on the next frame", "[td_rx_sync]")
 {
     model_reset(QUEUE_MAX);
-    FEED("\xc0", 100);
-    for (size_t i = 0; i < TD_RX_FRAME_MAX + 1; i++) {
+    FEED("\xc0\x01", 100);
+    for (size_t i = 0; i < TD_RX_FRAME_MAX; i++) {
         FEED("x", 100);
     }
-    FEED("\xc0" FRAME "version\n\xc0\xdb\xc0" FRAME "heap\n", 100);
-    FEED("\xc0\xdbx\xc0" FRAME "help\n", 100);
+    FEED("\xc0" FRAME "version\n\xc0\x01\xdb\xc0" FRAME "heap\n", 100);
+    FEED("\xc0\x01\xdbx\xc0" FRAME "help\n", 100);
     drain(QUEUE_MAX);
     TEST_ASSERT_EQUAL_UINT(3, s_model.bad_frames);
     TEST_ASSERT_EQUAL_UINT(3, s_model.frames);
@@ -512,18 +541,157 @@ TEST_CASE("oversized and malformed frames resynchronise on the next frame", "[td
     TEST_ASSERT_EQUAL_STRING("version\nheap\nhelp\n", s_model.ran);
 }
 
-TEST_CASE("an abandoned frame gives the port back to text once the host goes idle", "[td_rx_sync]")
+TEST_CASE("a delimiter followed by anything but ver 1 opens no frame", "[td_rx_sync]")
 {
     model_reset(QUEUE_MAX);
-    td_rx_split_idle(&s_model.split, frame_received, &s_model);
-    FEED("\xc0", 100);
-    td_rx_split_idle(&s_model.split, frame_received, &s_model);
+    FEED("\xc0version\n\xc0\xdb\xdd\n\xc0\xc0heap\n", 100);
+    drain(QUEUE_MAX);
+    EXPECT_QUEUED("version\n\xdb\xdd\nheap\n");
+    TEST_ASSERT_EQUAL_UINT(0, s_model.frames);
     TEST_ASSERT_EQUAL_UINT(0, s_model.bad_frames);
+}
+
+TEST_CASE("a delimiter after a frame swallows none of the text that follows", "[td_rx_sync]")
+{
+    model_reset(QUEUE_MAX);
+    FEED(FRAME "\xc0" "version\r\n", 100);
+    drain(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_UINT(1, s_model.frames);
+    TEST_ASSERT_EQUAL_UINT(0, s_model.bad_frames);
+    TEST_ASSERT_EQUAL_STRING("version\n", s_model.ran);
+}
+
+TEST_CASE("text right after a short frame runs at once", "[td_rx_sync]")
+{
+    model_reset(QUEUE_MAX);
+    FEED("\xc0\x01\x01\x01\xc0", 100);
+    for (uint32_t i = 1; i <= 10; i++) {
+        s_model.now = 100 * i;
+        FEED("version\r\n", 100);
+    }
+    FEED("uptime\r\n", 100);
+    drain(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_UINT(1, s_model.bad_frames);
+    TEST_ASSERT_EQUAL_UINT(11, lines_ran());
+}
+
+TEST_CASE("text that pads a cut frame to its length never hides the next frame", "[td_rx_sync]")
+{
+    uint8_t a[64];
+    uint8_t b[64];
+    message(9, "{\"m\":\"ping\",\"n\":0}", a, sizeof a);
+    size_t bn = message(10, "{\"m\":\"ping\",\"n\":1}", b, sizeof b);
+    model_reset(QUEUE_MAX);
+    feed_bytes(a, 1 + 17);
+    FEED("version\r\n", 100);
+    feed_bytes(b, bn);
+    FEED("uptime\r\n", 100);
+    drain(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_UINT(1, s_model.frames);
+    TEST_ASSERT_EQUAL_UINT(10, s_model.seq);
+    TEST_ASSERT_EQUAL_UINT(1, s_model.bad_frames);
+    TEST_ASSERT_EQUAL_STRING("uptime\n", s_model.ran);
+}
+
+TEST_CASE("a closed frame followed at once by ver 1 opens the next frame", "[td_rx_sync]")
+{
+    uint8_t a[64];
+    uint8_t b[64];
+    size_t an = message(1, "{\"m\":\"hello\"}", a, sizeof a);
+    size_t bn = message(2, "{\"m\":\"hello\"}", b, sizeof b);
+    model_reset(QUEUE_MAX);
+    feed_bytes(a, an);
+    feed_bytes(b + 1, bn - 1);
+    FEED("uptime\n", 100);
+    feed_bytes(a, an - 1);
+    feed_bytes(b, bn);
+    FEED("help\n", 100);
+    drain(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_UINT(4, s_model.frames);
+    TEST_ASSERT_EQUAL_UINT(2, s_model.seq);
+    TEST_ASSERT_EQUAL_UINT(0, s_model.bad_frames);
+    TEST_ASSERT_EQUAL_STRING("uptime\nhelp\n", s_model.ran);
+}
+
+TEST_CASE("random garbage before a frame never costs that frame or runs its body", "[td_rx_sync]")
+{
+    static const uint8_t alphabet[] = { 0xc0, 0xdb, 0xdc, 0xdd, 0x00, 0x01, 0x02, 0x08, 0x0a, 0x0d, 0x12, 'a', 0x7f };
+    uint8_t v[64];
+    size_t vn = message(77, "{\"m\":\"ping\",\"n\":5}", v, sizeof v);
+    uint32_t x = 7;
+    for (int run = 0; run < 10000; run++) {
+        uint8_t garbage[40];
+        size_t gn = 1 + rnd(&x) % sizeof garbage;
+        for (size_t i = 0; i < gn; i++) {
+            garbage[i] = alphabet[rnd(&x) % sizeof alphabet];
+        }
+        model_reset(QUEUE_MAX);
+        feed_bytes(garbage, gn);
+        feed_bytes(v, vn);
+        FEED("\r\nversion\r\n", 100);
+        drain(QUEUE_MAX);
+        TEST_ASSERT_EQUAL_UINT(77, s_model.seq);
+        TEST_ASSERT_NULL(strstr(s_model.ran, "ping"));
+    }
+}
+
+TEST_CASE("text every 100 ms after a cut frame runs from the frame's deadline on", "[td_rx_sync]")
+{
+    uint8_t w[64];
+    size_t wn = message(1, "{\"m\":\"hello\"}", w, sizeof w);
+    for (uint32_t gap = 100; gap <= 500; gap += 200) {
+        model_reset(QUEUE_MAX);
+        s_model.now = 1000;
+        feed_bytes(w, wn / 2);
+        size_t after_deadline = 0;
+        for (uint32_t i = 1; i <= 20; i++) {
+            s_model.now = 1000 + gap * i;
+            FEED("uptime\n", 100);
+            after_deadline += gap * i >= TD_RX_FRAME_DEADLINE_MS;
+        }
+        drain(QUEUE_MAX);
+        TEST_ASSERT_EQUAL_UINT(after_deadline, lines_ran());
+        TEST_ASSERT_EQUAL_UINT(1, s_model.bad_frames);
+    }
+}
+
+TEST_CASE("the frame deadline runs from the opener, not from the last byte", "[td_rx_sync]")
+{
+    uint8_t w[64];
+    size_t wn = message(1, "{\"m\":\"hello\"}", w, sizeof w);
+    model_reset(QUEUE_MAX);
+    feed_bytes(w, 5);
+    s_model.now = 300;
+    feed_bytes(w + 5, 5);
+    TEST_ASSERT_EQUAL_UINT32(1, at(TD_RX_FRAME_DEADLINE_MS - 1));
+    feed_bytes(w + 10, wn - 10);
+    TEST_ASSERT_EQUAL_UINT(1, s_model.frames);
+
+    model_reset(QUEUE_MAX);
+    feed_bytes(w, 5);
+    s_model.now = 300;
+    feed_bytes(w + 5, 5);
+    TEST_ASSERT_EQUAL_UINT32(TD_RX_NO_DEADLINE, at(TD_RX_FRAME_DEADLINE_MS));
+    TEST_ASSERT_EQUAL_UINT(1, s_model.bad_frames);
+    TEST_ASSERT_EQUAL_UINT(0, s_model.frames);
+}
+
+TEST_CASE("an abandoned frame gives the port back to text at its deadline", "[td_rx_sync]")
+{
+    model_reset(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_UINT32(TD_RX_NO_DEADLINE, at(0));
+    FEED("\xc0", 100);
+    TEST_ASSERT_EQUAL_UINT32(TD_RX_FRAME_DEADLINE_MS, at(0));
+    TEST_ASSERT_EQUAL_UINT32(TD_RX_NO_DEADLINE, at(TD_RX_FRAME_DEADLINE_MS));
+    TEST_ASSERT_EQUAL_UINT(0, s_model.bad_frames);
+    s_model.now = 1000;
     FEED("\xc0\x01\x01\x05", 100);
-    td_rx_split_idle(&s_model.split, frame_received, &s_model);
+    TEST_ASSERT_EQUAL_UINT32(1, at(1000 + TD_RX_FRAME_DEADLINE_MS - 1));
+    at(1000 + TD_RX_FRAME_DEADLINE_MS);
     FEED("heap\n", 100);
-    FEED("\xc0\xdb", 100);
-    td_rx_split_idle(&s_model.split, frame_received, &s_model);
+    s_model.now = 2000;
+    FEED("\xc0\x01\xdb", 100);
+    at(2000 + TD_RX_FRAME_DEADLINE_MS);
     FEED("help\n", 100);
     drain(QUEUE_MAX);
     TEST_ASSERT_EQUAL_UINT(2, s_model.bad_frames);
@@ -531,21 +699,54 @@ TEST_CASE("an abandoned frame gives the port back to text once the host goes idl
     TEST_ASSERT_EQUAL_STRING("heap\nhelp\n", s_model.ran);
 }
 
-TEST_CASE("a fully escaped maximum body fits the decoded receive buffer", "[td_rx_sync]")
+TEST_CASE("a frame cut by a stall past its deadline is lost and its tail is refused", "[td_rx_sync]")
+{
+    uint8_t w[64];
+    size_t wn = message(4, "{\"m\":\"hello\"}", w, sizeof w);
+    TEST_ASSERT_EQUAL_HEX8(0x0c, w[wn - 2]);
+    model_reset(QUEUE_MAX);
+    feed_bytes(w, wn / 2);
+    s_model.now = TD_RX_FRAME_DEADLINE_MS;
+    feed_bytes(w + wn / 2, wn - wn / 2);
+    FEED("uptime\n", 100);
+    drain(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_UINT(0, s_model.frames);
+    TEST_ASSERT_EQUAL_UINT(1, s_model.bad_frames);
+    TEST_ASSERT_EQUAL_STRING("", s_model.ran);
+    TEST_ASSERT_EQUAL_UINT(1, s_model.refused);
+}
+
+TEST_CASE("a line holding a control byte is refused and the next line runs", "[td_rx_sync]")
 {
     model_reset(QUEUE_MAX);
-    FEED("\xc0\x01\x02\xdb\xdc\x00\x00\x04", 100);
-    for (size_t i = 0; i < 1024 + 2; i++) {
-        feed_with_space(i % 2 ? "\xdb\xdd" : "\xdb\xdc", 2, 100);
+    FEED("\x01\x02version\nhe\x1b\bap\na\tb\n", 100);
+    drain(QUEUE_MAX);
+    TEST_ASSERT_EQUAL_UINT(1, s_model.refused);
+    TEST_ASSERT_EQUAL_STRING("heap\na\tb\n", s_model.ran);
+}
+
+TEST_CASE("a fully escaped maximum body fits the decoded receive buffer", "[td_rx_sync]")
+{
+    static uint8_t payload[TD_FRAME_PAYLOAD_MAX];
+    static uint8_t wire[TD_FRAME_WIRE_MAX];
+    for (size_t i = 0; i < sizeof payload; i++) {
+        payload[i] = i % 2 ? 0xdb : 0xc0;
     }
-    FEED("\xc0version\n", 100);
+    td_frame_t f = { .type = TD_FRAME_CHUNK, .seq = 0xc0, .len = sizeof payload, .payload = payload };
+    size_t n = td_frame_encode(&f, wire, sizeof wire);
+    TEST_ASSERT_NOT_EQUAL(0, n);
+    model_reset(QUEUE_MAX);
+    for (size_t off = 0; off < n; off += 2) {
+        feed_bytes(wire + off, n - off < 2 ? n - off : 2);
+    }
+    FEED("version\n", 100);
     drain(QUEUE_MAX);
     TEST_ASSERT_EQUAL_UINT(1, s_model.frames);
     TEST_ASSERT_EQUAL_UINT(0, s_model.bad_frames);
-    TEST_ASSERT_EQUAL_UINT(1032, s_model.frame_len);
+    TEST_ASSERT_EQUAL_UINT(TD_FRAME_BODY_MAX, s_model.frame_len);
     TEST_ASSERT_EQUAL_HEX8(0xc0, s_model.frame[2]);
     TEST_ASSERT_EQUAL_HEX8(0xc0, s_model.frame[6]);
-    TEST_ASSERT_EQUAL_HEX8(0xdb, s_model.frame[1031]);
+    TEST_ASSERT_EQUAL_HEX8(0xdb, s_model.frame[6 + TD_FRAME_PAYLOAD_MAX - 1]);
     TEST_ASSERT_EQUAL_STRING("version\n", s_model.ran);
 }
 

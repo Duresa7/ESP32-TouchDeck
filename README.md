@@ -112,12 +112,146 @@ echo a request, and report the connection state. The text command `link state`
 reports the same counters. The port stays available for the debug console and
 ROM flashing.
 
+The link also moves files and mirrors input. `layout.put` and `layout.get` copy a
+layout in chunks, `icon.put`, `icon.list`, and `icon.rm` manage the icons, and
+`settings.get`, `settings.put`, and `store.stat` read and change the deck. A put
+is checked and validated before it replaces the stored file, and a layout for the
+orientation on screen is shown without a reboot. While the app is connected, the
+deck sends a `press` event for each app or widget tap and a `key.report` event
+for each key report the engine emits, so the app can type the keys on the PC.
+`widget.set` fills a widget tile with a value, a caption, and a bar, and
+`dashboard.set` fills a dashboard page with up to 8 rows. The deck draws them on
+its next 100 ms redraw.
+
 The local verification harness provides `link hello`, `link ping --count 100`,
 `link state`, `link raw --hex <frame>`, and `link selftest`. `link scenario <file>`
 sends timed console lines and binary frames through one port handle. Console
 and link tasks reply independently, so callers match each channel separately.
 `link selftest` checks the [golden frames](schema/protocol/golden-frames.json)
 without a board. Live checks still require the board.
+
+## Storage and settings
+
+The `storage` partition holds one [LittleFS](https://github.com/joltwallet/esp_littlefs)
+volume, mounted at `/storage` before the console starts. The first boot after the
+partition was erased formats it and logs `store: formatted`, and every boot logs
+`store: mounted, <used>/<total> bytes`. Flashing the firmware leaves the volume
+alone. The paths the firmware uses are `/storage/settings.json`,
+`/storage/layouts/<orientation>.json`, `/storage/icons/<id>.bin`, and
+`/storage/recovery`.
+
+A write goes to `<path>.tmp`, is flushed with `fsync`, and is renamed over the
+target. LittleFS makes the rename atomic across power loss, so a reader sees the
+whole old file or the whole new one. A temporary file that a power cut left behind
+is removed at the next mount.
+
+Settings are `{"idle_timeout_s": 600, "orientation": "landscape"}`. The deck reads
+them before the display starts and logs `settings: idle_timeout_s=<n>
+orientation=<o>`. An unknown field is ignored, a missing field takes its default,
+a timeout outside 1 to 86400 takes 600, and an unknown orientation takes
+`landscape`. The idle timeout reaches the power gate at boot. The orientation
+applies at boot. In `portrait` the screen is the panel turned 90 degrees
+clockwise, 600 by 1024, and the deck loads `/storage/layouts/portrait.json`, or
+the built-in layout when that file is missing. Touch points, `touch` and `ui hold`
+injection, and `screenshot` all use the rotated size. The adapter rotates each
+frame in software, so portrait draws much slower than landscape.
+
+The `store` and `settings` console commands work on the volume:
+
+- `store stat [path]` reports the volume (`total`, `used`, `files`, `dirs`), a
+  directory's counts, or a file's size.
+- `store ls <dir>` lists a directory, `store rm <path>` removes a file or an empty
+  directory.
+- `store put <path> <bytes> <crc32>` takes the file from the host as `@tds ` base64
+  lines of 180 raw bytes, up to 65536 bytes. The deck holds the file in memory and
+  swaps it in atomically after its last line. It acknowledges every 6 lines, so the
+  host never sends more than one window ahead.
+- `store get <path>` streams a file as `@tds ` lines between a `start` and an `end`
+  reply that carries its CRC-32.
+- `settings get` and `settings set idle_timeout_s <n>` or
+  `settings set orientation landscape|portrait` read and write the file. A new
+  timeout applies at once. A new orientation applies on the next boot, so its
+  reply, like `settings.put`'s, carries `reboot_required` true.
+
+The local verification harness wraps the transfers as `serial store put <path>
+--from <file>` and `serial store get <path> --out <file>`, checking the CRC-32
+both ways.
+
+## Recovery
+
+Holding one finger on the glass for 10 seconds restarts the deck into a known-good
+state, whatever the deck shows and whether or not the backlight is on. The hold
+arms when one contact stays within 24 px of where it began for 10000 ms. A
+release before that, or a move past 24 px, starts over. The recovery watcher reads
+the raw contact before the idle gate, so a hold that begins on a dark screen
+counts from its first sample, and that same contact wakes the panel.
+
+When the hold arms, the deck stops sending the contact to the pages, so no tile
+fires when the finger lifts. It draws a full-screen `Release to reset` band, logs
+`recovery: armed`, writes the marker file `/storage/recovery`, and restarts 250 ms
+after the lift.
+
+A boot that finds the marker deletes it and runs in recovery mode. The deck shows
+the built-in pages and the default settings from RAM, leaves every file in
+`/storage` as it was, logs `recovery: mode on, files kept`, and shows a `Recovery`
+caption in the title band. The link's `hello` and `layout state` report
+`"recovery": true`, and `layout state` still names what is wrong with a stored
+layout that does not parse. A layout or settings write by the app, a
+`layout use storage`, or a restart leaves recovery mode. A plain `layout reload`
+in recovery mode reloads the built-in pages.
+
+The `recovery` console command has two forms:
+
+- `recovery state` replies with `mode`, `watcher` (`IDLE`, `HOLDING` or `ARMED`),
+  `held_ms`, and `armed_count`.
+- `recovery arm` writes the marker and restarts, as the hold does after the lift. It
+  is for tests.
+
+A swipe lasts at most 2000 ms, so `touch begin <x> <y>`, `touch move <x> <y>` and
+`touch end` hold an injected contact for as long as a test needs and return at
+once. A contact that nobody ends lifts by itself after 60 seconds. `touch stats`
+adds `watch_samples`, `watch_ns_avg`, and `watch_ns_max`, which is what the watcher
+costs per sample.
+
+## Firmware updates
+
+The app updates the deck's firmware over the link, and the deck rolls back by
+itself when the new image does not come up. The flash holds two application slots,
+`ota_0` and `ota_1`, of 4 MB each. An update writes the slot the deck is not
+running, so the running image stays whole until the very end.
+
+`update.begin {bytes, sha256}` opens the other slot and `update.end` finishes it, with
+the image carried by the same chunk transfer as a layout. At `update.end` the deck
+checks the SHA-256 of the bytes it wrote, validates the image, sets the new slot as
+the boot slot, replies with its name, and restarts 250 ms later. A refusal replies
+with `reason` and leaves the boot slot alone: `size`, `sha256`, `incomplete`,
+`flash`, `busy`, `unconfirmed`, or `project`. A transfer that stops moving for 2
+seconds is dropped, and the update returns to `IDLE`.
+
+The new image boots as `PENDING_VERIFY`. It confirms itself after the first frame,
+a layout load, and 10 seconds of uptime, and logs `update: confirmed <slot>`. A
+reset before that, from a crash, a watchdog, or a power cut, makes the bootloader
+mark the slot `ABORTED` and boot the previous one. While an image waits to confirm,
+the deck refuses another update.
+
+The `update` console command has three forms:
+
+- `update state` replies with `running`, `boot`, the state of `ota_0` and `ota_1`
+  (`NEW`, `PENDING_VERIFY`, `VALID`, `INVALID`, `ABORTED`, `UNDEFINED`, or `NONE`
+  when the slot has no record), `confirmed`, and the update `state`.
+- `update confirm` confirms the running image at once. It is for tests.
+- `update invalidate` marks the running image invalid and reboots into the other slot,
+  when that slot holds a valid image. It is for tests.
+
+`firmware/tools/make_bundle.py` packs a build into `touchdeck-<version>.tdfw`, a zip
+with `bootloader.bin`, `partition-table.bin`, `touchdeck.bin`, and a `manifest.json`
+that names each file's flash offset, size, and SHA-256 with the image's version and
+`elf_sha256`. `python firmware/tools/make_bundle.py --check <bundle>` reads one back.
+
+A flash over the cable writes `ota_0` and resets the boot slot to it, so
+`idf.py flash` always recovers the deck. The local verification harness provides
+`link update <touchdeck.bin> --wait` and `idf build-crashing`, a build that aborts
+two seconds after start, for checking the rollback on the board.
 
 ## Display
 
@@ -135,6 +269,9 @@ animation time of the look is a named token in `firmware/components/ui/ui_theme.
 The `ui` component adds the `ui` console command: `ui state` reports the page and
 the tile that is pressed, `ui goto <page>` changes the page, `ui tile <id>` gives a
 tile's box, and `ui hold <x> <y> <ms>` holds a press on the glass for a test.
+`ui state` also reports `online`, whether the app is connected, and `dimmed`, how
+many tiles are drawn dim. `ui widget <tile>` and `ui dashboard <page>` report what
+the app last sent to a widget tile or a dashboard page.
 
 The display component adds three console commands:
 
@@ -170,7 +307,31 @@ Every failure the validator prints starts with a stable rule key, such as
 for reading a layout file. Send the deck the compact form of a layout, because
 it rejects files over 32768 bytes without parsing them first.
 
-App-side actions and widgets dim on the deck while the app is offline.
+App-side actions and widgets dim on the deck while the app is offline. They
+draw at 40 percent opacity, and a tap on one logs `ui: offline <tile>` and sends
+nothing. Key, modifier, media, and page tiles never dim.
+
+### Layouts on the deck
+
+The firmware embeds `builtin.json` and draws its pages from it, so the deck has
+no page table in C. At boot it loads `/storage/layouts/<orientation>.json`. When
+that file is missing or invalid, the deck logs `layout: <reason>, using builtin`
+and starts on the built-in layout. Its parser accepts and rejects the same files
+as `check-layouts.mjs`, and it reports the same rule key.
+
+- `layout state` reports the layout on screen: `source` (`storage` or `builtin`),
+  `name`, `orientation`, `pages`, `tiles`, `icons_loaded`, `icons_missing`,
+  `bytes`, `load_ms`, and `error`.
+- `layout reload` and `layout use storage` load the stored file again.
+  `layout use builtin` switches to the built-in layout. A file that fails
+  validation never replaces the layout on screen. `layout state` reports why in
+  `error`.
+- `ui tile <id>` also reports the tile's `action` type and its `icon`.
+
+A `key` tile with `mods` sends its modifiers together with any active ones. A
+`page` tile slides to its page. App and widget tiles send a `press` event over
+the app link, and log `ui: press <page>/<tile> <kind>` when no link hook is set.
+A `file:<id>` icon is a 64 by 64 bitmap in [schema/icon-format.md](schema/icon-format.md).
 
 ## Unit tests
 

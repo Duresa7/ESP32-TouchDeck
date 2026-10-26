@@ -79,13 +79,9 @@ pub fn open(target: &str) -> io::Result<()> {
 }
 
 /// Builds the process for an approved command, through the shell when `shell` is set.
-pub fn command(spec: &CommandSpec) -> Command {
+pub fn command(spec: &CommandSpec) -> io::Result<Command> {
     let mut command = if spec.shell {
-        let line = std::iter::once(spec.program.as_str())
-            .chain(spec.args.iter().map(String::as_str))
-            .collect::<Vec<_>>()
-            .join(" ");
-        shell(&line)
+        shell(spec)?
     } else {
         let mut command = Command::new(&spec.program);
         command.args(&spec.args);
@@ -104,27 +100,77 @@ pub fn command(spec: &CommandSpec) -> Command {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
-    command
+    Ok(command)
 }
 
 #[cfg(windows)]
-fn shell(line: &str) -> Command {
+fn shell(spec: &CommandSpec) -> io::Result<Command> {
     use std::os::windows::process::CommandExt;
+    let line = std::iter::once(spec.program.as_str())
+        .chain(spec.args.iter().map(String::as_str))
+        .map(windows_argument)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if line.encode_utf16().count() >= 8191 || line.contains(['\0', '\r', '\n']) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "shell command exceeds cmd's limits",
+        ));
+    }
     let mut command = Command::new("cmd");
-    command.arg("/C").raw_arg(line);
+    // Delayed expansion happens after cmd parses operators. The values are a native argv
+    // command line, never shell source; %, !, &, and redirection remain literal data.
     command
+        .args(["/D", "/V:ON", "/S", "/C"])
+        .raw_arg("!TOUCHDECK_APPROVED_COMMAND!")
+        .env("TOUCHDECK_APPROVED_COMMAND", line);
+    Ok(command)
+}
+
+#[cfg(windows)]
+fn windows_argument(value: &str) -> String {
+    let quoted = value.is_empty() || value.contains([' ', '\t']);
+    let mut result = String::new();
+    if quoted {
+        result.push('"');
+    }
+    let mut slashes = 0;
+    for character in value.chars() {
+        if character == '\\' {
+            slashes += 1;
+            continue;
+        }
+        if character == '"' {
+            result.extend(std::iter::repeat_n('\\', slashes * 2 + 1));
+        } else {
+            result.extend(std::iter::repeat_n('\\', slashes));
+        }
+        result.push(character);
+        slashes = 0;
+    }
+    result.extend(std::iter::repeat_n(
+        '\\',
+        slashes * if quoted { 2 } else { 1 },
+    ));
+    if quoted {
+        result.push('"');
+    }
+    result
 }
 
 #[cfg(not(windows))]
-fn shell(line: &str) -> Command {
+fn shell(spec: &CommandSpec) -> io::Result<Command> {
     let mut command = Command::new("sh");
-    command.arg("-c").arg(line);
+    // The shell parses only this fixed script. Program and arguments are positional data.
     command
+        .args(["-c", "exec \"$@\"", "touchdeck", &spec.program])
+        .args(&spec.args);
+    Ok(command)
 }
 
 /// Runs an approved command to its end.
 pub fn run(spec: &CommandSpec) -> io::Result<ExitStatus> {
-    command(spec).status()
+    command(spec)?.status()
 }
 
 #[cfg(test)]
@@ -198,14 +244,33 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("td-host-shell-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let spec = CommandSpec {
-            program: "echo".into(),
-            args: vec!["marker".into(), ">".into(), "out.txt".into()],
+            program: if cfg!(windows) { "cmd" } else { "sh" }.into(),
+            args: vec![
+                if cfg!(windows) { "/C" } else { "-c" }.into(),
+                "echo marker>out.txt".into(),
+            ],
             cwd: dir.to_string_lossy().into_owned(),
             shell: true,
         };
         assert!(run(&spec).unwrap().success());
         let text = std::fs::read_to_string(dir.join("out.txt")).unwrap();
         assert_eq!(text.trim(), "marker");
+    }
+
+    #[test]
+    fn shell_arguments_cannot_inject_a_second_command() {
+        let dir = std::env::temp_dir().join(format!("td-host-injection-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("injected.txt");
+        let _ = std::fs::remove_file(&marker);
+        let spec = CommandSpec {
+            program: "echo".into(),
+            args: vec!["safe & echo injected > injected.txt".into()],
+            cwd: dir.to_string_lossy().into_owned(),
+            shell: true,
+        };
+        assert!(run(&spec).unwrap().success());
+        assert!(!marker.exists(), "an argument executed as shell source");
     }
 
     #[test]

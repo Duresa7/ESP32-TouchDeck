@@ -1,14 +1,11 @@
 use std::mem::size_of;
 
 use windows_sys::Win32::Foundation::HWND;
-use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
     MAPVK_VK_TO_VSC, MapVirtualKeyW, SendInput,
 };
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, SetForegroundWindow,
-};
+use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
 
 use crate::input::{InputSink, KeyEvent};
 use crate::keymap::{self, Code};
@@ -68,14 +65,7 @@ pub unsafe fn bring_to_front(hwnd: HWND) -> bool {
         if foreground == hwnd {
             return true;
         }
-        let ours = GetCurrentThreadId();
-        let theirs = GetWindowThreadProcessId(foreground, std::ptr::null_mut());
-        let attached = theirs != 0 && theirs != ours && AttachThreadInput(ours, theirs, 1) != 0;
-        BringWindowToTop(hwnd);
         SetForegroundWindow(hwnd);
-        if attached {
-            AttachThreadInput(ours, theirs, 0);
-        }
         GetForegroundWindow() == hwnd
     }
 }
