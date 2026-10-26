@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io::Write as _;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -33,6 +33,7 @@ pub struct AppState {
     mock: Option<MockDeck>,
     link: Mutex<Option<Link>>,
     sessions: AtomicU64,
+    updating: AtomicBool,
     fake_input: Option<FakeSink>,
     mirror: Mutex<MirrorInfo>,
     action_layout: Mutex<Option<(Layout, String)>>,
@@ -52,6 +53,7 @@ impl AppState {
             mock: mock.then(MockDeck::new),
             link: Mutex::new(None),
             sessions: AtomicU64::new(0),
+            updating: AtomicBool::new(false),
             fake_input: fake.then(FakeSink::default),
             mirror: Mutex::new(MirrorInfo::default()),
             action_layout: Mutex::new(None),
@@ -137,6 +139,9 @@ async fn blocking<T: Send + 'static>(
 pub async fn list_decks(app: AppHandle) -> Result<Vec<Candidate>, String> {
     blocking(move || {
         let state = app.state::<AppState>();
+        if state.updating.load(Ordering::Acquire) {
+            return Vec::new();
+        }
         let connected = state.connected();
         let ports: Vec<String> = match &state.mock {
             Some(_) => vec![MOCK_PORT.to_owned()],
@@ -171,6 +176,9 @@ pub async fn list_decks(app: AppHandle) -> Result<Vec<Candidate>, String> {
 pub async fn connect(app: AppHandle, port: String) -> Result<DeckInfo, String> {
     blocking(move || {
         let state = app.state::<AppState>();
+        if state.updating.load(Ordering::Acquire) {
+            return Err("firmware update in progress".into());
+        }
         if let Some(previous) = state.link.lock().unwrap().take() {
             previous.session.close();
         }
@@ -392,6 +400,7 @@ pub fn e2e_mock(state: State<'_, AppState>, action: String) -> Result<(), String
         .as_ref()
         .ok_or("the app is not running the mock deck")?;
     match action.as_str() {
+        "no-confirm" | "rollback" | "normal-update" => mock.update_mode(&action),
         "stop" => mock.stop(),
         "hang-up" => mock.hang_up(),
         other => return Err(format!("unknown mock action {other:?}")),
@@ -885,4 +894,55 @@ pub fn e2e_mock_sets(state: State<'_, AppState>) -> Result<Vec<serde_json::Value
         .as_ref()
         .ok_or("the app is not running the mock deck")?
         .sets())
+}
+
+#[tauri::command]
+pub async fn update_firmware(
+    app: AppHandle,
+    bytes: Vec<u8>,
+    port: String,
+    recover: bool,
+) -> Result<(), String> {
+    blocking(move || {
+        let bundle = td_link::bundle::Bundle::parse(&bytes)?;
+        let state = app.state::<AppState>();
+        if state.updating.swap(true, Ordering::AcqRel) {
+            return Err("firmware update already in progress".into());
+        }
+        struct Reset<'a>(&'a AtomicBool);
+        impl Drop for Reset<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Release);
+            }
+        }
+        let _reset = Reset(&state.updating);
+        app.state::<SourcesState>().disconnected();
+        if let Some(link) = state.link.lock().unwrap().take() {
+            link.session.close();
+        }
+        let mut connector: Box<dyn td_link::update::Connector> = match &state.mock {
+            Some(mock) if port == MOCK_PORT => Box::new(mock.clone()),
+            Some(_) => return Err("select the mock port".into()),
+            None => Box::new(td_link::update::PortConnector(&port)),
+        };
+        let mut flasher = td_link::recover::RomRecovery(&port);
+        let recovery = if recover {
+            if state.mock.is_some() {
+                return Err("ROM recovery requires real hardware".into());
+            }
+            Some(&mut flasher as &mut dyn td_link::recover::Recovery)
+        } else {
+            None
+        };
+        td_link::update::run(
+            &mut *connector,
+            recovery,
+            &bundle,
+            td_link::update::Deadlines::default(),
+            &mut |progress| {
+                let _ = app.emit("firmware-update", progress);
+            },
+        )
+    })
+    .await?
 }

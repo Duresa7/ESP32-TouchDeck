@@ -17,6 +17,7 @@ pub fn run() {
     let builder = builder
         .plugin(tauri_plugin_wdio_webdriver::init())
         .invoke_handler(tauri::generate_handler![
+            commands::update_firmware,
             commands::list_decks,
             commands::connect,
             commands::disconnect,
@@ -52,6 +53,7 @@ pub fn run() {
         ]);
     #[cfg(not(feature = "e2e"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        commands::update_firmware,
         commands::list_decks,
         commands::connect,
         commands::disconnect,

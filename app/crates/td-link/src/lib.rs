@@ -1,6 +1,9 @@
+pub mod bundle;
 pub mod discover;
 pub mod mock;
+pub mod recover;
 pub mod session;
+pub mod update;
 pub mod xfer;
 
 use std::io::{self, Read, Write};
