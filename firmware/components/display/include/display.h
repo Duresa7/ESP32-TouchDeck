@@ -14,9 +14,15 @@ extern "C" {
 typedef void (*display_build_fn)(void);
 
 /* Brings up the CH422G, the RGB panel and LVGL, calls `build` to fill the first screen, and waits for the first
- * frame. A NULL `build` leaves LVGL's empty screen.
+ * frame. A NULL `build` leaves LVGL's empty screen. In portrait the screen is the panel turned 90 degrees clockwise,
+ * 600 by 1024, until the next boot.
  * Returns ESP_ERR_TIMEOUT when the first frame did not reach the panel in time. */
-esp_err_t display_start(display_build_fn build);
+esp_err_t display_start(bool portrait, display_build_fn build);
+
+/* The orientation display_start was given, landscape before it ran, and the screen's size in it. */
+bool display_portrait(void);
+uint16_t display_width(void);
+uint16_t display_height(void);
 
 /* True once the LVGL adapter has started, which is what the UI's console commands need. */
 bool display_ready(void);

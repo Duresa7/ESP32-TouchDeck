@@ -28,6 +28,8 @@ typedef struct {
     uint32_t transition_frames;
     uint32_t last_ms;
     uint32_t last_frames;
+    bool online;
+    uint16_t dimmed;
 } ui_state_t;
 
 /* One tile, copied out of the layout. `icon` is empty for a tile with no icon. */
@@ -68,3 +70,35 @@ const lv_image_dsc_t *ui_icon_image(const char *icon);
 
 /* The LVGL symbol text of an `lv:` icon, or NULL. */
 const char *ui_icon_symbol(const char *icon);
+
+/*
+ * Widget tiles, dashboard pages and the offline dimming. The state table lives behind its own lock, which is a leaf:
+ * nothing else is taken while it is held. The objects belong to the LVGL task. ui_widget_begin runs before a layout's
+ * objects are built, with the LVGL lock held, and empties the table and the object lists.
+ */
+void ui_widget_begin(void);
+
+/* Draws a widget tile's value, caption and bar on its tile object and registers the tile in the table. */
+void ui_widget_build(lv_obj_t *obj, const ui_tile_t *tile, ui_rect_t rect);
+
+/* Registers an app or widget tile so it dims while the app is offline. Does nothing for other tiles. */
+void ui_widget_track(lv_obj_t *obj, const ui_tile_t *tile);
+
+/* True when a tap on this tile must send nothing because the tile is dimmed. */
+bool ui_widget_tap_blocked(const ui_tile_t *tile);
+
+/* How many tiles are dimmed now. */
+uint16_t ui_widget_dimmed(void);
+
+/* Copies an entry of the table. False for an id the layout does not have. */
+bool ui_widget_read(const char *tile, ui_widget_state_t *out);
+bool ui_dashboard_read(const char *page, ui_dash_state_t *out);
+
+/* Registers a dashboard page in the table, under the table lock. False when the table is full. */
+bool ui_widget_add_page(const char *page);
+
+/* The dashboard drawing, in ui_dashboard.c. begin forgets the old rows, build draws a page's empty rows and registers
+ * the page, and draw shows the state of the page at table index `index`. */
+void ui_dashboard_begin(void);
+void ui_dashboard_build(lv_obj_t *page_obj, const ui_page_t *page);
+void ui_dashboard_draw(int index, const ui_dash_state_t *state);

@@ -1,8 +1,8 @@
 #include "ui.h"
 #include "ui_priv.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "board_pins.h"
 #include "display.h"
 #include "esp_lv_adapter.h"
 #include "freertos/FreeRTOS.h"
@@ -67,11 +67,77 @@ static void cmd_state(void)
     td_reply_int(&r, "last_ms", st.last_ms);
     td_reply_int(&r, "last_frames", st.last_frames);
     td_reply_int(&r, "dot_x", ui_dot_x(0, st.pages));
-    td_reply_int(&r, "dot_pitch", ui_theme.dot_pitch);
-    td_reply_int(&r, "dot_y", ui_theme.dot_y);
+    td_reply_int(&r, "dot_pitch", ui_geo()->dot_pitch);
+    td_reply_int(&r, "dot_y", ui_geo()->dot_y);
     td_reply_int(&r, "dot_active", ui_theme.color.dot_active);
     td_reply_int(&r, "dot_idle", ui_theme.color.dot_idle);
     td_reply_int(&r, "glow", ui_theme.color.glow);
+    td_reply_bool(&r, "online", st.online);
+    td_reply_int(&r, "dimmed", st.dimmed);
+    send(&r);
+}
+
+/* A bar as a whole percent, or -1 for none, because a reply carries no fractions. */
+static long long bar_pct(float bar)
+{
+    return bar < 0.0f ? -1 : (long long)(bar * 100.0f + 0.5f);
+}
+
+static void cmd_widget(int argc, char **argv)
+{
+    ui_widget_state_t st;
+    if (argc != 3) {
+        send_error("usage: ui widget <tile>");
+        return;
+    }
+    if (!ui_widget_read(argv[2], &st)) {
+        send_error("unknown tile");
+        return;
+    }
+    char buf[TD_REPLY_MAX];
+    td_reply_t r;
+    td_reply_begin(&r, buf, sizeof buf, "ui", true);
+    td_reply_str(&r, "op", "widget");
+    td_reply_str(&r, "tile", argv[2]);
+    td_reply_str(&r, "value", st.value);
+    td_reply_str(&r, "caption", st.caption);
+    td_reply_int(&r, "bar_pct", bar_pct(st.bar));
+    td_reply_bool(&r, "stale", st.stale);
+    td_reply_int(&r, "updated_ms", st.updated_ms);
+    send(&r);
+}
+
+static void cmd_dashboard(int argc, char **argv)
+{
+    static ui_dash_state_t st;
+    if (argc != 3) {
+        send_error("usage: ui dashboard <page>");
+        return;
+    }
+    if (!ui_dashboard_read(argv[2], &st)) {
+        send_error("unknown page");
+        return;
+    }
+    const char *labels[UI_DASH_ROWS_MAX];
+    const char *values[UI_DASH_ROWS_MAX];
+    char bars[UI_DASH_ROWS_MAX][8];
+    const char *bar_texts[UI_DASH_ROWS_MAX];
+    for (int i = 0; i < st.count; i++) {
+        labels[i] = st.rows[i].label;
+        values[i] = st.rows[i].value;
+        snprintf(bars[i], sizeof bars[i], "%lld", bar_pct(st.rows[i].bar));
+        bar_texts[i] = bars[i];
+    }
+    char buf[TD_REPLY_MAX];
+    td_reply_t r;
+    td_reply_begin(&r, buf, sizeof buf, "ui", true);
+    td_reply_str(&r, "op", "dashboard");
+    td_reply_str(&r, "page", argv[2]);
+    td_reply_int(&r, "rows", st.count);
+    td_reply_strs(&r, "labels", labels, st.count);
+    td_reply_strs(&r, "values", values, st.count);
+    td_reply_strs(&r, "bars_pct", bar_texts, st.count);
+    td_reply_int(&r, "updated_ms", st.updated_ms);
     send(&r);
 }
 
@@ -151,13 +217,13 @@ static const char *hold_error(esp_err_t err)
 static void cmd_hold(int argc, char **argv)
 {
     unsigned long v[3] = { 0 };
-    static const unsigned long max[3] = { TD_LCD_H_RES - 1, TD_LCD_V_RES - 1, HOLD_MAX_MS };
+    const unsigned long max[3] = { display_width() - 1UL, display_height() - 1UL, HOLD_MAX_MS };
     bool ok = argc == 5;
     for (int i = 0; ok && i < 3; i++) {
         ok = parse_number(argv[2 + i], max[i], &v[i]);
     }
     if (!ok || v[2] == 0) {
-        send_error("usage: ui hold <x 0-1023> <y 0-599> <ms 1-2000>");
+        send_error("usage: ui hold <x> <y> <ms 1-2000>, x and y inside the screen");
         return;
     }
     const esp_err_t err = touch_inject_hold((uint16_t)v[0], (uint16_t)v[1], (uint32_t)v[2]);
@@ -195,9 +261,10 @@ static int cmd_ui(int argc, char **argv)
 {
     const char *sub = argc > 1 ? argv[1] : "";
     const bool state = strcmp(sub, "state") == 0 && argc == 2;
-    const bool known = state || strcmp(sub, "goto") == 0 || strcmp(sub, "tile") == 0 || strcmp(sub, "hold") == 0;
+    const bool known = state || strcmp(sub, "goto") == 0 || strcmp(sub, "tile") == 0 || strcmp(sub, "hold") == 0 ||
+                       strcmp(sub, "widget") == 0 || strcmp(sub, "dashboard") == 0;
     if (!known) {
-        send_error("usage: ui state | goto <page> | tile <id> | hold <x> <y> <ms>");
+        send_error("usage: ui state | goto <page> | tile <id> | hold <x> <y> <ms> | widget <tile> | dashboard <page>");
         return 0;
     }
     if (!display_ready() || !ui_ready()) {
@@ -211,6 +278,10 @@ static int cmd_ui(int argc, char **argv)
         cmd_goto(argc, argv);
     } else if (strcmp(sub, "tile") == 0) {
         cmd_tile(argc, argv);
+    } else if (strcmp(sub, "widget") == 0) {
+        cmd_widget(argc, argv);
+    } else if (strcmp(sub, "dashboard") == 0) {
+        cmd_dashboard(argc, argv);
     } else {
         cmd_hold(argc, argv);
     }
@@ -220,8 +291,10 @@ static int cmd_ui(int argc, char **argv)
 const esp_console_cmd_t *ui_console_commands(size_t *count)
 {
     static const esp_console_cmd_t cmds[] = {
-        { .command = "ui", .help = "report the deck's state, go to a page, find a tile, or hold a press on the glass",
-          .hint = "state | goto <page> | tile <id> | hold <x> <y> <ms>", .func = cmd_ui },
+        { .command = "ui",
+          .help = "report the deck's state, go to a page, find a tile, hold a press, or read a widget or dashboard",
+          .hint = "state | goto <page> | tile <id> | hold <x> <y> <ms> | widget <tile> | dashboard <page>",
+          .func = cmd_ui },
         { .command = "layout", .help = "report the loaded layout, reload it from storage, or switch to the built-in one",
           .hint = "state | reload | use builtin|storage", .func = ui_layout_cmd },
     };

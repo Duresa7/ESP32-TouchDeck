@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include "lvgl.h"
+#include "ui_geometry.h"
 #include "ui_pages.h"
 
 /* Colors are RGB565, because that is what the panel stores. A design color goes in as 8-bit channels and the
@@ -11,7 +12,8 @@
  * green. */
 #define UI_RGB565(r, g, b) ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
 
-/* Every color, size, shadow and animation time of the deck's look. The look is only read here. */
+/* Every color, size, shadow and animation time of the deck's look. The look is only read here. Where things sit on
+ * the screen depends on the orientation, so that lives in ui_geo(). */
 typedef struct {
     struct {
         uint16_t bg;
@@ -51,16 +53,29 @@ typedef struct {
         int16_t label_inset;
     } media;
     uint16_t mod_poll_ms;
-    ui_rect_t band;
-    ui_rect_t grid;
-    int16_t gap;
-    int16_t title_x;
-    int16_t title_y;
-    int16_t dot_y;
-    int16_t dot_pitch;
-    int16_t dot_size;
-    int16_t dot_active_extra;
-    int16_t bounce_px;
+    /* App and widget tiles fade to dim_opa while the app is offline. A stale widget value draws at stale_opa. */
+    uint8_t dim_opa;
+    uint8_t stale_opa;
+    /* A widget tile: the value in the tile font `value_dy` above the centre, the caption in the caption font
+     * `caption_dy` below it, and a bar_h tall bar in the glow color, `bar_bottom` above the tile's bottom edge, as
+     * wide as the tile times the bar fraction. The app's sets reach the screen on a redraw_ms timer. */
+    struct {
+        int16_t value_dy;
+        int16_t caption_dy;
+        int16_t bar_h;
+        int16_t bar_bottom;
+        int16_t bar_radius;
+        uint16_t redraw_ms;
+    } widget;
+    /* A dashboard page: UI_DASH_ROWS_MAX rows of row_gap apart filling the grid area, each a tile-colored strip with
+     * the label at `pad`, the value at the geometry's dash_value_x, and a bar_h tall bar from dash_bar_x to `pad`
+     * before the row's end. */
+    struct {
+        int16_t row_gap;
+        int16_t radius;
+        int16_t pad;
+        int16_t bar_h;
+    } dash;
     uint16_t anim_settle_ms;
     uint16_t anim_bounce_out_ms;
     uint16_t anim_bounce_back_ms;
@@ -85,12 +100,18 @@ typedef struct {
     lv_style_t mod_locked;
     lv_style_t lock_shackle;
     lv_style_t lock_body;
+    lv_style_t tile_dim;
+    lv_style_t widget_bar;
+    lv_style_t dash_row;
 } ui_styles_t;
 
 lv_color_t ui_color(uint16_t rgb565);
 
 /* Builds the shared styles once, and returns them on every later call. The caller holds the LVGL lock. */
 const ui_styles_t *ui_styles(void);
+
+/* The band, the grid, the title, the dots and the pager distances for the screen display_start set up. */
+const ui_geometry_t *ui_geo(void);
 
 /* The x of the centre of dot `index` when `count` dots sit in a row centred on the screen. */
 int16_t ui_dot_x(uint8_t index, uint8_t count);
