@@ -1,0 +1,25 @@
+[package]
+name = "touchdeck"
+version = "0.1.0"
+description = "TouchDeck desktop app"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "touchdeck_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-wdio-webdriver = { version = "1.5", optional = true }
+td-core.workspace = true
+td-link.workspace = true
+
+[features]
+e2e = ["dep:tauri-plugin-wdio-webdriver"]

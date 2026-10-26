@@ -13,6 +13,11 @@ build-crash/
 out/
 dist/
 
+# App build output and dependencies
+/app/target/
+/app/node_modules/
+/app/src-tauri/gen/
+
 # Hardware verification evidence
 /.verify/
 

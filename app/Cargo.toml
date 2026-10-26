@@ -1,0 +1,14 @@
+[workspace]
+resolver = "3"
+members = ["crates/td-core", "crates/td-link", "src-tauri"]
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.88"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+td-core = { path = "crates/td-core" }
+td-link = { path = "crates/td-link" }

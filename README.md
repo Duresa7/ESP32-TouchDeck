@@ -348,6 +348,14 @@ idf.py -p COM3 flash monitor
 The monitor ends with Unity's summary, `N Tests 0 Failures 0 Ignored`, and `OK`.
 Flash `firmware/` again afterwards to get the deck firmware back.
 
+## Desktop app
+
+The `app/` folder holds the TouchDeck desktop app for Windows and Linux, built
+with Tauri 2, Svelte 5, and Rust. It finds the deck on its USB-Serial/JTAG port,
+shows the build the deck runs, and gives the debug console a pane.
+[app/README.md](app/README.md) covers what the PC needs, the commands, and the
+mock deck that runs the app without a board.
+
 ## License
 
 TouchDeck is licensed under the [Apache License 2.0](LICENSE).
