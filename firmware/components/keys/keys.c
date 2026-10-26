@@ -59,6 +59,11 @@ keys_result_t keys_tap(uint8_t usage)
     return step((key_event_t){ .type = KEY_EV_KEY_TAP, .usage = usage });
 }
 
+keys_result_t keys_chord(uint8_t usage, uint8_t mods)
+{
+    return step((key_event_t){ .type = KEY_EV_CHORD, .usage = usage, .mods = mods });
+}
+
 keys_result_t keys_consumer(uint16_t usage)
 {
     return step((key_event_t){ .type = KEY_EV_CONSUMER_TAP, .usage = usage });

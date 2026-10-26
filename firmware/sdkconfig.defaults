@@ -12,6 +12,15 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # console. UART0 is wired to the RS485 transceiver on this board, not to USB.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
+# Mounting and formatting the storage volume runs on the main task, and the default 3584 bytes leaves little over
+# littlefs and the log call.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+
+# A new image boots as PENDING_VERIFY and confirms itself with esp_ota_mark_app_valid_cancel_rollback() after its first
+# frame, a layout load and 10 s of uptime. A reset before that makes the bootloader mark the slot ABORTED and boot the
+# other one. BOOTLOADER_APP_ANTI_ROLLBACK stays off, because it burns an eFuse that nobody can take back.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
 # cJSON recurses once per nesting level, and the link task parses host JSON on
 # a 6 KB stack. 16 matches the layout schema's nesting limit.
 CONFIG_CJSON_NESTING_LIMIT=16
