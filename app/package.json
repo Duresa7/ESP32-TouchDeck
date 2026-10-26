@@ -9,7 +9,7 @@
     "build": "vite build",
     "tauri": "tauri",
     "lint": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
-    "test": "node --test \"src/lib/*.test.ts\" \"e2e/*.test.ts\"",
+    "test": "node --test \"src/lib/*.test.ts\" \"src/lib/*/*.test.ts\" \"e2e/*.test.ts\"",
     "e2e": "wdio run e2e/wdio.conf.ts"
   },
   "dependencies": {

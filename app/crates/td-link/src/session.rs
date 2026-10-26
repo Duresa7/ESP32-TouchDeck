@@ -29,6 +29,21 @@ impl Default for SessionConfig {
     }
 }
 
+/// A chunk or an ack of a transfer, with the frame `seq` an ack must echo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum XferFrame {
+    Chunk {
+        seq: u8,
+        xfer: u8,
+        idx: u16,
+        data: Vec<u8>,
+    },
+    Ack {
+        xfer: u8,
+        next: u16,
+    },
+}
+
 /// What the deck sends that is not a reply: events, console text lines, and the end.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Incoming {
@@ -42,6 +57,7 @@ pub enum LinkError {
     Timeout(Duration),
     Closed(String),
     Busy,
+    TransferBusy,
     Io(String),
     Reply(ReplyError),
 }
@@ -52,6 +68,7 @@ impl fmt::Display for LinkError {
             LinkError::Timeout(after) => write!(f, "no reply within {} ms", after.as_millis()),
             LinkError::Closed(reason) => write!(f, "link closed: {reason}"),
             LinkError::Busy => f.write_str("255 requests are already waiting"),
+            LinkError::TransferBusy => f.write_str("a transfer is already running"),
             LinkError::Io(error) => write!(f, "write failed: {error}"),
             LinkError::Reply(error) => error.fmt(f),
         }
@@ -71,6 +88,7 @@ struct Shared {
     open: AtomicBool,
     reason: Mutex<String>,
     incoming: Sender<Incoming>,
+    xfer: Mutex<Option<Sender<XferFrame>>>,
 }
 
 impl Shared {
@@ -103,35 +121,43 @@ impl Shared {
         writer.flush()
     }
 
+    fn next_seq(pending: &mut Pending) -> Result<u8, LinkError> {
+        let seq = (1..=255u16)
+            .map(|step| ((u16::from(pending.last) + step - 1) % 255 + 1) as u8)
+            .find(|seq| !pending.waiting.contains_key(seq))
+            .ok_or(LinkError::Busy)?;
+        pending.last = seq;
+        Ok(seq)
+    }
+
     fn request(&self, request: &Request, timeout: Duration) -> Result<Reply, LinkError> {
+        self.call(request.name(), request.to_payload(), timeout)
+    }
+
+    fn call(&self, name: &str, payload: Vec<u8>, timeout: Duration) -> Result<Reply, LinkError> {
         let (slot, reply) = mpsc::sync_channel(1);
         let seq = {
             let mut pending = self.pending.lock().unwrap();
             if !self.open.load(Ordering::Acquire) {
                 return Err(self.closed());
             }
-            let seq = (1..=255u16)
-                .map(|step| ((u16::from(pending.last) + step - 1) % 255 + 1) as u8)
-                .find(|seq| !pending.waiting.contains_key(seq))
-                .ok_or(LinkError::Busy)?;
-            pending.last = seq;
+            let seq = Shared::next_seq(&mut pending)?;
             pending.waiting.insert(seq, slot);
             seq
         };
         let forget = || self.pending.lock().unwrap().waiting.remove(&seq);
-        let wire = Frame::message(Role::Request(seq), request.to_payload())
+        let wire = Frame::message(Role::Request(seq), payload)
             .encode()
-            .expect("requests fit one frame");
+            .map_err(|error| LinkError::Io(format!("request does not fit one frame: {error}")))?;
         if let Err(error) = self.write(&wire) {
             forget();
             return Err(LinkError::Io(error.to_string()));
         }
         match reply.recv_timeout(timeout) {
-            Ok(reply) if reply.m == request.name() => Ok(reply),
+            Ok(reply) if reply.m == name => Ok(reply),
             Ok(reply) => Err(LinkError::Reply(ReplyError::Fields(format!(
-                "reply names {:?}, not {:?}",
-                reply.m,
-                request.name()
+                "reply names {:?}, not {name:?}",
+                reply.m
             )))),
             Err(RecvTimeoutError::Timeout) => {
                 forget();
@@ -174,8 +200,77 @@ impl Shared {
                     let _ = self.incoming.send(Incoming::Event(event));
                 }
             }
+            Item::Frame(Frame {
+                role,
+                body: Body::Chunk { xfer, idx, data },
+            }) => self.to_xfer(XferFrame::Chunk {
+                seq: role.seq(),
+                xfer,
+                idx,
+                data,
+            }),
+            Item::Frame(Frame {
+                body: Body::Ack { xfer, next },
+                ..
+            }) => self.to_xfer(XferFrame::Ack { xfer, next }),
             Item::Frame(_) => {}
         }
+    }
+
+    fn to_xfer(&self, frame: XferFrame) {
+        if let Some(sink) = self.xfer.lock().unwrap().as_ref() {
+            let _ = sink.send(frame);
+        }
+    }
+}
+
+/// The one transfer a session runs at a time. Chunks and acks reach [`Transfer::frames`]
+/// until it drops.
+pub struct Transfer<'a> {
+    session: &'a Session,
+    pub frames: Receiver<XferFrame>,
+}
+
+impl Transfer<'_> {
+    /// Writes one chunk as a request frame with a fresh `seq`, which the receiver's ack echoes.
+    pub fn send_chunk(&self, xfer: u8, idx: u16, data: &[u8]) -> Result<(), LinkError> {
+        let shared = &self.session.shared;
+        let seq = Shared::next_seq(&mut shared.pending.lock().unwrap())?;
+        self.write(Frame {
+            role: Role::Request(seq),
+            body: Body::Chunk {
+                xfer,
+                idx,
+                data: data.to_vec(),
+            },
+        })
+    }
+
+    /// Acks a received chunk with the next index wanted, echoing the chunk's `seq`.
+    pub fn send_ack(&self, seq: u8, xfer: u8, next: u16) -> Result<(), LinkError> {
+        self.write(Frame {
+            role: Role::Response(seq),
+            body: Body::Ack { xfer, next },
+        })
+    }
+
+    fn write(&self, frame: Frame) -> Result<(), LinkError> {
+        let shared = &self.session.shared;
+        if !shared.open.load(Ordering::Acquire) {
+            return Err(shared.closed());
+        }
+        let wire = frame
+            .encode()
+            .map_err(|error| LinkError::Io(format!("frame does not encode: {error}")))?;
+        shared
+            .write(&wire)
+            .map_err(|error| LinkError::Io(error.to_string()))
+    }
+}
+
+impl Drop for Transfer<'_> {
+    fn drop(&mut self) {
+        self.session.shared.xfer.lock().unwrap().take();
     }
 }
 
@@ -205,6 +300,7 @@ impl Session {
             open: AtomicBool::new(true),
             reason: Mutex::new(String::new()),
             incoming,
+            xfer: Mutex::new(None),
         });
         let (stop, stopped) = mpsc::channel::<()>();
         let mut threads = vec![thread::spawn({
@@ -229,6 +325,30 @@ impl Session {
 
     pub fn request(&self, request: &Request, timeout: Duration) -> Result<Reply, LinkError> {
         self.shared.request(request, timeout)
+    }
+
+    /// Sends a message request that `td_core::Request` does not name, as JSON with its `m`.
+    pub fn call(&self, payload: &Value, timeout: Duration) -> Result<Reply, LinkError> {
+        let name = payload
+            .get("m")
+            .and_then(Value::as_str)
+            .ok_or_else(|| LinkError::Io("a message needs a string m".into()))?;
+        let bytes = serde_json::to_vec(payload).expect("JSON values serialize");
+        self.shared.call(name, bytes, timeout)
+    }
+
+    /// Starts the session's one transfer. A second one is refused until the first drops.
+    pub fn transfer(&self) -> Result<Transfer<'_>, LinkError> {
+        let mut slot = self.shared.xfer.lock().unwrap();
+        if slot.is_some() {
+            return Err(LinkError::TransferBusy);
+        }
+        let (sink, frames) = mpsc::channel();
+        *slot = Some(sink);
+        Ok(Transfer {
+            session: self,
+            frames,
+        })
     }
 
     pub fn hello(&self, timeout: Duration) -> Result<Hello, LinkError> {

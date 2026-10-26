@@ -2,6 +2,8 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount, tick } from 'svelte';
   import { append, classify, type ConsoleEntry } from './lib/console.ts';
+  import Settings from './lib/settings/Settings.svelte';
+  import Editor from './routes/Editor.svelte';
   import {
     HELLO_FIELDS,
     connect,
@@ -26,6 +28,12 @@
   let entries = $state<ConsoleEntry[]>([]);
   let line = $state('');
   let log = $state<HTMLOListElement>();
+  let view = $state<'deck' | 'editor' | 'settings'>('deck');
+  const VIEWS = [
+    ['deck', 'Deck'],
+    ['editor', 'Editor'],
+    ['settings', 'Settings'],
+  ] as const;
 
   const online = $derived(deck !== null && deck.online);
   const status = $derived(online && deck ? `Connected to ${deck.port}` : problem ? `Offline (${problem})` : 'Not connected');
@@ -117,12 +125,24 @@
     <span class="mark" aria-hidden="true"></span>
     <span data-testid="title">{title}</span>
   </div>
+  <nav class="views" aria-label="Views">
+    {#each VIEWS as [id, name] (id)}
+      <button class:active={view === id} onclick={() => (view = id)} aria-current={view === id ? 'page' : undefined} data-testid="nav-{id}"
+        >{name}</button
+      >
+    {/each}
+  </nav>
   <div class="status" data-testid="link-status">
     <span class="dot" data-testid="status-dot" data-state={online ? 'online' : 'offline'}></span>
     <span>{status}</span>
   </div>
 </header>
 
+{#if view === 'editor'}
+  <Editor {online} />
+{:else if view === 'settings'}
+  <Settings {online} session={online && deck ? deck.session : null} />
+{:else}
 <main class="layout">
   <section class="panel side">
     <div class="panel-head">
@@ -192,3 +212,50 @@
     </form>
   </section>
 </main>
+{/if}
+
+<style>
+  .views {
+    display: flex;
+    gap: 4px;
+    margin-right: auto;
+    margin-left: 12px;
+  }
+
+  .views button {
+    border-color: transparent;
+    background: transparent;
+    color: var(--muted);
+  }
+
+  .views button.active {
+    border-color: var(--line);
+    background: var(--raised);
+    color: var(--text);
+  }
+
+  :global(select),
+  :global(textarea),
+  :global(input:not([type='checkbox'])) {
+    min-width: 0;
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #0f141d;
+    color: var(--text);
+    font: inherit;
+  }
+
+  :global(textarea) {
+    resize: vertical;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+
+  :global(select:focus),
+  :global(textarea:focus),
+  :global(input:focus) {
+    border-color: var(--accent);
+    outline: none;
+  }
+</style>
