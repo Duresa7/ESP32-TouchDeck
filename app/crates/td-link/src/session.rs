@@ -421,7 +421,10 @@ mod tests {
 
     impl Write for BrokenWriter {
         fn write(&mut self, _bytes: &[u8]) -> io::Result<usize> {
-            Err(io::Error::new(ErrorKind::BrokenPipe, "heartbeat pipe broke"))
+            Err(io::Error::new(
+                ErrorKind::BrokenPipe,
+                "heartbeat pipe broke",
+            ))
         }
 
         fn flush(&mut self) -> io::Result<()> {
