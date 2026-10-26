@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
+#include "nvs_flash.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -22,11 +23,15 @@
 
 static const char *TAG = "netlink";
 
-/* The stack stays internal: pairing commits to NVS from this task, and a flash write asserts on a PSRAM stack. */
-#define TASK_STACK 6144
+/* The net task's stack is in PSRAM. A flash write asserts on a PSRAM stack, so each NVS save runs on a short-lived
+ * task with an internal stack while the net task waits. */
+#define TASK_STACK 8192
+#define SAVE_STACK 4096
 #define TASK_PRIORITY 2
 #define TASK_CORE 1
 #define POLL_MS 10
+/* With no client the task only watches the listener and the window, so it wakes less often. */
+#define IDLE_POLL_MS 100
 #define WRITE_MS 1000
 #define REFUSE_MS 100
 #define DRAIN_MS 100
@@ -77,6 +82,7 @@ static snapshot_t s_snap;
 static atomic_bool s_ready;
 static atomic_bool s_cancel;
 static atomic_bool s_hello;
+static SemaphoreHandle_t s_save_done;
 
 /* Net task only. */
 static net_t *n;
@@ -104,10 +110,29 @@ static void fill_random(void *ctx, uint8_t *out, size_t len)
     esp_fill_random(out, len);
 }
 
+typedef struct {
+    const td_netlink_apps_t *apps;
+    bool ok;
+} save_job_t;
+
+static void save_task(void *arg)
+{
+    save_job_t *job = arg;
+    job->ok = td_netlink_nvs_save(TD_NETLINK_NVS_NAMESPACE, job->apps);
+    xSemaphoreGive(s_save_done);
+    vTaskDelete(NULL);
+}
+
 static bool save_apps(void *ctx, const td_netlink_apps_t *apps)
 {
     (void)ctx;
-    return td_netlink_nvs_save(TD_NETLINK_NVS_NAMESPACE, apps);
+    save_job_t job = { .apps = apps };
+    if (xTaskCreatePinnedToCore(save_task, "td_netlink_nvs", SAVE_STACK, &job, TASK_PRIORITY, NULL, TASK_CORE)
+            != pdPASS) {
+        return false;
+    }
+    xSemaphoreTake(s_save_done, portMAX_DELAY);
+    return job.ok;
 }
 
 static bool write_all(int fd, const uint8_t *buf, size_t len, uint32_t timeout_ms)
@@ -318,6 +343,26 @@ static void publish(void)
     portEXIT_CRITICAL(&s_lock);
 }
 
+static void on_cancel(void)
+{
+    atomic_store(&s_cancel, true);
+}
+
+static void show_window(void)
+{
+    const td_netlink_window_t *w = &n->deck.window;
+    if (w->open && (!s_shown || s_shown_generation != w->generation)) {
+        ui_pairing_show(w->code, on_cancel);
+        s_shown = true;
+        s_shown_generation = w->generation;
+        ESP_LOGI(TAG, "pairing window open");
+    } else if (!w->open && s_shown) {
+        ui_pairing_hide();
+        s_shown = false;
+        ESP_LOGI(TAG, "pairing window closed");
+    }
+}
+
 static void run_command(void)
 {
     const cmd_t cmd = atomic_exchange(&s_cmd, CMD_NONE);
@@ -340,28 +385,9 @@ static void run_command(void)
         }
     }
     s_cmd_result = result;
+    show_window();
     publish();
     xSemaphoreGive(s_cmd_done);
-}
-
-static void on_cancel(void)
-{
-    atomic_store(&s_cancel, true);
-}
-
-static void show_window(void)
-{
-    const td_netlink_window_t *w = &n->deck.window;
-    if (w->open && (!s_shown || s_shown_generation != w->generation)) {
-        ui_pairing_show(w->code, on_cancel);
-        s_shown = true;
-        s_shown_generation = w->generation;
-        ESP_LOGI(TAG, "pairing window open");
-    } else if (!w->open && s_shown) {
-        ui_pairing_hide();
-        s_shown = false;
-        ESP_LOGI(TAG, "pairing window closed");
-    }
 }
 
 static void net_task(void *arg)
@@ -384,7 +410,7 @@ static void net_task(void *arg)
             FD_SET(s_client, &r);
             top = s_client > top ? s_client : top;
         }
-        struct timeval tv = { .tv_sec = 0, .tv_usec = POLL_MS * 1000 };
+        struct timeval tv = { .tv_sec = 0, .tv_usec = (s_client >= 0 ? POLL_MS : IDLE_POLL_MS) * 1000 };
         if (select(top + 1, &r, NULL, NULL, &tv) > 0) {
             if (s_client >= 0 && FD_ISSET(s_client, &r)) {
                 read_client();
@@ -440,13 +466,18 @@ esp_err_t td_netlink_start(void)
     s_out = xMessageBufferCreateWithCaps(OUT_RECORDS * (TD_NETLINK_PLAIN_MAX + sizeof(size_t)), MALLOC_CAP_SPIRAM);
     s_cmd_lock = xSemaphoreCreateMutex();
     s_cmd_done = xSemaphoreCreateBinary();
-    if (!n || !s_out || !s_cmd_lock || !s_cmd_done) {
+    s_save_done = xSemaphoreCreateBinary();
+    if (!n || !s_out || !s_cmd_lock || !s_cmd_done || !s_save_done) {
         return ESP_ERR_NO_MEM;
     }
     /* Wi-Fi brings the stack up first when it starts. Without it the listener still opens, on no interface. */
     esp_err_t err = esp_netif_init();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         return err;
+    }
+    /* Wi-Fi initialises NVS first when it starts, and a second init is a no-op. */
+    if (nvs_flash_init() != ESP_OK) {
+        ESP_LOGW(TAG, "NVS unavailable, pairings will not persist");
     }
     uint8_t deck_id[TD_NETLINK_DECK_ID_LEN];
     err = esp_read_mac(deck_id, ESP_MAC_WIFI_STA);
@@ -467,7 +498,8 @@ esp_err_t td_netlink_start(void)
     if (s_listen < 0) {
         return ESP_FAIL;
     }
-    if (xTaskCreatePinnedToCore(net_task, "td_netlink", TASK_STACK, NULL, TASK_PRIORITY, NULL, TASK_CORE) != pdPASS) {
+    if (xTaskCreatePinnedToCoreWithCaps(net_task, "td_netlink", TASK_STACK, NULL, TASK_PRIORITY, NULL, TASK_CORE,
+                                        MALLOC_CAP_SPIRAM) != pdPASS) {
         close(s_listen);
         s_listen = -1;
         publish();
