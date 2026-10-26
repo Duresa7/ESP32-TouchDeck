@@ -37,10 +37,12 @@ export const config: WebdriverIO.Config = {
   waitforTimeout: 10_000,
   connectionRetryCount: 1,
 
-  beforeSession: async () => {
+  beforeSession: async (_config, _capabilities, specs) => {
     if (attach) return;
     process.env.TD_E2E_SPAWNED_AT = String(Date.now());
-    app = spawn(binary, [], { env: { ...process.env, TAURI_WEBDRIVER_PORT: String(port) }, stdio: 'ignore' });
+    const env: NodeJS.ProcessEnv = { ...process.env, TAURI_WEBDRIVER_PORT: String(port) };
+    if (specs.some((spec) => basename(spec) === 'wireless.spec.ts')) env.TOUCHDECK_INPUT = 'fake';
+    app = spawn(binary, [], { env, stdio: 'ignore' });
     await serverReady(30_000);
   },
 
