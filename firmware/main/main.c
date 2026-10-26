@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "td_console.h"
+#include "td_link.h"
 #include "display.h"
 #include "touch.h"
 #include "ui.h"
@@ -70,6 +71,9 @@ void app_main(void)
     size_t power_cmd_count;
     const esp_console_cmd_t *power_cmds = power_console_commands(&power_cmd_count);
     register_commands("Power", power_cmds, power_cmd_count);
+    size_t link_cmd_count;
+    const esp_console_cmd_t *link_cmds = td_link_console_commands(&link_cmd_count);
+    register_commands("Link", link_cmds, link_cmd_count);
 
     /* The engine exists before the console can run a keys command. Its only sink here is the console key log.
      * The USB HID sink plugs in behind the same key_sink_t in the post-product update. */
@@ -77,6 +81,11 @@ void app_main(void)
     esp_err_t keys_err = keys_start(key_sink_log_sink(&s_key_log));
     if (keys_err != ESP_OK) {
         ESP_LOGE(TAG, "Keys failed to start: %s", esp_err_to_name(keys_err));
+    }
+
+    esp_err_t link_err = td_link_start();
+    if (link_err != ESP_OK) {
+        ESP_LOGE(TAG, "Link failed to start: %s", esp_err_to_name(link_err));
     }
 
     esp_err_t console_err = td_console_start();

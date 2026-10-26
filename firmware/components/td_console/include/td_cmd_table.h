@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define TD_CMD_TABLE_MAX 16
+#define TD_CMD_TABLE_MAX 32
 
 /*
  * The console's commands. `help` lists this table and the console registers it with esp_console in one go, so

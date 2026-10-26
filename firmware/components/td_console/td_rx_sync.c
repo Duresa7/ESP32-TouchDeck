@@ -1,4 +1,5 @@
 #include "td_rx_sync.h"
+#include <string.h>
 
 static bool is_eol(char c)
 {
@@ -44,4 +45,126 @@ size_t td_rx_sync(td_rx_sync_t *s, char *buf, size_t n, size_t space, size_t *dr
     }
     buf[0] = TD_RX_ABANDON;
     return 1;
+}
+
+#define FRAME_VERSION 0x01
+
+static void end_frame(td_rx_split_t *s, td_rx_frame_fn frame, void *context)
+{
+    if (s->mode == TD_RX_FRAME) {
+        frame(s->frame, s->frame_len, context);
+    } else if (s->mode == TD_RX_ESCAPE || s->mode == TD_RX_FRAME_DISCARD) {
+        frame(NULL, 0, context);
+    }
+}
+
+static void store(td_rx_split_t *s, uint8_t c)
+{
+    if (s->frame_len == sizeof s->frame) {
+        s->mode = TD_RX_FRAME_DISCARD;
+    } else {
+        s->frame[s->frame_len++] = c;
+        s->mode = TD_RX_FRAME;
+    }
+}
+
+uint32_t td_rx_split_expire(td_rx_split_t *s, uint32_t now_ms, td_rx_frame_fn frame, void *context)
+{
+    if (s->mode == TD_RX_TEXT) {
+        return TD_RX_NO_DEADLINE;
+    }
+    uint32_t age = now_ms - s->opened_ms;
+    if (age < TD_RX_FRAME_DEADLINE_MS) {
+        return TD_RX_FRAME_DEADLINE_MS - age;
+    }
+    end_frame(s, frame, context);
+    s->mode = TD_RX_TEXT;
+    return TD_RX_NO_DEADLINE;
+}
+
+void td_rx_split(td_rx_split_t *s, uint32_t now_ms, char *buf, size_t n,
+                 td_rx_text_fn text, td_rx_frame_fn frame, void *context)
+{
+    td_rx_split_expire(s, now_ms, frame, context);
+    size_t text_len = 0;
+    for (size_t i = 0; i < n; i++) {
+        uint8_t c = (uint8_t)buf[i];
+        if (c == 0xc0) {
+            if (text_len) {
+                text(buf, text_len, context);
+                text_len = 0;
+            }
+            end_frame(s, frame, context);
+            s->mode = TD_RX_OPEN;
+            s->opened_ms = now_ms;
+            s->frame_len = 0;
+        } else if (s->mode == TD_RX_TEXT || (s->mode == TD_RX_OPEN && c != FRAME_VERSION)) {
+            s->mode = TD_RX_TEXT;
+            buf[text_len++] = (char)c;
+        } else if (s->mode == TD_RX_ESCAPE) {
+            if (c == 0xdc || c == 0xdd) {
+                store(s, c == 0xdc ? 0xc0 : 0xdb);
+            } else {
+                s->mode = TD_RX_FRAME_DISCARD;
+            }
+        } else if (s->mode != TD_RX_FRAME_DISCARD) {
+            if (c == 0xdb) {
+                s->mode = TD_RX_ESCAPE;
+            } else {
+                store(s, c);
+            }
+        }
+    }
+    if (text_len) {
+        text(buf, text_len, context);
+    }
+}
+
+static bool has_control(const char *line, size_t len)
+{
+    for (size_t i = 0; i < len; i++) {
+        if ((unsigned char)line[i] < 0x20 && line[i] != '\t') {
+            return true;
+        }
+    }
+    return false;
+}
+
+td_line_status_t td_line_feed(td_line_t *s, int c, bool dropped,
+                              char *line, size_t cap, char echo[3], size_t *echo_len)
+{
+    *echo_len = 0;
+    if (c == TD_RX_ABANDON || (c < 0 && s->len == 0 && dropped)) {
+        memcpy(echo, "\r\n", 2);
+        *echo_len = 2;
+        *s = (td_line_t){0};
+        line[0] = '\0';
+        return TD_LINE_RESTART;
+    }
+    if (c < 0) {
+        return TD_LINE_MORE;
+    }
+    if (c == '\r' || c == '\n') {
+        memcpy(echo, "\r\n", 2);
+        *echo_len = 2;
+        line[s->len] = '\0';
+        td_line_status_t status = s->too_long ? TD_LINE_TOO_LONG
+                                : has_control(line, s->len) ? TD_LINE_CONTROL : TD_LINE_OK;
+        *s = (td_line_t){0};
+        return status;
+    }
+    if (c == '\b' || c == 0x7f) {
+        if (s->len > 0 && !s->too_long) {
+            s->len--;
+            memcpy(echo, "\b \b", 3);
+            *echo_len = 3;
+        }
+    } else if (s->len + 1 < cap) {
+        line[s->len++] = (char)c;
+        echo[0] = (char)c;
+        *echo_len = 1;
+    } else {
+        s->too_long = true;
+    }
+    return TD_LINE_MORE;
 }
