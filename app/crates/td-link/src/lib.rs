@@ -1,6 +1,7 @@
 pub mod bundle;
 pub mod discover;
 pub mod mock;
+pub mod net;
 pub mod recover;
 pub mod session;
 pub mod update;

@@ -19,6 +19,8 @@ use crate::xfer::{ICON_BYTES, LayoutState, RETRY_AFTER, TRANSMISSIONS, WINDOW, c
 use crate::{READ_TICK, Transport};
 
 pub const MOCK_PORT: &str = "mock";
+pub const MOCK_DECK_ID: [u8; 6] = [0x02, 0x00, 0x00, 0xaa, 0xbb, 0xcc];
+pub const MOCK_DECK_ID_HEX: &str = "020000aabbcc";
 pub const MOCK_ELF_SHA256: &str =
     "6d6f636b6465636b6d6f636b6465636b6d6f636b6465636b6d6f636b6465636b";
 const DASHBOARD_ROWS: usize = 8;
@@ -105,6 +107,37 @@ struct State {
     update_pending: Option<(String, String)>,
     update_mode: String,
     update_aborted: bool,
+    net_addr: Option<std::net::SocketAddr>,
+    net_pairings: BTreeMap<[u8; 16], NetPairingEntry>,
+    net_window: Option<MockPairWindow>,
+    net_next_code: String,
+    net_owner_active: bool,
+    net_session: Option<MockNetSession>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NetPairingEntry {
+    pub app_id: [u8; 16],
+    pub app_name: String,
+    pub ltk: [u8; 32],
+}
+
+#[derive(Debug, Clone)]
+struct MockPairWindow {
+    window_id: [u8; 16],
+    code: String,
+    expires_at: Instant,
+    failures: u8,
+    bound: bool,
+}
+
+#[derive(Debug, Clone)]
+struct MockNetSession {
+    app_id: String,
+    app_name: String,
+    since_ms: u64,
+    to_client: Sender<Vec<u8>>,
+    close_flag: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl State {
@@ -189,6 +222,12 @@ impl MockDeck {
                 update_pending: None,
                 update_mode: String::new(),
                 update_aborted: false,
+                net_addr: None,
+                net_pairings: BTreeMap::new(),
+                net_window: None,
+                net_next_code: "482910".into(),
+                net_owner_active: false,
+                net_session: None,
             })),
         }
     }
@@ -238,6 +277,10 @@ impl MockDeck {
         let mut state = self.state();
         state.link = None;
         state.generation += 1;
+        if let Some(sess) = state.net_session.take() {
+            sess.close_flag
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
     }
 
     pub fn delay_replies(&self, delay: Duration) {
@@ -251,13 +294,18 @@ impl MockDeck {
     /// Sends any event object, including ones `Event` does not name, such as `key.resync`.
     pub fn emit_value(&self, event: &Value) {
         let state = self.state();
-        if let (false, Some(link)) = (state.silent, &state.link) {
-            let payload = serde_json::to_vec(event).expect("events serialize");
-            let _ = link.send(
-                Frame::message(Role::Event, payload)
-                    .encode()
-                    .expect("events fit one frame"),
-            );
+        if state.silent {
+            return;
+        }
+        let payload = serde_json::to_vec(event).expect("events serialize");
+        let encoded = Frame::message(Role::Event, payload)
+            .encode()
+            .expect("events fit one frame");
+        if let Some(link) = &state.link {
+            let _ = link.send(encoded.clone());
+        }
+        if let Some(sess) = &state.net_session {
+            let _ = sess.to_client.send(encoded);
         }
     }
 
@@ -781,6 +829,7 @@ impl MockDeck {
                     reply.extend(self.link_state());
                     Value::Object(reply)
                 }
+                "net" => self.console_net(&command),
                 _ => json!({"cmd": word, "ok": false, "error": "unknown command"}),
             };
             self.state().lines.push(command.clone());
@@ -937,6 +986,8 @@ impl MockDeck {
             "wifi.state" | "wifi.set" | "wifi.forget" | "wifi.scan" => {
                 self.wifi_request(m, request)
             }
+            "net.state" | "net.forget" => self.net_request(m),
+
             "link.state" => Ok(self.link_state()),
             "icon.list" => {
                 let state = self.state();
@@ -1134,6 +1185,626 @@ impl Write for MockWriter {
 
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+impl MockDeck {
+    /// Returns the localhost TCP address where the mock deck speaks `net-v1`, binding
+    /// a listener on `127.0.0.1:0` on first call.
+    pub fn net_addr(&self) -> std::net::SocketAddr {
+        {
+            let state = self.state();
+            if let Some(addr) = state.net_addr {
+                return addr;
+            }
+        }
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("bind mock net-v1 listener");
+        let addr = listener.local_addr().expect("mock net-v1 local_addr");
+        self.state().net_addr = Some(addr);
+        let deck = self.clone();
+        thread::spawn(move || {
+            for accepted in listener.incoming() {
+                let Ok(stream) = accepted else {
+                    break;
+                };
+                let client_deck = deck.clone();
+                thread::spawn(move || client_deck.serve_net_client(stream));
+            }
+        });
+        addr
+    }
+
+    /// Test-only accessor for the 6-digit code displayed on the mock deck's screen.
+    /// Never exposed through `hello`, `net.state`, or console replies.
+    pub fn net_pairing_code(&self) -> String {
+        let state = self.state();
+        state
+            .net_window
+            .as_ref()
+            .map(|w| w.code.clone())
+            .unwrap_or_else(|| state.net_next_code.clone())
+    }
+
+    pub fn net_paired_count(&self) -> usize {
+        self.state().net_pairings.len()
+    }
+
+    fn net_state_fields(&self, state: &mut State) -> Map<String, Value> {
+        if state
+            .net_window
+            .as_ref()
+            .is_some_and(|w| Instant::now() >= w.expires_at)
+        {
+            state.net_window = None;
+        }
+        let port = state
+            .net_addr
+            .map_or(crate::net::NET_DEFAULT_PORT, |a| a.port());
+        let session = state.net_session.as_ref().map(|s| {
+            json!({
+                "app_id": s.app_id,
+                "app_name": s.app_name,
+                "since_ms": s.since_ms,
+            })
+        });
+        let fields = json!({
+            "listening": true,
+            "port": port,
+            "session": session,
+            "paired": state.net_pairings.len(),
+            "pairing": state.net_window.is_some(),
+        });
+        fields.as_object().cloned().unwrap_or_default()
+    }
+
+    fn net_request(&self, m: &str) -> Result<Map<String, Value>, String> {
+        let _ = self.net_addr();
+        let mut state = self.state();
+        if m == "net.forget" {
+            state.net_window = None;
+            state.net_pairings.clear();
+            if let Some(sess) = state.net_session.take() {
+                sess.close_flag
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+        Ok(self.net_state_fields(&mut state))
+    }
+
+    fn console_net(&self, command: &str) -> Value {
+        let _ = self.net_addr();
+        let words: Vec<&str> = command.split_whitespace().collect();
+        let sub = words.get(1).copied().unwrap_or("state");
+        match sub {
+            "state" => {
+                let mut state = self.state();
+                let mut reply = Map::from_iter([
+                    ("cmd".to_owned(), json!("net")),
+                    ("op".to_owned(), json!("state")),
+                    ("ok".to_owned(), json!(true)),
+                ]);
+                reply.extend(self.net_state_fields(&mut state));
+                Value::Object(reply)
+            }
+            "forget" => {
+                let mut state = self.state();
+                state.net_window = None;
+                state.net_pairings.clear();
+                if let Some(sess) = state.net_session.take() {
+                    sess.close_flag
+                        .store(true, std::sync::atomic::Ordering::Release);
+                }
+                let mut reply = Map::from_iter([
+                    ("cmd".to_owned(), json!("net")),
+                    ("op".to_owned(), json!("forget")),
+                    ("ok".to_owned(), json!(true)),
+                ]);
+                reply.extend(self.net_state_fields(&mut state));
+                Value::Object(reply)
+            }
+            "pair" => {
+                let mut state = self.state();
+                let now = Instant::now();
+                let expired = state
+                    .net_window
+                    .as_ref()
+                    .is_none_or(|w| now >= w.expires_at);
+                if expired {
+                    let mut window_id = [0u8; 16];
+                    getrandom::getrandom(&mut window_id).expect("OS CSPRNG");
+                    let code = state.net_next_code.clone();
+                    state.net_window = Some(MockPairWindow {
+                        window_id,
+                        code,
+                        expires_at: now
+                            + Duration::from_millis(u64::from(crate::net::PAIR_WINDOW_MS)),
+                        failures: 0,
+                        bound: false,
+                    });
+                }
+                let mut reply = Map::from_iter([
+                    ("cmd".to_owned(), json!("net")),
+                    ("op".to_owned(), json!("pair")),
+                    ("ok".to_owned(), json!(true)),
+                ]);
+                reply.extend(self.net_state_fields(&mut state));
+                Value::Object(reply)
+            }
+            _ => json!({"cmd": "net", "ok": false, "error": "unknown net subcommand"}),
+        }
+    }
+
+    fn rotate_next_code(state: &mut State) {
+        let mut raw = [0u8; 4];
+        getrandom::getrandom(&mut raw).expect("OS CSPRNG");
+        let n = (u32::from_be_bytes(raw) % 900_000) + 100_000;
+        let next = format!("{n:06}");
+        state.net_next_code = if next == state.net_next_code {
+            format!("{:06}", (n + 1) % 1_000_000)
+        } else {
+            next
+        };
+    }
+
+    fn serve_net_client(&self, stream: std::net::TcpStream) {
+        use crate::net::*;
+        use subtle::ConstantTimeEq;
+
+        if self.state().silent {
+            return;
+        }
+        {
+            let mut state = self.state();
+            if state.net_owner_active {
+                drop(state);
+                let mut sock = WireSocket::new(stream);
+                let _ = sock.send(
+                    &encode_net_error(NetErrorReason::Busy),
+                    Duration::from_millis(100),
+                );
+                sock.finish(Duration::from_millis(100));
+                return;
+            }
+            state.net_owner_active = true;
+        }
+
+        struct OwnerGuard(MockDeck);
+        impl Drop for OwnerGuard {
+            fn drop(&mut self) {
+                let mut state = self.0.state();
+                state.net_owner_active = false;
+                state.net_session = None;
+                if state.net_window.as_ref().is_some_and(|w| w.bound) {
+                    state.net_window = None;
+                }
+            }
+        }
+        let _guard = OwnerGuard(self.clone());
+
+        let mut sock = WireSocket::new(stream);
+        let Ok(first_wire) = sock.read_item(3, MAX_HANDSHAKE_BODY_LEN, HANDSHAKE_TIMEOUT) else {
+            sock.finish(Duration::from_millis(100));
+            return;
+        };
+        let (kind, first_fields) = match parse_handshake(&first_wire, None) {
+            Ok((k, f)) => (k, f.to_vec()),
+            Err(NetError::Local {
+                reason: NetErrorReason::Version,
+                ..
+            }) => {
+                let _ = sock.send(
+                    &encode_net_error(NetErrorReason::Version),
+                    Duration::from_millis(100),
+                );
+                sock.finish(Duration::from_millis(100));
+                return;
+            }
+            Err(_) => {
+                sock.finish(Duration::from_millis(100));
+                return;
+            }
+        };
+
+        if kind == KIND_PAIR_REQUEST {
+            let mut app_id = [0u8; APP_ID_LEN];
+            app_id.copy_from_slice(&first_fields[0..16]);
+            let name_len = first_fields[16] as usize;
+            let app_name = String::from_utf8_lossy(&first_fields[17..17 + name_len]).into_owned();
+
+            let (window_id, remaining_ms, window_expires) = {
+                let mut state = self.state();
+                if state.net_pairings.len() >= 4 || state.net_pairings.contains_key(&app_id) {
+                    drop(state);
+                    let _ = sock.send(
+                        &encode_net_error(NetErrorReason::Full),
+                        Duration::from_millis(100),
+                    );
+                    sock.finish(Duration::from_millis(100));
+                    return;
+                }
+                let now = Instant::now();
+                if let Some(w) = state.net_window.as_mut() {
+                    if now < w.expires_at && !w.bound {
+                        w.bound = true;
+                        let rem =
+                            (w.expires_at - now).as_millis().clamp(1, u128::from(PAIR_WINDOW_MS))
+                                as u32;
+                        (w.window_id, rem, w.expires_at)
+                    } else {
+                        state.net_window = None;
+                        let mut wid = [0u8; 16];
+                        getrandom::getrandom(&mut wid).expect("OS CSPRNG");
+                        let exp = now + Duration::from_millis(u64::from(PAIR_WINDOW_MS));
+                        let code = state.net_next_code.clone();
+                        state.net_window = Some(MockPairWindow {
+                            window_id: wid,
+                            code,
+                            expires_at: exp,
+                            failures: 0,
+                            bound: true,
+                        });
+                        (wid, PAIR_WINDOW_MS, exp)
+                    }
+                } else {
+                    let mut wid = [0u8; 16];
+                    getrandom::getrandom(&mut wid).expect("OS CSPRNG");
+                    let exp = now + Duration::from_millis(u64::from(PAIR_WINDOW_MS));
+                    let code = state.net_next_code.clone();
+                    state.net_window = Some(MockPairWindow {
+                        window_id: wid,
+                        code,
+                        expires_at: exp,
+                        failures: 0,
+                        bound: true,
+                    });
+                    (wid, PAIR_WINDOW_MS, exp)
+                }
+            };
+
+            let mut offer_fields = Vec::with_capacity(26);
+            offer_fields.extend_from_slice(&MOCK_DECK_ID);
+            offer_fields.extend_from_slice(&window_id);
+            offer_fields.extend_from_slice(&remaining_ms.to_be_bytes());
+            let Ok(offer_wire) = encode_handshake(KIND_PAIR_OFFER, &offer_fields) else {
+                return;
+            };
+            if sock.send(&offer_wire, HANDSHAKE_TIMEOUT).is_err() {
+                return;
+            }
+
+            loop {
+                let now = Instant::now();
+                if now >= window_expires {
+                    let _ = sock.send(
+                        &encode_net_error(NetErrorReason::Expired),
+                        Duration::from_millis(100),
+                    );
+                    sock.finish(Duration::from_millis(100));
+                    return;
+                }
+                let wait = window_expires - now;
+                let Ok((start_wire, start_fields)) =
+                    sock.receive_handshake(KIND_PAIR_START, wait)
+                else {
+                    sock.finish(Duration::from_millis(100));
+                    return;
+                };
+                let attempt_deadline = (Instant::now() + HANDSHAKE_TIMEOUT).min(window_expires);
+                let code = {
+                    let state = self.state();
+                    let Some(w) = state.net_window.as_ref() else {
+                        drop(state);
+                        let _ = sock.send(
+                            &encode_net_error(NetErrorReason::Cancelled),
+                            Duration::from_millis(100),
+                        );
+                        sock.finish(Duration::from_millis(100));
+                        return;
+                    };
+                    if Instant::now() >= w.expires_at {
+                        drop(state);
+                        let _ = sock.send(
+                            &encode_net_error(NetErrorReason::Expired),
+                            Duration::from_millis(100),
+                        );
+                        sock.finish(Duration::from_millis(100));
+                        return;
+                    }
+                    w.code.clone()
+                };
+
+                let mut a_pub = [0u8; SRP_PAD_LEN];
+                a_pub.copy_from_slice(&start_fields[0..384]);
+
+                let mut salt = [0u8; SALT_LEN];
+                getrandom::getrandom(&mut salt).expect("OS CSPRNG");
+                let mut b_priv = [0u8; 32];
+                loop {
+                    getrandom::getrandom(&mut b_priv).expect("OS CSPRNG");
+                    if b_priv.iter().any(|&b| b != 0) {
+                        break;
+                    }
+                }
+                let mut deck_nonce = [0u8; NONCE32_LEN];
+                getrandom::getrandom(&mut deck_nonce).expect("OS CSPRNG");
+
+                let ident = identity_bytes(&MOCK_DECK_ID, &app_id);
+                let Ok(secret) = srp_server_secret(&ident, &code, &salt, &b_priv, &a_pub) else {
+                    self.state().net_window = None;
+                    sock.finish(Duration::from_millis(100));
+                    return;
+                };
+
+                let mut ch_fields = Vec::with_capacity(432);
+                ch_fields.extend_from_slice(&salt);
+                ch_fields.extend_from_slice(&secret.b_pub);
+                ch_fields.extend_from_slice(&deck_nonce);
+                let Ok(ch_wire) = encode_handshake(KIND_PAIR_CHALLENGE, &ch_fields) else {
+                    return;
+                };
+                let Ok(pkeys) = derive_pair_keys(
+                    &secret.k_srp,
+                    &first_wire,
+                    &offer_wire,
+                    &start_wire,
+                    &ch_wire,
+                ) else {
+                    return;
+                };
+                let rem = attempt_deadline.saturating_duration_since(Instant::now());
+                if sock.send(&ch_wire, rem).is_err() {
+                    return;
+                }
+                let rem = attempt_deadline.saturating_duration_since(Instant::now());
+                let Ok((_, proof_fields)) = sock.receive_handshake(KIND_PAIR_PROOF, rem) else {
+                    sock.finish(Duration::from_millis(100));
+                    return;
+                };
+
+                if proof_fields.ct_eq(&pkeys.client_proof).unwrap_u8() != 1 {
+                    let failures = {
+                        let mut state = self.state();
+                        if let Some(w) = state.net_window.as_mut() {
+                            w.failures += 1;
+                            w.failures
+                        } else {
+                            3
+                        }
+                    };
+                    let _ = sock.send(
+                        &encode_net_error(NetErrorReason::Auth),
+                        Duration::from_millis(100),
+                    );
+                    if failures >= 3 {
+                        let mut state = self.state();
+                        state.net_window = None;
+                        Self::rotate_next_code(&mut state);
+                        drop(state);
+                        sock.finish(Duration::from_millis(100));
+                        return;
+                    }
+                    continue;
+                }
+
+                let mut ltk = [0u8; LTK_LEN];
+                getrandom::getrandom(&mut ltk).expect("OS CSPRNG");
+                let Ok(wrapped) = wrap_key(&pkeys, &ltk) else {
+                    return;
+                };
+                let mut accept_fields = Vec::with_capacity(80);
+                accept_fields.extend_from_slice(&pkeys.deck_proof);
+                accept_fields.extend_from_slice(&wrapped);
+                let Ok(accept_wire) = encode_handshake(KIND_PAIR_ACCEPT, &accept_fields) else {
+                    return;
+                };
+                let rem = attempt_deadline.saturating_duration_since(Instant::now());
+                if sock.send(&accept_wire, rem).is_err() {
+                    return;
+                }
+
+                let rem = attempt_deadline.saturating_duration_since(Instant::now());
+                let Ok((_, commit_fields)) = sock.receive_handshake(KIND_PAIR_COMMIT, rem) else {
+                    sock.finish(Duration::from_millis(100));
+                    return;
+                };
+                let expected_commit = commit_proof(&pkeys, &ltk);
+                if commit_fields.ct_eq(&expected_commit).unwrap_u8() != 1 {
+                    self.state().net_window = None;
+                    let _ = sock.send(
+                        &encode_net_error(NetErrorReason::Auth),
+                        Duration::from_millis(100),
+                    );
+                    sock.finish(Duration::from_millis(100));
+                    return;
+                }
+
+                {
+                    let mut state = self.state();
+                    if state.net_pairings.len() >= 4 || state.net_pairings.contains_key(&app_id) {
+                        state.net_window = None;
+                        drop(state);
+                        let _ = sock.send(
+                            &encode_net_error(NetErrorReason::Full),
+                            Duration::from_millis(100),
+                        );
+                        sock.finish(Duration::from_millis(100));
+                        return;
+                    }
+                    state.net_pairings.insert(
+                        app_id,
+                        NetPairingEntry {
+                            app_id,
+                            app_name,
+                            ltk,
+                        },
+                    );
+                    state.net_window = None;
+                }
+
+                let stored = stored_proof(&pkeys, &ltk);
+                if let Ok(stored_wire) = encode_handshake(KIND_PAIR_STORED, &stored) {
+                    let rem = attempt_deadline.saturating_duration_since(Instant::now());
+                    let _ = sock.send(&stored_wire, rem);
+                }
+                sock.finish(Duration::from_millis(100));
+                return;
+            }
+        } else if kind == KIND_SESSION_OPEN {
+            let mut deck_id = [0u8; DECK_ID_LEN];
+            deck_id.copy_from_slice(&first_fields[0..6]);
+            let mut app_id = [0u8; APP_ID_LEN];
+            app_id.copy_from_slice(&first_fields[6..22]);
+            let mut client_nonce = [0u8; NONCE32_LEN];
+            client_nonce.copy_from_slice(&first_fields[22..54]);
+
+            let entry = {
+                let state = self.state();
+                if deck_id != MOCK_DECK_ID {
+                    None
+                } else {
+                    state.net_pairings.get(&app_id).cloned()
+                }
+            };
+            let Some(entry) = entry else {
+                let _ = sock.send(
+                    &encode_net_error(NetErrorReason::Auth),
+                    Duration::from_millis(100),
+                );
+                sock.finish(Duration::from_millis(100));
+                return;
+            };
+
+            let mut deck_nonce = [0u8; NONCE32_LEN];
+            getrandom::getrandom(&mut deck_nonce).expect("OS CSPRNG");
+            let skeys = derive_session_keys(
+                &entry.ltk,
+                &MOCK_DECK_ID,
+                &app_id,
+                &client_nonce,
+                &deck_nonce,
+            );
+            let mut ch_fields = [0u8; 64];
+            ch_fields[0..32].copy_from_slice(&deck_nonce);
+            ch_fields[32..64].copy_from_slice(&skeys.deck_proof);
+            let Ok(ch_wire) = encode_handshake(KIND_SESSION_CHALLENGE, &ch_fields) else {
+                return;
+            };
+            if sock.send(&ch_wire, HANDSHAKE_TIMEOUT).is_err() {
+                return;
+            }
+            let Ok((_, proof_fields)) =
+                sock.receive_handshake(KIND_SESSION_PROOF, HANDSHAKE_TIMEOUT)
+            else {
+                sock.finish(Duration::from_millis(100));
+                return;
+            };
+            if proof_fields.ct_eq(&skeys.client_proof).unwrap_u8() != 1 {
+                let _ = sock.send(
+                    &encode_net_error(NetErrorReason::Auth),
+                    Duration::from_millis(100),
+                );
+                sock.finish(Duration::from_millis(100));
+                return;
+            }
+            let Ok(ready_wire) = encode_handshake(KIND_SESSION_READY, &skeys.ready_proof) else {
+                return;
+            };
+            if sock.send(&ready_wire, HANDSHAKE_TIMEOUT).is_err() {
+                return;
+            }
+
+            let (to_client, from_deck) = mpsc::channel::<Vec<u8>>();
+            let close_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            {
+                let mut state = self.state();
+                let since_ms = state.booted.elapsed().as_millis() as u64;
+                state.net_session = Some(MockNetSession {
+                    app_id: hex::encode(app_id),
+                    app_name: entry.app_name.clone(),
+                    since_ms,
+                    to_client: to_client.clone(),
+                    close_flag: close_flag.clone(),
+                });
+            }
+
+            let mut sender = RecordSender::new(&skeys.d2c, DIR_D2C);
+            let mut receiver = RecordReceiver::new(&skeys.c2d, DIR_C2D);
+            let mut last_valid_rx = Instant::now();
+
+            loop {
+                if last_valid_rx.elapsed() >= ONLINE_FOR {
+                    break;
+                }
+                if self.state().silent {
+                    thread::sleep(READ_TICK);
+                    continue;
+                }
+                match sock.read_item(MIN_RECORD_BODY_LEN, MAX_RECORD_BODY_LEN, READ_TICK) {
+                    Ok(wire) => {
+                        let Ok(body) = receiver.open(&wire) else {
+                            break;
+                        };
+                        let Ok(frame) = Frame::decode_body(&body) else {
+                            break;
+                        };
+                        last_valid_rx = Instant::now();
+                        let out_slip = match frame {
+                            Frame {
+                                role,
+                                body: body @ (Body::Chunk { .. } | Body::Ack { .. }),
+                            } => self.answer_xfer(role, body),
+                            other => self.answer_frame(other),
+                        };
+                        if !out_slip.is_empty() {
+                            let delay = self.state().reply_delay;
+                            if !delay.is_zero() {
+                                thread::sleep(delay);
+                            }
+                            let Ok(reply_frame) = Frame::decode_wire(&out_slip) else {
+                                break;
+                            };
+                            let Ok(reply_body) = reply_frame.encode_body() else {
+                                break;
+                            };
+                            let Ok(sealed) = sender.seal(&reply_body) else {
+                                break;
+                            };
+                            if sock.send(&sealed, Duration::from_secs(5)).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Err(NetError::Io(err))
+                        if matches!(
+                            err.kind(),
+                            ErrorKind::TimedOut | ErrorKind::WouldBlock | ErrorKind::Interrupted
+                        ) => {}
+                    Err(_) => break,
+                }
+                self.pump(&to_client);
+                while let Ok(slip) = from_deck.try_recv() {
+                    let Ok(f) = Frame::decode_wire(&slip) else {
+                        continue;
+                    };
+                    let Ok(b) = f.encode_body() else {
+                        continue;
+                    };
+                    let Ok(sealed) = sender.seal(&b) else {
+                        return;
+                    };
+                    if sock.send(&sealed, Duration::from_secs(5)).is_err() {
+                        return;
+                    }
+                }
+                if close_flag.load(std::sync::atomic::Ordering::Acquire) {
+                    sock.finish(Duration::from_millis(100));
+                    break;
+                }
+            }
+        } else {
+            sock.finish(Duration::from_millis(100));
+        }
     }
 }
 

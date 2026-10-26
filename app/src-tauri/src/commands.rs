@@ -18,6 +18,7 @@ use td_link::mock::MOCK_PORT;
 use td_link::xfer::{IconSync, PutReport, get_layout, prune_icons, push_icons, put_layout};
 use td_link::{Incoming, MockDeck, Serial, Session, SessionConfig, Transport};
 
+use crate::net_store::{ActivePair, NetPairOffer, NetPairStep, NetStore, parse_net_port};
 use crate::sources::SourcesState;
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(1);
@@ -44,6 +45,7 @@ pub struct AppState {
     action_log: Mutex<VecDeque<ActionLog>>,
     log_path: Mutex<Option<PathBuf>>,
     icon_cache: Mutex<Option<IconCache>>,
+    net: NetStore,
 }
 
 impl AppState {
@@ -65,6 +67,7 @@ impl AppState {
             action_log: Mutex::new(VecDeque::new()),
             log_path: Mutex::new(None),
             icon_cache: Mutex::new(None),
+            net: NetStore::new(mock),
         }
     }
 
@@ -76,6 +79,7 @@ impl AppState {
             let _ = std::fs::create_dir_all(&logs);
             *self.log_path.lock().unwrap() = Some(logs.join("actions.log"));
         }
+        self.net.use_dir(config.clone());
         if let (None, Some(config)) = (&self.mock, config) {
             let path = config.join("approvals.json");
             let approvals = Approvals::load(path.clone())
@@ -107,6 +111,23 @@ impl AppState {
     }
 
     fn transport(&self, port: &str) -> Result<Box<dyn Transport>, String> {
+        if let Some((host, tcp_port)) = parse_net_port(port) {
+            let (deck_id, app_id, ltk, deck_id_hex) =
+                self.net.resolve_credentials(&host, tcp_port)?;
+            let addr: std::net::SocketAddr = format!("{host}:{tcp_port}")
+                .parse()
+                .map_err(|error| format!("{port}: {error}"))?;
+            let net = td_link::net::NetTransport::connect(
+                addr,
+                &deck_id,
+                &app_id,
+                &ltk,
+                Duration::from_secs(5),
+            )
+            .map_err(|error| format!("{port}: {error}"))?;
+            self.net.confirm_deck(&deck_id_hex, &host, tcp_port);
+            return Ok(Box::new(net));
+        }
         match &self.mock {
             Some(mock) if port == MOCK_PORT => Ok(Box::new(mock.connect())),
             Some(_) => Err(format!("{port} is not the mock deck")),
@@ -164,27 +185,48 @@ pub async fn list_decks(app: AppHandle) -> Result<Vec<Candidate>, String> {
             Some(_) => vec![MOCK_PORT.to_owned()],
             None => td_link::discover::candidate_ports(),
         };
-        if state.mock.is_none() && connected.is_none() {
-            return discover();
-        }
-        ports
-            .into_iter()
-            .map(|port| match &connected {
-                Some((info, _)) if info.port == port => Candidate {
-                    port,
-                    probe: Probe::Deck {
-                        hello: info.hello.clone(),
+        let mut candidates: Vec<Candidate> = if state.mock.is_none() && connected.is_none() {
+            discover()
+        } else {
+            ports
+                .into_iter()
+                .map(|port| match &connected {
+                    Some((info, _)) if info.port == port => Candidate {
+                        port,
+                        probe: Probe::Deck {
+                            hello: info.hello.clone(),
+                        },
                     },
-                },
-                _ => {
-                    let probe = match state.transport(&port) {
-                        Ok(transport) => probe_transport(transport),
-                        Err(detail) => Probe::Busy { detail },
-                    };
-                    Candidate { port, probe }
-                }
-            })
-            .collect()
+                    _ => {
+                        let probe = match state.transport(&port) {
+                            Ok(transport) => probe_transport(transport),
+                            Err(detail) => Probe::Busy { detail },
+                        };
+                        Candidate { port, probe }
+                    }
+                })
+                .collect()
+        };
+
+        let mdns = match &state.mock {
+            Some(mock) => {
+                let addr = mock.net_addr();
+                vec![td_link::discover::NetDiscovered {
+                    host: addr.ip().to_string(),
+                    port: addr.port(),
+                    deck_id: Some(td_link::mock::MOCK_DECK_ID_HEX.into()),
+                    name: Some("touchdeck-aabbcc".into()),
+                    proto: Some(1),
+                    paired: Some(mock.net_paired_count() as u8),
+                }]
+            }
+            None => td_link::discover::discover_mdns(Duration::from_millis(250)),
+        };
+        let conn_pair = connected
+            .as_ref()
+            .map(|(info, _)| (info.port.as_str(), &info.hello));
+        candidates.extend(state.net.build_candidates(mdns, conn_pair));
+        candidates
     })
     .await
 }
@@ -546,6 +588,11 @@ pub fn e2e_mock_record(state: State<'_, AppState>) -> Result<Value, String> {
         "layouts": {
             "landscape": layout(Orientation::Landscape),
             "portrait": layout(Orientation::Portrait),
+        },
+        "net": {
+            "port": mock.net_addr().port(),
+            "code": mock.net_pairing_code(),
+            "paired": mock.net_paired_count(),
         },
     }))
 }
@@ -1106,6 +1153,182 @@ pub async fn update_firmware(
                 let _ = app.emit("firmware-update", progress);
             },
         )
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn net_add_host(app: AppHandle, host: String) -> Result<String, String> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let default_port = match &state.mock {
+            Some(mock) if host.trim() == "127.0.0.1" => mock.net_addr().port(),
+            _ => td_link::net::NET_DEFAULT_PORT,
+        };
+        state.net.add_manual_target(&host, default_port)
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn net_pair_start(
+    app: AppHandle,
+    port: String,
+    name: Option<String>,
+) -> Result<NetPairOffer, String> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let (host, tcp_port) =
+            parse_net_port(&port).ok_or_else(|| format!("{port} is not a network deck"))?;
+        let addr: std::net::SocketAddr = format!("{host}:{tcp_port}")
+            .parse()
+            .map_err(|error| format!("{port}: {error}"))?;
+        let (app_id, app_name) = state.net.app_identity();
+        let session = td_link::net::PairSession::open(
+            addr,
+            &app_id,
+            &app_name,
+            td_link::net::HANDSHAKE_TIMEOUT,
+        )
+        .map_err(|error| error.to_string())?;
+        let deck_id = hex::encode(session.deck_id);
+        let remaining_ms = session.remaining_ms;
+        *state.net.active_pair.lock().unwrap() = Some(ActivePair {
+            port: port.clone(),
+            host: host.clone(),
+            tcp_port,
+            deck_id: deck_id.clone(),
+            name: name.clone(),
+            session,
+            failures: 0,
+        });
+        Ok(NetPairOffer {
+            port,
+            host,
+            tcp_port,
+            deck_id,
+            name,
+            remaining_ms,
+            attempts_left: 3,
+        })
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn net_pair_code(app: AppHandle, code: String) -> Result<NetPairStep, String> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let mut active = state
+            .net
+            .active_pair
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or_else(|| "No pairing window is open.".to_owned())?;
+
+        let host = active.host.clone();
+        let tcp_port = active.tcp_port;
+        let name = active.name.clone();
+        let res = active
+            .session
+            .try_code(&code, |cred| state.net.save_pending(cred, &host, tcp_port, name.clone()));
+
+        match res {
+            Ok(cred) => {
+                let deck_id_hex = hex::encode(cred.deck_id);
+                state.net.confirm_deck(&deck_id_hex, &host, tcp_port);
+                Ok(NetPairStep {
+                    paired: true,
+                    locked: false,
+                    attempts_left: 3u8.saturating_sub(active.failures),
+                    deck_id: deck_id_hex,
+                    port: active.port,
+                    error: None,
+                })
+            }
+            Err(td_link::net::NetError::Remote(td_link::net::NetErrorReason::Auth)) => {
+                active.failures += 1;
+                let left = 3u8.saturating_sub(active.failures);
+                let locked = left == 0;
+                let port = active.port.clone();
+                let deck_id = active.deck_id.clone();
+                if !locked {
+                    *state.net.active_pair.lock().unwrap() = Some(active);
+                }
+                Ok(NetPairStep {
+                    paired: false,
+                    locked,
+                    attempts_left: left,
+                    deck_id,
+                    port,
+                    error: Some(if locked {
+                        "Three wrong codes entered. The pairing window on the deck closed.".into()
+                    } else {
+                        format!(
+                            "Wrong code ({left} attempt{} left).",
+                            if left == 1 { "" } else { "s" }
+                        )
+                    }),
+                })
+            }
+            Err(error) => Err(error.to_string()),
+        }
+    })
+    .await?
+}
+
+#[tauri::command]
+pub fn net_pair_cancel(state: State<'_, AppState>) -> Result<(), String> {
+    state.net.active_pair.lock().unwrap().take();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn net_forget_deck(
+    app: AppHandle,
+    port: String,
+    deck_id: Option<String>,
+) -> Result<(), String> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        if state
+            .link
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|l| l.port == port)
+        {
+            if let Some(prev) = state.link.lock().unwrap().take() {
+                app.state::<SourcesState>().disconnected();
+                prev.session.close();
+            }
+        }
+        state.net.forget_deck(&port, deck_id.as_deref())
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn net_state(app: AppHandle) -> Result<Value, String> {
+    blocking(move || {
+        session(&app)?
+            .call(&serde_json::json!({"m": "net.state"}), SETTINGS_TIMEOUT)
+            .map_err(|error| error.to_string())?
+            .fields()
+            .map_err(|error| error.to_string())
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn net_forget(app: AppHandle) -> Result<Value, String> {
+    blocking(move || {
+        session(&app)?
+            .call(&serde_json::json!({"m": "net.forget"}), SETTINGS_TIMEOUT)
+            .map_err(|error| error.to_string())?
+            .fields()
+            .map_err(|error| error.to_string())
     })
     .await?
 }

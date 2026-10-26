@@ -129,7 +129,7 @@ impl Frame {
         }
     }
 
-    pub fn encode(&self) -> Result<Vec<u8>, FrameError> {
+    pub fn encode_body(&self) -> Result<Vec<u8>, FrameError> {
         let payload = self.body.payload();
         if payload.len() > PAYLOAD_MAX {
             return Err(FrameError::Length);
@@ -145,6 +145,11 @@ impl Frame {
         body.extend_from_slice(&payload);
         let crc = crc16(&body);
         body.extend_from_slice(&crc.to_le_bytes());
+        Ok(body)
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, FrameError> {
+        let body = self.encode_body()?;
         let mut wire = Vec::with_capacity(2 * body.len() + 2);
         wire.push(END);
         for byte in body {

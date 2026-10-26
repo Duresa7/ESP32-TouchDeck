@@ -16,10 +16,16 @@
     describe,
     disconnect,
     listDecks,
+    netAddHost,
+    netForgetDeck,
+    netPairCancel,
+    netPairCode,
+    netPairStart,
     onConsoleLine,
     onLinkClosed,
     type Candidate,
     type DeckInfo,
+    type NetPairOffer,
   } from './lib/deck.ts';
 
   let title = $state('TouchDeck');
@@ -32,6 +38,12 @@
   let entries = $state<ConsoleEntry[]>([]);
   let line = $state('');
   let log = $state<HTMLOListElement>();
+  let manualIp = $state('');
+  let pairOffer = $state<NetPairOffer | null>(null);
+  let pairCode = $state('');
+  let pairBusy = $state(false);
+  let pairLocked = $state(false);
+  let pairError = $state<string | null>(null);
   let view = $state<'deck' | 'editor' | 'actions' | 'settings' | 'sources' | 'update'>('deck');
   const VIEWS = [
     ['deck', 'Deck'],
@@ -43,6 +55,7 @@
   ] as const;
 
   const online = $derived(deck !== null && deck.online);
+  const isWifiLink = $derived(deck !== null && deck.port.startsWith('net:'));
   const status = $derived(online && deck ? `Connected to ${deck.port}` : problem ? `Offline (${problem})` : 'Not connected');
 
   async function refresh() {
@@ -67,6 +80,7 @@
     performance.mark('connect-start');
     try {
       deck = await connect(port);
+      await refresh();
       await tick();
       performance.mark('connected');
     } catch (error) {
@@ -76,10 +90,95 @@
     }
   }
 
+  async function addIp(event: SubmitEvent) {
+    event.preventDefault();
+    const target = manualIp.trim();
+    if (!target) return;
+    problem = null;
+    try {
+      await netAddHost(target);
+      manualIp = '';
+      await refresh();
+    } catch (error) {
+      problem = String(error);
+    }
+  }
+
+  async function startPair(candidate: Candidate) {
+    problem = null;
+    pairError = null;
+    pairCode = '';
+    pairLocked = false;
+    pairBusy = true;
+    const name = candidate.status === 'net-unpaired' || candidate.status === 'net-paired' ? candidate.name : undefined;
+    try {
+      pairOffer = await netPairStart(candidate.port, name);
+    } catch (error) {
+      problem = String(error);
+    } finally {
+      pairBusy = false;
+    }
+  }
+
+  async function submitPair(event: SubmitEvent) {
+    event.preventDefault();
+    const code = pairCode.trim();
+    if (!pairOffer || pairBusy || pairLocked || !/^[0-9]{6}$/.test(code)) return;
+    pairBusy = true;
+    pairError = null;
+    try {
+      const step = await netPairCode(code);
+      if (step.paired) {
+        const targetPort = step.port;
+        pairOffer = null;
+        pairCode = '';
+        await refresh();
+        await connectTo(targetPort);
+      } else {
+        pairError = step.error ?? 'Authentication failed.';
+        pairLocked = step.locked;
+        pairCode = '';
+        if (step.locked) {
+          await refresh();
+        }
+      }
+    } catch (error) {
+      pairError = String(error);
+      pairLocked = true;
+    } finally {
+      pairBusy = false;
+    }
+  }
+
+  async function cancelPair() {
+    pairOffer = null;
+    pairCode = '';
+    pairError = null;
+    pairLocked = false;
+    try {
+      await netPairCancel();
+    } catch {
+      // Ignore cancel cleanup error
+    }
+  }
+
+  async function forgetPairedDeck(candidate: Candidate) {
+    const deckId = candidate.status === 'net-paired' ? candidate.deck_id : undefined;
+    try {
+      if (deck?.port === candidate.port) {
+        deck = null;
+      }
+      await netForgetDeck(candidate.port, deckId);
+      await refresh();
+    } catch (error) {
+      problem = String(error);
+    }
+  }
+
   async function send(event: SubmitEvent) {
     event.preventDefault();
     const text = line.trim();
-    if (!text || !online) return;
+    if (!text || !online || isWifiLink) return;
     entries = append(entries, { kind: 'sent', text });
     line = '';
     try {
@@ -94,7 +193,7 @@
   }
 
   function connectable(candidate: Candidate) {
-    return candidate.status === 'deck' || candidate.status === 'silent';
+    return candidate.status === 'deck' || candidate.status === 'silent' || candidate.status === 'net-paired';
   }
 
   $effect(() => {
@@ -169,7 +268,28 @@
             <span class="port">{candidate.port}</span>
             <span class="detail">{describe(candidate)}</span>
           </div>
-          {#if online && deck?.port === candidate.port}
+          {#if candidate.status === 'net-unpaired'}
+            <button
+              class="primary"
+              onclick={() => startPair(candidate)}
+              disabled={pairBusy || connecting !== null}
+              data-testid="pair">Pair</button
+            >
+          {:else if candidate.status === 'net-paired'}
+            <div class="deck-actions">
+              {#if online && deck?.port === candidate.port}
+                <button onclick={() => disconnect().then(() => { deck = null; refresh(); })} data-testid="disconnect">Disconnect</button>
+              {:else}
+                <button
+                  class="primary"
+                  onclick={() => connectTo(candidate.port)}
+                  disabled={!connectable(candidate) || connecting !== null}
+                  data-testid="connect">{connecting === candidate.port ? 'Connecting' : 'Connect'}</button
+                >
+              {/if}
+              <button onclick={() => forgetPairedDeck(candidate)} data-testid="net-forget-deck">Forget</button>
+            </div>
+          {:else if online && deck?.port === candidate.port}
             <button onclick={() => disconnect()} data-testid="disconnect">Disconnect</button>
           {:else}
             <button
@@ -187,6 +307,18 @@
       {/each}
     </ul>
 
+    <form class="add-ip" onsubmit={addIp} data-testid="net-ip-form">
+      <input
+        bind:value={manualIp}
+        placeholder="Add deck by IP (e.g. 192.168.1.50)"
+        autocomplete="off"
+        spellcheck="false"
+        aria-label="Deck IP address"
+        data-testid="net-ip-input"
+      />
+      <button type="submit" disabled={!manualIp.trim()} data-testid="net-ip-add">Add IP</button>
+    </form>
+
     {#if deck}
       <dl class="hello" data-testid="deck-info">
         {#each HELLO_FIELDS as field (field)}
@@ -202,7 +334,7 @@
   <section class="panel console" data-testid="console">
     <div class="panel-head">
       <h2>Console</h2>
-      <span class="hint">{online ? 'Lines go to the deck console' : 'Connect a deck to use the console'}</span>
+      <span class="hint">{isWifiLink ? 'Console is USB-only' : online ? 'Lines go to the deck console' : 'Connect a deck to use the console'}</span>
     </div>
     <ol class="log" bind:this={log} data-testid="console-log">
       {#each entries as entry}
@@ -214,17 +346,52 @@
     <form class="prompt" onsubmit={send}>
       <input
         bind:value={line}
-        placeholder={online ? 'version' : ''}
-        disabled={!online}
+        placeholder={online && !isWifiLink ? 'version' : ''}
+        disabled={!online || isWifiLink}
         autocomplete="off"
         spellcheck="false"
         aria-label="Console line"
         data-testid="console-input"
       />
-      <button class="primary" disabled={!online || !line.trim()} data-testid="console-send">Send</button>
+      <button class="primary" disabled={!online || isWifiLink || !line.trim()} data-testid="console-send">Send</button>
     </form>
   </section>
 </main>
+{/if}
+
+{#if pairOffer}
+  <div class="pair-backdrop" role="dialog" aria-modal="true" aria-labelledby="pair-title" data-testid="pair-modal">
+    <form class="pair-dialog" onsubmit={submitPair}>
+      <h3 id="pair-title">Pair over Wi-Fi</h3>
+      <p class="pair-sub">
+        Deck <code>{pairOffer.name ?? pairOffer.host}</code> (<code>{pairOffer.deck_id}</code>) is showing a 6-digit pairing code.
+      </p>
+      <label class="pair-field">
+        <span>6-digit code</span>
+        <input
+          bind:value={pairCode}
+          maxlength="6"
+          inputmode="numeric"
+          placeholder="000000"
+          autocomplete="off"
+          disabled={pairBusy || pairLocked}
+          data-testid="pair-code-input"
+        />
+      </label>
+      {#if pairError}
+        <p class="pair-error" data-testid="pair-error">{pairError}</p>
+      {/if}
+      <div class="pair-actions">
+        <button type="button" onclick={cancelPair} data-testid="pair-cancel">{pairLocked ? 'Close' : 'Cancel'}</button>
+        <button
+          type="submit"
+          class="primary"
+          disabled={pairBusy || pairLocked || !/^[0-9]{6}$/.test(pairCode.trim())}
+          data-testid="pair-submit">{pairBusy ? 'Pairing…' : 'Pair & Connect'}</button
+        >
+      </div>
+    </form>
+  </div>
 {/if}
 
 <Approval />
@@ -247,6 +414,81 @@
     border-color: var(--line);
     background: var(--raised);
     color: var(--text);
+  }
+
+  .deck-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .add-ip {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .add-ip input {
+    flex: 1;
+  }
+
+  .pair-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(8, 11, 16, 0.78);
+  }
+
+  .pair-dialog {
+    width: min(400px, 92vw);
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--panel, #141a24);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .pair-dialog h3 {
+    margin: 0;
+    font-size: 16px;
+  }
+
+  .pair-sub {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
+  .pair-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+  }
+
+  .pair-field input {
+    font-family: var(--mono);
+    font-size: 18px;
+    letter-spacing: 0.18em;
+    text-align: center;
+  }
+
+  .pair-error {
+    margin: 0;
+    color: #ff6b6b;
+    font-size: 13px;
+  }
+
+  .pair-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
   }
 
   :global(select),

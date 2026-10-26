@@ -14,7 +14,10 @@ crate-type = ["rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+getrandom = "0.2"
+hex = "0.4"
 keyring = "4"
+zeroize = "1"
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = [] }

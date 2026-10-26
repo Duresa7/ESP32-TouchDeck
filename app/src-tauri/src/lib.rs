@@ -1,4 +1,5 @@
 mod commands;
+mod net_store;
 mod sources;
 
 use tauri::Manager;
@@ -46,6 +47,13 @@ pub fn run() {
             commands::wifi_scan,
             commands::wifi_set,
             commands::wifi_forget,
+            commands::net_add_host,
+            commands::net_pair_start,
+            commands::net_pair_code,
+            commands::net_pair_cancel,
+            commands::net_forget_deck,
+            commands::net_state,
+            commands::net_forget,
             commands::settings_get,
             commands::settings_put,
             commands::reboot_deck,
@@ -88,6 +96,13 @@ pub fn run() {
         commands::wifi_scan,
         commands::wifi_set,
         commands::wifi_forget,
+        commands::net_add_host,
+        commands::net_pair_start,
+        commands::net_pair_code,
+        commands::net_pair_cancel,
+        commands::net_forget_deck,
+        commands::net_state,
+        commands::net_forget,
         commands::settings_get,
         commands::settings_put,
         commands::reboot_deck,

@@ -6,10 +6,20 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+aes-gcm = "0.10"
+espflash = { version = "4", default-features = false, features = ["serialport"] }
+getrandom = "0.2"
+hex = "0.4"
+hkdf = "0.12"
+hmac = "0.12"
+num-bigint = "0.4"
 serde.workspace = true
 serde_json.workspace = true
-espflash = { version = "4", default-features = false, features = ["serialport"] }
 serialport = "4.10"
 sha2 = "0.10"
+socket2 = "0.6"
+srp = "=0.6.0"
+subtle = "2"
 td-core.workspace = true
+zeroize = "1"
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }

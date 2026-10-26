@@ -20,5 +20,5 @@ test('one spec can be picked by name', () => {
 test('the bundled specs are all shared', () => {
   const names = (platform: string) => specsFor(platform).map((file) => file.split(/[\\/]/).pop());
   assert.deepEqual(names('win32'), names('linux'));
-  assert.deepEqual(names('linux'), ['actions.spec.ts', 'connect.spec.ts', 'console.spec.ts', 'disconnect.spec.ts', 'editor.spec.ts', 'icons.spec.ts', 'keys.spec.ts', 'settings.spec.ts', 'smoke.spec.ts', 'sources-cliproxy.spec.ts', 'sources-install.spec.ts', 'sources.spec.ts', 'update.spec.ts', 'window.spec.ts', 'wireless.spec.ts']);
+  assert.deepEqual(names('linux'), ['actions.spec.ts', 'connect.spec.ts', 'console.spec.ts', 'disconnect.spec.ts', 'editor.spec.ts', 'icons.spec.ts', 'keys.spec.ts', 'net.spec.ts', 'settings.spec.ts', 'smoke.spec.ts', 'sources-cliproxy.spec.ts', 'sources-install.spec.ts', 'sources.spec.ts', 'update.spec.ts', 'window.spec.ts', 'wireless.spec.ts']);
 });
