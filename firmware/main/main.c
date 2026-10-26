@@ -3,7 +3,9 @@
 #include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "cJSON.h"
 #include "esp_chip_info.h"
+#include "esp_heap_caps.h"
 #include "esp_flash.h"
 #include "esp_ota_ops.h"
 #include "esp_psram.h"
@@ -33,8 +35,17 @@ static void register_commands(const char *owner, const esp_console_cmd_t *cmds, 
     }
 }
 
+/* A layout of up to 32 KB parses into thousands of small cJSON nodes. Below 16 KB malloc prefers internal RAM, which
+ * the display and LVGL need, so cJSON takes PSRAM first and internal RAM only when PSRAM is full. */
+static void *cjson_malloc(size_t size)
+{
+    return heap_caps_malloc_prefer(size, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, MALLOC_CAP_8BIT);
+}
+
 void app_main(void)
 {
+    cJSON_InitHooks(&(cJSON_Hooks){ .malloc_fn = cjson_malloc, .free_fn = heap_caps_free });
+
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
 
@@ -114,6 +125,7 @@ void app_main(void)
         ESP_LOGE(TAG, "Console failed to start: %s", esp_err_to_name(console_err));
     }
 
+    ui_layout_boot(td_settings_orientation_name(settings.orientation));
     esp_err_t display_err = display_start(ui_build);
     if (display_err != ESP_OK) {
         ESP_LOGE(TAG, "Display failed to start: %s", esp_err_to_name(display_err));

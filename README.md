@@ -214,6 +214,28 @@ it rejects files over 32768 bytes without parsing them first.
 
 App-side actions and widgets dim on the deck while the app is offline.
 
+### Layouts on the deck
+
+The firmware embeds `builtin.json` and draws its pages from it, so the deck has
+no page table in C. At boot it loads `/storage/layouts/<orientation>.json`. When
+that file is missing or invalid, the deck logs `layout: <reason>, using builtin`
+and starts on the built-in layout. Its parser accepts and rejects the same files
+as `check-layouts.mjs`, and it reports the same rule key.
+
+- `layout state` reports the layout on screen: `source` (`storage` or `builtin`),
+  `name`, `orientation`, `pages`, `tiles`, `icons_loaded`, `icons_missing`,
+  `bytes`, `load_ms`, and `error`.
+- `layout reload` and `layout use storage` load the stored file again.
+  `layout use builtin` switches to the built-in layout. A file that fails
+  validation never replaces the layout on screen. `layout state` reports why in
+  `error`.
+- `ui tile <id>` also reports the tile's `action` type and its `icon`.
+
+A `key` tile with `mods` sends its modifiers together with any active ones. A
+`page` tile slides to its page. App and widget tiles log
+`ui: press <page>/<tile> <kind>` and send nothing until the app link carries them.
+A `file:<id>` icon is a 64 by 64 bitmap in [schema/icon-format.md](schema/icon-format.md).
+
 ## Unit tests
 
 `firmware/test_app` is an ESP-IDF project that runs the [Unity](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/system/unity.html)
