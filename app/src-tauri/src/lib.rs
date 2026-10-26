@@ -35,6 +35,11 @@ pub fn run() {
             sources::statusline_preview,
             sources::statusline_install,
             commands::push_layout,
+            commands::remove_unused_icons,
+            commands::builtin_icons,
+            commands::default_icon,
+            commands::icon_file,
+            commands::take_app_icon,
             commands::pull_layout,
             commands::settings_get,
             commands::settings_put,
@@ -67,6 +72,11 @@ pub fn run() {
         sources::statusline_preview,
         sources::statusline_install,
         commands::push_layout,
+        commands::remove_unused_icons,
+        commands::builtin_icons,
+        commands::default_icon,
+        commands::icon_file,
+        commands::take_app_icon,
         commands::pull_layout,
         commands::settings_get,
         commands::settings_put,
@@ -84,6 +94,8 @@ pub fn run() {
             let paths = app.path();
             app.state::<commands::AppState>()
                 .use_dirs(paths.app_config_dir().ok(), paths.app_log_dir().ok())?;
+            app.state::<commands::AppState>()
+                .use_icon_dir(paths.app_cache_dir().ok());
             if let Some(window) = app.get_webview_window("main") {
                 window.set_title(&format!("TouchDeck {BUILD_SHA}"))?;
             }

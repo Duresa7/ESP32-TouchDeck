@@ -38,7 +38,10 @@ export interface PutReport {
   chunks: number;
   retransmits: number;
   elapsed_ms: number;
+  icons: { sent: string[]; unavailable: string[] };
 }
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** One layout per orientation plus a selection. Every layout it holds is valid. */
 export interface EditorState {
@@ -189,13 +192,34 @@ export function createEditor() {
         const report = await invoke<PutReport>('push_layout', { layout: canonical(layout) });
         performance.measure('push', 'push-start');
         const { state: deck } = report;
-        say('ok', `Deck shows ${deck.name}: ${deck.pages} pages, ${deck.tiles} tiles (${report.bytes} bytes in ${report.elapsed_ms} ms)`);
+        const { sent, unavailable } = report.icons;
+        const missing = unavailable.length ? `, ${plural(unavailable.length, 'icon')} not in the cache` : '';
+        say(
+          unavailable.length ? 'error' : 'ok',
+          `Deck shows ${deck.name}: ${deck.pages} pages, ${deck.tiles} tiles (${report.bytes} bytes in ${report.elapsed_ms} ms), ${plural(sent.length, 'icon')} sent${missing}`,
+        );
         return report;
       } catch (error) {
         say('error', `Push failed: ${String(error)}`);
         return null;
       } finally {
         store.update((s) => ({ ...s, busy: null }));
+      }
+    },
+
+    /** Removes every icon on the deck that no layout in the editor or on the deck names. */
+    async removeUnusedIcons(): Promise<string[] | null> {
+      const layouts = Object.values(state().layouts)
+        .filter((layout): layout is Layout => layout !== null)
+        .map(canonical);
+      say('info', 'Removing unused icons');
+      try {
+        const removed = await invoke<string[]>('remove_unused_icons', { layouts });
+        say('ok', `${plural(removed.length, 'unused icon')} removed`);
+        return removed;
+      } catch (error) {
+        say('error', `Remove unused icons failed: ${String(error)}`);
+        return null;
       }
     },
 
