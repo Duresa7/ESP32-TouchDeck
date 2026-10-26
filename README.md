@@ -177,6 +177,42 @@ The local verification harness wraps the transfers as `serial store put <path>
 --from <file>` and `serial store get <path> --out <file>`, checking the CRC-32
 both ways.
 
+## Recovery
+
+Holding one finger on the glass for 10 seconds restarts the deck into a known-good
+state, whatever the deck shows and whether or not the backlight is on. The hold
+arms when one contact stays within 24 px of where it began for 10000 ms. A
+release before that, or a move past 24 px, starts over. The recovery watcher reads
+the raw contact before the idle gate, so a hold that begins on a dark screen
+counts from its first sample, and that same contact wakes the panel.
+
+When the hold arms, the deck stops sending the contact to the pages, so no tile
+fires when the finger lifts. It draws a full-screen `Release to reset` band, logs
+`recovery: armed`, writes the marker file `/storage/recovery`, and restarts 250 ms
+after the lift.
+
+A boot that finds the marker deletes it and runs in recovery mode. The deck shows
+the built-in pages and the default settings from RAM, leaves every file in
+`/storage` as it was, logs `recovery: mode on, files kept`, and shows a `Recovery`
+caption in the title band. The link's `hello` and `layout state` report
+`"recovery": true`, and `layout state` still names what is wrong with a stored
+layout that does not parse. A layout or settings write by the app, a
+`layout use storage`, or a restart leaves recovery mode. A plain `layout reload`
+in recovery mode reloads the built-in pages.
+
+The `recovery` console command has two forms:
+
+- `recovery state` replies with `mode`, `watcher` (`IDLE`, `HOLDING` or `ARMED`),
+  `held_ms`, and `armed_count`.
+- `recovery arm` writes the marker and restarts, as the hold does after the lift. It
+  is for tests.
+
+A swipe lasts at most 2000 ms, so `touch begin <x> <y>`, `touch move <x> <y>` and
+`touch end` hold an injected contact for as long as a test needs and return at
+once. A contact that nobody ends lifts by itself after 60 seconds. `touch stats`
+adds `watch_samples`, `watch_ns_avg`, and `watch_ns_max`, which is what the watcher
+costs per sample.
+
 ## Display
 
 On boot the panel shows the deck, drawn with LVGL 9: dark rounded tiles on a

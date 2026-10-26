@@ -51,6 +51,11 @@ bool ui_ready(void);
 /* The orientation the deck booted in, which names the layout file a put replaces and a reload reads. */
 const char *ui_layout_slot(void);
 
+/* Leaves recovery mode for a deliberate act by the app or a lane, named by `why`, and takes the `Recovery` caption
+ * off the screen. A no-op outside recovery mode. Takes the LVGL lock, so never call it from an LVGL callback. While
+ * the deck is in recovery mode a reload of the stored layout reloads the built-in one, so call this first. */
+void ui_leave_recovery(const char *why);
+
 /* Called on the LVGL task for every tap on an app or widget tile: the page id, the tile id, and the kind, which is
  * "launch", "open", "command" or "widget". The hook must not block. */
 typedef void (*ui_press_hook_t)(const char *page, const char *tile, const char *kind);

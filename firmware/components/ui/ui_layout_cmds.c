@@ -4,6 +4,7 @@
 #include "display.h"
 #include "esp_lv_adapter.h"
 #include "td_console.h"
+#include "td_recovery.h"
 
 #define LOCK_TIMEOUT_MS 3000
 
@@ -62,6 +63,7 @@ static void cmd_state(void)
     td_reply_int(&r, "screen_events", screen_events);
     td_reply_int(&r, "timers", timers);
     td_reply_str(&r, "error", info.error);
+    td_reply_bool(&r, "recovery", td_recovery_mode());
     send(&r);
 }
 
@@ -111,7 +113,11 @@ int ui_layout_cmd(int argc, char **argv)
     } else if (reload) {
         cmd_load("reload", false);
     } else {
-        cmd_load("use", strcmp(argv[2], "builtin") == 0);
+        const bool builtin = strcmp(argv[2], "builtin") == 0;
+        if (!builtin) {
+            ui_leave_recovery("layout use storage");
+        }
+        cmd_load("use", builtin);
     }
     return 0;
 }

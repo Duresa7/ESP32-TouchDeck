@@ -10,6 +10,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "lvgl.h"
+#include "td_recovery.h"
+#include "touch.h"
 #include "ui_pager.h"
 #include "ui_theme.h"
 #include "ui_tile_keys.h"
@@ -18,6 +20,8 @@ static const char *TAG = "ui";
 static const char *LAYOUT_TAG = "layout";
 
 #define LOCK_TIMEOUT_MS 3000
+#define RECOVERY_BAND_COLOR UI_RGB565(176, 32, 32)
+#define RECOVERY_CAPTION_COLOR UI_RGB565(255, 176, 64)
 
 /*
  * The pager, the objects and the press bookkeeping belong to the LVGL task, and ui_goto() and a reload borrow them
@@ -42,6 +46,7 @@ static struct {
     lv_obj_t *track;
     int32_t track_x;
     lv_obj_t *title;
+    lv_obj_t *recovery_caption;
     uint8_t title_page;
     lv_obj_t *dots[UI_PAGES_MAX];
     lv_obj_t *pressed_obj;
@@ -300,6 +305,39 @@ static void on_release(lv_event_t *e)
     ui_tile_keys_click(ref >= 0 ? &s.pages[ref / 256] : NULL, tile);
 }
 
+/* The 10-second hold armed. The band covers the screen as the last child of the active screen, above whichever page
+ * shows, and stays until the deck restarts. It sits on the screen and not on the top layer because the screenshot
+ * snapshots the active screen alone. It takes no input. Runs in the LVGL read callback, so the adapter lock is held. */
+static void on_recovery_armed(void)
+{
+    const ui_geometry_t *g = ui_geo();
+    lv_obj_t *band = lv_obj_create(lv_screen_active());
+    lv_obj_remove_style_all(band);
+    lv_obj_set_clickable(band, false);
+    lv_obj_set_scrollable(band, false);
+    lv_obj_set_pos(band, 0, 0);
+    lv_obj_set_size(band, g->screen.w, g->screen.h);
+    lv_obj_set_style_bg_color(band, ui_color(RECOVERY_BAND_COLOR), 0);
+    lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
+    lv_obj_move_foreground(band);
+
+    lv_obj_t *label = lv_label_create(band);
+    lv_label_set_text_static(label, "Release to reset");
+    lv_obj_set_style_text_font(label, ui_theme.font_tile, 0);
+    lv_obj_set_style_text_color(label, ui_color(ui_theme.color.text), 0);
+    lv_obj_center(label);
+}
+
+static void build_recovery_caption(lv_obj_t *screen, const ui_geometry_t *g)
+{
+    lv_obj_t *caption = lv_label_create(screen);
+    lv_label_set_text_static(caption, "Recovery");
+    lv_obj_add_style(caption, &ui_styles()->title, 0);
+    lv_obj_set_style_text_color(caption, ui_color(RECOVERY_CAPTION_COLOR), 0);
+    lv_obj_align(caption, LV_ALIGN_TOP_RIGHT, -g->title_x, g->title_y);
+    s.recovery_caption = caption;
+}
+
 /* An icon above the label, with the label in the caption font. */
 static void stack_icon(lv_obj_t *label, lv_obj_t *icon, int32_t icon_h, int32_t tile_w)
 {
@@ -439,6 +477,7 @@ static void tear_down(void)
     lv_obj_clean(screen);
     s.track = NULL;
     s.title = NULL;
+    s.recovery_caption = NULL;
     memset(s.dots, 0, sizeof s.dots);
 }
 
@@ -470,6 +509,10 @@ static void build_objects(void)
     lv_label_set_text_static(s.title, s.pages[0].title);
     lv_obj_add_style(s.title, &ui_styles()->title, 0);
     lv_obj_set_pos(s.title, g->title_x, g->title_y);
+    if (td_recovery_mode()) {
+        build_recovery_caption(screen, g);
+    }
+    touch_set_recovery_cb(on_recovery_armed);
 
     build_dots(screen);
 }
@@ -550,7 +593,19 @@ void ui_layout_boot(const char *orientation)
     size_t bytes = 0;
     td_layout_error_t err;
     char reason[UI_LAYOUT_ERROR_MAX] = "";
-    if (td_layout_load_file(path, &stored, &bytes, &err)) {
+    if (td_recovery_mode()) {
+        /* Recovery runs the built-in pages. The stored file is still parsed, so `layout state` names what is wrong
+         * with it, and then dropped. */
+        if (td_layout_load_file(path, &stored, &bytes, &err)) {
+            td_layout_free(stored);
+            stored = NULL;
+        } else {
+            describe_error(reason, sizeof reason, &err);
+        }
+        ESP_LOGW(LAYOUT_TAG, "recovery mode, using builtin");
+        s.boot = td_layout_builtin();
+        bytes = 0;
+    } else if (td_layout_load_file(path, &stored, &bytes, &err)) {
         s.boot = stored;
     } else {
         describe_error(reason, sizeof reason, &err);
@@ -593,6 +648,8 @@ bool ui_layout_reload(bool use_builtin, td_layout_error_t *err)
     td_layout_t *stored = NULL;
     const td_layout_t *next = NULL;
     size_t bytes = 0;
+    /* Recovery keeps the built-in pages until a deliberate act leaves it, so a plain reload reloads them. */
+    use_builtin = use_builtin || td_recovery_mode();
     if (use_builtin) {
         next = td_layout_builtin();
     } else {
@@ -633,6 +690,22 @@ bool ui_layout_reload(bool use_builtin, td_layout_error_t *err)
 const char *ui_layout_slot(void)
 {
     return s.orientation[0] != '\0' ? s.orientation : "landscape";
+}
+
+void ui_leave_recovery(const char *why)
+{
+    if (!td_recovery_mode()) {
+        return;
+    }
+    td_recovery_leave(why);
+    if (!ui_ready() || esp_lv_adapter_lock(LOCK_TIMEOUT_MS) != ESP_OK) {
+        return;
+    }
+    if (s.recovery_caption != NULL) {
+        lv_obj_delete(s.recovery_caption);
+        s.recovery_caption = NULL;
+    }
+    esp_lv_adapter_unlock();
 }
 
 bool ui_ready(void)

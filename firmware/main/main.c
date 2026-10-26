@@ -22,6 +22,7 @@
 #include "key_sink_log.h"
 #include "keys.h"
 #include "power.h"
+#include "td_recovery.h"
 #include "td_store.h"
 
 static const char *TAG = "touchdeck";
@@ -93,6 +94,9 @@ void app_main(void)
     size_t store_cmd_count;
     const esp_console_cmd_t *store_cmds = td_store_console_commands(&store_cmd_count);
     register_commands("Store", store_cmds, store_cmd_count);
+    size_t recovery_cmd_count;
+    const esp_console_cmd_t *recovery_cmds = td_recovery_console_commands(&recovery_cmd_count);
+    register_commands("Recovery", recovery_cmds, recovery_cmd_count);
 
     /* The volume mounts before the console starts, and the settings load before the display does, which sizes its
      * frame buffers for the stored orientation. A change to it applies on the next boot. */
@@ -100,9 +104,12 @@ void app_main(void)
     td_settings_defaults(&settings);
     esp_err_t store_err = td_store_mount(NULL);
     if (store_err == ESP_OK) {
-        const esp_err_t settings_err = td_store_settings_load(&settings);
-        if (settings_err == ESP_ERR_INVALID_RESPONSE) {
-            ESP_LOGW(SETTINGS_TAG, "settings.json is not usable, using the defaults for what it does not give");
+        /* A boot that finds the recovery marker runs the default settings from RAM and leaves settings.json alone. */
+        if (!td_recovery_boot()) {
+            const esp_err_t settings_err = td_store_settings_load(&settings);
+            if (settings_err == ESP_ERR_INVALID_RESPONSE) {
+                ESP_LOGW(SETTINGS_TAG, "settings.json is not usable, using the defaults for what it does not give");
+            }
         }
     } else {
         ESP_LOGE(TAG, "Store failed to mount, the settings are the defaults: %s", esp_err_to_name(store_err));

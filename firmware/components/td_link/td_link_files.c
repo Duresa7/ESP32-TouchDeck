@@ -261,6 +261,7 @@ static void finish_put(cJSON *reply)
     }
     const bool shown = strcmp(s.orientation, ui_layout_slot()) == 0;
     close_xfer();
+    ui_leave_recovery("layout.put");
     if (shown && ui_ready() && !ui_layout_reload(false, &err)) {
         snprintf(message, sizeof message, "%s: %s", err.key, err.message);
         td_link_fail(reply, message);
@@ -454,9 +455,12 @@ void td_link_settings_put(const cJSON *request, cJSON *reply)
         td_link_fail(reply, "settings not saved");
         return;
     }
+    ui_leave_recovery("settings.put");
     power_set_idle_timeout_s(next.idle_timeout_s, esp_timer_get_time());
     settings_fields(reply, &next);
-    cJSON_AddBoolToObject(reply, "reboot_required", next.orientation != before.orientation);
+    /* Against the orientation on screen, which recovery mode runs at the default and not at the stored one. */
+    cJSON_AddBoolToObject(reply, "reboot_required",
+                          strcmp(td_settings_orientation_name(next.orientation), ui_layout_slot()) != 0);
 }
 
 static bool count_cb(void *ctx, const char *name, uint32_t size, bool is_dir)
