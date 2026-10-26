@@ -3,8 +3,9 @@
 #include "unity.h"
 #include "td_rotate.h"
 
-/* A small panel, so every rect below crosses the 16 by 32 tile edges. The logical screen is PHYS_H by PHYS_W. */
-#define PHYS_W 40
+/* A panel small enough to check whole, and tall enough that the rects below cross the 16 by 128 tile edges. The
+ * logical screen is PHYS_H by PHYS_W. */
+#define PHYS_W 160
 #define PHYS_H 24
 #define SENTINEL 0xBEEF
 
@@ -44,7 +45,7 @@ static void check_rect(int x1, int y1, int x2, int y2, bool clockwise)
 TEST_CASE("clockwise rotation matches the adapter's ROTATE_90 mapping", "[td_rotate]")
 {
     check_rect(0, 0, PHYS_H - 1, PHYS_W - 1, true);
-    check_rect(1, 2, 22, 38, true);
+    check_rect(1, 2, 22, 150, true);
     check_rect(5, 7, 5, 7, true);
     check_rect(0, 33, PHYS_H - 1, 34, true);
 }
@@ -52,7 +53,7 @@ TEST_CASE("clockwise rotation matches the adapter's ROTATE_90 mapping", "[td_rot
 TEST_CASE("counter-clockwise rotation matches the adapter's ROTATE_270 mapping", "[td_rotate]")
 {
     check_rect(0, 0, PHYS_H - 1, PHYS_W - 1, false);
-    check_rect(1, 2, 22, 38, false);
+    check_rect(1, 2, 22, 150, false);
     check_rect(5, 7, 5, 7, false);
     check_rect(17, 0, 18, PHYS_W - 1, false);
 }
@@ -66,8 +67,8 @@ TEST_CASE("clockwise rotation puts the logical corners where portrait expects th
     }
     src[0] = 1;                                   /* logical (0, 0) */
     src[PHYS_H - 1] = 2;                          /* logical (23, 0) */
-    src[(PHYS_W - 1) * PHYS_H] = 3;               /* logical (0, 39) */
-    src[(PHYS_W - 1) * PHYS_H + PHYS_H - 1] = 4;  /* logical (23, 39) */
+    src[(PHYS_W - 1) * PHYS_H] = 3;               /* logical (0, 159) */
+    src[(PHYS_W - 1) * PHYS_H + PHYS_H - 1] = 4;  /* logical (23, 159) */
     td_rotate565_region(src, PHYS_H, s_got, PHYS_W, PHYS_H, 0, 0, PHYS_H - 1, PHYS_W - 1, true);
     TEST_ASSERT_EQUAL_HEX16(1, s_got[0 * PHYS_W + PHYS_W - 1]);
     TEST_ASSERT_EQUAL_HEX16(2, s_got[(PHYS_H - 1) * PHYS_W + PHYS_W - 1]);

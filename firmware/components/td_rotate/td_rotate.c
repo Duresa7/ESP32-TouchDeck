@@ -1,10 +1,11 @@
 #include "td_rotate.h"
 
-/* A tile is TILE_W source columns, which become TILE_W panel rows, by TILE_H source rows, which fill one 64-byte
- * cache line of each panel row. Panel rows 2 KB apart share 4 of the 128 sets of the S3's 64 KB 8-way data cache,
- * so 16 of them take 4 ways of each and leave room for the source lines. */
+/* A tile is TILE_W source columns, which become TILE_W panel rows, by up to TILE_H source rows, which become one
+ * contiguous run of each panel row. Panel rows 2 KB apart share 4 of the 128 sets of the S3's 64 KB 8-way data cache,
+ * so 16 of them, 4 lines each, fit beside the tile's source lines. LVGL's partial flushes are shorter than TILE_H, so
+ * a tile spans a whole flush. On the board this measured 11 fps in portrait against 8 fps with 32-row tiles. */
 #define TILE_W 16
-#define TILE_H 32
+#define TILE_H 128
 
 static int min_int(int a, int b)
 {

@@ -4,9 +4,9 @@
 
 /*
  * esp_lvgl_adapter 0.7.3 rotates each flushed area in display_rotate_copy_region, one pixel at a time down a
- * column of 64 panel rows. Those rows are 2 KB apart in PSRAM and land in 4 sets of the data cache, 16 rows a set
- * against 8 ways, so nearly every pixel write misses and portrait ran at under 1 frame a second. The linker wraps
- * the adapter's calls to it (see CMakeLists.txt), and this sends the RGB565 quarter turns to td_rotate's tiled copy
+ * column of 64 panel rows that sit 2 KB apart in PSRAM. On the board that copy took about 2.1 us a pixel, 1.3 s a
+ * portrait frame, so portrait ran at 0.6 fps. The linker wraps the adapter's calls to it (see CMakeLists.txt), and
+ * this sends the RGB565 quarter turns to td_rotate's tiled copy, about 0.12 us a pixel,
  * and everything else back to the adapter. The arguments are the adapter's own; the CMake check pins the version.
  */
 void __real_display_rotate_copy_region(const void *src, void *dst_fb, uint16_t lv_x_start, uint16_t lv_y_start,
