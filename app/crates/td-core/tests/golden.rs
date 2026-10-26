@@ -93,7 +93,7 @@ fn limits_and_crc_match_the_fixture_file() {
 #[test]
 fn every_valid_frame_decodes_and_encodes_byte_for_byte() {
     let golden = golden();
-    let mut valid = 0;
+    let (mut valid, mut longest) = (0, 0);
     for fixture in golden.frames.iter().filter(|f| f.valid) {
         let wire = unhex(&fixture.hex);
         let expected = fixture.decoded.as_ref().unwrap();
@@ -113,9 +113,11 @@ fn every_valid_frame_decodes_and_encodes_byte_for_byte() {
         );
         assert_eq!(frame.encode().unwrap(), wire, "{}", fixture.name);
         assert!(wire.len() <= WIRE_MAX, "{}", fixture.name);
+        longest = longest.max(wire.len());
         valid += 1;
     }
     assert!(valid >= 12);
+    assert_eq!(longest, 2061, "the largest escaped frame in link-v1.md");
 }
 
 #[test]
