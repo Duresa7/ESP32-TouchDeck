@@ -11,10 +11,11 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 use td_core::{Hello, Layout, Orientation, Request, Settings};
 use td_host::actions::{self, Plan};
+use td_host::icons::{self, Builtin, IconCache};
 use td_host::{Approvals, CommandSpec, FakeSink, Grant, InputSink, Mirror, Mirrored, Outcome};
 use td_link::discover::{Candidate, Probe, discover, probe_transport};
 use td_link::mock::MOCK_PORT;
-use td_link::xfer::{PutReport, get_layout, put_layout};
+use td_link::xfer::{IconSync, PutReport, get_layout, prune_icons, push_icons, put_layout};
 use td_link::{Incoming, MockDeck, Serial, Session, SessionConfig, Transport};
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(1);
@@ -39,6 +40,7 @@ pub struct AppState {
     requests: AtomicU64,
     action_log: Mutex<VecDeque<ActionLog>>,
     log_path: Mutex<Option<PathBuf>>,
+    icon_cache: Mutex<Option<IconCache>>,
 }
 
 impl AppState {
@@ -58,6 +60,7 @@ impl AppState {
             requests: AtomicU64::new(0),
             action_log: Mutex::new(VecDeque::new()),
             log_path: Mutex::new(None),
+            icon_cache: Mutex::new(None),
         }
     }
 
@@ -76,6 +79,20 @@ impl AppState {
             *self.approvals.lock().unwrap() = approvals;
         }
         Ok(())
+    }
+
+    /// Keeps icon files taken from apps under `<cache>/icons`.
+    pub fn use_icon_dir(&self, cache: Option<PathBuf>) {
+        let dir = cache.unwrap_or_else(|| std::env::temp_dir().join("touchdeck"));
+        *self.icon_cache.lock().unwrap() = Some(IconCache::new(dir.join("icons")));
+    }
+
+    fn icon_cache(&self) -> Result<IconCache, String> {
+        self.icon_cache
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| "the icon cache is not set up".to_owned())
     }
 
     fn input_sink(&self) -> Result<Box<dyn InputSink>, String> {
@@ -284,20 +301,97 @@ fn session(app: &AppHandle) -> Result<Arc<Session>, String> {
         .ok_or_else(|| "no deck is connected".to_owned())
 }
 
-/// Validates a layout with the schema rules and pushes its canonical form into the deck's
-/// slot for its own orientation.
+fn parse_layout(text: &str) -> Result<Layout, String> {
+    Layout::parse(text.as_bytes()).map_err(|errors| {
+        let all: Vec<String> = errors.iter().map(ToString::to_string).collect();
+        all.join("; ")
+    })
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PushReport {
+    #[serde(flatten)]
+    put: PutReport,
+    icons: IconSync,
+}
+
+/// Validates a layout with the schema rules, sends the icons it names that the deck lacks, and
+/// pushes its canonical form into the deck's slot for its own orientation.
 #[tauri::command]
-pub async fn push_layout(app: AppHandle, layout: String) -> Result<PutReport, String> {
+pub async fn push_layout(app: AppHandle, layout: String) -> Result<PushReport, String> {
     blocking(move || {
-        let parsed = Layout::parse(layout.as_bytes()).map_err(|errors| {
-            let all: Vec<String> = errors.iter().map(ToString::to_string).collect();
-            all.join("; ")
-        })?;
-        let report = put_layout(&*session(&app)?, parsed.orientation, &parsed)
-            .map_err(|error| error.to_string())?;
+        let parsed = parse_layout(&layout)?;
+        let session = session(&app)?;
+        let cache = app.state::<AppState>().icon_cache()?;
+        let icons = push_icons(&session, &icons::file_ids(&parsed), |id| cache.get(id))
+            .map_err(|error| format!("icons: {error}"))?;
+        let put =
+            put_layout(&session, parsed.orientation, &parsed).map_err(|error| error.to_string())?;
         // The deck may now show another layout, so the next press reads it again.
         *app.state::<AppState>().action_layout.lock().unwrap() = None;
-        Ok(report)
+        Ok(PushReport { put, icons })
+    })
+    .await?
+}
+
+/// Removes every icon on the deck that neither `layouts` nor the deck's own stored layouts name.
+#[tauri::command]
+pub async fn remove_unused_icons(
+    app: AppHandle,
+    layouts: Vec<String>,
+) -> Result<Vec<String>, String> {
+    blocking(move || {
+        let session = session(&app)?;
+        let mut keep = std::collections::BTreeSet::new();
+        for text in &layouts {
+            keep.extend(icons::file_ids(&parse_layout(text)?));
+        }
+        for orientation in [Orientation::Landscape, Orientation::Portrait] {
+            // A slot with no stored layout names no icon.
+            if let Ok(report) = get_layout(&session, orientation)
+                && let Ok(stored) = Layout::parse(&report.data)
+            {
+                keep.extend(icons::file_ids(&stored));
+            }
+        }
+        prune_icons(&session, &keep).map_err(|error| error.to_string())
+    })
+    .await?
+}
+
+/// The built-in icon set, with each icon's `file:` id.
+#[tauri::command]
+pub async fn builtin_icons() -> Result<Vec<Builtin>, String> {
+    blocking(|| icons::builtin().to_vec()).await
+}
+
+/// The built-in icon a tile's action suggests, if any.
+#[tauri::command]
+pub fn default_icon(action: Value) -> Option<Builtin> {
+    let name = icons::default_for(&action)?;
+    icons::builtin()
+        .iter()
+        .find(|icon| icon.name == name)
+        .cloned()
+}
+
+/// The `TDI1` file for an icon id, from the built-in set or the app's cache.
+#[tauri::command]
+pub fn icon_file(state: State<'_, AppState>, id: String) -> Result<tauri::ipc::Response, String> {
+    state
+        .icon_cache()?
+        .get(&id)
+        .map(tauri::ipc::Response::new)
+        .ok_or_else(|| format!("no icon file for {id}"))
+}
+
+/// Takes the icon of the program at `path`, stores it in the cache, and returns its id.
+#[tauri::command]
+pub async fn take_app_icon(app: AppHandle, path: String) -> Result<String, String> {
+    blocking(move || {
+        app.state::<AppState>()
+            .icon_cache()?
+            .take_app_icon(std::path::Path::new(&path))
     })
     .await?
 }
@@ -366,6 +460,7 @@ pub fn e2e_mock_record(state: State<'_, AppState>) -> Result<Value, String> {
         "lines": mock.lines(),
         "settings": mock.settings(),
         "reboots": mock.reboots(),
+        "icons": mock.icons(),
         "layouts": {
             "landscape": layout(Orientation::Landscape),
             "portrait": layout(Orientation::Portrait),
