@@ -1,4 +1,4 @@
-idf_component_register(SRCS "td_frame.c" "td_crc16.c"
+idf_component_register(SRCS "td_frame.c" "td_crc16.c" "td_xfer.c"
                        INCLUDE_DIRS "include")
 
 if(CMAKE_PROJECT_NAME STREQUAL "touchdeck_test")

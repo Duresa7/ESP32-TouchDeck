@@ -111,10 +111,23 @@ static void click_page(void *ctx, uint8_t index)
     ui_goto(index);
 }
 
+static ui_press_hook_t s_press_hook;
+
+void ui_set_press_hook(ui_press_hook_t hook)
+{
+    s_press_hook = hook;
+}
+
 static void click_press(void *ctx, const ui_tile_t *tile)
 {
     const ui_page_t *page = ctx;
-    ESP_LOGI("ui", "press %s/%s %s", page != NULL ? page->id : "?", tile->id, td_action_name(&tile->action));
+    const char *page_id = page != NULL ? page->id : "?";
+    const char *kind = td_action_name(&tile->action);
+    if (s_press_hook != NULL) {
+        s_press_hook(page_id, tile->id, kind);
+    } else {
+        ESP_LOGI("ui", "press %s/%s %s", page_id, tile->id, kind);
+    }
 }
 
 void ui_tile_keys_click(const ui_page_t *page, const ui_tile_t *tile)

@@ -1,4 +1,6 @@
 #include "td_link.h"
+#include "td_link_priv.h"
+#include "ui.h"
 #include <stdio.h>
 #include <string.h>
 #include "esp_app_desc.h"
@@ -20,10 +22,14 @@ static void hello(const cJSON *request, cJSON *reply)
     cJSON_AddStringToObject(reply, "elf_sha256", sha);
     cJSON_AddStringToObject(reply, "version", app->version);
     cJSON_AddStringToObject(reply, "running", running ? running->label : "unknown");
-    const char *sinks[] = { "log" };
-    cJSON_AddItemToObject(reply, "sinks", cJSON_CreateStringArray(sinks, 1));
+    const char *sinks[] = { "log", "link" };
+    cJSON_AddItemToObject(reply, "sinks", cJSON_CreateStringArray(sinks, 2));
     cJSON_AddBoolToObject(reply, "recovery", false);
-    cJSON_AddStringToObject(reply, "layout", "builtin");
+    ui_layout_info_t layout = { 0 };
+    if (ui_ready()) {
+        ui_layout_info(&layout);
+    }
+    cJSON_AddStringToObject(reply, "layout", layout.from_storage ? "storage" : "builtin");
 }
 
 static void ping(const cJSON *request, cJSON *reply)
@@ -54,6 +60,15 @@ static const struct {
     { "hello", hello },
     { "ping", ping },
     { "link.state", state },
+    { "layout.put", td_link_layout_put },
+    { "layout.get", td_link_layout_get },
+    { "icon.put", td_link_icon_put },
+    { "icon.list", td_link_icon_list },
+    { "icon.rm", td_link_icon_rm },
+    { "settings.get", td_link_settings_get },
+    { "settings.put", td_link_settings_put },
+    { "store.stat", td_link_store_stat },
+    { "xfer.end", td_link_xfer_end },
 };
 
 #define ECHO_CHARS_MAX 64
