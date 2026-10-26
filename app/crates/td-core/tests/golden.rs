@@ -250,7 +250,12 @@ fn every_stream_fixture_yields_its_frames_and_errors_at_any_read_size() {
             let mut decoder = StreamDecoder::default();
             let (_, frames) = split(&mut decoder, &unhex(&fixture.hex), width);
             assert_eq!(frames, expected, "{} at {width}", fixture.name);
-            assert_eq!(decoder.errors(), fixture.errors, "{} at {width}", fixture.name);
+            assert_eq!(
+                decoder.errors(),
+                fixture.errors,
+                "{} at {width}",
+                fixture.name
+            );
         }
     }
 }
