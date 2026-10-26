@@ -168,8 +168,6 @@ pub struct Hello {
     pub layout: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wifi: Option<radios::WifiHello>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ble: Option<radios::BleHello>,
 }
 
 impl Hello {

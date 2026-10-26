@@ -17,9 +17,6 @@ async function field(id: string, value: string) {
 }
 
 const inputLog = () => invoke<string[]>('e2e_input_log');
-const key = (keys: number[]) => ({ m: 'key.report', type: 'kbd', mods: 0, keys });
-const emit = (events: object[]) => invoke<void>('e2e_emit', { events, everyMs: 30 });
-const mirror = () => invoke<{ enabled: boolean; reason: string }>('mirror_state');
 
 async function wifiState(state: string) {
   await browser.waitUntil(async () => (await $('[data-testid="wifi-state"]').getAttribute('data-state')) === state, { timeout: 7000 });
@@ -65,46 +62,15 @@ describe('wireless setup on the mock deck', () => {
     await wifiState('off');
   });
 
-  it('releases held keys, pauses for Bluetooth, and resumes after forgetting', async () => {
-    await emit([key([105, 106])]);
-    await browser.waitUntil(async () => (await inputLog()).length === 2);
-    expect(await inputLog()).toEqual(['down F14', 'down F15']);
-    await $('[data-testid="ble-pair"]').click();
-    await browser.waitUntil(async () => (await $('[data-testid="ble-state"]').getAttribute('data-connected')) === 'true');
-    expect(await $('[data-testid="ble-state"]').getText()).toContain('1 bonded');
-    await browser.waitUntil(async () => !(await mirror()).enabled);
-    expect(await inputLog()).toEqual(['down F14', 'down F15', 'up F15', 'up F14']);
-    note('ble_connected', await $('[data-testid="ble-state"]').getText());
-    await shot('bluetooth-connected');
+  it('shows only Wi-Fi setup and keeps the password out of the console', async () => {
+    expect(await browser.execute(() => /bluetooth/i.test(document.body.textContent ?? ''))).toBe(false);
+    expect(await $('[data-testid="ble-pair"]').isExisting()).toBe(false);
     await $('[data-testid="nav-actions"]').click();
-    await browser.waitUntil(async () => (await $('[data-testid="mirror-state"]').getText()).includes('Bluetooth'));
-    await emit([key([107]), { m: 'key.resync', mods: 0, keys: [108] }, { m: 'key.report', type: 'con', usage: 226 }]);
-    await browser.waitUntil(async () => (await $$('[data-testid="key-report"][data-outcome="off"]')).length === 3);
-    expect(await inputLog()).toEqual(['down F14', 'down F15', 'up F15', 'up F14']);
-    note('paused_reports', 3);
-    await shot('bluetooth-paused');
-    await $('[data-testid="nav-settings"]').click();
-    await browser.waitUntil(async () => (await $('[data-testid="ble-state"]').getText()).includes('1 bonded'));
-    await $('[data-testid="ble-forget"]').click();
-    await browser.waitUntil(async () => (await mirror()).enabled);
-    await browser.waitUntil(async () => (await $('[data-testid="ble-state"]').getText()).includes('0 bonded'));
-    await emit([key([109]), key([])]);
-    await browser.waitUntil(async () => (await inputLog()).length === 6);
-    expect(await inputLog()).toEqual(['down F14', 'down F15', 'up F15', 'up F14', 'down F18', 'up F18']);
-    note('pause_resume_input', await inputLog());
-  });
-
-  it('switches Bluetooth off and back on and shows the app typing path', async () => {
-    await $('[data-testid="ble-enabled"]').click();
-    await browser.waitUntil(async () => !(await $('[data-testid="ble-enabled"]').isSelected()));
-    expect(await $('[data-testid="ble-pair"]').isEnabled()).toBe(false);
-    await $('[data-testid="ble-enabled"]').click();
-    await browser.waitUntil(async () => (await $('[data-testid="ble-enabled"]').isSelected()));
-    await $('[data-testid="nav-actions"]').click();
-    await browser.waitUntil(async () => (await $('[data-testid="mirror-state"]').getText()).includes('mirrored USB'));
-    await shot('usb-mirroring-resumed');
+    expect(await $('[data-testid="mirror-state"]').isExisting()).toBe(false);
+    await shot('actions');
     await $('[data-testid="nav-deck"]').click();
     note('password_in_console', await browser.execute(() => document.body.textContent?.includes('mock-only-pass') ?? false));
     expect(await browser.execute(() => document.body.textContent?.includes('mock-only-pass') ?? false)).toBe(false);
   });
+
 });

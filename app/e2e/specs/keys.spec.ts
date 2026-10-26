@@ -151,7 +151,7 @@ describe('key mirror on the mock deck', () => {
     fake = (await invoke<string[] | null>('e2e_input_log')) !== null;
     note('input', fake ? 'fake sink' : 'operating system');
     await $('[data-testid="nav-actions"]').click();
-    await browser.waitUntil(async () => (await $('[data-testid="mirror-state"]').getAttribute('data-enabled')) === 'true', {
+    await browser.waitUntil(async () => (await invoke<{ enabled: boolean }>('mirror_state')).enabled, {
       timeout: 3_000,
       timeoutMsg: 'mirroring is not on',
     });

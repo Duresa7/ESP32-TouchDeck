@@ -22,16 +22,10 @@
     exit_code: number | null;
   }
 
-  interface MirrorInfo {
-    enabled: boolean;
-    reason: string;
-  }
-
   let { online }: { online: boolean } = $props();
 
   let layout = $state<LayoutSummary | null>(null);
   let log = $state<ActionLog[]>([]);
-  let mirror = $state<MirrorInfo | null>(null);
   let problem = $state<string | null>(null);
 
   async function loadFile(event: Event) {
@@ -51,15 +45,10 @@
     return new Date(ms).toLocaleTimeString();
   }
 
-  $effect(() => {
-    if (online) invoke<MirrorInfo>('mirror_state').then((info) => (mirror = info));
-  });
-
   onMount(() => {
     invoke<LayoutSummary | null>('action_layout').then((summary) => (layout = summary ?? layout));
     invoke<ActionLog[]>('action_log').then((entries) => (log = [...entries, ...log]));
     const listeners = [
-      listen<MirrorInfo>('mirror-state', (event) => (mirror = event.payload)),
       listen<LayoutSummary>('action-layout', (event) => (layout = event.payload)),
       listen<ActionLog>('action-log', (event) => (log = [...log.slice(-99), event.payload])),
     ];
@@ -70,9 +59,6 @@
 <section class="panel actions" data-testid="actions">
   <div class="panel-head">
     <h2>Actions</h2>
-    <span class="hint" data-testid="mirror-state" data-enabled={mirror ? String(mirror.enabled) : null}>
-      {online ? (mirror?.reason ?? '') : 'Connect a deck to mirror its keys'}
-    </span>
   </div>
   <div class="body">
     <div class="layout-line">

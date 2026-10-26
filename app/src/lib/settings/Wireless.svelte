@@ -10,18 +10,10 @@
     reason: string | null;
     host: string;
   }
-  interface BleState {
-    enabled: boolean;
-    pairing: boolean;
-    bonded: number;
-    connected: boolean;
-    peer: string | null;
-  }
   interface AccessPoint { ssid: string; rssi: number; auth: string }
 
   let { online, session }: { online: boolean; session: number | null } = $props();
   let wifi = $state<WifiState | null>(null);
-  let ble = $state<BleState | null>(null);
   let aps = $state<AccessPoint[]>([]);
   let ssid = $state('');
   let password = $state('');
@@ -33,7 +25,6 @@
   $effect(() => {
     const id = session;
     wifi = null;
-    ble = null;
     aps = [];
     ssid = '';
     password = '';
@@ -45,11 +36,8 @@
       if (polling) return;
       polling = true;
       try {
-        const [nextWifi, nextBle] = await Promise.all([
-          invoke<WifiState>('wifi_state'),
-          invoke<BleState>('ble_command', { action: 'state' }),
-        ]);
-        if (active) { wifi = nextWifi; ble = nextBle; }
+        const nextWifi = await invoke<WifiState>('wifi_state');
+        if (active) { wifi = nextWifi; }
       } catch {
         if (active) problem = 'Could not read wireless status. Check that the deck firmware supports wireless setup.';
       } finally { polling = false; }
@@ -87,14 +75,6 @@
     catch { problem = 'Could not forget the Wi-Fi network.'; }
     finally { busy = false; }
   }
-
-  async function bluetooth(action: string, on?: boolean) {
-    busy = true;
-    problem = '';
-    try { ble = await invoke<BleState>('ble_command', { action, on }); }
-    catch { problem = 'Could not change Bluetooth settings.'; }
-    finally { busy = false; }
-  }
 </script>
 
 <section class="wireless" data-testid="wireless">
@@ -128,18 +108,6 @@
         <button type="button" onclick={forgetWifi} disabled={busy || !wifi?.configured} data-testid="wifi-forget">Forget network</button>
       </div>
     </form>
-    <h3>Bluetooth</h3>
-    <p data-testid="ble-state" data-connected={ble?.connected ?? false}>
-      {ble ? `${ble.enabled ? 'On' : 'Off'} · ${ble.connected ? 'connected' : 'disconnected'} · ${ble.bonded} bonded` : 'Reading Bluetooth status…'}
-      {#if ble?.pairing} · Pairing for up to 120 seconds{/if}
-      {#if ble?.peer} · {ble.peer}{/if}
-    </p>
-    <label class="switch"><input type="checkbox" role="switch" checked={ble?.enabled ?? false} disabled={busy || !ble} onchange={(event) => bluetooth('enable', event.currentTarget.checked)} data-testid="ble-enabled" /> Bluetooth on</label>
-    <div class="row">
-      <button onclick={() => bluetooth('pair')} disabled={busy || !ble?.enabled || ble.pairing} data-testid="ble-pair">Pair</button>
-      <button onclick={() => bluetooth('forget')} disabled={busy || !ble || (!ble.bonded && !ble.pairing)} data-testid="ble-forget">Forget Bluetooth hosts</button>
-    </div>
-    <p class="muted">Pair the deck in your PC's Bluetooth settings. While Bluetooth is connected, the app releases its held keys and pauses mirrored USB key typing.</p>
     {#if problem}<p class="problem" role="alert" data-testid="wireless-error">{problem}</p>{/if}
   {/if}
 </section>
@@ -147,7 +115,7 @@
 <style>
   .wireless { display: grid; gap: 12px; max-width: 620px; margin-top: 16px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
   form, label { display: grid; gap: 8px; }
-  .row, .switch { display: flex; align-items: center; gap: 8px; }
+  .row { display: flex; align-items: center; gap: 8px; }
   p, h2, h3 { margin: 0; }
   .muted { color: var(--muted); font-size: 12px; }
   .problem { color: var(--bad); }
