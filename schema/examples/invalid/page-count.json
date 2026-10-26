@@ -1,0 +1,80 @@
+expected: layout.page-count
+{
+  "name": "Invalid example",
+  "schema": 1,
+  "orientation": "landscape",
+  "pages": [
+    {
+      "id": "page_0",
+      "title": "Page",
+      "kind": "grid",
+      "rows": 1,
+      "cols": 1,
+      "tiles": []
+    },
+    {
+      "id": "page_1",
+      "title": "Page",
+      "kind": "grid",
+      "rows": 1,
+      "cols": 1,
+      "tiles": []
+    },
+    {
+      "id": "page_2",
+      "title": "Page",
+      "kind": "grid",
+      "rows": 1,
+      "cols": 1,
+      "tiles": []
+    },
+    {
+      "id": "page_3",
+      "title": "Page",
+      "kind": "grid",
+      "rows": 1,
+      "cols": 1,
+      "tiles": []
+    },
+    {
+      "id": "page_4",
+      "title": "Page",
+      "kind": "grid",
+      "rows": 1,
+      "cols": 1,
+      "tiles": []
+    },
+    {
+      "id": "page_5",
+      "title": "Page",
+      "kind": "grid",
+      "rows": 1,
+      "cols": 1,
+      "tiles": []
+    },
+    {
+      "id": "page_6",
+      "title": "Page",
+      "kind": "grid",
+      "rows": 1,
+      "cols": 1,
+      "tiles": []
+    },
+    {
+      "id": "page_7",
+      "title": "Page",
+      "kind": "grid",
+      "rows": 1,
+      "cols": 1,
+      "tiles": []
+    },
+    {
+      "id": "page_8",
+      "title": "Page",
+      "kind": "grid",
+      "rows": 1,
+      "cols": 1,
+      "tiles": []
+    }
+  ]
+}

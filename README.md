@@ -133,6 +133,29 @@ The display component hands its commands to `td_console_register`, so `help`
 lists them. Until the display has started, `screenshot` and `perf` answer
 `display not ready`.
 
+## Layout format
+
+The versioned [layout format](schema/README.md) describes pages, tiles, icons,
+and actions as JSON. [builtin.json](schema/examples/builtin.json) preserves the
+milestone 1 pages. [dev.json](schema/examples/dev.json) covers the action types
+and a dashboard for the PC app.
+
+Validate the examples or your own layout with Node.js:
+
+```sh
+npm ci --prefix schema
+node schema/check-layouts.mjs
+node schema/check-layouts.mjs path/to/layout.json
+node --test schema/
+```
+
+Every failure the validator prints starts with a stable rule key, such as
+`label.blank`. [schema/README.md](schema/README.md) lists the keys and the rules
+for reading a layout file. Send the deck the compact form of a layout, because
+it rejects files over 32768 bytes without parsing them first.
+
+App-side actions and widgets dim on the deck while the app is offline.
+
 ## Unit tests
 
 `firmware/test_app` is an ESP-IDF project that runs the [Unity](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/system/unity.html)

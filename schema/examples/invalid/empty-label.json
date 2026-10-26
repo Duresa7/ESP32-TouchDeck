@@ -1,0 +1,29 @@
+expected: label.blank
+{
+  "name": "Invalid example",
+  "schema": 1,
+  "orientation": "landscape",
+  "pages": [
+    {
+      "id": "main",
+      "title": "Main",
+      "kind": "grid",
+      "rows": 1,
+      "cols": 1,
+      "tiles": [
+        {
+          "id": "tile",
+          "label": "",
+          "row": 0,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "none"
+          }
+        }
+      ]
+    }
+  ]
+}
