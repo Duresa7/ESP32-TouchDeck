@@ -9,6 +9,9 @@
 
 #define UI_PAGES_MAX 8
 
+/* Draws the pairing screen again after a rebuild cleared the screen. The caller holds the adapter lock. */
+void ui_pairing_redraw(void);
+
 /*
  * What the console reports about the deck. Totals count the page changes that ran their whole slide, so
  * transition_frames * 1000 / transition_ms is the frame rate during a transition. A slide that a new touch cut

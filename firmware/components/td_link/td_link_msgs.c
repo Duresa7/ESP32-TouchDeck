@@ -7,11 +7,12 @@
 #include "esp_app_desc.h"
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
+#include "td_netlink_service.h"
 #include "td_recovery.h"
 
 static bool link_online(void)
 {
-    return td_link_state().online;
+    return td_link_online_any();
 }
 
 static void hello(const cJSON *request, cJSON *reply)
@@ -167,6 +168,22 @@ static void dashboard_set(const cJSON *request, cJSON *reply)
     cJSON_AddNumberToObject(reply, "rows", count);
 }
 
+static void net_state(const cJSON *request, cJSON *reply)
+{
+    (void)request;
+    td_netlink_state_fields(reply);
+}
+
+static void net_forget(const cJSON *request, cJSON *reply)
+{
+    (void)request;
+    if (!td_netlink_forget_all(td_link_origin() == TD_LINK_NET)) {
+        td_link_fail(reply, "the pairings could not be erased");
+        cJSON_AddStringToObject(reply, "reason", "storage");
+    }
+    td_netlink_state_fields(reply);
+}
+
 static const struct {
     const char *name;
     void (*handler)(const cJSON *request, cJSON *reply);
@@ -188,6 +205,8 @@ static const struct {
 
     { "widget.set", widget_set },
     { "dashboard.set", dashboard_set },
+    { "net.state", net_state },
+    { "net.forget", net_forget },
 };
 
 #define ECHO_CHARS_MAX 64

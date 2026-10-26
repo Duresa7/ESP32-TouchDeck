@@ -2,12 +2,15 @@
 #include "td_link_priv.h"
 #include "key_sink_link.h"
 #include "td_frame.h"
+#include "td_netlink_service.h"
 #include "td_rx_sync.h"
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 
@@ -19,10 +22,18 @@
 
 _Static_assert(TD_RX_FRAME_MAX >= TD_FRAME_BODY_MAX, "receive buffer must hold a decoded maximum frame");
 
+/* Each packet in s_frames is u16le(len), the transport, and one decoded body. USB's receive task and the net task
+ * both write it, one whole packet at a time under s_frames_lock. */
+#define PACKET_HEADER 3
+
 static StreamBufferHandle_t s_frames;
+static SemaphoreHandle_t s_frames_lock;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static td_link_state_t s_state;
-static uint8_t s_rx_packet[2 + TD_FRAME_BODY_MAX];
+static uint8_t s_rx_packet[PACKET_HEADER + TD_FRAME_BODY_MAX];
+static td_link_transport_t s_origin;
+static atomic_bool s_net_online;
+static atomic_bool s_net_closed;
 static QueueHandle_t s_presses;
 static uint32_t s_press_seq;
 
@@ -46,9 +57,53 @@ td_link_state_t td_link_state(void)
 
 void td_link_hello(void)
 {
+    if (s_origin == TD_LINK_NET) {
+        atomic_store(&s_net_online, true);
+        td_netlink_hello();
+        return;
+    }
     portENTER_CRITICAL(&s_lock);
     s_state.online = true;
     portEXIT_CRITICAL(&s_lock);
+}
+
+td_link_transport_t td_link_origin(void)
+{
+    return s_origin;
+}
+
+bool td_link_online_any(void)
+{
+    return td_link_state().online || atomic_load(&s_net_online);
+}
+
+static void enqueue(td_link_transport_t transport, const uint8_t *body, size_t len)
+{
+    xSemaphoreTake(s_frames_lock, portMAX_DELAY);
+    if (xStreamBufferSpacesAvailable(s_frames) < len + PACKET_HEADER) {
+        xSemaphoreGive(s_frames_lock);
+        td_link_count_drop();
+        return;
+    }
+    s_rx_packet[0] = len & 0xff;
+    s_rx_packet[1] = len >> 8;
+    s_rx_packet[2] = (uint8_t)transport;
+    memcpy(s_rx_packet + PACKET_HEADER, body, len);
+    size_t sent = xStreamBufferSend(s_frames, s_rx_packet, len + PACKET_HEADER, 0);
+    xSemaphoreGive(s_frames_lock);
+    configASSERT(sent == len + PACKET_HEADER);
+}
+
+/* The session's records arrive authenticated with their bodies checked, so they skip USB's counters. */
+static void net_frame(const uint8_t *body, size_t len)
+{
+    enqueue(TD_LINK_NET, body, len);
+}
+
+static void net_closed(void)
+{
+    atomic_store(&s_net_online, false);
+    atomic_store(&s_net_closed, true);
 }
 
 void td_link_count_drop(void)
@@ -76,16 +131,7 @@ static void receive_frame(const uint8_t *body, size_t len, void *context)
     s_state.last_rx_ms = now;
     s_state.frames_rx++;
     portEXIT_CRITICAL(&s_lock);
-
-    if (xStreamBufferSpacesAvailable(s_frames) < len + 2) {
-        td_link_count_drop();
-        return;
-    }
-    s_rx_packet[0] = len & 0xff;
-    s_rx_packet[1] = len >> 8;
-    memcpy(s_rx_packet + 2, body, len);
-    size_t sent = xStreamBufferSend(s_frames, s_rx_packet, len + 2, 0);
-    configASSERT(sent == len + 2);
+    enqueue(TD_LINK_USB, body, len);
 }
 
 static bool read_bytes(uint8_t *buf, size_t len, TickType_t first_wait)
@@ -101,10 +147,19 @@ static bool read_bytes(uint8_t *buf, size_t len, TickType_t first_wait)
     return true;
 }
 
-bool td_link_send(uint8_t type, uint8_t seq, uint8_t flags, const uint8_t *payload, size_t len)
+bool td_link_send_on(td_link_transport_t transport, uint8_t type, uint8_t seq, uint8_t flags, const uint8_t *payload,
+                     size_t len)
 {
     static uint8_t wire[TD_FRAME_WIRE_MAX];
     td_frame_t frame = { .type = type, .seq = seq, .flags = flags, .len = (uint16_t)len, .payload = payload };
+    if (transport == TD_LINK_NET) {
+        size_t body_len = td_frame_encode_body(&frame, wire, sizeof wire);
+        if (!body_len || !td_netlink_send(wire, body_len)) {
+            td_link_count_drop();
+            return false;
+        }
+        return true;
+    }
     size_t wire_len = td_frame_encode(&frame, wire, sizeof wire);
     if (!wire_len || !td_console_write((const char *)wire, wire_len)) {
         td_link_count_drop();
@@ -114,6 +169,11 @@ bool td_link_send(uint8_t type, uint8_t seq, uint8_t flags, const uint8_t *paylo
     s_state.frames_tx++;
     portEXIT_CRITICAL(&s_lock);
     return true;
+}
+
+bool td_link_send(uint8_t type, uint8_t seq, uint8_t flags, const uint8_t *payload, size_t len)
+{
+    return td_link_send_on(s_origin, type, seq, flags, payload, len);
 }
 
 void td_link_fail(cJSON *reply, const char *error)
@@ -150,11 +210,12 @@ static void handle_message(const td_frame_t *frame)
 static void handle_frame(TickType_t wait)
 {
     static uint8_t body[TD_FRAME_BODY_MAX];
-    uint8_t header[2];
+    uint8_t header[PACKET_HEADER];
     if (!read_bytes(header, sizeof header, wait)) {
         return;
     }
     size_t len = header[0] | ((size_t)header[1] << 8);
+    s_origin = header[2] == TD_LINK_NET ? TD_LINK_NET : TD_LINK_USB;
     read_bytes(body, len, portMAX_DELAY);
     td_frame_t frame;
     if (td_frame_decode(body, len, &frame) != TD_FRAME_OK) {
@@ -185,21 +246,29 @@ void td_link_press(const char *page, const char *tile, const char *kind)
     xQueueSend(s_presses, &press, 0);
 }
 
-/* Events go out only while the app is connected. Otherwise they are thrown away, and their seq leaves a gap. */
+/* Each event goes to every link the app is online on. With none online it is thrown away, and its seq leaves a gap. */
+static void send_event(const bool online[2], const char *json, size_t len)
+{
+    for (int transport = TD_LINK_USB; transport <= TD_LINK_NET; transport++) {
+        if (online[transport]) {
+            td_link_send_on((td_link_transport_t)transport, TD_FRAME_MESSAGE, 0, TD_FRAME_EVENT, (const uint8_t *)json,
+                            len);
+        }
+    }
+}
+
 static void send_events(void)
 {
     static char json[KEY_SINK_LINK_EVENT_MAX];
-    const bool online = td_link_state().online;
+    const bool online[2] = { td_link_state().online, atomic_load(&s_net_online) };
     press_t press;
     for (int turn = 0; turn < TD_LINK_EVENTS_PER_TURN && xQueueReceive(s_presses, &press, 0) == pdTRUE; turn++) {
-        if (online) {
-            int len = snprintf(json, sizeof json,
-                               "{\"m\":\"press\",\"page\":\"%s\",\"tile\":\"%s\",\"kind\":\"%s\",\"seq\":%u,\"t\":%u}",
-                               press.page, press.tile, press.kind, (unsigned)press.seq, (unsigned)press.t);
-            td_link_send(TD_FRAME_MESSAGE, 0, TD_FRAME_EVENT, (const uint8_t *)json, (size_t)len);
-        }
+        int len = snprintf(json, sizeof json,
+                           "{\"m\":\"press\",\"page\":\"%s\",\"tile\":\"%s\",\"kind\":\"%s\",\"seq\":%u,\"t\":%u}",
+                           press.page, press.tile, press.kind, (unsigned)press.seq, (unsigned)press.t);
+        send_event(online, json, (size_t)len);
     }
-    if (!online) {
+    if (!online[TD_LINK_USB] && !online[TD_LINK_NET]) {
         key_sink_link_discard();
         return;
     }
@@ -208,7 +277,7 @@ static void send_events(void)
         if (len == 0) {
             break;
         }
-        td_link_send(TD_FRAME_MESSAGE, 0, TD_FRAME_EVENT, (const uint8_t *)json, len);
+        send_event(online, json, len);
     }
 }
 
@@ -217,6 +286,9 @@ static void link_task(void *arg)
     (void)arg;
     for (;;) {
         handle_frame(pdMS_TO_TICKS(TD_LINK_POLL_MS));
+        if (atomic_exchange(&s_net_closed, false)) {
+            td_link_files_closed(TD_LINK_NET);
+        }
         td_link_files_service((uint32_t)(esp_timer_get_time() / 1000));
         send_events();
     }
@@ -229,7 +301,8 @@ esp_err_t td_link_start(void)
     }
     s_frames = xStreamBufferCreate(TD_LINK_STREAM_BYTES, 1);
     s_presses = xQueueCreate(TD_LINK_PRESS_QUEUE, sizeof(press_t));
-    if (!s_frames || !s_presses) {
+    s_frames_lock = xSemaphoreCreateMutex();
+    if (!s_frames || !s_presses || !s_frames_lock) {
         if (s_frames) {
             vStreamBufferDelete(s_frames);
             s_frames = NULL;
@@ -248,5 +321,6 @@ esp_err_t td_link_start(void)
         return ESP_ERR_NO_MEM;
     }
     td_console_set_frame_handler(receive_frame, NULL);
+    td_netlink_attach(&(const td_netlink_link_t){ .frame = net_frame, .closed = net_closed });
     return ESP_OK;
 }

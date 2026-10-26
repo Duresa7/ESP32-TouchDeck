@@ -558,6 +558,7 @@ static void build_objects(void)
     if (s.recovery_armed) {
         draw_recovery_band();
     }
+    ui_pairing_redraw();
 }
 
 /*

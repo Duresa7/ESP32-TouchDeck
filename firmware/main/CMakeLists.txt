@@ -1,5 +1,5 @@
 idf_component_register(SRCS "main.c"
-                       PRIV_REQUIRES spi_flash esp_psram esp_timer app_update td_console td_link td_update display touch ui keys power td_store espressif__cjson heap
+                       PRIV_REQUIRES spi_flash esp_psram esp_timer app_update td_console td_link td_netlink td_update display touch ui keys power td_store espressif__cjson heap
                        INCLUDE_DIRS "")
 
 # `idf.py build-crashing` builds with -DTD_TEST_BOOT_CRASH=1 into build-crash/, an image that aborts two seconds after

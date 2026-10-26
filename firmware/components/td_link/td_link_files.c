@@ -41,6 +41,7 @@ static struct {
     uint32_t last_ms;
     uint8_t last_id;
     uint8_t tx_seq;
+    td_link_transport_t transport;
 } s;
 
 /* Frees the buffer and forgets the transfer, and leaves a running update alone. */
@@ -72,6 +73,7 @@ static bool open_xfer(kind_t kind, uint32_t bytes)
         return false;
     }
     s.kind = kind;
+    s.transport = td_link_origin();
     s.last_id = s.last_id % 255 + 1;
     s.last_ms = (uint32_t)(esp_timer_get_time() / 1000);
     return true;
@@ -329,6 +331,7 @@ void td_link_update_begin(const cJSON *request, cJSON *reply)
     }
     drop_xfer();
     s.kind = KIND_UPDATE;
+    s.transport = td_link_origin();
     s.last_id = s.last_id % 255 + 1;
     s.last_ms = (uint32_t)(esp_timer_get_time() / 1000);
     td_xfer_init(&s.x, s.last_id, false, bytes, 0, update_sink, NULL);
@@ -372,13 +375,13 @@ static void send_chunk(uint16_t idx)
     payload[2] = idx >> 8;
     memcpy(payload + TD_FRAME_CHUNK_HEADER, s.buf + start, len);
     s.tx_seq = s.tx_seq % 255 + 1;
-    td_link_send(TD_FRAME_CHUNK, s.tx_seq, 0, payload, TD_FRAME_CHUNK_HEADER + len);
+    td_link_send_on(s.transport, TD_FRAME_CHUNK, s.tx_seq, 0, payload, TD_FRAME_CHUNK_HEADER + len);
 }
 
 void td_link_files_chunk(uint8_t seq, const uint8_t *payload, size_t len)
 {
     if (len < TD_FRAME_CHUNK_HEADER || (s.kind != KIND_LAYOUT_PUT && s.kind != KIND_ICON_PUT && s.kind != KIND_UPDATE)
-        || payload[0] != s.x.id) {
+        || payload[0] != s.x.id || td_link_origin() != s.transport) {
         td_link_count_drop();
         return;
     }
@@ -392,7 +395,7 @@ void td_link_files_chunk(uint8_t seq, const uint8_t *payload, size_t len)
 
 void td_link_files_ack(const uint8_t *payload, size_t len)
 {
-    if (len != 3 || s.kind != KIND_GET || payload[0] != s.x.id) {
+    if (len != 3 || s.kind != KIND_GET || payload[0] != s.x.id || td_link_origin() != s.transport) {
         td_link_count_drop();
         return;
     }
@@ -414,6 +417,13 @@ void td_link_files_service(uint32_t now_ms)
             close_xfer();
         }
     } else if (now_ms - s.last_ms > TD_XFER_IDLE_MS) {
+        close_xfer();
+    }
+}
+
+void td_link_files_closed(td_link_transport_t transport)
+{
+    if (s.kind != KIND_NONE && s.transport == transport) {
         close_xfer();
     }
 }

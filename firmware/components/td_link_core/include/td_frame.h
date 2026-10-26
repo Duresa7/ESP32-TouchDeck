@@ -41,4 +41,6 @@ typedef enum {
 td_frame_result_t td_frame_decode(const uint8_t *body, size_t len, td_frame_t *frame);
 td_frame_result_t td_frame_decode_slip(const uint8_t *wire, size_t len,
                                      uint8_t *body, size_t cap, td_frame_t *frame);
+/* The unescaped body, header through CRC, as the network link seals it. */
+size_t td_frame_encode_body(const td_frame_t *frame, uint8_t *body, size_t cap);
 size_t td_frame_encode(const td_frame_t *frame, uint8_t *wire, size_t cap);

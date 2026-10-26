@@ -1,5 +1,5 @@
 idf_component_register(SRCS "ui_theme.c" "ui_deck.c" "ui_cmds.c" "ui_tile_keys.c" "ui_icon.c" "ui_layout_cmds.c"
-                            "ui_widget.c" "ui_dashboard.c"
+                            "ui_widget.c" "ui_dashboard.c" "ui_pairing.c"
                        INCLUDE_DIRS "include"
                        REQUIRES console td_layout td_ui_core
                        PRIV_REQUIRES board display keys power touch td_console td_store esp_timer heap

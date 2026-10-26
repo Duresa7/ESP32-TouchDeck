@@ -77,6 +77,12 @@ const char *ui_widget_update(const char *tile, const char *value, const char *ca
 /* Replaces a dashboard page's rows the same way. Refusals: "unknown page", "too many rows", "display not ready". */
 const char *ui_dashboard_update(const char *page, const ui_dash_row_t *rows, size_t count);
 
+/* Shows the pairing code full screen over the deck, with a Cancel button that calls on_cancel on the LVGL task, or
+ * takes it away. The screen keeps the code only while it shows it and never logs it. Both take the LVGL lock, so
+ * never call them from an LVGL callback. */
+void ui_pairing_show(const char code[6], void (*on_cancel)(void));
+void ui_pairing_hide(void);
+
 /* The ui console commands, for td_console_register(). Before the display has started, a well-formed command
  * answers "display not ready". */
 const esp_console_cmd_t *ui_console_commands(size_t *count);

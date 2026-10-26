@@ -24,6 +24,7 @@
 #include "power.h"
 #include "td_recovery.h"
 #include "td_store.h"
+#include "td_netlink_service.h"
 #include "td_update.h"
 
 static const char *TAG = "touchdeck";
@@ -126,6 +127,9 @@ void app_main(void)
     size_t update_cmd_count;
     const esp_console_cmd_t *update_cmds = td_update_console_commands(&update_cmd_count);
     register_commands("Update", update_cmds, update_cmd_count);
+    size_t netlink_cmd_count;
+    const esp_console_cmd_t *netlink_cmds = td_netlink_console_commands(&netlink_cmd_count);
+    register_commands("Net link", netlink_cmds, netlink_cmd_count);
 
     /* The volume mounts before the console starts, and the settings load before the display does, which sizes its
      * frame buffers for the stored orientation. A change to it applies on the next boot. */
@@ -189,6 +193,11 @@ void app_main(void)
     esp_err_t touch_err = touch_start();
     if (touch_err != ESP_OK) {
         ESP_LOGE(TAG, "Touch failed to start: %s", esp_err_to_name(touch_err));
+    }
+
+    const esp_err_t netlink_err = td_netlink_start();
+    if (netlink_err != ESP_OK) {
+        ESP_LOGE(TAG, "Net link failed to start: %s", esp_err_to_name(netlink_err));
     }
 
     int ticks = 0;
