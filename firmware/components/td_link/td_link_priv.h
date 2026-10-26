@@ -32,6 +32,8 @@ void td_link_settings_get(const cJSON *request, cJSON *reply);
 void td_link_settings_put(const cJSON *request, cJSON *reply);
 void td_link_store_stat(const cJSON *request, cJSON *reply);
 void td_link_xfer_end(const cJSON *request, cJSON *reply);
+void td_link_update_begin(const cJSON *request, cJSON *reply);
+void td_link_update_end(const cJSON *request, cJSON *reply);
 
 /* The `layout state` fields, from the layout on screen. */
 void td_link_layout_fields(cJSON *reply);

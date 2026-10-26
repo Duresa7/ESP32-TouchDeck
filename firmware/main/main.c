@@ -24,6 +24,7 @@
 #include "power.h"
 #include "td_recovery.h"
 #include "td_store.h"
+#include "td_update.h"
 
 static const char *TAG = "touchdeck";
 static const char *SETTINGS_TAG = "settings";
@@ -46,8 +47,33 @@ static void *cjson_malloc(size_t size)
     return heap_caps_malloc_prefer(size, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, MALLOC_CAP_8BIT);
 }
 
+/* What the running image must have done before it confirms itself, besides staying up. */
+static bool first_frame_shown(void)
+{
+    return display_frame_count() > 0;
+}
+
+static bool layout_loaded(void)
+{
+    return ui_ready();
+}
+
+#ifdef TD_TEST_BOOT_CRASH
+/* A build for the rollback check: it dies two seconds after app_main, well before it could confirm itself. */
+static void boot_crash_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    ESP_LOGE(TAG, "TD_TEST_BOOT_CRASH: aborting on purpose");
+    abort();
+}
+#endif
+
 void app_main(void)
 {
+#ifdef TD_TEST_BOOT_CRASH
+    xTaskCreate(boot_crash_task, "td_boot_crash", 3072, NULL, 5, NULL);
+#endif
     cJSON_InitHooks(&(cJSON_Hooks){ .malloc_fn = cjson_malloc, .free_fn = heap_caps_free });
 
     esp_chip_info_t chip_info;
@@ -97,6 +123,9 @@ void app_main(void)
     size_t recovery_cmd_count;
     const esp_console_cmd_t *recovery_cmds = td_recovery_console_commands(&recovery_cmd_count);
     register_commands("Recovery", recovery_cmds, recovery_cmd_count);
+    size_t update_cmd_count;
+    const esp_console_cmd_t *update_cmds = td_update_console_commands(&update_cmd_count);
+    register_commands("Update", update_cmds, update_cmd_count);
 
     /* The volume mounts before the console starts, and the settings load before the display does, which sizes its
      * frame buffers for the stored orientation. A change to it applies on the next boot. */
@@ -134,6 +163,12 @@ void app_main(void)
     esp_err_t console_err = td_console_start();
     if (console_err != ESP_OK) {
         ESP_LOGE(TAG, "Console failed to start: %s", esp_err_to_name(console_err));
+    }
+
+    /* A new image waits here for its first frame, a layout and ten seconds of uptime before it confirms itself. */
+    esp_err_t update_err = td_update_start(first_frame_shown, layout_loaded);
+    if (update_err != ESP_OK) {
+        ESP_LOGE(TAG, "Update watch failed to start: %s", esp_err_to_name(update_err));
     }
 
     ui_set_press_hook(td_link_press);

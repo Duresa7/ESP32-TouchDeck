@@ -40,6 +40,7 @@ static struct {
     ui_layout_info_t boot_info;
     char orientation[12];
     bool screen_set_up;
+    bool recovery_armed;
     ui_pager_t pager;
     const ui_page_t *pages;
     uint8_t page_count;
@@ -305,10 +306,9 @@ static void on_release(lv_event_t *e)
     ui_tile_keys_click(ref >= 0 ? &s.pages[ref / 256] : NULL, tile);
 }
 
-/* The 10-second hold armed. The band covers the screen as the last child of the active screen, above whichever page
- * shows, and stays until the deck restarts. It sits on the screen and not on the top layer because the screenshot
- * snapshots the active screen alone. It takes no input. Runs in the LVGL read callback, so the adapter lock is held. */
-static void on_recovery_armed(void)
+/* The band covers the screen as the last child of the active screen, above whichever page shows. It sits on the screen
+ * and not on the top layer because the screenshot snapshots the active screen alone. It takes no input. */
+static void draw_recovery_band(void)
 {
     const ui_geometry_t *g = ui_geo();
     lv_obj_t *band = lv_obj_create(lv_screen_active());
@@ -326,6 +326,14 @@ static void on_recovery_armed(void)
     lv_obj_set_style_text_font(label, ui_theme.font_tile, 0);
     lv_obj_set_style_text_color(label, ui_color(ui_theme.color.text), 0);
     lv_obj_center(label);
+}
+
+/* The 10-second hold armed. The band stays until the deck restarts, so a layout rebuild draws it again. Runs in the
+ * LVGL read callback, so the adapter lock is held. */
+static void on_recovery_armed(void)
+{
+    s.recovery_armed = true;
+    draw_recovery_band();
 }
 
 static void build_recovery_caption(lv_obj_t *screen, const ui_geometry_t *g)
@@ -515,6 +523,9 @@ static void build_objects(void)
     touch_set_recovery_cb(on_recovery_armed);
 
     build_dots(screen);
+    if (s.recovery_armed) {
+        draw_recovery_band();
+    }
 }
 
 /*

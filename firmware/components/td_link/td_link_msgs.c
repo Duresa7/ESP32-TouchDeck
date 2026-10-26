@@ -183,6 +183,9 @@ static const struct {
     { "settings.put", td_link_settings_put },
     { "store.stat", td_link_store_stat },
     { "xfer.end", td_link_xfer_end },
+    { "update.begin", td_link_update_begin },
+    { "update.end", td_link_update_end },
+
     { "widget.set", widget_set },
     { "dashboard.set", dashboard_set },
 };

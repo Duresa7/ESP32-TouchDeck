@@ -9,6 +9,7 @@ AGENTS.md
 # Build output
 .pio/
 build/
+build-crash/
 out/
 dist/
 
@@ -24,6 +25,7 @@ managed_components/
 *.hex
 *.bin
 *.map
+*.tdfw
 
 # IDE settings
 .vscode/
