@@ -50,14 +50,88 @@ pub fn parse_desktop(text: &str) -> (Option<String>, Option<String>) {
 
 /// Whether an `Exec=` line runs `path`, by full path or by the program's name on `PATH`.
 pub fn exec_names(exec: &str, path: &Path) -> bool {
-    let program = exec
-        .split_whitespace()
-        .find(|word| !word.contains('='))
-        .unwrap_or_default()
-        .trim_matches('"');
+    let Some(words) = exec_words(exec) else {
+        return false;
+    };
+    let mut words = words.iter().map(String::as_str);
+    let Some(first) = words.next() else {
+        return false;
+    };
+    let program = if Path::new(first)
+        .file_name()
+        .is_some_and(|name| name == "env")
+    {
+        env_program(words)
+    } else {
+        Some(first)
+    };
+    let Some(program) = program else {
+        return false;
+    };
     let program = Path::new(program);
     program == path
         || (program.components().count() == 1 && path.file_name() == Some(program.as_os_str()))
+}
+
+/// Split desktop-entry arguments, keeping whitespace inside quoted executable paths.
+fn exec_words(exec: &str) -> Option<Vec<String>> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut quoted = false;
+    let mut present = false;
+    let mut chars = exec.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                quoted = !quoted;
+                present = true;
+            }
+            '\\' if quoted => {
+                word.push(chars.next()?);
+                present = true;
+            }
+            ch if ch.is_whitespace() && !quoted => {
+                if present {
+                    words.push(std::mem::take(&mut word));
+                    present = false;
+                }
+            }
+            ch => {
+                word.push(ch);
+                present = true;
+            }
+        }
+    }
+    if quoted {
+        return None;
+    }
+    if present {
+        words.push(word);
+    }
+    Some(words)
+}
+
+/// `env` is a launcher; its assignments and options precede the app executable.
+fn env_program<'a>(mut words: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    while let Some(word) = words.next() {
+        match word {
+            "--" => return words.next(),
+            "-i" | "--ignore-environment" => continue,
+            "-u" | "--unset" | "-C" | "--chdir" => {
+                words.next()?;
+            }
+            _ if word.starts_with("--unset=") || word.starts_with("--chdir=") => continue,
+            _ if word.starts_with('-') => return None,
+            _ if word
+                .split_once('=')
+                .is_some_and(|(name, _)| !name.is_empty()) =>
+            {
+                continue;
+            }
+            _ => return Some(word),
+        }
+    }
+    None
 }
 
 fn desktop_icon(path: &Path) -> Option<String> {
@@ -117,6 +191,34 @@ mod tests {
         assert!(exec_names(&exec, Path::new("/usr/bin/gedit")));
         assert!(!exec_names(&exec, Path::new("/usr/bin/vim")));
         assert!(exec_names("gedit %U", Path::new("/usr/bin/gedit")));
+    }
+
+    #[test]
+    fn desktop_exec_matches_wrapped_and_quoted_programs() {
+        assert!(exec_names(
+            "/usr/bin/env -i -u OLD A=1 gedit %U",
+            Path::new("/usr/bin/gedit")
+        ));
+        assert!(exec_names(
+            "env A=1 -- \"/opt/My Editor/bin/edit\" %F",
+            Path::new("/opt/My Editor/bin/edit")
+        ));
+        assert!(!exec_names(
+            "env A=1 /usr/bin/gedit %U",
+            Path::new("/usr/bin/env")
+        ));
+        assert!(!exec_names(
+            "env A=1 /usr/bin/gedit %U",
+            Path::new("/usr/bin/vim")
+        ));
+        assert!(!exec_names(
+            "env --bad-option /usr/bin/gedit",
+            Path::new("/usr/bin/gedit")
+        ));
+        assert!(!exec_names(
+            "\"/opt/My Editor/bin/edit %F",
+            Path::new("/opt/My Editor/bin/edit")
+        ));
     }
 
     #[test]
