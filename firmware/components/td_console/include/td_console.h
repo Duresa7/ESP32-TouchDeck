@@ -35,6 +35,9 @@ bool td_reply_error(char *buf, size_t cap, const char *cmd, const char *message)
  */
 esp_err_t td_console_register(const esp_console_cmd_t *cmds, size_t count);
 
+/* Before start, mask the rest of a matching line after N parsed words. Strings must outlive the console. */
+esp_err_t td_console_mask_after(const char *prefix, size_t words);
+
 /*
  * Sends bytes to the host, and waits for the USB driver's TX ring when it is full, up to a second for each 128
  * bytes, instead of dropping them. Replies go out this way, not through stdio. The stdio path drops a whole write

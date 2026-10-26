@@ -72,9 +72,18 @@ void td_console_set_frame_handler(td_rx_frame_fn handler, void *context);
  */
 size_t td_rx_sync(td_rx_sync_t *s, char *buf, size_t n, size_t space, size_t *dropped);
 
+/* prefix uses parsed words, separated by one space. after_words includes those words. */
+typedef struct {
+    const char *prefix;
+    size_t after_words;
+} td_echo_mask_t;
+
 typedef struct {
     size_t len;
     bool too_long;
+    size_t secret_from;
+    const td_echo_mask_t *masks;
+    size_t mask_count;
 } td_line_t;
 
 typedef enum {

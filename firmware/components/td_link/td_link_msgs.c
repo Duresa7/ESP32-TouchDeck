@@ -8,6 +8,7 @@
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
 #include "td_recovery.h"
+#include "td_net.h"
 
 static bool link_online(void)
 {
@@ -38,6 +39,7 @@ static void hello(const cJSON *request, cJSON *reply)
         ui_layout_info(&layout);
     }
     cJSON_AddStringToObject(reply, "layout", layout.from_storage ? "storage" : "builtin");
+    td_net_hello(reply);
 }
 
 static void ping(const cJSON *request, cJSON *reply)
@@ -188,6 +190,10 @@ static const struct {
 
     { "widget.set", widget_set },
     { "dashboard.set", dashboard_set },
+    { "wifi.state", td_net_message },
+    { "wifi.set", td_net_message },
+    { "wifi.forget", td_net_message },
+    { "wifi.scan", td_net_message },
 };
 
 #define ECHO_CHARS_MAX 64

@@ -1,5 +1,31 @@
 #include "td_rx_sync.h"
 #include <string.h>
+#include "esp_console.h"
+
+static bool line_secret(const char *line, size_t len, const td_echo_mask_t *mask)
+{
+    char copy[256];
+    char *argv[32];
+    if (!mask || !mask->prefix || len >= sizeof copy) return false;
+    memcpy(copy, line, len);
+    copy[len] = '\0';
+    const size_t argc = esp_console_split_argv(copy, argv, sizeof argv / sizeof argv[0]);
+    if (argc <= mask->after_words) return false;
+    const char *prefix = mask->prefix;
+    for (size_t i = 0; i < argc; i++) {
+        const size_t n = strcspn(prefix, " ");
+        if (strlen(argv[i]) != n || memcmp(argv[i], prefix, n) != 0) return false;
+        prefix += n;
+        if (!*prefix) return true;
+        prefix++;
+    }
+    return false;
+}
+
+static void reset_line(td_line_t *s)
+{
+    *s = (td_line_t){ .masks = s->masks, .mask_count = s->mask_count };
+}
 
 static bool is_eol(char c)
 {
@@ -137,7 +163,7 @@ td_line_status_t td_line_feed(td_line_t *s, int c, bool dropped,
     if (c == TD_RX_ABANDON || (c < 0 && s->len == 0 && dropped)) {
         memcpy(echo, "\r\n", 2);
         *echo_len = 2;
-        *s = (td_line_t){0};
+        reset_line(s);
         line[0] = '\0';
         return TD_LINE_RESTART;
     }
@@ -150,7 +176,7 @@ td_line_status_t td_line_feed(td_line_t *s, int c, bool dropped,
         line[s->len] = '\0';
         td_line_status_t status = s->too_long ? TD_LINE_TOO_LONG
                                 : has_control(line, s->len) ? TD_LINE_CONTROL : TD_LINE_OK;
-        *s = (td_line_t){0};
+        reset_line(s);
         return status;
     }
     if (c == '\b' || c == 0x7f) {
@@ -161,7 +187,13 @@ td_line_status_t td_line_feed(td_line_t *s, int c, bool dropped,
         }
     } else if (s->len + 1 < cap) {
         line[s->len++] = (char)c;
-        echo[0] = (char)c;
+        for (size_t i = 0; i < s->mask_count; i++) {
+            if (line_secret(line, s->len, &s->masks[i])) {
+                if (!s->secret_from || s->len < s->secret_from) s->secret_from = s->len;
+                break;
+            }
+        }
+        echo[0] = s->secret_from && s->len >= s->secret_from ? '*' : (char)c;
         *echo_len = 1;
     } else {
         s->too_long = true;

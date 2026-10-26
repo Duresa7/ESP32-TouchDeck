@@ -25,6 +25,8 @@
 #include "td_recovery.h"
 #include "td_store.h"
 #include "td_update.h"
+#include "td_net.h"
+#include "wifi_glyph.h"
 
 static const char *TAG = "touchdeck";
 static const char *SETTINGS_TAG = "settings";
@@ -126,6 +128,10 @@ void app_main(void)
     size_t update_cmd_count;
     const esp_console_cmd_t *update_cmds = td_update_console_commands(&update_cmd_count);
     register_commands("Update", update_cmds, update_cmd_count);
+    size_t net_cmd_count;
+    const esp_console_cmd_t *net_cmds = td_net_console_commands(&net_cmd_count);
+    register_commands("Wi-Fi", net_cmds, net_cmd_count);
+    ESP_ERROR_CHECK(td_console_mask_after("wifi set", 3));
 
     /* The volume mounts before the console starts, and the settings load before the display does, which sizes its
      * frame buffers for the stored orientation. A change to it applies on the next boot. */
@@ -191,10 +197,18 @@ void app_main(void)
         ESP_LOGE(TAG, "Touch failed to start: %s", esp_err_to_name(touch_err));
     }
 
+    const esp_err_t net_err = td_net_start();
+    if (net_err != ESP_OK) {
+        ESP_LOGE(TAG, "Wi-Fi failed to start: %s", esp_err_to_name(net_err));
+    }
+    wifi_glyph_start();
+
     int ticks = 0;
     while (true) {
-        ESP_LOGI(TAG, "alive %d, free heap %" PRIu32 " bytes",
-                 ticks++, esp_get_free_heap_size());
+        ESP_LOGI(TAG, "alive %d, free heap %" PRIu32 " bytes, internal %u, largest %u",
+                 ticks++, esp_get_free_heap_size(),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
         vTaskDelay(pdMS_TO_TICKS(2000));
     }
 }
