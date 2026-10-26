@@ -119,6 +119,9 @@ is checked and validated before it replaces the stored file, and a layout for th
 orientation on screen is shown without a reboot. While the app is connected, the
 deck sends a `press` event for each app or widget tap and a `key.report` event
 for each key report the engine emits, so the app can type the keys on the PC.
+`widget.set` fills a widget tile with a value, a caption, and a bar, and
+`dashboard.set` fills a dashboard page with up to 8 rows. The deck draws them on
+its next 100 ms redraw.
 
 The local verification harness provides `link hello`, `link ping --count 100`,
 `link state`, `link raw --hex <frame>`, and `link selftest`. `link scenario <file>`
@@ -185,6 +188,9 @@ animation time of the look is a named token in `firmware/components/ui/ui_theme.
 The `ui` component adds the `ui` console command: `ui state` reports the page and
 the tile that is pressed, `ui goto <page>` changes the page, `ui tile <id>` gives a
 tile's box, and `ui hold <x> <y> <ms>` holds a press on the glass for a test.
+`ui state` also reports `online`, whether the app is connected, and `dimmed`, how
+many tiles are drawn dim. `ui widget <tile>` and `ui dashboard <page>` report what
+the app last sent to a widget tile or a dashboard page.
 
 The display component adds three console commands:
 
@@ -220,7 +226,9 @@ Every failure the validator prints starts with a stable rule key, such as
 for reading a layout file. Send the deck the compact form of a layout, because
 it rejects files over 32768 bytes without parsing them first.
 
-App-side actions and widgets dim on the deck while the app is offline.
+App-side actions and widgets dim on the deck while the app is offline. They
+draw at 40 percent opacity, and a tap on one logs `ui: offline <tile>` and sends
+nothing. Key, modifier, media, and page tiles never dim.
 
 ### Layouts on the deck
 

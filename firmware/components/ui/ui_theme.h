@@ -51,6 +51,30 @@ typedef struct {
         int16_t label_inset;
     } media;
     uint16_t mod_poll_ms;
+    /* App and widget tiles fade to dim_opa while the app is offline. A stale widget value draws at stale_opa. */
+    uint8_t dim_opa;
+    uint8_t stale_opa;
+    /* A widget tile: the value in the tile font `value_dy` above the centre, the caption in the caption font
+     * `caption_dy` below it, and a bar_h tall bar in the glow color, `bar_bottom` above the tile's bottom edge, as
+     * wide as the tile times the bar fraction. The app's sets reach the screen on a redraw_ms timer. */
+    struct {
+        int16_t value_dy;
+        int16_t caption_dy;
+        int16_t bar_h;
+        int16_t bar_bottom;
+        int16_t bar_radius;
+        uint16_t redraw_ms;
+    } widget;
+    /* A dashboard page: UI_DASH_ROWS_MAX rows of row_gap apart filling the grid area, each a tile-colored strip with
+     * the label at `pad`, the value at value_x, and a bar_h tall bar from bar_x to `pad` before the row's end. */
+    struct {
+        int16_t row_gap;
+        int16_t radius;
+        int16_t pad;
+        int16_t value_x;
+        int16_t bar_x;
+        int16_t bar_h;
+    } dash;
     ui_rect_t band;
     ui_rect_t grid;
     int16_t gap;
@@ -85,6 +109,9 @@ typedef struct {
     lv_style_t mod_locked;
     lv_style_t lock_shackle;
     lv_style_t lock_body;
+    lv_style_t tile_dim;
+    lv_style_t widget_bar;
+    lv_style_t dash_row;
 } ui_styles_t;
 
 lv_color_t ui_color(uint16_t rgb565);

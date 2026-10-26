@@ -37,6 +37,24 @@ const ui_theme_t ui_theme = {
         .label_inset = 16,
     },
     .mod_poll_ms = 50,
+    .dim_opa = LV_OPA_40,
+    .stale_opa = LV_OPA_60,
+    .widget = {
+        .value_dy = 16,
+        .caption_dy = 30,
+        .bar_h = 6,
+        .bar_bottom = 12,
+        .bar_radius = 3,
+        .redraw_ms = 100,
+    },
+    .dash = {
+        .row_gap = 8,
+        .radius = 10,
+        .pad = 20,
+        .value_x = 360,
+        .bar_x = 600,
+        .bar_h = 12,
+    },
     /* Only this band slides, so a slide redraws the band and leaves the strips above and below it alone. It is
      * taller than the grid by 20 px each side, and a pressed tile's glow reaches 17 px (glow_width / 2 + 1 +
      * glow_spread). */
@@ -167,12 +185,35 @@ static void init_mod_styles(ui_styles_t *st)
     lv_style_set_border_width(&st->lock_body, 0);
 }
 
+/* The dim style sits in LV_STATE_USER_2, which ranks above PRESSED, so a dimmed tile stays dim under a finger. */
+static void init_widget_styles(ui_styles_t *st)
+{
+    const ui_theme_t *t = &ui_theme;
+
+    lv_style_init(&st->tile_dim);
+    lv_style_set_opa(&st->tile_dim, t->dim_opa);
+
+    lv_style_init(&st->widget_bar);
+    lv_style_set_radius(&st->widget_bar, t->widget.bar_radius);
+    lv_style_set_bg_opa(&st->widget_bar, LV_OPA_COVER);
+    lv_style_set_bg_color(&st->widget_bar, ui_color(t->color.glow));
+    lv_style_set_border_width(&st->widget_bar, 0);
+
+    lv_style_init(&st->dash_row);
+    lv_style_set_radius(&st->dash_row, t->dash.radius);
+    lv_style_set_bg_opa(&st->dash_row, LV_OPA_COVER);
+    lv_style_set_bg_color(&st->dash_row, ui_color(t->color.tile));
+    lv_style_set_border_width(&st->dash_row, 0);
+    lv_style_set_pad_all(&st->dash_row, 0);
+}
+
 const ui_styles_t *ui_styles(void)
 {
     if (!s_styles_ready) {
         init_tile_styles(&s_styles);
         init_text_and_dot_styles(&s_styles);
         init_mod_styles(&s_styles);
+        init_widget_styles(&s_styles);
         s_styles_ready = true;
     }
     return &s_styles;

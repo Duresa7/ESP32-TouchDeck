@@ -183,6 +183,29 @@ The link sink queues reports without blocking, 64 deep, and never loses a releas
 queued reports away and sends one `key.resync` before anything newer. A consumer releases every key it holds on a `seq`
 gap, then applies the next report, and sets its state exactly on a `key.resync`.
 
+## Widgets and dashboards (M2-06)
+
+| Request | Successful response fields |
+|---|---|
+| `{"m":"widget.set","tile":T,"value":V,"caption":C,"bar":B,"stale":S}` | `tile`, and the stored `value`, `caption`, `bar`, and `stale` |
+| `{"m":"dashboard.set","page":P,"rows":[{"label":L,"value":V,"bar":B}]}` | `page`, `rows`, the number of rows stored |
+
+`tile` names a `widget` tile of the layout on screen, and `page` a `dashboard` page. Any other id is refused with
+`unknown tile` or `unknown page`. `value`, `caption`, `label`, and `bar` are optional. A missing string is empty, and
+a missing or null `bar` is -1, meaning no bar. A `bar` is a fraction from 0 to 1. The deck stores a negative bar as -1
+and a bar above 1 as 1. It keeps the first 24 bytes of `value`, 16 of `caption`, and 16 of each row's `label` and
+`value`, cut on a UTF-8 boundary. `stale` is false when missing, and the deck draws a stale value at 60 percent
+opacity. More than 8 rows are refused whole with `too many rows`. A field of the wrong type is refused. A set replaces
+the whole state of its tile or page.
+
+The link task writes a set into the deck's state table and marks the tile dirty. A 100 ms redraw timer draws each
+dirty tile once, so a burst of sets costs one redraw. A set is stored whether or not the link is online. The state
+table starts empty for every layout the deck loads.
+
+While the link is offline, the deck draws every `launch`, `open`, `command`, and `widget` tile at 40 percent opacity.
+A tap on a dimmed tile logs `ui: offline <tile>` and sends no `press` event. The deck checks the link on its redraw
+timer, so tiles brighten within 100 ms of `hello` and dim within 100 ms of the 5000 ms expiry.
+
 ## Concurrency and discovery
 
 The RX task splits text and frame bodies before text NUL mapping or overflow
