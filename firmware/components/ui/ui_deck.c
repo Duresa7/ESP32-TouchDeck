@@ -10,7 +10,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "lvgl.h"
+#include "power.h"
 #include "td_recovery.h"
+#include "td_store.h"
 #include "touch.h"
 #include "ui_pager.h"
 #include "ui_theme.h"
@@ -709,6 +711,12 @@ void ui_leave_recovery(const char *why)
         return;
     }
     td_recovery_leave(why);
+    /* Recovery ran the default settings from RAM. Put back the stored idle timeout; orientation waits for a reboot. */
+    td_settings_t settings;
+    td_settings_defaults(&settings);
+    td_store_settings_load(&settings);
+    power_set_idle_timeout_s(settings.idle_timeout_s, esp_timer_get_time());
+    ESP_LOGI(TAG, "recovery left, idle_timeout_s=%u", (unsigned)settings.idle_timeout_s);
     if (!ui_ready() || esp_lv_adapter_lock(LOCK_TIMEOUT_MS) != ESP_OK) {
         return;
     }
