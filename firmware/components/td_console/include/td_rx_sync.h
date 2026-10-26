@@ -72,7 +72,8 @@ void td_console_set_frame_handler(td_rx_frame_fn handler, void *context);
  */
 size_t td_rx_sync(td_rx_sync_t *s, char *buf, size_t n, size_t space, size_t *dropped);
 
-/* prefix uses parsed words, separated by one space. after_words includes those words. */
+/* A line whose first words are `prefix` (parsed words, one space apart) has its bytes from word after_words + 1 on
+ * echoed as `*`. after_words counts the prefix's own words. */
 typedef struct {
     const char *prefix;
     size_t after_words;

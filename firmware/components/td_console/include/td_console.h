@@ -35,7 +35,15 @@ bool td_reply_error(char *buf, size_t cap, const char *cmd, const char *message)
  */
 esp_err_t td_console_register(const esp_console_cmd_t *cmds, size_t count);
 
-/* Before start, mask the rest of a matching line after N parsed words. Strings must outlive the console. */
+/*
+ * Declares that a command's line is secret after its first N words, so the console echoes `*` instead of each typed
+ * byte from the first byte of word N + 1, quote and escape characters included, and the command still receives the
+ * real text. `prefix` is the command's leading words separated by single spaces, for example "wifi set", and N counts
+ * every word of the line up to the secret, so "wifi set" with 3 hides the password of `wifi set <ssid> <password>`.
+ * Words are split the way the console splits them, so quotes and escapes work. Call it before td_console_start. It
+ * fails with ESP_ERR_INVALID_STATE after that, ESP_ERR_INVALID_ARG for an empty prefix or an N of 0 or 31 and up, and
+ * ESP_ERR_NO_MEM past 4 entries. `prefix` must stay valid for good.
+ */
 esp_err_t td_console_mask_after(const char *prefix, size_t words);
 
 /*
