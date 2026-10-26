@@ -1,6 +1,7 @@
 pub mod edit;
 pub mod frame;
 pub mod layout;
+pub mod radios;
 pub mod settings;
 
 use serde::{Deserialize, Serialize};
@@ -165,6 +166,10 @@ pub struct Hello {
     pub sinks: Vec<String>,
     pub recovery: bool,
     pub layout: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wifi: Option<radios::WifiHello>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ble: Option<radios::BleHello>,
 }
 
 impl Hello {
