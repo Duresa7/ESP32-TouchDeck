@@ -15,7 +15,7 @@ use td_core::{
     Body, Event, Frame, Hello, ICON_PAGE, Item, Layout, Orientation, Role, Settings, StreamDecoder,
 };
 
-use crate::xfer::{LayoutState, RETRY_AFTER, TRANSMISSIONS, WINDOW, crc32};
+use crate::xfer::{ICON_BYTES, LayoutState, RETRY_AFTER, TRANSMISSIONS, WINDOW, crc32};
 use crate::{READ_TICK, Transport};
 
 pub const MOCK_PORT: &str = "mock";
@@ -26,11 +26,19 @@ const ONLINE_FOR: Duration = Duration::from_secs(5);
 const HEARTBEAT: Duration = Duration::from_secs(2);
 const BUILTIN: &[u8] = include_bytes!("../../../../schema/examples/builtin.json");
 
+/// Where a put lands once `xfer.end` accepts it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Target {
+    Layout(Orientation),
+    Icon(String),
+    Update,
+}
+
 /// A put the deck is receiving into `<path>.tmp`.
 #[derive(Debug)]
 struct Inbound {
     xfer: u8,
-    orientation: Orientation,
+    target: Target,
     bytes: usize,
     crc32: u32,
     data: Vec<u8>,
@@ -63,6 +71,7 @@ struct State {
     hello: Hello,
     settings: Settings,
     icons: BTreeSet<String>,
+    icon_files: HashMap<String, Vec<u8>>,
     widgets: BTreeMap<String, Value>,
     dashboards: BTreeMap<String, Value>,
     sets: Vec<Value>,
@@ -135,6 +144,7 @@ impl MockDeck {
                 hello,
                 settings: Settings::default(),
                 icons: BTreeSet::new(),
+                icon_files: HashMap::new(),
                 widgets: BTreeMap::new(),
                 dashboards: BTreeMap::new(),
                 sets: Vec::new(),
@@ -299,6 +309,16 @@ impl MockDeck {
 
     pub fn add_icons(&self, ids: impl IntoIterator<Item = String>) {
         self.state().icons.extend(ids);
+    }
+
+    /// The icon ids the deck stores.
+    pub fn icons(&self) -> BTreeSet<String> {
+        self.state().icons.clone()
+    }
+
+    /// The file an `icon.put` stored under `id`.
+    pub fn icon_file(&self, id: &str) -> Option<Vec<u8>> {
+        self.state().icon_files.get(id).cloned()
     }
 
     pub fn received(&self) -> Vec<Value> {
@@ -526,13 +546,50 @@ impl MockDeck {
         let xfer = MockDeck::next_xfer(&mut state);
         state.inbound = Some(Inbound {
             xfer,
-            orientation,
+            target: Target::Layout(orientation),
             bytes,
             crc32,
             data: Vec::with_capacity(bytes),
             next: 0,
         });
         Ok(Map::from_iter([("xfer".to_owned(), json!(xfer))]))
+    }
+
+    fn icon_put(&self, request: &Map<String, Value>) -> Result<Map<String, Value>, String> {
+        let id = icon_id_of(request)?;
+        let bytes = request
+            .get("bytes")
+            .and_then(Value::as_u64)
+            .ok_or("icon.put needs bytes")? as usize;
+        let crc32 = request
+            .get("crc32")
+            .and_then(Value::as_u64)
+            .and_then(|crc| u32::try_from(crc).ok())
+            .ok_or("icon.put needs crc32")?;
+        if bytes != ICON_BYTES {
+            return Err(format!("an icon is {ICON_BYTES} bytes, not {bytes}"));
+        }
+        let mut state = self.state();
+        let xfer = MockDeck::next_xfer(&mut state);
+        state.inbound = Some(Inbound {
+            xfer,
+            target: Target::Icon(id),
+            bytes,
+            crc32,
+            data: Vec::with_capacity(bytes),
+            next: 0,
+        });
+        Ok(Map::from_iter([("xfer".to_owned(), json!(xfer))]))
+    }
+
+    fn icon_rm(&self, request: &Map<String, Value>) -> Result<Map<String, Value>, String> {
+        let id = icon_id_of(request)?;
+        let mut state = self.state();
+        if !state.icons.remove(&id) {
+            return Err(format!("no icon {id}"));
+        }
+        state.icon_files.remove(&id);
+        Ok(Map::new())
     }
 
     fn layout_get(&self, request: &Map<String, Value>) -> Result<Map<String, Value>, String> {
@@ -591,11 +648,26 @@ impl MockDeck {
         if crc32(&data) != inbound.crc32 {
             return Err("crc32 mismatch".into());
         }
+        let orientation = match inbound.target {
+            Target::Layout(orientation) => orientation,
+            Target::Update => return Err("firmware uses update.end".into()),
+            Target::Icon(id) => {
+                if !data.starts_with(b"TDI1") {
+                    return Err("not a TDI1 icon".into());
+                }
+                state.icons.insert(id.clone());
+                state.icon_files.insert(id.clone(), data);
+                return Ok(Map::from_iter([
+                    ("id".to_owned(), json!(id)),
+                    ("bytes".to_owned(), json!(ICON_BYTES)),
+                ]));
+            }
+        };
         if let Err(errors) = Layout::parse(&data) {
             return Err(format!("invalid layout: {}", errors[0]));
         }
-        state.layouts.insert(inbound.orientation, data);
-        if inbound.orientation == state.shown {
+        state.layouts.insert(orientation, data);
+        if orientation == state.shown {
             state.hello.layout = "storage".into();
         }
         drop(state);
@@ -852,7 +924,7 @@ impl MockDeck {
                 };
                 state.inbound = Some(Inbound {
                     xfer,
-                    orientation: Orientation::Landscape,
+                    target: Target::Update,
                     bytes,
                     crc32: 0,
                     data: Vec::new(),
@@ -865,7 +937,8 @@ impl MockDeck {
             "update.end" => {
                 let mut state = self.state();
                 let inbound = state.inbound.take().ok_or("no update")?;
-                if request.get("xfer").and_then(Value::as_u64) != Some(u64::from(inbound.xfer))
+                if inbound.target != Target::Update
+                    || request.get("xfer").and_then(Value::as_u64) != Some(u64::from(inbound.xfer))
                     || inbound.data.len() != inbound.bytes
                     || Some(crate::bundle::sha256(&inbound.data)) != state.update_sha.take()
                 {
@@ -887,6 +960,8 @@ impl MockDeck {
                 Ok(object(json!({"slot":slot})))
             }
             "layout.put" => self.layout_put(request),
+            "icon.put" => self.icon_put(request),
+            "icon.rm" => self.icon_rm(request),
             "layout.get" => self.layout_get(request),
             "xfer.end" => self.xfer_end(request),
             _ => Err("unknown message".into()),
@@ -900,6 +975,20 @@ fn orientation_of(request: &Map<String, Value>) -> Result<Orientation, String> {
         Some("portrait") => Ok(Orientation::Portrait),
         _ => Err("orientation must be landscape or portrait".into()),
     }
+}
+
+fn icon_id_of(request: &Map<String, Value>) -> Result<String, String> {
+    request
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| {
+            id.len() == 16
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        })
+        .map(str::to_owned)
+        .ok_or_else(|| "id must be 16 lowercase hex digits".into())
 }
 
 pub struct MockTransport {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import ActionForm from './ActionForm.svelte';
+  import IconPicker from './IconPicker.svelte';
   import { ICONS, type Action, type Edit, type Layout, type Tile, moveTile, resizeTile, setAction, setIcon, setLabel } from './validate.ts';
 
   interface Props {
@@ -61,6 +62,7 @@
       {/if}
     </select>
   </label>
+  <IconPicker {page} {tile} {apply} />
 
   <div class="cells">
     <label><span>Row</span><input type="number" min="0" max="7" value={tile.row} onchange={(e) => apply((l) => moveTile(l, page, tile.id, number(e), tile.col))} data-testid="tile-row" /></label>

@@ -7,17 +7,19 @@
 //! wants. A chunk without an ack after 200 ms goes again, 5 times in all, and then the
 //! transfer aborts. `xfer.end {xfer}` closes it: after a put the deck checks the CRC-32,
 //! swaps the file in, and replies with its `layout state` fields. After a get the app checks
-//! the CRC-32 itself.
+//! the CRC-32 itself. `icon.put {id, bytes, crc32}` opens a transfer the same way for one
+//! 12300-byte icon file, and `icon.rm {id}` removes one.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::time::{Duration, Instant};
 
+use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use td_core::frame::CHUNK_DATA_MAX;
 use td_core::layout::UPLOAD_MAX;
-use td_core::{Layout, Orientation, ReplyError};
+use td_core::{IconPage, Layout, Orientation, ReplyError, Request};
 
 use crate::session::{LinkError, Session, Transfer, XferFrame};
 
@@ -329,6 +331,88 @@ pub fn get_layout(session: &Session, orientation: Orientation) -> Result<GetRepo
     })
 }
 
+/// A `TDI1` icon file is always this size, per `schema/icon-format.md`.
+pub const ICON_BYTES: usize = 12300;
+
+/// What one icon sync did before a layout push.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct IconSync {
+    /// Ids the layout names that the deck lacked and the app sent.
+    pub sent: Vec<String>,
+    /// Ids the layout names that the deck lacked and the app has no file for.
+    pub unavailable: Vec<String>,
+}
+
+/// Every icon id the deck stores, read a page at a time.
+pub fn list_icons(session: &Session) -> Result<BTreeSet<String>, XferError> {
+    let mut ids = BTreeSet::new();
+    let mut cursor = None;
+    loop {
+        let page: IconPage = session
+            .request(&Request::IconList { cursor }, REQUEST_TIMEOUT)?
+            .fields()?;
+        ids.extend(page.ids);
+        match page.next {
+            Some(next) if Some(next) != cursor => cursor = Some(next),
+            _ => return Ok(ids),
+        }
+    }
+}
+
+/// Stores one icon file on the deck as `<id>.bin`.
+pub fn put_icon(session: &Session, id: &str, data: &[u8]) -> Result<(), XferError> {
+    if data.len() != ICON_BYTES {
+        return Err(XferError::Size {
+            expected: ICON_BYTES,
+            got: data.len(),
+        });
+    }
+    let transfer = session.transfer()?;
+    let request = json!({"m": "icon.put", "id": id, "bytes": data.len(), "crc32": crc32(data)});
+    let opened: Opened = session.call(&request, REQUEST_TIMEOUT)?.fields()?;
+    send_chunks(&transfer, opened.xfer, data)?;
+    session
+        .call(&json!({"m": "xfer.end", "xfer": opened.xfer}), END_TIMEOUT)?
+        .fields::<IgnoredAny>()?;
+    Ok(())
+}
+
+pub fn remove_icon(session: &Session, id: &str) -> Result<(), XferError> {
+    session
+        .call(&json!({"m": "icon.rm", "id": id}), REQUEST_TIMEOUT)?
+        .fields::<IgnoredAny>()?;
+    Ok(())
+}
+
+/// Sends every id in `wanted` that the deck lacks, reading each file through `file`.
+pub fn push_icons(
+    session: &Session,
+    wanted: &BTreeSet<String>,
+    file: impl Fn(&str) -> Option<Vec<u8>>,
+) -> Result<IconSync, XferError> {
+    let stored = list_icons(session)?;
+    let mut sync = IconSync::default();
+    for id in wanted.difference(&stored) {
+        match file(id) {
+            Some(data) => {
+                put_icon(session, id, &data)?;
+                sync.sent.push(id.clone());
+            }
+            None => sync.unavailable.push(id.clone()),
+        }
+    }
+    Ok(sync)
+}
+
+/// Removes every icon on the deck that is not in `keep`, and returns the removed ids.
+pub fn prune_icons(session: &Session, keep: &BTreeSet<String>) -> Result<Vec<String>, XferError> {
+    let unused: Vec<String> = list_icons(session)?.difference(keep).cloned().collect();
+    for id in &unused {
+        remove_icon(session, id)?;
+    }
+    Ok(unused)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -517,5 +601,57 @@ mod tests {
             get_layout(&session, Orientation::Landscape).unwrap().data,
             bytes
         );
+    }
+
+    fn icon(seed: u8) -> (String, Vec<u8>) {
+        let mut file = b"TDI1".to_vec();
+        file.resize(ICON_BYTES, seed);
+        (format!("{seed:016x}"), file)
+    }
+
+    #[test]
+    fn a_second_push_sends_no_icon_the_deck_already_has() {
+        let deck = MockDeck::new();
+        let session = open(&deck);
+        let files: std::collections::BTreeMap<String, Vec<u8>> = (1..=3).map(icon).collect();
+        let wanted: BTreeSet<String> = files.keys().cloned().collect();
+        let first = push_icons(&session, &wanted, |id| files.get(id).cloned()).unwrap();
+        assert_eq!(first.sent.len(), 3);
+        let second = push_icons(&session, &wanted, |id| files.get(id).cloned()).unwrap();
+        assert_eq!(second, IconSync::default());
+        assert_eq!(deck.icons(), wanted);
+        assert_eq!(
+            deck.icon_file("0000000000000002"),
+            files.get("0000000000000002").cloned()
+        );
+    }
+
+    #[test]
+    fn prune_removes_only_unnamed_icons_and_the_push_sends_the_missing_one() {
+        let deck = MockDeck::new();
+        deck.add_icons((1..=40u8).map(|seed| icon(seed).0));
+        let session = open(&deck);
+        let keep: BTreeSet<String> = [icon(2).0, icon(35).0, icon(50).0].into();
+        let removed = prune_icons(&session, &keep).unwrap();
+        assert_eq!(removed.len(), 38);
+        assert!(removed.iter().all(|id| !keep.contains(id)));
+        assert_eq!(deck.icons(), [icon(2).0, icon(35).0].into());
+        let sync =
+            push_icons(&session, &keep, |id| (id == icon(50).0).then(|| icon(50).1)).unwrap();
+        assert_eq!(sync.sent, vec![icon(50).0]);
+        assert_eq!(deck.icons(), keep);
+    }
+
+    #[test]
+    fn the_deck_refuses_an_icon_of_the_wrong_size_or_id() {
+        let deck = MockDeck::new();
+        let session = open(&deck);
+        assert!(matches!(
+            put_icon(&session, &icon(1).0, b"TDI1"),
+            Err(XferError::Size { .. })
+        ));
+        assert!(put_icon(&session, "NOT-AN-ID", &icon(1).1).is_err());
+        assert!(remove_icon(&session, &icon(1).0).is_err());
+        assert!(deck.icons().is_empty());
     }
 }
