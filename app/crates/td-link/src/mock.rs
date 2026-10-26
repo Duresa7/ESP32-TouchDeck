@@ -85,6 +85,8 @@ struct State {
     lose_out: Vec<u16>,
     corrupt_next_put: bool,
     reboots: u32,
+    key_seq: u32,
+    press_seq: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +140,8 @@ impl MockDeck {
                 lose_out: Vec::new(),
                 corrupt_next_put: false,
                 reboots: 0,
+                key_seq: 0,
+                press_seq: 0,
             })),
         }
     }
@@ -178,6 +182,11 @@ impl MockDeck {
     }
 
     pub fn emit(&self, event: &Event) {
+        self.emit_value(&serde_json::to_value(event).expect("events serialize"));
+    }
+
+    /// Sends any event object, including ones `Event` does not name, such as `key.resync`.
+    pub fn emit_value(&self, event: &Value) {
         let state = self.state();
         if let (false, Some(link)) = (state.silent, &state.link) {
             let payload = serde_json::to_vec(event).expect("events serialize");
@@ -187,6 +196,65 @@ impl MockDeck {
                     .expect("events fit one frame"),
             );
         }
+    }
+
+    fn uptime_ms(&self) -> u64 {
+        self.state().booted.elapsed().as_millis() as u64
+    }
+
+    /// Emits a key report the way the link sink does, with the next `seq`. `report` holds
+    /// `type` and either `mods` and `keys` or `usage`.
+    pub fn emit_key(&self, report: &Value) -> u32 {
+        let seq = self.next_key_seq();
+        let mut event = Map::from_iter([
+            ("m".to_owned(), json!("key.report")),
+            ("seq".to_owned(), json!(seq)),
+            ("t".to_owned(), json!(self.uptime_ms())),
+        ]);
+        for field in ["type", "mods", "keys", "usage"] {
+            if let Some(value) = report.get(field) {
+                event.insert(field.to_owned(), value.clone());
+            }
+        }
+        self.emit_value(&Value::Object(event));
+        seq
+    }
+
+    /// Emits `key.resync` with the engine's state, as the link sink does after its queue overflowed.
+    pub fn emit_resync(&self, mods: u8, keys: &[u8]) -> u32 {
+        let seq = self.next_key_seq();
+        let t = self.uptime_ms();
+        self.emit_value(
+            &json!({"m": "key.resync", "seq": seq, "t": t, "mods": mods, "keys": keys}),
+        );
+        seq
+    }
+
+    /// Spends `count` key `seq` numbers without sending, as reports the link sink dropped.
+    pub fn drop_key_reports(&self, count: u32) {
+        self.state().key_seq += count;
+    }
+
+    pub fn emit_press(&self, page: &str, tile: &str, kind: &str) -> u32 {
+        let seq = {
+            let mut state = self.state();
+            state.press_seq += 1;
+            state.press_seq
+        };
+        self.emit(&Event::Press {
+            page: page.into(),
+            tile: tile.into(),
+            kind: kind.into(),
+            seq,
+            t: self.uptime_ms(),
+        });
+        seq
+    }
+
+    fn next_key_seq(&self) -> u32 {
+        let mut state = self.state();
+        state.key_seq += 1;
+        state.key_seq
     }
 
     pub fn add_icons(&self, ids: impl IntoIterator<Item = String>) {
@@ -817,6 +885,56 @@ mod tests {
         assert_eq!(
             (state.frames_rx, state.frames_tx, state.online),
             (3, 2, true)
+        );
+    }
+
+    #[test]
+    fn key_reports_count_seq_and_a_drop_leaves_a_gap() {
+        let deck = MockDeck::new();
+        let (_session, events) = Session::open(
+            Box::new(deck.connect()),
+            SessionConfig {
+                ping_every: None,
+                ..SessionConfig::default()
+            },
+        )
+        .unwrap();
+        deck.emit_key(&json!({"type": "kbd", "mods": 0, "keys": [104]}));
+        deck.drop_key_reports(1);
+        deck.emit_key(&json!({"type": "con", "usage": 233}));
+        deck.emit_resync(0, &[]);
+        deck.emit_press("apps", "launch", "launch");
+        let got: Vec<Value> = (0..4)
+            .map(
+                |_| match events.recv_timeout(Duration::from_secs(1)).unwrap() {
+                    crate::Incoming::Event(event) => event,
+                    other => panic!("not an event: {other:?}"),
+                },
+            )
+            .collect();
+        assert_eq!(
+            (
+                got[0]["m"].as_str(),
+                got[0]["seq"].as_u64(),
+                &got[0]["keys"]
+            ),
+            (Some("key.report"), Some(1), &json!([104]))
+        );
+        assert_eq!(
+            (got[1]["seq"].as_u64(), &got[1]["usage"]),
+            (Some(3), &json!(233))
+        );
+        assert_eq!(
+            (got[2]["m"].as_str(), got[2]["seq"].as_u64()),
+            (Some("key.resync"), Some(4))
+        );
+        assert_eq!(
+            (
+                got[3]["m"].as_str(),
+                got[3]["seq"].as_u64(),
+                got[3]["tile"].as_str()
+            ),
+            (Some("press"), Some(1), Some("launch"))
         );
     }
 

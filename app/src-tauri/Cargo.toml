@@ -19,6 +19,7 @@ serde_json.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-wdio-webdriver = { version = "1.5", optional = true }
 td-core.workspace = true
+td-host.workspace = true
 td-link.workspace = true
 
 [features]

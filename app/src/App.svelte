@@ -1,8 +1,10 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount, tick } from 'svelte';
+  import Approval from './lib/actions/Approval.svelte';
   import { append, classify, type ConsoleEntry } from './lib/console.ts';
   import Settings from './lib/settings/Settings.svelte';
+  import Actions from './routes/Actions.svelte';
   import Editor from './routes/Editor.svelte';
   import {
     HELLO_FIELDS,
@@ -28,10 +30,11 @@
   let entries = $state<ConsoleEntry[]>([]);
   let line = $state('');
   let log = $state<HTMLOListElement>();
-  let view = $state<'deck' | 'editor' | 'settings'>('deck');
+  let view = $state<'deck' | 'editor' | 'actions' | 'settings'>('deck');
   const VIEWS = [
     ['deck', 'Deck'],
     ['editor', 'Editor'],
+    ['actions', 'Actions'],
     ['settings', 'Settings'],
   ] as const;
 
@@ -140,6 +143,8 @@
 
 {#if view === 'editor'}
   <Editor {online} />
+{:else if view === 'actions'}
+  <Actions {online} />
 {:else if view === 'settings'}
   <Settings {online} session={online && deck ? deck.session : null} />
 {:else}
@@ -213,6 +218,8 @@
   </section>
 </main>
 {/if}
+
+<Approval />
 
 <style>
   .views {
