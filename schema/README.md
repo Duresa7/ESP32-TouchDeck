@@ -286,8 +286,10 @@ The message after a key names the place with a JSON Pointer and says what is wro
 Structural messages contain the schema keyword in parentheses. Missing or extra
 fields also include the quoted field name. Known page kinds and
 action types report errors from the selected branch only. A field the selected
-branch does not define is reported as `shape.unknown-field` and nothing else, so
-a dashboard page with a `tiles` array never reports errors about those tiles.
+branch does not define is reported as `shape.unknown-field` and no other schema
+error, so a dashboard page with a `tiles` array never reports schema errors about
+those tiles. The file-wide text rules still apply inside such a field:
+`json.integer-form`, `json.duplicate-member`, and `string.malformed-unicode`.
 A missing or unknown kind or type reports only `page.kind` or `action.type`, so
 a missing `kind` never reports `shape.missing-field`. Ajv is pinned by the lockfile.
 
