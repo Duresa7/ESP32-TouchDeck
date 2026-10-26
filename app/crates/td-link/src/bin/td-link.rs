@@ -23,6 +23,8 @@ commands:
   settings get           print the deck settings
   settings put [--idle <s>] [--orientation <o>]
                          store settings; unnamed fields keep the deck's values
+  update <bundle>        update firmware over the link
+  recover <bundle>       restore firmware through USB-Serial/JTAG
   reboot                 restart the deck through its console";
 
 struct Args {
@@ -138,6 +140,44 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
 
 fn run(args: &Args) -> Result<bool, String> {
     match args.command.as_str() {
+        "update" | "recover" => {
+            let path = args
+                .rest
+                .first()
+                .ok_or("update/recover needs a .tdfw bundle")?;
+            let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+            let bundle = td_link::bundle::Bundle::parse(&bytes)?;
+            let port = match &args.port {
+                Some(p) => p.clone(),
+                None if args.mock => MOCK_PORT.into(),
+                None => match candidate_ports().as_slice() {
+                    [p] => p.clone(),
+                    _ => return Err("select one port with --port".into()),
+                },
+            };
+            let mut connector: Box<dyn td_link::update::Connector> = if args.mock {
+                Box::new(MockDeck::new())
+            } else {
+                Box::new(td_link::update::PortConnector(&port))
+            };
+            let mut recovery = td_link::recover::RomRecovery(&port);
+            let recovery = if args.command == "recover" {
+                if args.mock {
+                    return Err("ROM recovery needs a real USB-Serial/JTAG port".into());
+                }
+                Some(&mut recovery as &mut dyn td_link::recover::Recovery)
+            } else {
+                None
+            };
+            Ok(td_link::update::run(
+                &mut *connector,
+                recovery,
+                &bundle,
+                td_link::update::Deadlines::default(),
+                &mut |state| print(&serde_json::to_value(state).unwrap()),
+            )
+            .is_ok())
+        }
         "discover" => {
             let candidates = if args.mock {
                 vec![Candidate {

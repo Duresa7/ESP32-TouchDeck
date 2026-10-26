@@ -31,6 +31,7 @@ const BUILTIN: &[u8] = include_bytes!("../../../../schema/examples/builtin.json"
 enum Target {
     Layout(Orientation),
     Icon(String),
+    Update,
 }
 
 /// A put the deck is receiving into `<path>.tmp`.
@@ -98,6 +99,10 @@ struct State {
     reboots: u32,
     key_seq: u32,
     press_seq: u32,
+    update_sha: Option<String>,
+    update_pending: Option<(String, String)>,
+    update_mode: String,
+    update_aborted: bool,
 }
 
 impl State {
@@ -167,6 +172,10 @@ impl MockDeck {
                 reboots: 0,
                 key_seq: 0,
                 press_seq: 0,
+                update_sha: None,
+                update_pending: None,
+                update_mode: String::new(),
+                update_aborted: false,
             })),
         }
     }
@@ -176,7 +185,23 @@ impl MockDeck {
     }
 
     /// Plugs a host into the deck. A later connect replaces the earlier one.
+    pub fn update_mode(&self, mode: &str) {
+        self.state().update_mode = mode.into();
+    }
     pub fn connect(&self) -> MockTransport {
+        {
+            let mut state = self.state();
+            if let Some((hash, slot)) = state.update_pending.take() {
+                state.reboots += 1;
+                if state.update_mode == "rollback" {
+                    state.update_aborted = true;
+                } else {
+                    state.hello.elf_sha256 = hash;
+                    state.hello.running = slot;
+                }
+                state.booted = Instant::now();
+            }
+        }
         let (to_deck, from_host) = mpsc::channel::<Vec<u8>>();
         let (to_host, from_deck) = mpsc::channel::<Vec<u8>>();
         let generation = {
@@ -625,6 +650,7 @@ impl MockDeck {
         }
         let orientation = match inbound.target {
             Target::Layout(orientation) => orientation,
+            Target::Update => return Err("firmware uses update.end".into()),
             Target::Icon(id) => {
                 if !data.starts_with(b"TDI1") {
                     return Err("not a TDI1 icon".into());
@@ -710,6 +736,11 @@ impl MockDeck {
                 continue;
             };
             let reply = match word {
+                "update" => {
+                    let state = self.state();
+                    json!({"cmd":"update","op":"state","ok":true,"running":state.hello.running,
+                        "confirmed":state.update_mode!="no-confirm","ota_0":if state.update_aborted && state.hello.running=="ota_1" {"ABORTED"} else {"VALID"},"ota_1":if state.update_aborted && state.hello.running=="ota_0" {"ABORTED"} else {"VALID"}})
+                }
                 "version" => {
                     let hello = self.state().hello.clone();
                     json!({"cmd": "version", "ok": true, "project_name": "touchdeck", "version": hello.version, "elf_sha256": hello.elf_sha256})
@@ -868,6 +899,65 @@ impl MockDeck {
                     .insert(page.to_owned(), Value::Object(request.clone()));
                 state.record_set(request);
                 Ok(Map::new())
+            }
+            "update.begin" => {
+                let bytes = request
+                    .get("bytes")
+                    .and_then(Value::as_u64)
+                    .filter(|b| *b > 0 && *b <= 0x400000)
+                    .ok_or("invalid update bytes")? as usize;
+                let hash = request
+                    .get("sha256")
+                    .and_then(Value::as_str)
+                    .ok_or("missing update sha256")?
+                    .to_owned();
+                let mut state = self.state();
+                if state.inbound.is_some() {
+                    return Err("transfer busy".into());
+                }
+                state.last_xfer = state.last_xfer % 255 + 1;
+                let xfer = state.last_xfer;
+                let slot = if state.hello.running == "ota_0" {
+                    "ota_1"
+                } else {
+                    "ota_0"
+                };
+                state.inbound = Some(Inbound {
+                    xfer,
+                    target: Target::Update,
+                    bytes,
+                    crc32: 0,
+                    data: Vec::new(),
+                    next: 0,
+                });
+                state.update_sha = Some(hash);
+                state.update_aborted = false;
+                Ok(object(json!({"xfer":xfer,"slot":slot})))
+            }
+            "update.end" => {
+                let mut state = self.state();
+                let inbound = state.inbound.take().ok_or("no update")?;
+                if inbound.target != Target::Update
+                    || request.get("xfer").and_then(Value::as_u64) != Some(u64::from(inbound.xfer))
+                    || inbound.data.len() != inbound.bytes
+                    || Some(crate::bundle::sha256(&inbound.data)) != state.update_sha.take()
+                {
+                    return Err("update sha256 or size mismatch".into());
+                }
+                if inbound.data.len() < 208 {
+                    return Err("invalid application image".into());
+                }
+                let hash = inbound.data[176..208]
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect();
+                let slot = if state.hello.running == "ota_0" {
+                    "ota_1"
+                } else {
+                    "ota_0"
+                };
+                state.update_pending = Some((hash, slot.into()));
+                Ok(object(json!({"slot":slot})))
             }
             "layout.put" => self.layout_put(request),
             "icon.put" => self.icon_put(request),
