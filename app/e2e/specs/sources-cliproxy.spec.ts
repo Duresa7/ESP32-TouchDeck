@@ -5,6 +5,7 @@ import { connectFirstDeck } from '../deck.ts';
 import { note, shot } from '../report.ts';
 import { DEFAULT_KEY, start, type FixtureServer } from '../fixtures/cliproxy-server.mjs';
 import { DEV_JSON, invoke, mockSets, openSources, saveJson, saveText, setChecked, save, type, until, useLayout, type Set } from '../sources.ts';
+import type { Status } from '../../src/lib/sources/api.ts';
 
 const ACCOUNTS = ['ada@example.com', 'grace@example.com', 'linus@example.com'];
 const dashboards = (sets: Set[]) => sets.filter((set) => set.m === 'dashboard.set');
@@ -139,8 +140,9 @@ describe('cliproxyapi source', () => {
     const staleSent = async () => tile(await mockSets(), 'proxy').some((set) => set.stale === true && set.at_ms >= stopped);
     await until(
       async () => {
-        const fails = Number(await $('[data-testid="proxy-state"]').getAttribute('data-fails'));
         const stale_sent = await staleSent();
+        const { proxy } = await invoke<Status>('sources_status');
+        const fails = proxy.fails;
         trace.push({ t: Date.now() - stopped, fails, stale_sent });
         return stale_sent && fails >= 3;
       },
@@ -150,6 +152,10 @@ describe('cliproxyapi source', () => {
     const early = trace.filter((sample) => sample.fails < 3 && sample.stale_sent);
     const stale = tile(await mockSets(), 'proxy').find((set) => set.stale === true && set.at_ms >= stopped)!;
     const dashboardStale = dashboards(await mockSets()).at(-1)!;
+    await browser.waitUntil(async () => {
+      const state = $('[data-testid="proxy-state"]');
+      return (await state.getAttribute('data-state')) === 'stale' && Number(await state.getAttribute('data-fails')) >= 3;
+    }, { timeout: 5_000, timeoutMsg: 'the page did not show the third failure as stale' });
     await shot('proxy-stale');
 
     server = await start({ port, key: DEFAULT_KEY });
