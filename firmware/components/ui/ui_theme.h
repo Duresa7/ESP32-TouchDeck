@@ -84,6 +84,8 @@ typedef struct {
     const lv_font_t *font_tile;
     const lv_font_t *font_title;
     const lv_font_t *font_caption;
+    /* The last step down for a tile label too wide for its tile in the tile and caption fonts. */
+    const lv_font_t *font_small;
 } ui_theme_t;
 
 extern const ui_theme_t ui_theme;

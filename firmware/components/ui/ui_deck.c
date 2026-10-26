@@ -363,6 +363,35 @@ static void stack_icon(lv_obj_t *label, lv_obj_t *icon, int32_t icon_h, int32_t 
     lv_obj_align(icon, LV_ALIGN_CENTER, 0, -(caption_h + gap) / 2);
 }
 
+/* Preserve labels that already fit. Oversized labels use a smaller font, then wrap with dots if needed. */
+static void fit_label(lv_obj_t *label, const char *text, int32_t tile_w, int32_t tile_h)
+{
+    lv_point_t size;
+    lv_text_get_size(&size, text, ui_theme.font_tile, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    if (size.x <= tile_w && size.y <= tile_h) {
+        return;
+    }
+    const int32_t max_w = tile_w - 2 * ui_theme.media.label_inset;
+    const lv_font_t *const fonts[] = { ui_theme.font_caption, ui_theme.font_small };
+    for (size_t i = 0; i < sizeof fonts / sizeof fonts[0]; i++) {
+        lv_text_get_size(&size, text, fonts[i], 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        if (size.x <= max_w && size.y <= tile_h) {
+            lv_obj_set_style_text_font(label, fonts[i], 0);
+            return;
+        }
+    }
+    lv_obj_set_style_text_font(label, ui_theme.font_small, 0);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(label, max_w);
+    /* LVGL's dots mode needs its own writable copy of the text. */
+    lv_label_set_text(label, text);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+    lv_text_get_size(&size, text, ui_theme.font_small, 0, 0, max_w, LV_TEXT_FLAG_NONE);
+    if (size.y > tile_h) {
+        lv_obj_set_height(label, tile_h);
+    }
+}
+
 static void build_tile(lv_obj_t *parent, const ui_page_t *page, const ui_tile_t *tile)
 {
     const ui_styles_t *st = ui_styles();
@@ -399,6 +428,7 @@ static void build_tile(lv_obj_t *parent, const ui_page_t *page, const ui_tile_t 
         stack_icon(label, icon, image->header.h, r.w);
     } else {
         lv_obj_add_style(label, &st->tile_label, 0);
+        fit_label(label, tile->label, r.w, r.h);
         lv_obj_center(label);
     }
 
