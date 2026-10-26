@@ -4,16 +4,22 @@
 #include "lvgl.h"
 #include "td_net.h"
 
-static lv_obj_t *s_glyph;
-static int s_connected = -1;
+#define GLYPH_UP 0x56c8a1
+#define GLYPH_DOWN 0x596474
+#define GLYPH_POLL_MS 500
 
+static lv_obj_t *s_glyph;
+static int s_up = -1;
+
+/* The glyph is a label on the top layer, so a color change redraws only its own box and the deck's tiles stay as
+ * they are. */
 static void update(lv_timer_t *timer)
 {
     (void)timer;
-    const bool connected = td_net_state().state == TD_NET_CONNECTED;
-    if (s_connected != connected) {
-        lv_obj_set_style_text_color(s_glyph, lv_color_hex(connected ? 0x56c8a1 : 0x596474), 0);
-        s_connected = connected;
+    const bool up = td_net_status() == TD_NET_CONNECTED;
+    if (s_up != up) {
+        lv_obj_set_style_text_color(s_glyph, lv_color_hex(up ? GLYPH_UP : GLYPH_DOWN), 0);
+        s_up = up;
     }
 }
 
@@ -26,6 +32,6 @@ void wifi_glyph_start(void)
     lv_obj_align(s_glyph, LV_ALIGN_TOP_RIGHT, -24, 16);
     lv_obj_set_clickable(s_glyph, false);
     update(NULL);
-    lv_timer_create(update, 500, NULL);
+    lv_timer_create(update, GLYPH_POLL_MS, NULL);
     esp_lv_adapter_unlock();
 }

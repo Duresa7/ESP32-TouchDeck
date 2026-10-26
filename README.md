@@ -73,6 +73,7 @@ td> version
 | `@tds` | storage | Carries one base64 line of a `store put`. The host sends it after the put. |
 | `recovery` | storage | Reports the recovery hold watcher, or arms recovery and restarts. |
 | `update` | update | Reports the firmware slots and update state. |
+| `wifi` | net | Reports, stores, forgets, and scans for the Wi-Fi network the deck joins. |
 
 An unknown command answers with `"ok":false` and an `error`.
 
@@ -274,6 +275,42 @@ A flash over the cable writes `ota_0` and resets the boot slot to it, so
 `idf.py flash` always recovers the deck. The local verification harness provides
 `link update <touchdeck.bin> --wait` and `idf build-crashing`, a build that aborts
 two seconds after start, for checking the rollback on the board.
+
+## Wi-Fi
+
+The deck joins one stored Wi-Fi network as a station. It keeps the SSID and the
+passphrase in NVS, namespace `td_net`, so a layout wipe or a recovery boot never
+makes it forget the network. The SSID is 1 to 32 bytes of UTF-8. The passphrase
+is empty, for an open network, or 8 to 63 bytes. With a stored network the
+station starts at boot without holding anything up, the display and the console
+come up first. A failed join retries after 1, 2, 4, and 8 seconds and then every
+30 seconds for good.
+
+While it holds an IP address the deck advertises `_touchdeck._tcp` on port 47820
+over mDNS, with host name `touchdeck-<last 6 hex of the station MAC>` and TXT
+records `id` (the 12 hex digits of the MAC), `proto=1`, and `name` (the host
+name). Nothing listens on that port yet. A small Wi-Fi glyph at the top right of
+the screen is green while the deck is connected and grey otherwise.
+
+The `wifi` console command has four forms, and each replies with the fields of
+the link's `wifi.state`: `configured`, `ssid`, `state` (`off`, `connecting`,
+`connected`, `failed`), `ip`, `rssi`, `reason`, and `host`.
+
+- `wifi state` reports them.
+- `wifi set <ssid> <password>` stores the network and starts joining it. Quote a
+  word that holds spaces, and give `""` as the password for an open network. The
+  console echoes `*` for every byte of the password as it arrives, and no reply or
+  log line carries it.
+- `wifi forget` erases the stored network and disconnects.
+- `wifi scan` lists up to 16 access points as `{ssid, rssi, auth}`, strongest
+  first. It takes up to 2 seconds, and the console waits for it.
+
+The same operations are the link messages `wifi.state`, `wifi.set`, `wifi.forget`,
+and `wifi.scan`, and `hello` reports `wifi` with the `state` and `ip`. They are
+specified in [link-v1.md](schema/protocol/link-v1.md). A component that needs the
+network includes `td_net.h` for `td_net_state`, which reads the station's state
+and IP, and `td_net_mdns_txt_set`, which adds or replaces a TXT record on the
+advertised service.
 
 ## Display
 

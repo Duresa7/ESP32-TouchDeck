@@ -182,6 +182,7 @@ td_line_status_t td_line_feed(td_line_t *s, int c, bool dropped,
     if (c == '\b' || c == 0x7f) {
         if (s->len > 0 && !s->too_long) {
             s->len--;
+            if (s->len < s->secret_from) s->secret_from = 0;
             memcpy(echo, "\b \b", 3);
             *echo_len = 3;
         }

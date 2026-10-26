@@ -243,6 +243,49 @@ While the link is offline, the deck draws every `launch`, `open`, `command`, and
 A tap on a dimmed tile logs `ui: offline <tile>` and sends no `press` event. The deck checks the link on its redraw
 timer, so tiles brighten within 100 ms of `hello` and dim within 100 ms of the 5000 ms expiry.
 
+## Wi-Fi (M3-01)
+
+The deck joins one stored Wi-Fi network as a station and advertises itself over mDNS. These messages read and change
+that network over USB. Every one follows the response rules above, and a refusal carries an `error` sentence and a
+`reason` word.
+
+| Request | Successful response fields |
+|---|---|
+| `{"m":"wifi.state"}` | `configured`, `ssid`, `state`, `ip`, `rssi`, `reason`, `host` |
+| `{"m":"wifi.set","ssid":S,"password":P}` | the `wifi.state` fields, read as the deck starts connecting, so `state` is `connecting` |
+| `{"m":"wifi.forget"}` | the `wifi.state` fields after the stored network is erased and the station disconnected |
+| `{"m":"wifi.scan"}` | `aps`, a list of `{ssid, rssi, auth}`, strongest first, at most 16 |
+
+`state` is `off` while no network is stored, `connecting` while the deck joins or waits to retry, `connected` once it
+holds an IP address, and `failed` after a join or a link failed, until the next attempt starts. `ssid` is the stored
+network's name, or an empty string. `ip` is a dotted address while `connected`, else `null`. `rssi` is the signal in
+dBm while `connected`, else `null`. `host` is the mDNS host name, `touchdeck-` and the last 6 hex digits of the station
+MAC. The password is never reported.
+
+`reason` is `null` until a join or a link fails, then the last failure as one word, and `null` again once the deck
+connects. The words are `no_ap` (the network was not found), `auth` (the password or handshake was refused), `assoc`
+(the access point refused to associate), `beacon` (the access point went silent), `left` (the access point dropped the
+deck), `lost_ip` (the DHCP lease was lost), `driver` (the Wi-Fi driver refused to start a join), and `disconnected`
+(anything else).
+
+`ssid` must be 1 to 32 bytes. `password` must be empty, for an open network, or 8 to 63 bytes. Anything else, and a
+missing or non-string field, is refused with `reason:"args"` and stores nothing. `wifi.set` replaces the stored
+network, so a deck keeps one. A scan or a store that finds the radio busy is refused with `reason:"busy"`, and a
+driver error with `reason:"wifi"`. `wifi.scan` runs one active scan, which takes up to 2 seconds. It lists a network
+once per access point, so an SSID seen on two access points appears twice, and it cuts the list short, below 16, when
+the reply would not fit one 1024-byte payload. `auth` is one of `open`, `wep`, `wpa`, `wpa2`, `wpa_wpa2`, `wpa3`,
+`wpa2_wpa3`, `enterprise`, `owe`, or `unknown`.
+
+`hello` reports `wifi`, an object with `state` and `ip` as above.
+
+The network lives in NVS namespace `td_net`, keys `ssid` and `pass`, so a layout wipe or a recovery boot keeps it. The
+deck starts the station at boot when a network is stored and never waits for it, and it retries a failed join after 1,
+2, 4, and 8 seconds, then every 30 seconds for good. While `connected` it advertises service `_touchdeck._tcp` on port
+47820 with TXT records `id` (the 12 hex digits of the station MAC), `proto` (`1`), and `name` (the host name). The deck
+only advertises. A later milestone opens the port. The text command `wifi` takes `state`, `set <ssid> <password>`,
+`forget`, and `scan`, and replies in the console's `{"cmd":"wifi","ok":true,...}` envelope with the same fields. The
+console echoes `*` for every byte of a `wifi set` password as it arrives.
+
 ## Concurrency and discovery
 
 The RX task splits text and frame bodies before text NUL mapping or overflow

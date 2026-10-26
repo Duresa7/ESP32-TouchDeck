@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include "esp_wifi.h"
 
 void td_net_state_fields(cJSON *reply)
 {
@@ -25,9 +26,18 @@ void td_net_hello(cJSON *reply)
 
 static void failure(cJSON *reply, esp_err_t err)
 {
+    const char *reason = "wifi";
+    const char *error = "wifi driver error";
+    if (err == ESP_ERR_INVALID_ARG) {
+        reason = "args";
+        error = "ssid must be 1 to 32 bytes of UTF-8 and password empty or 8 to 63 bytes";
+    } else if (err == ESP_ERR_INVALID_STATE || err == ESP_ERR_WIFI_STATE || err == ESP_ERR_WIFI_CONN) {
+        reason = "busy";
+        error = "wifi is busy";
+    }
     cJSON_ReplaceItemInObjectCaseSensitive(reply, "ok", cJSON_CreateFalse());
-    cJSON_AddStringToObject(reply, "reason", err == ESP_ERR_INVALID_ARG ? "args" :
-                            err == ESP_ERR_INVALID_STATE ? "busy" : "wifi");
+    cJSON_AddStringToObject(reply, "error", error);
+    cJSON_AddStringToObject(reply, "reason", reason);
 }
 
 static void execute(const char *op, const char *ssid, const char *password, cJSON *reply)
@@ -48,7 +58,7 @@ void td_net_message(const cJSON *request, cJSON *reply)
     const cJSON *m = cJSON_GetObjectItemCaseSensitive(request, "m");
     const cJSON *ssid = cJSON_GetObjectItemCaseSensitive(request, "ssid");
     const cJSON *password = cJSON_GetObjectItemCaseSensitive(request, "password");
-    const char *op = m->valuestring + 5;
+    const char *op = m->valuestring + strlen("wifi.");
     execute(op, cJSON_IsString(ssid) ? ssid->valuestring : NULL,
             cJSON_IsString(password) ? password->valuestring : NULL, reply);
 }
@@ -66,7 +76,8 @@ static int command(int argc, char **argv)
         execute(argv[1], NULL, NULL, reply);
     } else {
         failure(reply, ESP_ERR_INVALID_ARG);
-        cJSON_AddStringToObject(reply, "error", "usage: wifi state | set <ssid> <password> | forget | scan");
+        cJSON_ReplaceItemInObjectCaseSensitive(reply, "error",
+            cJSON_CreateString("usage: wifi state | set <ssid> <password> | forget | scan"));
     }
     char *json = cJSON_PrintUnformatted(reply);
     if (json) {
