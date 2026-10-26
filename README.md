@@ -50,9 +50,31 @@ td> version
 @td {"cmd":"version","ok":true,"project_name":"touchdeck",...}
 ```
 
-The commands are `help`, `version`, `heap`, `uptime`, and `reboot`, plus the
-three the display adds, which `help` lists too. An unknown command answers with
-`"ok":false` and an `error`.
+`help` lists the commands in this order:
+
+| Command | Owner | What it does |
+|---|---|---|
+| `help` | console | Lists the console commands. |
+| `version` | console | Reports the app descriptor. |
+| `heap` | console | Reports free heap. |
+| `uptime` | console | Reports milliseconds since boot. |
+| `reboot` | console | Restarts the board. |
+| `screenshot` | display | Streams the screen as RGB565 base64 lines, scale 1, 2, or 4. |
+| `perf` | display | Measures frames per second. The reply arrives when it is done. |
+| `backlight` | display | Turns the backlight on or off. With no argument it reports it. |
+| `ui` | ui | Reports the deck and drives its pages and tiles. |
+| `layout` | ui | Reports the loaded layout, reloads it from storage, or switches to the built-in one. |
+| `touch` | touch | Injects taps and swipes, logs real touches, and reports touch statistics. |
+| `keys` | keys | Drives the key engine, reads its state, logs and records its reports, and fuzzes the reducer. |
+| `power` | power | Reports the idle screen-off state, or sets the idle timeout until the next reset. |
+| `link` | link | Reports the app link state. |
+| `store` | storage | Inspects, reads, and writes the files on the storage partition. |
+| `settings` | storage | Reads or changes the settings that persist across resets. |
+| `@tds` | storage | Carries one base64 line of a `store put`. The host sends it after the put. |
+| `recovery` | storage | Reports the recovery hold watcher, or arms recovery and restarts. |
+| `update` | update | Reports the firmware slots and update state. |
+
+An unknown command answers with `"ok":false` and an `error`.
 
 A component adds commands with `td_console_register`, which takes an array of
 `esp_console_cmd_t`. `app_main` calls it for every component before
