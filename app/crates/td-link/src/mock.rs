@@ -70,9 +70,7 @@ impl Outbound {
 struct State {
     hello: Hello,
     wifi: td_core::radios::WifiState,
-    ble: td_core::radios::BleState,
     wifi_due: Option<Instant>,
-    ble_due: Option<Instant>,
     settings: Settings,
     icons: BTreeSet<String>,
     icon_files: HashMap<String, Vec<u8>>,
@@ -143,7 +141,6 @@ impl MockDeck {
             recovery: false,
             layout: "builtin".into(),
             wifi: None,
-            ble: None,
         };
         MockDeck {
             state: Arc::new(Mutex::new(State {
@@ -157,15 +154,7 @@ impl MockDeck {
                     reason: None,
                     host: "touchdeck-aabbcc".into(),
                 },
-                ble: td_core::radios::BleState {
-                    enabled: true,
-                    pairing: false,
-                    bonded: 0,
-                    connected: false,
-                    peer: None,
-                },
                 wifi_due: None,
-                ble_due: None,
                 settings: Settings::default(),
                 icons: BTreeSet::new(),
                 icon_files: HashMap::new(),
@@ -921,56 +910,6 @@ impl MockDeck {
             .clone())
     }
 
-    fn ble_request(
-        &self,
-        m: &str,
-        request: &Map<String, Value>,
-    ) -> Result<Map<String, Value>, String> {
-        let mut state = self.state();
-        match m {
-            "ble.pair" => {
-                if !state.ble.enabled {
-                    return Err("Bluetooth is off".into());
-                }
-                state.ble.pairing = true;
-                state.ble_due = Some(Instant::now() + Duration::from_millis(700));
-            }
-            "ble.forget" => {
-                state.ble.bonded = 0;
-                state.ble.connected = false;
-                state.ble.pairing = false;
-                state.ble.peer = None;
-                state.ble_due = None;
-            }
-            "ble.enable" => {
-                state.ble.enabled = request
-                    .get("on")
-                    .and_then(Value::as_bool)
-                    .ok_or("on must be a Boolean")?;
-                if !state.ble.enabled {
-                    state.ble.connected = false;
-                    state.ble.pairing = false;
-                    state.ble.peer = None;
-                    state.ble_due = None;
-                }
-            }
-            _ => {
-                if state.ble_due.is_some_and(|due| Instant::now() >= due) {
-                    state.ble_due = None;
-                    state.ble.pairing = false;
-                    state.ble.bonded = 1;
-                    state.ble.connected = true;
-                    state.ble.peer = Some("aa:bb:cc:dd:ee:ff".into());
-                }
-            }
-        }
-        Ok(serde_json::to_value(&state.ble)
-            .unwrap()
-            .as_object()
-            .unwrap()
-            .clone())
-    }
-
     fn dispatch(
         &self,
         m: &str,
@@ -985,14 +924,6 @@ impl MockDeck {
                     state: state.wifi.state,
                     ip: state.wifi.ip.clone(),
                 });
-                state.hello.ble = Some(td_core::radios::BleHello {
-                    enabled: state.ble.enabled,
-                    connected: state.ble.connected,
-                });
-                state.hello.sinks.retain(|sink| sink != "ble");
-                if state.ble.enabled {
-                    state.hello.sinks.push("ble".into());
-                }
                 Ok(object(
                     serde_json::to_value(&state.hello).expect("hello serializes"),
                 ))
@@ -1006,7 +937,6 @@ impl MockDeck {
             "wifi.state" | "wifi.set" | "wifi.forget" | "wifi.scan" => {
                 self.wifi_request(m, request)
             }
-            "ble.state" | "ble.pair" | "ble.forget" | "ble.enable" => self.ble_request(m, request),
             "link.state" => Ok(self.link_state()),
             "icon.list" => {
                 let state = self.state();
@@ -1215,9 +1145,9 @@ mod tests {
 
     #[test]
     fn radios_use_the_fixed_shapes_and_never_record_passwords() {
-        use td_core::radios::{BleState, WifiState, WifiStatus};
+        use td_core::radios::{WifiState, WifiStatus};
         let deck = MockDeck::new();
-        let (session, incoming) = Session::open(
+        let (session, _incoming) = Session::open(
             Box::new(deck.connect()),
             SessionConfig {
                 ping_every: None,
@@ -1227,7 +1157,6 @@ mod tests {
         .unwrap();
         let call = |request: Value| session.call(&request, Duration::from_secs(1)).unwrap();
         let initial = session.hello(Duration::from_secs(1)).unwrap();
-        assert!(!initial.ble.unwrap().connected);
         assert_eq!(initial.wifi.unwrap().state, WifiStatus::Off);
         let scan = call(json!({"m":"wifi.scan"}))
             .fields::<td_core::radios::WifiScan>()
@@ -1263,38 +1192,6 @@ mod tests {
         let forgotten: WifiState = call(json!({"m":"wifi.forget"})).fields().unwrap();
         assert!(!forgotten.configured);
         assert_eq!(forgotten.state, WifiStatus::Off);
-        let pairing: BleState = call(json!({"m":"ble.pair"})).fields().unwrap();
-        assert!(pairing.pairing);
-        deck.state().ble_due = Some(Instant::now());
-        let connected: BleState = call(json!({"m":"ble.state"})).fields().unwrap();
-        assert!(connected.connected);
-        assert_eq!(connected.bonded, 1);
-        assert!(
-            session
-                .hello(Duration::from_secs(1))
-                .unwrap()
-                .ble
-                .unwrap()
-                .connected
-        );
-        let forgotten: BleState = call(json!({"m":"ble.forget"})).fields().unwrap();
-        assert!(!forgotten.connected);
-        assert_eq!(forgotten.bonded, 0);
-        let off: BleState = call(json!({"m":"ble.enable", "on":false}))
-            .fields()
-            .unwrap();
-        assert!(!off.enabled);
-        assert!(!call(json!({"m":"ble.pair"})).ok);
-        let on: BleState = call(json!({"m":"ble.enable", "on":true})).fields().unwrap();
-        assert!(on.enabled);
-        let states: Vec<_> = incoming
-            .try_iter()
-            .filter_map(|item| match item {
-                crate::Incoming::BleState(state) => Some(state),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(states, [pairing, connected, forgotten, off, on]);
     }
 
     #[test]

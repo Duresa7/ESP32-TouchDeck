@@ -5,6 +5,8 @@ USB-Serial/JTAG port, connects over the [framed app link](../schema/protocol/lin
 shows the build the deck runs, and gives the debug console a pane. The window title
 names the git commit the app was built from.
 
+Bluetooth keys are a post-product item.
+
 ## Layout
 
 | Path | What it holds |
