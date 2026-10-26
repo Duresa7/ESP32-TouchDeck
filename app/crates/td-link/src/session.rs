@@ -426,7 +426,7 @@ fn ping_loop(shared: &Shared, stop: &Receiver<()>, every: Duration, timeout: Dur
             Err(LinkError::Timeout(_)) => {
                 return shared.shutdown("the deck stopped answering ping");
             }
-            Err(_) => return,
+            Err(error) => return shared.shutdown(&format!("heartbeat failed: {error}")),
         }
     }
 }
@@ -535,6 +535,59 @@ mod tests {
         );
         assert!(started.elapsed() >= Duration::from_millis(300));
         assert!(session.is_open());
+    }
+
+    struct BrokenWriter;
+
+    impl Write for BrokenWriter {
+        fn write(&mut self, _bytes: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(
+                ErrorKind::BrokenPipe,
+                "heartbeat pipe broke",
+            ))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct TimeoutReader;
+
+    impl Read for TimeoutReader {
+        fn read(&mut self, _bytes: &mut [u8]) -> io::Result<usize> {
+            thread::sleep(crate::READ_TICK);
+            Err(ErrorKind::TimedOut.into())
+        }
+    }
+
+    struct BrokenTransport;
+
+    impl Transport for BrokenTransport {
+        fn split(self: Box<Self>) -> io::Result<(Box<dyn Read + Send>, Box<dyn Write + Send>)> {
+            Ok((Box::new(TimeoutReader), Box::new(BrokenWriter)))
+        }
+    }
+
+    #[test]
+    fn heartbeat_write_failure_closes_the_session() {
+        let config = SessionConfig {
+            ping_every: Some(Duration::from_millis(10)),
+            ping_timeout: Duration::from_millis(100),
+        };
+        let (session, events) = Session::open(Box::new(BrokenTransport), config).unwrap();
+        let closed = events.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(
+            closed,
+            Incoming::Closed("heartbeat failed: write failed: heartbeat pipe broke".into())
+        );
+        assert!(!session.is_open());
+        assert!(matches!(
+            session.request(&Request::Hello, Duration::from_millis(50)),
+            Err(LinkError::Closed(_))
+        ));
+        session.close();
+        assert!(events.try_recv().is_err(), "only one Closed event");
     }
 
     #[test]

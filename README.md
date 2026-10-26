@@ -119,6 +119,9 @@ is checked and validated before it replaces the stored file, and a layout for th
 orientation on screen is shown without a reboot. While the app is connected, the
 deck sends a `press` event for each app or widget tap and a `key.report` event
 for each key report the engine emits, so the app can type the keys on the PC.
+`widget.set` fills a widget tile with a value, a caption, and a bar, and
+`dashboard.set` fills a dashboard page with up to 8 rows. The deck draws them on
+its next 100 ms redraw.
 
 The local verification harness provides `link hello`, `link ping --count 100`,
 `link state`, `link raw --hex <frame>`, and `link selftest`. `link scenario <file>`
@@ -146,8 +149,12 @@ Settings are `{"idle_timeout_s": 600, "orientation": "landscape"}`. The deck rea
 them before the display starts and logs `settings: idle_timeout_s=<n>
 orientation=<o>`. An unknown field is ignored, a missing field takes its default,
 a timeout outside 1 to 86400 takes 600, and an unknown orientation takes
-`landscape`. The idle timeout reaches the power gate at boot. The orientation is
-stored and reported, and the display applies it in a later milestone.
+`landscape`. The idle timeout reaches the power gate at boot. The orientation
+applies at boot. In `portrait` the screen is the panel turned 90 degrees
+clockwise, 600 by 1024, and the deck loads `/storage/layouts/portrait.json`, or
+the built-in layout when that file is missing. Touch points, `touch` and `ui hold`
+injection, and `screenshot` all use the rotated size. The adapter rotates each
+frame in software, so portrait draws much slower than landscape.
 
 The `store` and `settings` console commands work on the volume:
 
@@ -163,7 +170,8 @@ The `store` and `settings` console commands work on the volume:
   reply that carries its CRC-32.
 - `settings get` and `settings set idle_timeout_s <n>` or
   `settings set orientation landscape|portrait` read and write the file. A new
-  timeout applies at once.
+  timeout applies at once. A new orientation applies on the next boot, so its
+  reply, like `settings.put`'s, carries `reboot_required` true.
 
 The local verification harness wraps the transfers as `serial store put <path>
 --from <file>` and `serial store get <path> --out <file>`, checking the CRC-32
@@ -186,8 +194,11 @@ after the lift.
 A boot that finds the marker deletes it and runs in recovery mode. The deck shows
 the built-in pages and the default settings from RAM, leaves every file in
 `/storage` as it was, logs `recovery: mode on, files kept`, and shows a `Recovery`
-caption in the title band. The link's `hello` reports `"recovery": true`. A
-layout or settings write by the app leaves recovery mode, and a restart does too.
+caption in the title band. The link's `hello` and `layout state` report
+`"recovery": true`, and `layout state` still names what is wrong with a stored
+layout that does not parse. A layout or settings write by the app, a
+`layout use storage`, or a restart leaves recovery mode. A plain `layout reload`
+in recovery mode reloads the built-in pages.
 
 The `recovery` console command has two forms:
 
@@ -258,6 +269,9 @@ animation time of the look is a named token in `firmware/components/ui/ui_theme.
 The `ui` component adds the `ui` console command: `ui state` reports the page and
 the tile that is pressed, `ui goto <page>` changes the page, `ui tile <id>` gives a
 tile's box, and `ui hold <x> <y> <ms>` holds a press on the glass for a test.
+`ui state` also reports `online`, whether the app is connected, and `dimmed`, how
+many tiles are drawn dim. `ui widget <tile>` and `ui dashboard <page>` report what
+the app last sent to a widget tile or a dashboard page.
 
 The display component adds three console commands:
 
@@ -293,7 +307,9 @@ Every failure the validator prints starts with a stable rule key, such as
 for reading a layout file. Send the deck the compact form of a layout, because
 it rejects files over 32768 bytes without parsing them first.
 
-App-side actions and widgets dim on the deck while the app is offline.
+App-side actions and widgets dim on the deck while the app is offline. They
+draw at 40 percent opacity, and a tap on one logs `ui: offline <tile>` and sends
+nothing. Key, modifier, media, and page tiles never dim.
 
 ### Layouts on the deck
 

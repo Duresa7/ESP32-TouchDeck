@@ -3,7 +3,6 @@
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
-#include "board_pins.h"
 #include "display.h"
 #include "esp_log.h"
 #include "esp_lv_adapter.h"
@@ -21,11 +20,8 @@ static const char *TAG = "ui";
 static const char *LAYOUT_TAG = "layout";
 
 #define LOCK_TIMEOUT_MS 3000
-
 #define RECOVERY_BAND_COLOR UI_RGB565(176, 32, 32)
 #define RECOVERY_CAPTION_COLOR UI_RGB565(255, 176, 64)
-
-static const ui_pager_cfg_t k_pager_cfg = { .page_w = TD_LCD_H_RES, .slop = 16, .swipe = 96 };
 
 /*
  * The pager, the objects and the press bookkeeping belong to the LVGL task, and ui_goto() and a reload borrow them
@@ -51,6 +47,7 @@ static struct {
     lv_obj_t *track;
     int32_t track_x;
     lv_obj_t *title;
+    lv_obj_t *recovery_caption;
     uint8_t title_page;
     lv_obj_t *dots[UI_PAGES_MAX];
     lv_obj_t *pressed_obj;
@@ -208,7 +205,7 @@ static void start_bounce(int8_t direction)
     const int32_t rest = ui_pager_rest_x(&s.pager);
     lv_anim_t anim;
     lv_anim_init(&anim);
-    lv_anim_set_values(&anim, rest, rest + direction * ui_theme.bounce_px);
+    lv_anim_set_values(&anim, rest, rest + direction * ui_geo()->bounce_px);
     lv_anim_set_duration(&anim, ui_theme.anim_bounce_out_ms);
     lv_anim_set_reverse_duration(&anim, ui_theme.anim_bounce_back_ms);
     begin_slide(&anim, false);
@@ -301,6 +298,10 @@ static void on_release(lv_event_t *e)
     const ui_tile_t *tile = tile_of(tile_obj);
     const unsigned taps = atomic_fetch_add(&s.taps, 1) + 1;
     ESP_LOGI(TAG, "click taps=%u tile=%s", taps, tile->id);
+    if (ui_widget_tap_blocked(tile)) {
+        ESP_LOGI(TAG, "offline %s", tile->id);
+        return;
+    }
     const int ref = tile_ref(tile);
     ui_tile_keys_click(ref >= 0 ? &s.pages[ref / 256] : NULL, tile);
 }
@@ -309,12 +310,13 @@ static void on_release(lv_event_t *e)
  * and not on the top layer because the screenshot snapshots the active screen alone. It takes no input. */
 static void draw_recovery_band(void)
 {
+    const ui_geometry_t *g = ui_geo();
     lv_obj_t *band = lv_obj_create(lv_screen_active());
     lv_obj_remove_style_all(band);
     lv_obj_set_clickable(band, false);
     lv_obj_set_scrollable(band, false);
     lv_obj_set_pos(band, 0, 0);
-    lv_obj_set_size(band, TD_LCD_H_RES, TD_LCD_V_RES);
+    lv_obj_set_size(band, g->screen.w, g->screen.h);
     lv_obj_set_style_bg_color(band, ui_color(RECOVERY_BAND_COLOR), 0);
     lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
     lv_obj_move_foreground(band);
@@ -334,13 +336,14 @@ static void on_recovery_armed(void)
     draw_recovery_band();
 }
 
-static void build_recovery_caption(lv_obj_t *screen)
+static void build_recovery_caption(lv_obj_t *screen, const ui_geometry_t *g)
 {
     lv_obj_t *caption = lv_label_create(screen);
     lv_label_set_text_static(caption, "Recovery");
     lv_obj_add_style(caption, &ui_styles()->title, 0);
     lv_obj_set_style_text_color(caption, ui_color(RECOVERY_CAPTION_COLOR), 0);
-    lv_obj_align(caption, LV_ALIGN_TOP_RIGHT, -ui_theme.title_x, ui_theme.title_y);
+    lv_obj_align(caption, LV_ALIGN_TOP_RIGHT, -g->title_x, g->title_y);
+    s.recovery_caption = caption;
 }
 
 /* An icon above the label, with the label in the caption font. */
@@ -361,17 +364,23 @@ static void stack_icon(lv_obj_t *label, lv_obj_t *icon, int32_t icon_h, int32_t 
 static void build_tile(lv_obj_t *parent, const ui_page_t *page, const ui_tile_t *tile)
 {
     const ui_styles_t *st = ui_styles();
-    const ui_rect_t r = ui_tile_rect(page, tile, ui_theme.grid, ui_theme.gap);
+    const ui_geometry_t *g = ui_geo();
+    const ui_rect_t r = ui_tile_rect(page, tile, g->grid, g->gap);
 
     lv_obj_t *obj = lv_obj_create(parent);
     lv_obj_remove_style_all(obj);
     lv_obj_add_style(obj, &st->tile, 0);
     lv_obj_add_style(obj, &st->tile_down, LV_STATE_PRESSED);
-    lv_obj_set_pos(obj, r.x, r.y - ui_theme.band.y);
+    lv_obj_set_pos(obj, r.x, r.y - g->band.y);
     lv_obj_set_size(obj, r.w, r.h);
     lv_obj_set_scrollable(obj, false);
     lv_obj_set_event_bubble(obj, true);
     lv_obj_set_user_data(obj, (void *)tile);
+    ui_widget_track(obj, tile);
+    if (tile->action.type == TD_ACTION_WIDGET) {
+        ui_widget_build(obj, tile, r);
+        return;
+    }
 
     lv_obj_t *label = lv_label_create(obj);
     lv_label_set_text_static(label, tile->label);
@@ -399,11 +408,14 @@ static void build_page(uint8_t index)
     const ui_page_t *page = &s.pages[index];
     lv_obj_t *obj = lv_obj_create(s.track);
     lv_obj_remove_style_all(obj);
-    lv_obj_set_size(obj, s.pager.cfg.page_w, ui_theme.band.h);
+    lv_obj_set_size(obj, s.pager.cfg.page_w, ui_geo()->band.h);
     lv_obj_set_pos(obj, index * s.pager.cfg.page_w, 0);
     lv_obj_set_scrollable(obj, false);
     lv_obj_set_event_bubble(obj, true);
 
+    if (page->kind == UI_PAGE_DASHBOARD) {
+        ui_dashboard_build(obj, page);
+    }
     for (uint8_t i = 0; i < page->tile_count; i++) {
         build_tile(obj, page, &page->tiles[i]);
     }
@@ -412,13 +424,14 @@ static void build_page(uint8_t index)
 static void build_dots(lv_obj_t *screen)
 {
     const ui_styles_t *st = ui_styles();
+    const ui_geometry_t *g = ui_geo();
     for (uint8_t i = 0; i < s.page_count; i++) {
         lv_obj_t *dot = lv_obj_create(screen);
         lv_obj_remove_style_all(dot);
         lv_obj_add_style(dot, &st->dot, 0);
         lv_obj_add_style(dot, &st->dot_on, LV_STATE_CHECKED);
-        lv_obj_set_size(dot, ui_theme.dot_size, ui_theme.dot_size);
-        lv_obj_set_pos(dot, ui_dot_x(i, s.page_count) - ui_theme.dot_size / 2, ui_theme.dot_y - ui_theme.dot_size / 2);
+        lv_obj_set_size(dot, g->dot_size, g->dot_size);
+        lv_obj_set_pos(dot, ui_dot_x(i, s.page_count) - g->dot_size / 2, g->dot_y - g->dot_size / 2);
         lv_obj_set_scrollable(dot, false);
         lv_obj_set_clickable(dot, false);
         s.dots[i] = dot;
@@ -472,23 +485,25 @@ static void tear_down(void)
     lv_obj_clean(screen);
     s.track = NULL;
     s.title = NULL;
+    s.recovery_caption = NULL;
     memset(s.dots, 0, sizeof s.dots);
 }
 
 static void build_objects(void)
 {
+    const ui_geometry_t *g = ui_geo();
     lv_obj_t *screen = lv_screen_active();
     lv_obj_t *band = lv_obj_create(screen);
     lv_obj_remove_style_all(band);
-    lv_obj_set_pos(band, ui_theme.band.x, ui_theme.band.y);
-    lv_obj_set_size(band, ui_theme.band.w, ui_theme.band.h);
+    lv_obj_set_pos(band, g->band.x, g->band.y);
+    lv_obj_set_size(band, g->band.w, g->band.h);
     lv_obj_set_scrollable(band, false);
     lv_obj_set_event_bubble(band, true);
 
     s.track = lv_obj_create(band);
     lv_obj_remove_style_all(s.track);
     lv_obj_set_pos(s.track, 0, 0);
-    lv_obj_set_size(s.track, s.pager.cfg.page_w * s.page_count, ui_theme.band.h);
+    lv_obj_set_size(s.track, s.pager.cfg.page_w * s.page_count, g->band.h);
     lv_obj_set_scrollable(s.track, false);
     lv_obj_set_event_bubble(s.track, true);
     s.track_x = 0;
@@ -501,9 +516,9 @@ static void build_objects(void)
     s.title_page = 0;
     lv_label_set_text_static(s.title, s.pages[0].title);
     lv_obj_add_style(s.title, &ui_styles()->title, 0);
-    lv_obj_set_pos(s.title, ui_theme.title_x, ui_theme.title_y);
+    lv_obj_set_pos(s.title, g->title_x, g->title_y);
     if (td_recovery_mode()) {
-        build_recovery_caption(screen);
+        build_recovery_caption(screen, g);
     }
     touch_set_recovery_cb(on_recovery_armed);
 
@@ -523,6 +538,7 @@ static void load_locked(const td_layout_t *layout, const ui_layout_info_t *info,
     set_up_screen();
     tear_down();
     ui_tile_keys_start();
+    ui_widget_begin();
 
     const uint8_t count = count_valid_pages(layout->pages, layout->page_count);
     layout_lock();
@@ -534,7 +550,9 @@ static void load_locked(const td_layout_t *layout, const ui_layout_info_t *info,
     atomic_store(&s.page, 0);
     layout_unlock();
 
-    ui_pager_init(&s.pager, &k_pager_cfg, count > 0 ? count : 1);
+    const ui_geometry_t *g = ui_geo();
+    const ui_pager_cfg_t cfg = { .page_w = g->screen.w, .slop = g->slop, .swipe = g->swipe };
+    ui_pager_init(&s.pager, &cfg, count > 0 ? count : 1);
     if (count > 0) {
         build_objects();
         show_page(0);
@@ -586,7 +604,19 @@ void ui_layout_boot(const char *orientation)
     size_t bytes = 0;
     td_layout_error_t err;
     char reason[UI_LAYOUT_ERROR_MAX] = "";
-    if (td_layout_load_file(path, &stored, &bytes, &err)) {
+    if (td_recovery_mode()) {
+        /* Recovery runs the built-in pages. The stored file is still parsed, so `layout state` names what is wrong
+         * with it, and then dropped. */
+        if (td_layout_load_file(path, &stored, &bytes, &err)) {
+            td_layout_free(stored);
+            stored = NULL;
+        } else {
+            describe_error(reason, sizeof reason, &err);
+        }
+        ESP_LOGW(LAYOUT_TAG, "recovery mode, using builtin");
+        s.boot = td_layout_builtin();
+        bytes = 0;
+    } else if (td_layout_load_file(path, &stored, &bytes, &err)) {
         s.boot = stored;
     } else {
         describe_error(reason, sizeof reason, &err);
@@ -629,6 +659,8 @@ bool ui_layout_reload(bool use_builtin, td_layout_error_t *err)
     td_layout_t *stored = NULL;
     const td_layout_t *next = NULL;
     size_t bytes = 0;
+    /* Recovery keeps the built-in pages until a deliberate act leaves it, so a plain reload reloads them. */
+    use_builtin = use_builtin || td_recovery_mode();
     if (use_builtin) {
         next = td_layout_builtin();
     } else {
@@ -671,6 +703,22 @@ const char *ui_layout_slot(void)
     return s.orientation[0] != '\0' ? s.orientation : "landscape";
 }
 
+void ui_leave_recovery(const char *why)
+{
+    if (!td_recovery_mode()) {
+        return;
+    }
+    td_recovery_leave(why);
+    if (!ui_ready() || esp_lv_adapter_lock(LOCK_TIMEOUT_MS) != ESP_OK) {
+        return;
+    }
+    if (s.recovery_caption != NULL) {
+        lv_obj_delete(s.recovery_caption);
+        s.recovery_caption = NULL;
+    }
+    esp_lv_adapter_unlock();
+}
+
 bool ui_ready(void)
 {
     return atomic_load(&s.built);
@@ -699,6 +747,8 @@ void ui_get_state(ui_state_t *out)
     out->transition_frames = atomic_load(&s.transition_frames);
     out->last_ms = atomic_load(&s.last_ms);
     out->last_frames = atomic_load(&s.last_frames);
+    out->online = ui_link_online();
+    out->dimmed = ui_widget_dimmed();
 }
 
 bool ui_goto(uint8_t page)
@@ -729,7 +779,7 @@ bool ui_tile_info(const char *id, ui_tile_info_t *out)
     }
     if (tile != NULL) {
         out->page = page;
-        out->rect = ui_tile_rect(&s.pages[page], tile, ui_theme.grid, ui_theme.gap);
+        out->rect = ui_tile_rect(&s.pages[page], tile, ui_geo()->grid, ui_geo()->gap);
         snprintf(out->label, sizeof out->label, "%s", tile->label);
         snprintf(out->action, sizeof out->action, "%s", td_action_name(&tile->action));
         snprintf(out->icon, sizeof out->icon, "%s", tile->icon != NULL ? tile->icon : "");

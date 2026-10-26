@@ -148,6 +148,25 @@ mod tests {
     }
 
     #[test]
+    fn a_new_store_denies_every_command_by_default() {
+        let memory = Approvals::in_memory();
+        let disk = Approvals::load(scratch("default-deny")).unwrap();
+        assert!(!memory.is_always(&echo().hash()));
+        assert!(!disk.is_always(&echo().hash()));
+        assert!(disk.records().is_empty());
+    }
+
+    #[test]
+    fn always_does_not_approve_another_program() {
+        let mut approvals = Approvals::in_memory();
+        approvals.grant(&echo().hash(), Grant::Always).unwrap();
+        let mut changed = echo();
+        changed.program = "another-program".into();
+        assert!(!approvals.is_always(&changed.hash()));
+        assert!(approvals.is_always(&echo().hash()));
+    }
+
+    #[test]
     fn once_runs_without_remembering() {
         let mut approvals = Approvals::in_memory();
         approvals.grant(&echo().hash(), Grant::Once).unwrap();
