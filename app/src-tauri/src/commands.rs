@@ -227,6 +227,13 @@ pub async fn connect(app: AppHandle, port: String) -> Result<DeckInfo, String> {
             reason: String::new(),
         };
         let puller = (app.clone(), session.clone());
+        let radios = session.clone();
+        std::thread::spawn(move || {
+            while radios.is_open() {
+                let _ = radios.call(&serde_json::json!({"m":"ble.state"}), SETTINGS_TIMEOUT);
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        });
         std::thread::spawn(move || forward(&forwarder, &session, &incoming, closed, mirror));
         std::thread::spawn(move || pull_action_layout(&puller.0, &puller.1));
         Ok(DeckInfo {
@@ -248,6 +255,27 @@ fn forward(
 ) {
     for item in incoming {
         match item {
+            Incoming::BleState(ble) => {
+                if let Some(mirror) = mirror.as_mut() {
+                    mirror.set_bluetooth(ble.connected);
+                    let info = MirrorInfo {
+                        enabled: mirror.enabled(),
+                        reason: mirror.reason().into(),
+                    };
+                    let state = app.state::<AppState>();
+                    if state
+                        .link
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .is_some_and(|link| link.id == closed.session)
+                    {
+                        *state.mirror.lock().unwrap() = info.clone();
+                        let _ = app.emit("mirror-state", info);
+                        let _ = app.emit("ble-state", ble);
+                    }
+                }
+            }
             Incoming::Line(line) => {
                 let _ = app.emit("console-line", line);
             }
@@ -427,6 +455,91 @@ pub async fn pull_layout(app: AppHandle, orientation: Orientation) -> Result<Str
 }
 
 #[tauri::command]
+pub async fn wifi_state(app: AppHandle) -> Result<td_core::radios::WifiState, String> {
+    blocking(move || {
+        session(&app)?
+            .call(&serde_json::json!({"m":"wifi.state"}), SETTINGS_TIMEOUT)
+            .map_err(|error| error.to_string())?
+            .fields()
+            .map_err(|error| error.to_string())
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn wifi_scan(app: AppHandle) -> Result<td_core::radios::WifiScan, String> {
+    blocking(move || {
+        session(&app)?
+            .call(
+                &serde_json::json!({"m":"wifi.scan"}),
+                Duration::from_secs(15),
+            )
+            .map_err(|error| error.to_string())?
+            .fields()
+            .map_err(|error| error.to_string())
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn wifi_set(
+    app: AppHandle,
+    ssid: String,
+    password: String,
+) -> Result<td_core::radios::WifiState, String> {
+    if !td_core::radios::valid_credentials(&ssid, &password) {
+        return Err(
+            "Use a 1 to 32 byte network name and an empty or 8 to 63 byte password.".into(),
+        );
+    }
+    blocking(move || {
+        session(&app)?
+            .call(
+                &serde_json::json!({"m":"wifi.set", "ssid":ssid, "password":password}),
+                SETTINGS_TIMEOUT,
+            )
+            .map_err(|_| "Could not send the Wi-Fi settings.".to_owned())?
+            .fields()
+            .map_err(|_| "The deck refused the Wi-Fi settings.".to_owned())
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn wifi_forget(app: AppHandle) -> Result<td_core::radios::WifiState, String> {
+    blocking(move || {
+        session(&app)?
+            .call(&serde_json::json!({"m":"wifi.forget"}), SETTINGS_TIMEOUT)
+            .map_err(|error| error.to_string())?
+            .fields()
+            .map_err(|error| error.to_string())
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn ble_command(
+    app: AppHandle,
+    action: String,
+    on: Option<bool>,
+) -> Result<td_core::radios::BleState, String> {
+    if !matches!(action.as_str(), "state" | "pair" | "forget" | "enable") {
+        return Err("Unknown Bluetooth action.".into());
+    }
+    blocking(move || {
+        session(&app)?
+            .call(
+                &serde_json::json!({"m":format!("ble.{action}"), "on":on}),
+                SETTINGS_TIMEOUT,
+            )
+            .map_err(|error| error.to_string())?
+            .fields()
+            .map_err(|error| error.to_string())
+    })
+    .await?
+}
+
+#[tauri::command]
 pub async fn settings_get(app: AppHandle) -> Result<Settings, String> {
     blocking(move || {
         session(&app)?
@@ -563,13 +676,12 @@ fn start_mirror(state: &AppState, hello: &Hello) -> Option<Mirror> {
     let (mirror, info) = match state.input_sink() {
         Ok(sink) => {
             let mut mirror = Mirror::new(sink);
-            let wanted = Mirror::wanted(&hello.sinks);
-            mirror.set_enabled(wanted);
-            let reason = if wanted {
-                "typing the deck's keys on this PC"
-            } else {
-                "off: the deck types through its own USB HID sink"
-            };
+            mirror.set_routes(
+                &hello.sinks,
+                hello.ble.as_ref().is_some_and(|ble| ble.connected),
+            );
+            let wanted = mirror.enabled();
+            let reason = mirror.reason();
             (
                 Some(mirror),
                 MirrorInfo {
