@@ -33,6 +33,10 @@ bool keys_started(void);
 /* A keyboard usage, 1 to 255, with the active modifiers, then the all-released report. Clears one-shot modifiers. */
 keys_result_t keys_tap(uint8_t usage);
 
+/* A keyboard usage with its own modifier bits added to the active ones, then the all-released report. Clears one-shot
+ * modifiers, as keys_tap does. */
+keys_result_t keys_chord(uint8_t usage, uint8_t mods);
+
 /* A consumer usage, 1 to 65535, then the empty consumer report. Leaves every modifier as it is. */
 keys_result_t keys_consumer(uint16_t usage);
 

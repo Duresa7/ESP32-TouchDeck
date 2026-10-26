@@ -1,11 +1,13 @@
 #include "ui_tile_keys.h"
 #include "keys.h"
 #include "ui_theme.h"
-#include "ui_tile_action.h"
+#include "esp_log.h"
+#include "ui_priv.h"
 
 /* The console, a swipe and the idle code write the engine too, so the subjects follow keys_get_state() and not the
  * tiles' own taps. lv_subject_set_int notifies only on change, so a quiet poll redraws nothing. */
 static lv_subject_t *s_mod[KEY_MOD_COUNT];
+static lv_timer_t *s_poll;
 
 static void sync_mods(void)
 {
@@ -50,48 +52,26 @@ static void add_glyph_part(lv_obj_t *tile, lv_subject_t *subject, const lv_style
 
 void ui_tile_keys_start(void)
 {
-    for (unsigned m = 0; m < KEY_MOD_COUNT; m++) {
-        s_mod[m] = lv_subject_create(LV_SUBJECT_TYPE_INT);
-    }
-    sync_mods();
-    lv_timer_create(on_poll, ui_theme.mod_poll_ms, NULL);
-}
-
-static const struct {
-    uint16_t usage;
-    const char *glyph;
-} k_icons[] = {
-    { UI_CONSUMER_PREV, LV_SYMBOL_PREV },
-    { UI_CONSUMER_PLAY_PAUSE, LV_SYMBOL_PLAY LV_SYMBOL_PAUSE },
-    { UI_CONSUMER_NEXT, LV_SYMBOL_NEXT },
-    { UI_CONSUMER_MUTE, LV_SYMBOL_MUTE },
-    { UI_CONSUMER_VOLUME_DOWN, LV_SYMBOL_VOLUME_MID },
-    { UI_CONSUMER_VOLUME_UP, LV_SYMBOL_VOLUME_MAX },
-};
-
-const char *ui_tile_keys_icon(const ui_tile_t *tile)
-{
-    const ui_action_t action = ui_tile_action(tile);
-    if (action.kind != UI_ACTION_CONSUMER) {
-        return NULL;
-    }
-    for (size_t i = 0; i < sizeof k_icons / sizeof k_icons[0]; i++) {
-        if (k_icons[i].usage == action.consumer) {
-            return k_icons[i].glyph;
+    if (s_mod[0] == NULL) {
+        for (unsigned m = 0; m < KEY_MOD_COUNT; m++) {
+            s_mod[m] = lv_subject_create(LV_SUBJECT_TYPE_INT);
         }
     }
-    return NULL;
+    if (s_poll != NULL) {
+        lv_timer_delete(s_poll);
+    }
+    sync_mods();
+    s_poll = lv_timer_create(on_poll, ui_theme.mod_poll_ms, NULL);
 }
 
 void ui_tile_keys_dress(lv_obj_t *obj, const ui_tile_t *tile)
 {
-    const ui_action_t action = ui_tile_action(tile);
-    if (action.kind != UI_ACTION_MOD) {
+    if (tile->action.type != TD_ACTION_MOD) {
         return;
     }
     const ui_styles_t *st = ui_styles();
     const ui_theme_t *t = &ui_theme;
-    lv_subject_t *subject = s_mod[action.mod];
+    lv_subject_t *subject = s_mod[tile->action.mod.mod];
 
     lv_obj_add_style(obj, &st->mod_one_shot, LV_STATE_USER_1);
     lv_obj_add_style(obj, &st->mod_locked, LV_STATE_CHECKED);
@@ -103,10 +83,14 @@ void ui_tile_keys_dress(lv_obj_t *obj, const ui_tile_t *tile)
                    (t->lock.h - t->lock.body_h) / 2);
 }
 
-static void click_key(void *ctx, uint8_t usage)
+static void click_key(void *ctx, uint8_t usage, uint8_t mods)
 {
     (void)ctx;
-    keys_tap(usage);
+    if (mods != 0) {
+        keys_chord(usage, mods);
+    } else {
+        keys_tap(usage);
+    }
 }
 
 static void click_mod(void *ctx, key_mod_t mod)
@@ -121,10 +105,37 @@ static void click_consumer(void *ctx, uint16_t usage)
     keys_consumer(usage);
 }
 
-void ui_tile_keys_click(const ui_tile_t *tile)
+static void click_page(void *ctx, uint8_t index)
 {
-    static const ui_action_ops_t ops = { .key = click_key, .mod = click_mod, .consumer = click_consumer };
-    if (ui_tile_click(tile, &ops, NULL)) {
+    (void)ctx;
+    ui_goto(index);
+}
+
+static ui_press_hook_t s_press_hook;
+
+void ui_set_press_hook(ui_press_hook_t hook)
+{
+    s_press_hook = hook;
+}
+
+static void click_press(void *ctx, const ui_tile_t *tile)
+{
+    const ui_page_t *page = ctx;
+    const char *page_id = page != NULL ? page->id : "?";
+    const char *kind = td_action_name(&tile->action);
+    if (s_press_hook != NULL) {
+        s_press_hook(page_id, tile->id, kind);
+    } else {
+        ESP_LOGI("ui", "press %s/%s %s", page_id, tile->id, kind);
+    }
+}
+
+void ui_tile_keys_click(const ui_page_t *page, const ui_tile_t *tile)
+{
+    static const ui_action_ops_t ops = {
+        .key = click_key, .mod = click_mod, .consumer = click_consumer, .page = click_page, .press = click_press,
+    };
+    if (ui_tile_click(tile, &ops, (void *)page)) {
         sync_mods();
     }
 }
