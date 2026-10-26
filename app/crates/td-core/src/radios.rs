@@ -33,21 +33,6 @@ pub struct WifiScan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BleState {
-    pub enabled: bool,
-    pub pairing: bool,
-    pub bonded: u8,
-    pub connected: bool,
-    pub peer: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BleHello {
-    pub enabled: bool,
-    pub connected: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WifiHello {
     pub state: WifiStatus,
     pub ip: Option<String>,

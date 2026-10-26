@@ -48,7 +48,6 @@ pub enum XferFrame {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Incoming {
     Event(Value),
-    BleState(td_core::radios::BleState),
     Line(String),
     Closed(String),
 }
@@ -187,15 +186,10 @@ impl Shared {
                 role: Role::Response(seq),
                 body: Body::Message(payload),
             }) => {
-                if let Ok(reply) = Reply::parse(&payload) {
-                    if reply.m.starts_with("ble.")
-                        && let Ok(state) = reply.fields::<td_core::radios::BleState>()
-                    {
-                        let _ = self.incoming.send(Incoming::BleState(state));
-                    }
-                    if let Some(slot) = self.pending.lock().unwrap().waiting.remove(&seq) {
-                        let _ = slot.send(reply);
-                    }
+                if let Ok(reply) = Reply::parse(&payload)
+                    && let Some(slot) = self.pending.lock().unwrap().waiting.remove(&seq)
+                {
+                    let _ = slot.send(reply);
                 }
             }
             Item::Frame(Frame {
