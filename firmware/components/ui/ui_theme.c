@@ -1,5 +1,5 @@
 #include "ui_theme.h"
-#include "board_pins.h"
+#include "display.h"
 
 const ui_theme_t ui_theme = {
     .color = {
@@ -37,19 +37,22 @@ const ui_theme_t ui_theme = {
         .label_inset = 16,
     },
     .mod_poll_ms = 50,
-    /* Only this band slides, so a slide redraws the band and leaves the strips above and below it alone. It is
-     * taller than the grid by 20 px each side, and a pressed tile's glow reaches 17 px (glow_width / 2 + 1 +
-     * glow_spread). */
-    .band = { .x = 0, .y = 56, .w = TD_LCD_H_RES, .h = 504 },
-    .grid = { .x = 28, .y = 76, .w = 968, .h = 464 },
-    .gap = 16,
-    .title_x = 36,
-    .title_y = 14,
-    .dot_y = 580,
-    .dot_pitch = 34,
-    .dot_size = 12,
-    .dot_active_extra = 11,
-    .bounce_px = 48,
+    .dim_opa = LV_OPA_40,
+    .stale_opa = LV_OPA_60,
+    .widget = {
+        .value_dy = 16,
+        .caption_dy = 30,
+        .bar_h = 6,
+        .bar_bottom = 12,
+        .bar_radius = 3,
+        .redraw_ms = 100,
+    },
+    .dash = {
+        .row_gap = 8,
+        .radius = 10,
+        .pad = 20,
+        .bar_h = 12,
+    },
     .anim_settle_ms = 260,
     .anim_bounce_out_ms = 110,
     .anim_bounce_back_ms = 150,
@@ -133,7 +136,7 @@ static void init_text_and_dot_styles(ui_styles_t *st)
 
     lv_style_init(&st->dot_on);
     lv_style_set_bg_color(&st->dot_on, ui_color(t->color.dot_active));
-    lv_style_set_transform_width(&st->dot_on, t->dot_active_extra);
+    lv_style_set_transform_width(&st->dot_on, ui_geo()->dot_active_extra);
 }
 
 /* LVGL ranks a state's styles by the state's value, CHECKED 4, PRESSED 128, USER_1 4096, so a press still shows the
@@ -167,19 +170,54 @@ static void init_mod_styles(ui_styles_t *st)
     lv_style_set_border_width(&st->lock_body, 0);
 }
 
+/* The dim style sits in LV_STATE_USER_2, which ranks above PRESSED, so a dimmed tile stays dim under a finger. */
+static void init_widget_styles(ui_styles_t *st)
+{
+    const ui_theme_t *t = &ui_theme;
+
+    lv_style_init(&st->tile_dim);
+    lv_style_set_opa(&st->tile_dim, t->dim_opa);
+
+    lv_style_init(&st->widget_bar);
+    lv_style_set_radius(&st->widget_bar, t->widget.bar_radius);
+    lv_style_set_bg_opa(&st->widget_bar, LV_OPA_COVER);
+    lv_style_set_bg_color(&st->widget_bar, ui_color(t->color.glow));
+    lv_style_set_border_width(&st->widget_bar, 0);
+
+    lv_style_init(&st->dash_row);
+    lv_style_set_radius(&st->dash_row, t->dash.radius);
+    lv_style_set_bg_opa(&st->dash_row, LV_OPA_COVER);
+    lv_style_set_bg_color(&st->dash_row, ui_color(t->color.tile));
+    lv_style_set_border_width(&st->dash_row, 0);
+    lv_style_set_pad_all(&st->dash_row, 0);
+}
+
 const ui_styles_t *ui_styles(void)
 {
     if (!s_styles_ready) {
         init_tile_styles(&s_styles);
         init_text_and_dot_styles(&s_styles);
         init_mod_styles(&s_styles);
+        init_widget_styles(&s_styles);
         s_styles_ready = true;
     }
     return &s_styles;
 }
 
+/* Only the band slides, so a slide redraws the band and leaves the strips above and below it alone. It is taller than
+ * the grid by 20 px each side, and a pressed tile's glow reaches 17 px (glow_width / 2 + 1 + glow_spread). The screen
+ * size is fixed once display_start has run, so the geometry is worked out again only when it differs from the last. */
+const ui_geometry_t *ui_geo(void)
+{
+    static ui_geometry_t geo;
+    const ui_size_t screen = { .w = (int16_t)display_width(), .h = (int16_t)display_height() };
+    if (geo.screen.w != screen.w || geo.screen.h != screen.h) {
+        geo = ui_geometry(screen);
+    }
+    return &geo;
+}
+
 int16_t ui_dot_x(uint8_t index, uint8_t count)
 {
-    const int span = (count > 0 ? count - 1 : 0) * ui_theme.dot_pitch;
-    return (int16_t)((TD_LCD_H_RES - span) / 2 + index * ui_theme.dot_pitch);
+    return ui_geometry_dot_x(ui_geo(), index, count);
 }
