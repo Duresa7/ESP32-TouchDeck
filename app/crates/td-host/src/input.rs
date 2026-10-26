@@ -126,6 +126,8 @@ pub enum Outcome {
 pub struct Mirror {
     sink: Box<dyn InputSink>,
     enabled: bool,
+    hid: bool,
+    bluetooth: bool,
     mods: u8,
     keys: Vec<u8>,
     last_seq: Option<u32>,
@@ -137,6 +139,8 @@ impl Mirror {
         Mirror {
             sink,
             enabled: true,
+            hid: false,
+            bluetooth: false,
             mods: 0,
             keys: Vec::new(),
             last_seq: None,
@@ -147,6 +151,27 @@ impl Mirror {
     /// Mirroring stays off while the deck reports a `hid` sink, so the PC never gets a key twice.
     pub fn wanted(sinks: &[String]) -> bool {
         !sinks.iter().any(|sink| sink == "hid")
+    }
+
+    pub fn set_routes(&mut self, sinks: &[String], bluetooth: bool) {
+        self.hid = !Self::wanted(sinks);
+        self.bluetooth = bluetooth;
+        self.set_enabled(!self.hid && !bluetooth);
+    }
+
+    pub fn set_bluetooth(&mut self, connected: bool) {
+        self.bluetooth = connected;
+        self.set_enabled(!self.hid && !connected);
+    }
+
+    pub fn reason(&self) -> &'static str {
+        if self.hid {
+            "The deck types through USB HID. App key typing is paused."
+        } else if self.bluetooth {
+            "The deck types through Bluetooth. App key typing is paused."
+        } else {
+            "The app types mirrored USB key reports on this PC."
+        }
     }
 
     pub fn set_enabled(&mut self, enabled: bool) {
@@ -166,6 +191,7 @@ impl Mirror {
 
     pub fn apply(&mut self, event: &Mirrored) -> Outcome {
         if !self.enabled {
+            self.last_seq = Some(event.seq());
             return Outcome::Off;
         }
         let seq = event.seq();
@@ -394,6 +420,44 @@ mod tests {
         mirror.set_enabled(false);
         assert_eq!(mirror.apply(&kbd(2, 0, &[105])), Outcome::Off);
         assert_eq!(fake.take(), [Down(F13), Up(F13)]);
+    }
+
+    #[test]
+    fn bluetooth_releases_all_keys_suppresses_reports_and_resyncs_then_resumes() {
+        let (mut mirror, fake) = mirror();
+        mirror.set_routes(&["link".into(), "ble".into()], false);
+        mirror.apply(&kbd(1, 3, &[104, 106]));
+        fake.take();
+        mirror.set_bluetooth(true);
+        assert_eq!(fake.take(), [Up(F15), Up(F13), Up(SHIFT), Up(CTRL)]);
+        assert_eq!(mirror.apply(&kbd(2, 0, &[104])), Outcome::Off);
+        assert_eq!(mirror.apply(&con(3, 226)), Outcome::Off);
+        let resync =
+            Mirrored::parse(&json!({"m":"key.resync", "seq":4, "mods":3, "keys":[106]})).unwrap();
+        assert_eq!(mirror.apply(&resync), Outcome::Off);
+        mirror.set_bluetooth(true);
+        assert!(fake.take().is_empty());
+        assert_eq!(mirror.held(), (0, &[][..]));
+        mirror.set_bluetooth(false);
+        assert!(fake.take().is_empty());
+        mirror.apply(&kbd(5, 0, &[104]));
+        mirror.apply(&kbd(6, 0, &[]));
+        assert_eq!(fake.take(), [Down(F13), Up(F13)]);
+    }
+
+    #[test]
+    fn a_connected_bluetooth_hello_starts_paused_and_hid_stays_paused_after_disconnect() {
+        let (mut mirror, fake) = mirror();
+        mirror.set_routes(&["ble".into(), "link".into()], true);
+        assert_eq!(mirror.apply(&kbd(1, 0, &[104])), Outcome::Off);
+        mirror.set_bluetooth(false);
+        mirror.apply(&kbd(2, 0, &[104]));
+        assert_eq!(fake.take(), [Down(F13)]);
+        mirror.set_routes(&["hid".into(), "ble".into()], true);
+        assert_eq!(fake.take(), [Up(F13)]);
+        mirror.set_bluetooth(false);
+        assert_eq!(mirror.apply(&kbd(3, 0, &[104])), Outcome::Off);
+        assert!(fake.take().is_empty());
     }
 
     #[test]

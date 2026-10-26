@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Wireless from './Wireless.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import type { Orientation } from '../editor/validate.ts';
 
@@ -99,6 +100,7 @@
       {online ? (status?.text ?? '') : 'Connect a deck to change its settings.'}
     </p>
   </form>
+  <Wireless {online} {session} />
 </section>
 
 <style>
@@ -112,7 +114,7 @@
   .card {
     display: grid;
     gap: 14px;
-    max-width: 460px;
+    max-width: 620px;
     padding: 18px;
     border: 1px solid var(--line);
     border-radius: 12px;

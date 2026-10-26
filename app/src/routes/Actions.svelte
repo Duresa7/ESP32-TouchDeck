@@ -59,6 +59,7 @@
     invoke<LayoutSummary | null>('action_layout').then((summary) => (layout = summary ?? layout));
     invoke<ActionLog[]>('action_log').then((entries) => (log = [...entries, ...log]));
     const listeners = [
+      listen<MirrorInfo>('mirror-state', (event) => (mirror = event.payload)),
       listen<LayoutSummary>('action-layout', (event) => (layout = event.payload)),
       listen<ActionLog>('action-log', (event) => (log = [...log.slice(-99), event.payload])),
     ];
