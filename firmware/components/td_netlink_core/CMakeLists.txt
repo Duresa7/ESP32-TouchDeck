@@ -1,4 +1,4 @@
-idf_component_register(SRCS "td_net.c" "td_net_crypto.c" "td_net_srp.c" "td_net_record.c" "td_net_nvs.c"
+idf_component_register(SRCS "td_netlink.c" "td_netlink_crypto.c" "td_netlink_srp.c" "td_netlink_record.c" "td_netlink_nvs.c"
                        INCLUDE_DIRS "include"
                        PRIV_REQUIRES td_link_core mbedtls nvs_flash)
 

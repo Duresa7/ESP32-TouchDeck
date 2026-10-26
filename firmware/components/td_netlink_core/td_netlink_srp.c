@@ -1,10 +1,10 @@
-#include "td_net_srp.h"
-#include "td_net_crypto.h"
+#include "td_netlink_srp.h"
+#include "td_netlink_crypto.h"
 #include "mbedtls/bignum.h"
 #include <stdbool.h>
 
 /* RFC 5054 Appendix A, the 3072-bit group. */
-static const uint8_t N_BYTES[TD_NET_SRP_LEN] = {
+static const uint8_t N_BYTES[TD_NETLINK_SRP_LEN] = {
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xc9, 0x0f, 0xda, 0xa2, 0x21, 0x68, 0xc2, 0x34,
     0xc4, 0xc6, 0x62, 0x8b, 0x80, 0xdc, 0x1c, 0xd1, 0x29, 0x02, 0x4e, 0x08, 0x8a, 0x67, 0xcc, 0x74,
     0x02, 0x0b, 0xbe, 0xa6, 0x3b, 0x13, 0x9b, 0x22, 0x51, 0x4a, 0x08, 0x79, 0x8e, 0x34, 0x04, 0xdd,
@@ -30,85 +30,85 @@ static const uint8_t N_BYTES[TD_NET_SRP_LEN] = {
     0x08, 0xe2, 0x4f, 0xa0, 0x74, 0xe5, 0xab, 0x31, 0x43, 0xdb, 0x5b, 0xfc, 0xe0, 0xfd, 0x10, 0x8e,
     0x4b, 0x82, 0xd1, 0x20, 0xa9, 0x3a, 0xd2, 0xca, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 };
-static const uint8_t ZEROS[TD_NET_SRP_LEN - 1];
+static const uint8_t ZEROS[TD_NETLINK_SRP_LEN - 1];
 static const uint8_t G = 5;
 
 typedef struct {
     mbedtls_mpi N, g, A, b, x, v, k, B, u, t, w, S, RR;
 } srp_mpi_t;
 
-static bool read_hash(mbedtls_mpi *out, const td_net_part_t *parts, size_t count)
+static bool read_hash(mbedtls_mpi *out, const td_netlink_part_t *parts, size_t count)
 {
-    uint8_t digest[TD_NET_H512_LEN];
-    bool ok = td_net_sha512(parts, count, digest) && mbedtls_mpi_read_binary(out, digest, sizeof digest) == 0;
-    td_net_wipe(digest, sizeof digest);
+    uint8_t digest[TD_NETLINK_H512_LEN];
+    bool ok = td_netlink_sha512(parts, count, digest) && mbedtls_mpi_read_binary(out, digest, sizeof digest) == 0;
+    td_netlink_wipe(digest, sizeof digest);
     return ok;
 }
 
-static td_net_srp_result_t compute(srp_mpi_t *m, const td_net_srp_in_t *in, uint8_t B[TD_NET_SRP_LEN],
+static td_netlink_srp_result_t compute(srp_mpi_t *m, const td_netlink_srp_in_t *in, uint8_t B[TD_NETLINK_SRP_LEN],
                                    uint8_t key[64])
 {
     if (mbedtls_mpi_read_binary(&m->N, N_BYTES, sizeof N_BYTES) || mbedtls_mpi_lset(&m->g, G)
-            || mbedtls_mpi_read_binary(&m->A, in->A, TD_NET_SRP_LEN)) {
-        return TD_NET_SRP_FAIL;
+            || mbedtls_mpi_read_binary(&m->A, in->A, TD_NETLINK_SRP_LEN)) {
+        return TD_NETLINK_SRP_FAIL;
     }
     if (mbedtls_mpi_cmp_int(&m->A, 0) <= 0 || mbedtls_mpi_cmp_mpi(&m->A, &m->N) >= 0) {
-        return TD_NET_SRP_BAD_PUBLIC;
+        return TD_NETLINK_SRP_BAD_PUBLIC;
     }
-    if (mbedtls_mpi_read_binary(&m->b, in->b, TD_NET_EXP_LEN) || mbedtls_mpi_cmp_int(&m->b, 0) == 0) {
-        return TD_NET_SRP_FAIL;
+    if (mbedtls_mpi_read_binary(&m->b, in->b, TD_NETLINK_EXP_LEN) || mbedtls_mpi_cmp_int(&m->b, 0) == 0) {
+        return TD_NETLINK_SRP_FAIL;
     }
 
-    uint8_t inner[TD_NET_H512_LEN];
-    const td_net_part_t identity[] = {
-        {in->identity, in->identity_len}, {":", 1}, {in->code, TD_NET_CODE_LEN},
+    uint8_t inner[TD_NETLINK_H512_LEN];
+    const td_netlink_part_t identity[] = {
+        {in->identity, in->identity_len}, {":", 1}, {in->code, TD_NETLINK_CODE_LEN},
     };
-    bool ok = td_net_sha512(identity, 3, inner);
-    const td_net_part_t salted[] = {{in->salt, TD_NET_SALT_LEN}, {inner, sizeof inner}};
+    bool ok = td_netlink_sha512(identity, 3, inner);
+    const td_netlink_part_t salted[] = {{in->salt, TD_NETLINK_SALT_LEN}, {inner, sizeof inner}};
     ok = ok && read_hash(&m->x, salted, 2);
-    td_net_wipe(inner, sizeof inner);
-    const td_net_part_t group[] = {{N_BYTES, sizeof N_BYTES}, {ZEROS, sizeof ZEROS}, {&G, 1}};
+    td_netlink_wipe(inner, sizeof inner);
+    const td_netlink_part_t group[] = {{N_BYTES, sizeof N_BYTES}, {ZEROS, sizeof ZEROS}, {&G, 1}};
     ok = ok && read_hash(&m->k, group, 3);
     if (!ok || mbedtls_mpi_exp_mod(&m->v, &m->g, &m->x, &m->N, &m->RR)
             || mbedtls_mpi_mul_mpi(&m->t, &m->k, &m->v) || mbedtls_mpi_mod_mpi(&m->t, &m->t, &m->N)
             || mbedtls_mpi_exp_mod(&m->w, &m->g, &m->b, &m->N, &m->RR)
             || mbedtls_mpi_add_mpi(&m->B, &m->t, &m->w) || mbedtls_mpi_mod_mpi(&m->B, &m->B, &m->N)
             || mbedtls_mpi_cmp_int(&m->B, 0) == 0
-            || mbedtls_mpi_write_binary(&m->B, B, TD_NET_SRP_LEN)) {
-        return TD_NET_SRP_FAIL;
+            || mbedtls_mpi_write_binary(&m->B, B, TD_NETLINK_SRP_LEN)) {
+        return TD_NETLINK_SRP_FAIL;
     }
 
-    const td_net_part_t publics[] = {{in->A, TD_NET_SRP_LEN}, {B, TD_NET_SRP_LEN}};
+    const td_netlink_part_t publics[] = {{in->A, TD_NETLINK_SRP_LEN}, {B, TD_NETLINK_SRP_LEN}};
     if (!read_hash(&m->u, publics, 2) || mbedtls_mpi_cmp_int(&m->u, 0) == 0
             || mbedtls_mpi_exp_mod(&m->t, &m->v, &m->u, &m->N, &m->RR)
             || mbedtls_mpi_mul_mpi(&m->w, &m->A, &m->t) || mbedtls_mpi_mod_mpi(&m->w, &m->w, &m->N)
             || mbedtls_mpi_exp_mod(&m->S, &m->w, &m->b, &m->N, &m->RR)
             || mbedtls_mpi_cmp_int(&m->S, 0) == 0) {
-        return TD_NET_SRP_FAIL;
+        return TD_NETLINK_SRP_FAIL;
     }
 
-    uint8_t s[TD_NET_SRP_LEN];
+    uint8_t s[TD_NETLINK_SRP_LEN];
     size_t min_len = mbedtls_mpi_size(&m->S);
     ok = mbedtls_mpi_write_binary(&m->S, s, min_len) == 0;
-    const td_net_part_t secret[] = {{s, min_len}};
-    ok = ok && td_net_sha512(secret, 1, key);
-    td_net_wipe(s, sizeof s);
-    return ok ? TD_NET_SRP_OK : TD_NET_SRP_FAIL;
+    const td_netlink_part_t secret[] = {{s, min_len}};
+    ok = ok && td_netlink_sha512(secret, 1, key);
+    td_netlink_wipe(s, sizeof s);
+    return ok ? TD_NETLINK_SRP_OK : TD_NETLINK_SRP_FAIL;
 }
 
-td_net_srp_result_t td_net_srp_server(const td_net_srp_in_t *in, uint8_t B[TD_NET_SRP_LEN], uint8_t key[64])
+td_netlink_srp_result_t td_netlink_srp_server(const td_netlink_srp_in_t *in, uint8_t B[TD_NETLINK_SRP_LEN], uint8_t key[64])
 {
     srp_mpi_t m;
     mbedtls_mpi *all[] = {&m.N, &m.g, &m.A, &m.b, &m.x, &m.v, &m.k, &m.B, &m.u, &m.t, &m.w, &m.S, &m.RR};
     for (size_t i = 0; i < sizeof all / sizeof all[0]; i++) {
         mbedtls_mpi_init(all[i]);
     }
-    td_net_srp_result_t result = compute(&m, in, B, key);
+    td_netlink_srp_result_t result = compute(&m, in, B, key);
     for (size_t i = 0; i < sizeof all / sizeof all[0]; i++) {
         mbedtls_mpi_free(all[i]);
     }
-    if (result != TD_NET_SRP_OK) {
-        td_net_wipe(key, 64);
+    if (result != TD_NETLINK_SRP_OK) {
+        td_netlink_wipe(key, 64);
     }
     return result;
 }
