@@ -1,8 +1,11 @@
 #include <stdint.h>
 #include <string.h>
 #include "unity.h"
+#include "cJSON.h"
 #include "td_frame.h"
 #include "td_rx_sync.h"
+
+extern const char golden_start[] asm("_binary_golden_frames_json_start");
 
 #define QUEUE_MAX 2048
 #define LOG_MAX 8192
@@ -513,6 +516,69 @@ TEST_CASE("a truncated frame resynchronises on the next frame without leaking it
     TEST_ASSERT_EQUAL_UINT(3, s_model.frames);
     TEST_ASSERT_EQUAL_MEMORY(FRAME_BODY, s_model.frame, sizeof FRAME_BODY - 1);
     TEST_ASSERT_EQUAL_STRING("heap\nhelp\n", s_model.ran);
+}
+
+static size_t golden_unhex(const char *hex, uint8_t *out, size_t cap)
+{
+    size_t len = strlen(hex) / 2;
+    TEST_ASSERT_LESS_OR_EQUAL_UINT(cap, len);
+    for (size_t i = 0; i < len; i++) {
+        unsigned byte = 0;
+        for (size_t j = 0; j < 2; j++) {
+            char c = hex[2 * i + j];
+            byte = byte << 4 | (unsigned)(c <= '9' ? c - '0' : c - 'a' + 10);
+        }
+        out[i] = (uint8_t)byte;
+    }
+    return len;
+}
+
+static const char *golden_frame_hex(const cJSON *root, const char *name)
+{
+    const cJSON *entry;
+    cJSON_ArrayForEach(entry, cJSON_GetObjectItemCaseSensitive(root, "frames")) {
+        if (strcmp(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(entry, "name")), name) == 0) {
+            return cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(entry, "hex"));
+        }
+    }
+    TEST_FAIL_MESSAGE(name);
+    return NULL;
+}
+
+TEST_CASE("every golden stream yields its frames and errors at any read size and leaks no text", "[td_rx_sync]")
+{
+    static uint8_t stream[4 * TD_FRAME_WIRE_MAX];
+    static uint8_t wire[TD_FRAME_WIRE_MAX];
+    static uint8_t body[TD_FRAME_BODY_MAX];
+    cJSON *root = cJSON_Parse(golden_start);
+    TEST_ASSERT_NOT_NULL(root);
+    const cJSON *streams = cJSON_GetObjectItemCaseSensitive(root, "streams");
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(1, cJSON_GetArraySize(streams));
+    const cJSON *entry;
+    cJSON_ArrayForEach(entry, streams) {
+        const char *name = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(entry, "name"));
+        size_t len = golden_unhex(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(entry, "hex")), stream, sizeof stream);
+        const cJSON *frames = cJSON_GetObjectItemCaseSensitive(entry, "frames");
+        int count = cJSON_GetArraySize(frames);
+        TEST_ASSERT_GREATER_OR_EQUAL_INT_MESSAGE(1, count, name);
+        const char *last = cJSON_GetStringValue(cJSON_GetArrayItem(frames, count - 1));
+        size_t wire_len = golden_unhex(golden_frame_hex(root, last), wire, sizeof wire);
+        td_frame_t expected;
+        TEST_ASSERT_EQUAL(TD_FRAME_OK, td_frame_decode_slip(wire, wire_len, body, sizeof body, &expected));
+        const size_t widths[] = { 1, 3, 7, 64 };
+        for (size_t w = 0; w < sizeof widths / sizeof widths[0]; w++) {
+            model_reset(QUEUE_MAX);
+            for (size_t offset = 0; offset < len; offset += widths[w]) {
+                feed((const char *)stream + offset, len - offset < widths[w] ? len - offset : widths[w]);
+            }
+            TEST_ASSERT_EQUAL_UINT_MESSAGE(count, s_model.frames, name);
+            TEST_ASSERT_EQUAL_UINT_MESSAGE(cJSON_GetObjectItemCaseSensitive(entry, "errors")->valueint, s_model.bad_frames, name);
+            TEST_ASSERT_EQUAL_UINT_MESSAGE(0, s_model.queued_len, name);
+            TEST_ASSERT_EQUAL_UINT_MESSAGE(6u + expected.len + 2u, s_model.frame_len, name);
+            TEST_ASSERT_EQUAL_MEMORY_MESSAGE(body, s_model.frame, s_model.frame_len, name);
+        }
+    }
+    cJSON_Delete(root);
 }
 
 TEST_CASE("a doubled opening delimiter still frames", "[td_rx_sync]")

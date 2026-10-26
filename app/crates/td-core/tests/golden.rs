@@ -11,6 +11,15 @@ struct Golden {
     crc: String,
     limits: Limits,
     frames: Vec<Fixture>,
+    streams: Vec<StreamFixture>,
+}
+
+#[derive(Deserialize)]
+struct StreamFixture {
+    name: String,
+    hex: String,
+    frames: Vec<String>,
+    errors: u64,
 }
 
 #[derive(Deserialize)]
@@ -222,6 +231,28 @@ fn a_frame_cut_short_by_the_host_resynchronises() {
     );
     assert_eq!(frames, [Frame::decode_wire(&hello).unwrap()]);
     assert_eq!(decoder.errors(), 1);
+}
+
+#[test]
+fn every_stream_fixture_yields_its_frames_and_errors_at_any_read_size() {
+    let golden = golden();
+    assert!(!golden.streams.is_empty());
+    for fixture in &golden.streams {
+        let expected: Vec<Frame> = fixture
+            .frames
+            .iter()
+            .map(|name| {
+                let frame = golden.frames.iter().find(|f| &f.name == name).unwrap();
+                Frame::decode_wire(&unhex(&frame.hex)).unwrap()
+            })
+            .collect();
+        for width in [1, 3, 7, 64, 4096] {
+            let mut decoder = StreamDecoder::default();
+            let (_, frames) = split(&mut decoder, &unhex(&fixture.hex), width);
+            assert_eq!(frames, expected, "{} at {width}", fixture.name);
+            assert_eq!(decoder.errors(), fixture.errors, "{} at {width}", fixture.name);
+        }
+    }
 }
 
 #[test]

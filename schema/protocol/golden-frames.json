@@ -260,6 +260,16 @@
       }
     }
   ],
+  "streams": [
+    {
+      "name": "truncated-then-valid",
+      "hex": "c0010101000d007b22c00101010137007b226d223a2268656c6c6f222c226f6b223a747275652c2270726f64756374223a22746f7563686465636b222c2270726f746f223a317d12ecc0",
+      "frames": [
+        "hello-response"
+      ],
+      "errors": 1
+    }
+  ],
   "limits": {
     "payload_bytes": 1024,
     "chunk_data_bytes": 1021,
