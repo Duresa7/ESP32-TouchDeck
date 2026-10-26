@@ -1,4 +1,5 @@
 mod commands;
+mod sources;
 
 use tauri::Manager;
 
@@ -9,7 +10,9 @@ static DOCTOR_MARKER: &str = concat!("touchdeck-build-sha:", env!("TD_GIT_SHA"))
 
 pub fn run() {
     let mock = std::env::var("TOUCHDECK_MOCK").is_ok_and(|value| value == "1");
-    let builder = tauri::Builder::default().manage(commands::AppState::new(mock));
+    let builder = tauri::Builder::default()
+        .manage(commands::AppState::new(mock))
+        .manage(sources::SourcesState::new(mock));
     #[cfg(feature = "e2e")]
     let builder = builder
         .plugin(tauri_plugin_wdio_webdriver::init())
@@ -19,6 +22,18 @@ pub fn run() {
             commands::disconnect,
             commands::deck_info,
             commands::console_send,
+            commands::e2e_mock,
+            commands::e2e_mock_press,
+            commands::e2e_mock_sets,
+            sources::sources_view,
+            sources::sources_status,
+            sources::sources_save,
+            sources::sources_set_key,
+            sources::sources_clear_key,
+            sources::sources_refresh,
+            sources::sources_use_layout,
+            sources::statusline_preview,
+            sources::statusline_install,
             commands::push_layout,
             commands::remove_unused_icons,
             commands::builtin_icons,
@@ -29,7 +44,6 @@ pub fn run() {
             commands::settings_get,
             commands::settings_put,
             commands::reboot_deck,
-            commands::e2e_mock,
             commands::e2e_mock_record,
             commands::mirror_state,
             commands::set_action_layout,
@@ -39,7 +53,7 @@ pub fn run() {
             commands::approval_answer,
             commands::focus_window,
             commands::e2e_emit,
-            commands::e2e_input_log
+            commands::e2e_input_log,
         ]);
     #[cfg(not(feature = "e2e"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
@@ -48,6 +62,15 @@ pub fn run() {
         commands::disconnect,
         commands::deck_info,
         commands::console_send,
+        sources::sources_view,
+        sources::sources_status,
+        sources::sources_save,
+        sources::sources_set_key,
+        sources::sources_clear_key,
+        sources::sources_refresh,
+        sources::sources_use_layout,
+        sources::statusline_preview,
+        sources::statusline_install,
         commands::push_layout,
         commands::remove_unused_icons,
         commands::builtin_icons,
@@ -64,7 +87,7 @@ pub fn run() {
         commands::pending_approvals,
         commands::action_log,
         commands::approval_answer,
-        commands::focus_window
+        commands::focus_window,
     ]);
     builder
         .setup(|app| {

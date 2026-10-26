@@ -18,6 +18,8 @@ use td_link::mock::MOCK_PORT;
 use td_link::xfer::{IconSync, PutReport, get_layout, prune_icons, push_icons, put_layout};
 use td_link::{Incoming, MockDeck, Serial, Session, SessionConfig, Transport};
 
+use crate::sources::SourcesState;
+
 const HELLO_TIMEOUT: Duration = Duration::from_secs(1);
 const SETTINGS_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -202,6 +204,7 @@ pub async fn connect(app: AppHandle, port: String) -> Result<DeckInfo, String> {
         }
         let mirror = start_mirror(&state, &hello);
         let session = Arc::new(session);
+        app.state::<SourcesState>().connected(session.clone());
         let id = state.sessions.fetch_add(1, Ordering::Relaxed) + 1;
         *state.link.lock().unwrap() = Some(Link {
             id,
@@ -244,7 +247,12 @@ fn forward(
                 if let Some(report) = Mirrored::parse(&event) {
                     mirror_report(app, mirror.as_mut(), &report);
                 } else if event.get("m").and_then(Value::as_str) == Some("press") {
-                    on_press(app, session, &event);
+                    if let Some(tile) = event["tile"].as_str() {
+                        app.state::<SourcesState>().pressed(tile);
+                    }
+                    if event["kind"] != "widget" {
+                        on_press(app, session, &event);
+                    }
                 }
                 let _ = app.emit("deck-event", event);
             }
@@ -256,6 +264,7 @@ fn forward(
                 let mut link = state.link.lock().unwrap();
                 if link.as_ref().is_some_and(|link| link.id == closed.session) {
                     link.take();
+                    app.state::<SourcesState>().disconnected();
                 }
                 drop(link);
                 session.close();
@@ -268,6 +277,7 @@ fn forward(
 
 #[tauri::command]
 pub async fn disconnect(app: AppHandle) -> Result<(), String> {
+    app.state::<SourcesState>().disconnected();
     blocking(move || {
         let link = app.state::<AppState>().link.lock().unwrap().take();
         if let Some(link) = link {
@@ -327,6 +337,7 @@ pub async fn push_layout(app: AppHandle, layout: String) -> Result<PushReport, S
             .map_err(|error| format!("icons: {error}"))?;
         let put =
             put_layout(&session, parsed.orientation, &parsed).map_err(|error| error.to_string())?;
+        app.state::<SourcesState>().use_layout(parsed);
         // The deck may now show another layout, so the next press reads it again.
         *app.state::<AppState>().action_layout.lock().unwrap() = None;
         Ok(PushReport { put, icons })
@@ -631,6 +642,7 @@ fn pull_action_layout(app: &AppHandle, session: &Session) -> bool {
     let Ok(layout) = Layout::parse(&report.data) else {
         return false;
     };
+    app.state::<SourcesState>().use_layout(layout.clone());
     let summary = summary(&layout, "deck");
     *app.state::<AppState>().action_layout.lock().unwrap() = Some((layout, "deck".into()));
     let _ = app.emit("action-layout", summary);
@@ -948,4 +960,29 @@ pub fn e2e_input_log(state: State<'_, AppState>) -> Option<Vec<String>> {
             })
             .collect()
     })
+}
+
+#[cfg(feature = "e2e")]
+#[tauri::command]
+pub fn e2e_mock_press(
+    state: State<'_, AppState>,
+    page: String,
+    tile: String,
+) -> Result<(), String> {
+    state
+        .mock
+        .as_ref()
+        .ok_or("the app is not running the mock deck")?
+        .emit_press(&page, &tile, "widget");
+    Ok(())
+}
+
+#[cfg(feature = "e2e")]
+#[tauri::command]
+pub fn e2e_mock_sets(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
+    Ok(state
+        .mock
+        .as_ref()
+        .ok_or("the app is not running the mock deck")?
+        .sets())
 }

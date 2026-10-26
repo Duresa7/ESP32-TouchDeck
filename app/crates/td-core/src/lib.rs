@@ -35,6 +35,27 @@ pub enum Request {
     SettingsGet,
     #[serde(rename = "settings.put")]
     SettingsPut(Settings),
+    #[serde(rename = "widget.set")]
+    WidgetSet {
+        tile: String,
+        value: String,
+        caption: String,
+        bar: f64,
+        stale: bool,
+    },
+    #[serde(rename = "dashboard.set")]
+    DashboardSet {
+        page: String,
+        rows: Vec<DashboardRow>,
+    },
+}
+
+/// One row of a dashboard page. `bar` is a fraction from 0 to 1, or -1 for none.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DashboardRow {
+    pub label: String,
+    pub value: String,
+    pub bar: f64,
 }
 
 impl Request {
@@ -46,6 +67,8 @@ impl Request {
             Request::IconList { .. } => "icon.list",
             Request::SettingsGet => "settings.get",
             Request::SettingsPut(_) => "settings.put",
+            Request::WidgetSet { .. } => "widget.set",
+            Request::DashboardSet { .. } => "dashboard.set",
         }
     }
 
@@ -191,6 +214,37 @@ mod tests {
         assert_eq!(
             put.to_payload(),
             br#"{"m":"settings.put","idle_timeout_s":120,"orientation":"portrait"}"#
+        );
+    }
+
+    #[test]
+    fn widget_and_dashboard_requests_use_the_m2_06_shapes() {
+        let widget = Request::WidgetSet {
+            tile: "context".into(),
+            value: "42%".into(),
+            caption: "Context".into(),
+            bar: 0.42,
+            stale: false,
+        };
+        assert_eq!(
+            widget.to_payload(),
+            br#"{"m":"widget.set","tile":"context","value":"42%","caption":"Context","bar":0.42,"stale":false}"#
+        );
+        let dashboard = Request::DashboardSet {
+            page: "accounts".into(),
+            rows: vec![DashboardRow {
+                label: "a@b.c".into(),
+                value: "active".into(),
+                bar: -1.0,
+            }],
+        };
+        assert_eq!(
+            dashboard.to_payload(),
+            br#"{"m":"dashboard.set","page":"accounts","rows":[{"label":"a@b.c","value":"active","bar":-1.0}]}"#
+        );
+        assert_eq!(
+            (widget.name(), dashboard.name()),
+            ("widget.set", "dashboard.set")
         );
     }
 

@@ -15,6 +15,7 @@ mod input_linux;
 #[cfg(windows)]
 mod input_windows;
 pub mod keymap;
+pub mod sources;
 
 pub use approval::{Approvals, CommandSpec, Grant};
 pub use input::{FakeSink, InputSink, KeyEvent, Mirror, Mirrored, Outcome};

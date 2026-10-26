@@ -6,6 +6,7 @@
   import Settings from './lib/settings/Settings.svelte';
   import Actions from './routes/Actions.svelte';
   import Editor from './routes/Editor.svelte';
+  import Sources from './routes/Sources.svelte';
   import {
     HELLO_FIELDS,
     connect,
@@ -30,12 +31,13 @@
   let entries = $state<ConsoleEntry[]>([]);
   let line = $state('');
   let log = $state<HTMLOListElement>();
-  let view = $state<'deck' | 'editor' | 'actions' | 'settings'>('deck');
+  let view = $state<'deck' | 'editor' | 'actions' | 'settings' | 'sources'>('deck');
   const VIEWS = [
     ['deck', 'Deck'],
     ['editor', 'Editor'],
     ['actions', 'Actions'],
     ['settings', 'Settings'],
+    ['sources', 'Sources'],
   ] as const;
 
   const online = $derived(deck !== null && deck.online);
@@ -141,7 +143,9 @@
   </div>
 </header>
 
-{#if view === 'editor'}
+{#if view === 'sources'}
+  <Sources />
+{:else if view === 'editor'}
   <Editor {online} />
 {:else if view === 'actions'}
   <Actions {online} />

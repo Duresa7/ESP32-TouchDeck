@@ -21,6 +21,7 @@ use crate::{READ_TICK, Transport};
 pub const MOCK_PORT: &str = "mock";
 pub const MOCK_ELF_SHA256: &str =
     "6d6f636b6465636b6d6f636b6465636b6d6f636b6465636b6d6f636b6465636b";
+const DASHBOARD_ROWS: usize = 8;
 const ONLINE_FOR: Duration = Duration::from_secs(5);
 const HEARTBEAT: Duration = Duration::from_secs(2);
 const BUILTIN: &[u8] = include_bytes!("../../../../schema/examples/builtin.json");
@@ -71,6 +72,8 @@ struct State {
     icons: BTreeSet<String>,
     icon_files: HashMap<String, Vec<u8>>,
     widgets: BTreeMap<String, Value>,
+    dashboards: BTreeMap<String, Value>,
+    sets: Vec<Value>,
     received: Vec<Value>,
     lines: Vec<String>,
     silent: bool,
@@ -95,6 +98,17 @@ struct State {
     reboots: u32,
     key_seq: u32,
     press_seq: u32,
+}
+
+impl State {
+    fn record_set(&mut self, request: &Map<String, Value>) {
+        let mut set = request.clone();
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis() as u64);
+        set.insert("at_ms".into(), json!(at));
+        self.sets.push(Value::Object(set));
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +141,8 @@ impl MockDeck {
                 icons: BTreeSet::new(),
                 icon_files: HashMap::new(),
                 widgets: BTreeMap::new(),
+                dashboards: BTreeMap::new(),
+                sets: Vec::new(),
                 received: Vec::new(),
                 lines: Vec::new(),
                 silent: false,
@@ -292,8 +308,20 @@ impl MockDeck {
         self.state().settings
     }
 
+    /// The latest `widget.set` per tile.
     pub fn widgets(&self) -> BTreeMap<String, Value> {
         self.state().widgets.clone()
+    }
+
+    /// The latest `dashboard.set` per page.
+    pub fn dashboards(&self) -> BTreeMap<String, Value> {
+        self.state().dashboards.clone()
+    }
+
+    /// Every `widget.set` and `dashboard.set` in arrival order, each with `at_ms`, the unix
+    /// milliseconds at which the mock received it.
+    pub fn sets(&self) -> Vec<Value> {
+        self.state().sets.clone()
     }
 
     /// The layout file the deck stores for `orientation`, as it arrived.
@@ -815,9 +843,30 @@ impl MockDeck {
                     .get("tile")
                     .and_then(Value::as_str)
                     .ok_or("widget.set needs a tile".to_owned())?;
-                self.state()
+                let mut state = self.state();
+                state
                     .widgets
                     .insert(tile.to_owned(), Value::Object(request.clone()));
+                state.record_set(request);
+                Ok(Map::new())
+            }
+            "dashboard.set" => {
+                let page = request
+                    .get("page")
+                    .and_then(Value::as_str)
+                    .ok_or("dashboard.set needs a page")?;
+                let rows = request
+                    .get("rows")
+                    .and_then(Value::as_array)
+                    .ok_or("dashboard.set needs rows")?;
+                if rows.len() > DASHBOARD_ROWS {
+                    return Err("a dashboard holds 8 rows".into());
+                }
+                let mut state = self.state();
+                state
+                    .dashboards
+                    .insert(page.to_owned(), Value::Object(request.clone()));
+                state.record_set(request);
                 Ok(Map::new())
             }
             "layout.put" => self.layout_put(request),
@@ -1022,6 +1071,65 @@ mod tests {
             ),
             (Some("press"), Some(1), Some("launch"))
         );
+    }
+
+    #[test]
+    fn widget_and_dashboard_sets_are_recorded_in_order_with_arrival_times() {
+        let deck = MockDeck::new();
+        let (session, _events) = Session::open(
+            Box::new(deck.connect()),
+            SessionConfig {
+                ping_every: None,
+                ..SessionConfig::default()
+            },
+        )
+        .unwrap();
+        let widget = td_core::Request::WidgetSet {
+            tile: "context".into(),
+            value: "42%".into(),
+            caption: "Context".into(),
+            bar: 0.42,
+            stale: false,
+        };
+        let dashboard = td_core::Request::DashboardSet {
+            page: "accounts".into(),
+            rows: vec![td_core::DashboardRow {
+                label: "a@b.c".into(),
+                value: "active".into(),
+                bar: -1.0,
+            }],
+        };
+        assert!(session.request(&widget, Duration::from_secs(1)).unwrap().ok);
+        assert!(
+            session
+                .request(&dashboard, Duration::from_secs(1))
+                .unwrap()
+                .ok
+        );
+        let sets = deck.sets();
+        assert_eq!(
+            sets.iter().map(|set| set["m"].clone()).collect::<Vec<_>>(),
+            [json!("widget.set"), json!("dashboard.set")]
+        );
+        assert_eq!(sets[0]["tile"], "context");
+        assert_eq!(sets[0]["value"], "42%");
+        assert!(sets[0]["at_ms"].as_u64().unwrap() <= sets[1]["at_ms"].as_u64().unwrap());
+        assert_eq!(deck.widgets()["context"]["stale"], false);
+        assert_eq!(deck.dashboards()["accounts"]["rows"][0]["label"], "a@b.c");
+    }
+
+    #[test]
+    fn a_ninth_dashboard_row_is_refused() {
+        let deck = MockDeck::new();
+        let rows: Vec<Value> = (0..9)
+            .map(|n| json!({"label": n.to_string(), "value": "x", "bar": -1}))
+            .collect();
+        let request = json!({"m": "dashboard.set", "page": "p", "rows": rows});
+        assert_eq!(
+            deck.dispatch("dashboard.set", request.as_object().unwrap()),
+            Err("a dashboard holds 8 rows".to_owned())
+        );
+        assert!(deck.sets().is_empty());
     }
 
     #[test]
