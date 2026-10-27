@@ -1,0 +1,90 @@
+name: installer lifecycle
+
+on:
+  pull_request:
+    paths:
+      - app/src-tauri/windows/installer-hooks.nsh
+      - app/src-tauri/tauri.conf.json
+      - app/scripts/package_windows.py
+      - app/scripts/installer_lifecycle.ps1
+      - .github/workflows/installer-lifecycle.yml
+      - app/crates/td-core/src/statusline.rs
+      - app/crates/td-core/src/app_dirs.rs
+      - app/crates/td-core/examples/installer_statusline_fixture.rs
+      - app/crates/td-link/src/bin/td-statusline.rs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-lifecycle-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installer-lifecycle:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      # Same pinned toolchain and disposable signing recipe as release-windows.yml.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          package_json_file: app/package.json
+
+      - name: Install locked build dependencies on disposable runner
+        shell: pwsh
+        run: |
+          pnpm --dir app install --frozen-lockfile
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          git clone --branch v6.1 --recursive --depth 1 https://github.com/espressif/esp-idf.git "$env:RUNNER_TEMP/esp-idf"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP/esp-idf/install.ps1" esp32s3
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Build disposable test-signed installer and matching firmware
+        shell: pwsh
+        run: |
+          . "$env:RUNNER_TEMP/esp-idf/export.ps1"
+          python app/scripts/package_windows.py build --out "$env:RUNNER_TEMP/touchdeck-release" --test-signing
+          exit $LASTEXITCODE
+
+      - name: Build shared status-line fixture
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/touchdeck-release/build/app
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          cargo build --manifest-path app/Cargo.toml --locked --release --target x86_64-pc-windows-msvc -p td-core --example installer_statusline_fixture
+          exit $LASTEXITCODE
+
+      - name: Install, update with a locked helper, and uninstall
+        shell: pwsh
+        run: |
+          & app/scripts/installer_lifecycle.ps1 `
+            -InstallerPath "$env:RUNNER_TEMP/touchdeck-release/release-assets/TouchDeck-windows-x64-TEST-ONLY-setup.exe" `
+            -StatuslineFixture "$env:RUNNER_TEMP/touchdeck-release/build/app/x86_64-pc-windows-msvc/release/examples/installer_statusline_fixture.exe" `
+            -ArtifactDir "$env:RUNNER_TEMP/installer-lifecycle"
+          exit $LASTEXITCODE
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: installer-lifecycle
+          # These are sanitized by the script; never upload profiles, settings, or signing material.
+          path: |
+            ${{ runner.temp }}/installer-lifecycle/summary.json
+            ${{ runner.temp }}/installer-lifecycle/lifecycle.log
+          if-no-files-found: warn
+          retention-days: 14
