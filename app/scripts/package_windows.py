@@ -67,6 +67,14 @@ def audit_radio(build):
     return {"usb_serial_jtag": True, "radio_components": [], "build_components": components}
 
 
+def verify_production_app(app, graph):
+    if "tauri-plugin-wdio-webdriver" in graph or b"tauri_plugin_wdio_webdriver" in app:
+        raise ValueError("WebDriver found in production package")
+    for marker in ("touchdeck-scripted-app-updater-e2e", "e2e_app_update"):
+        if any(marker.encode(encoding) in app for encoding in ("utf-8", "utf-16-le")):
+            raise ValueError("Scripted app updater found in production package")
+
+
 def firmware(out, revision, lock_path):
     idf = Path(os.environ["IDF_PATH"]) / "tools/idf.py"
     if not idf.is_file():
@@ -120,8 +128,7 @@ def verify(archive_path):
         if ("touchdeck-build-sha:" + manifest["source_revision"]).encode() not in app:
             raise ValueError("Executable source marker does not match manifest")
         graph = archive.read("build/production-dependencies.txt").decode("utf-8")
-        if "tauri-plugin-wdio-webdriver" in graph or b"tauri_plugin_wdio_webdriver" in app:
-            raise ValueError("WebDriver found in production package")
+        verify_production_app(app, graph)
         if not archive.read("td-statusline.exe").startswith(b"MZ") or not app.startswith(b"MZ"):
             raise ValueError("Windows executables missing")
         fw = manifest["firmware"]
@@ -300,9 +307,18 @@ def main():
     builder.add_argument("--notes-file", type=Path, help="release notes for latest.json")
     checker = commands.add_parser("verify")
     checker.add_argument("archive", type=Path)
+    app_checker = commands.add_parser("verify-app", help="check production app feature exclusion without rebuilding firmware")
+    app_checker.add_argument("binary", type=Path)
+    app_checker.add_argument("dependencies", type=Path, help="cargo tree -e normal,build,features output for the build")
     args = parser.parse_args()
     try:
-        build(args) if args.command == "build" else verify(args.archive)
+        if args.command == "build":
+            build(args)
+        elif args.command == "verify":
+            verify(args.archive)
+        else:
+            verify_production_app(args.binary.read_bytes(), args.dependencies.read_text(encoding="utf-8"))
+            print(json.dumps({"ok": True, "webdriver": False, "scripted_app_updater": False}))
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError, zipfile.BadZipFile) as error:
         print(f"packaging: {error}", file=sys.stderr)
         return 1

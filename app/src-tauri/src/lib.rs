@@ -57,6 +57,7 @@ pub fn run() {
             app_updates::app_update_check,
             app_updates::app_update_download,
             app_updates::app_update_install,
+            app_updates::e2e::e2e_app_update,
             commands::update_firmware,
             commands::list_decks,
             commands::connect,

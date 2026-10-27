@@ -6,6 +6,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, ipc::Channel};
 use tauri_plugin_updater::{Update, UpdaterBuilder, UpdaterExt};
 
+#[cfg(feature = "e2e")]
+pub(crate) mod e2e;
+
 const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -110,12 +113,13 @@ impl AppUpdateGate {
         Ok(TransferGuard(self.clone()))
     }
 
-    fn begin_install(&self) -> Result<InstallGuard, String> {
+    fn begin_install(&self) -> Result<InstallGuard, UpdateError> {
         let mut state = self.0.lock().unwrap();
         if state.installing || state.transfers != 0 {
-            return Err(
-                "Wait for deck operations to finish before installing the app update".into(),
-            );
+            return Err(UpdateError::new(
+                UpdateErrorKind::Busy,
+                "Wait for deck operations to finish before installing the app update",
+            ));
         }
         state.installing = true;
         Ok(InstallGuard(self.clone()))
@@ -138,16 +142,68 @@ impl Drop for InstallGuard {
 enum Pending {
     #[default]
     Empty,
-    Available(Update),
+    Available(UpdateSource),
     Downloaded {
-        update: Update,
+        update: UpdateSource,
         bytes: Vec<u8>,
     },
     Busy,
 }
 
 #[derive(Default)]
-pub(crate) struct AppUpdates(Mutex<Pending>);
+pub(crate) struct AppUpdates {
+    pending: Mutex<Pending>,
+    #[cfg(feature = "e2e")]
+    scripted: e2e::ScriptedUpdater,
+}
+
+/// Only the updater I/O varies in e2e builds; pending state and install guards are shared.
+enum UpdateSource {
+    Release(Box<Update>),
+    #[cfg(feature = "e2e")]
+    Scripted(e2e::ScriptedUpdate),
+}
+
+impl UpdateSource {
+    fn metadata(&self) -> UpdateInfo {
+        match self {
+            Self::Release(update) => metadata(update),
+            #[cfg(feature = "e2e")]
+            Self::Scripted(update) => update.metadata(),
+        }
+    }
+
+    async fn download(&self, progress: Channel<DownloadProgress>) -> Result<Vec<u8>, UpdateError> {
+        match self {
+            Self::Release(update) => {
+                let mut downloaded = 0;
+                update
+                    .download(
+                        |chunk, total| {
+                            downloaded += chunk as u64;
+                            let _ = progress.send(DownloadProgress { downloaded, total });
+                        },
+                        || {},
+                    )
+                    .await
+                    .map_err(UpdateError::updater)
+            }
+            #[cfg(feature = "e2e")]
+            Self::Scripted(update) => update.download(progress).await,
+        }
+    }
+
+    fn install(&self, bytes: &[u8]) -> Result<(), UpdateError> {
+        match self {
+            // On Windows this exits only after the installer launches. Do not request a relaunch.
+            Self::Release(update) => update
+                .install(bytes)
+                .map_err(|error| UpdateError::new(UpdateErrorKind::Installer, error.to_string())),
+            #[cfg(feature = "e2e")]
+            Self::Scripted(update) => update.install(),
+        }
+    }
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -173,7 +229,7 @@ fn metadata(update: &Update) -> UpdateInfo {
 }
 
 fn take_pending(state: &AppUpdates) -> Result<Pending, UpdateError> {
-    let mut pending = state.0.lock().unwrap();
+    let mut pending = state.pending.lock().unwrap();
     if matches!(*pending, Pending::Busy) {
         return Err(UpdateError::new(
             UpdateErrorKind::Busy,
@@ -183,8 +239,11 @@ fn take_pending(state: &AppUpdates) -> Result<Pending, UpdateError> {
     Ok(std::mem::replace(&mut *pending, Pending::Busy))
 }
 
-#[tauri::command]
-pub(crate) async fn app_update_check(app: AppHandle) -> Result<Option<UpdateInfo>, UpdateError> {
+async fn check_source(app: &AppHandle) -> Result<Option<UpdateSource>, UpdateError> {
+    #[cfg(feature = "e2e")]
+    if let Some(result) = app.state::<AppUpdates>().scripted.check() {
+        return result.map(|update| update.map(UpdateSource::Scripted));
+    }
     if !cfg!(windows) {
         return Err(UpdateError::new(
             UpdateErrorKind::Unsupported,
@@ -205,36 +264,36 @@ pub(crate) async fn app_update_check(app: AppHandle) -> Result<Option<UpdateInfo
             "This candidate has no release signing public key. Install an official release to enable app updates",
         ));
     }
+    let update = check_release(updater_builder(app).build().map_err(UpdateError::updater)?).await?;
+    if update
+        .as_ref()
+        .is_some_and(|update| update.download_url.scheme() != "https")
+    {
+        return Err(UpdateError::new(
+            UpdateErrorKind::Metadata,
+            "App update download must use HTTPS",
+        ));
+    }
+    Ok(update.map(|update| UpdateSource::Release(Box::new(update))))
+}
+
+#[tauri::command]
+pub(crate) async fn app_update_check(app: AppHandle) -> Result<Option<UpdateInfo>, UpdateError> {
     let state = app.state::<AppUpdates>();
     let _previous = take_pending(&state)?;
-    let result = async {
-        check_release(
-            updater_builder(&app)
-                .build()
-                .map_err(UpdateError::updater)?,
-        )
-        .await
-    }
-    .await;
+    let result = check_source(&app).await;
     match result {
         Ok(Some(update)) => {
-            if update.download_url.scheme() != "https" {
-                *state.0.lock().unwrap() = Pending::Empty;
-                return Err(UpdateError::new(
-                    UpdateErrorKind::Metadata,
-                    "App update download must use HTTPS",
-                ));
-            }
-            let info = metadata(&update);
-            *state.0.lock().unwrap() = Pending::Available(update);
+            let info = update.metadata();
+            *state.pending.lock().unwrap() = Pending::Available(update);
             Ok(Some(info))
         }
         Ok(None) => {
-            *state.0.lock().unwrap() = Pending::Empty;
+            *state.pending.lock().unwrap() = Pending::Empty;
             Ok(None)
         }
         Err(error) => {
-            *state.0.lock().unwrap() = Pending::Empty;
+            *state.pending.lock().unwrap() = Pending::Empty;
             Err(error)
         }
     }
@@ -248,48 +307,40 @@ pub(crate) async fn app_update_download(
     let state = app.state::<AppUpdates>();
     let previous = take_pending(&state)?;
     let Pending::Available(update) = previous else {
-        *state.0.lock().unwrap() = previous;
+        *state.pending.lock().unwrap() = previous;
         return Err(UpdateError::new(
             UpdateErrorKind::Busy,
             "Check for a newer app version before downloading",
         ));
     };
-    let mut downloaded = 0;
-    let result = update
-        .download(
-            |chunk, total| {
-                downloaded += chunk as u64;
-                let _ = progress.send(DownloadProgress { downloaded, total });
-            },
-            || {},
-        )
-        .await;
+    let result = update.download(progress).await;
     match result {
         Ok(bytes) => {
             // The official updater returns bytes only after signature AND signed-version verification.
-            *state.0.lock().unwrap() = Pending::Downloaded { update, bytes };
+            *state.pending.lock().unwrap() = Pending::Downloaded { update, bytes };
             Ok(())
         }
         Err(error) => {
-            *state.0.lock().unwrap() = Pending::Available(update);
-            Err(UpdateError::updater(error))
+            *state.pending.lock().unwrap() = Pending::Available(update);
+            Err(error)
         }
     }
 }
 
 #[tauri::command]
 pub(crate) async fn app_update_install(app: AppHandle) -> Result<(), UpdateError> {
-    if !cfg!(windows) || std::env::var("TOUCHDECK_MOCK").is_ok_and(|value| value == "1") {
+    let disabled =
+        !cfg!(windows) || std::env::var("TOUCHDECK_MOCK").is_ok_and(|value| value == "1");
+    #[cfg(feature = "e2e")]
+    let disabled = disabled && !app.state::<AppUpdates>().scripted.enabled();
+    if disabled {
         return Err(UpdateError::new(
             UpdateErrorKind::Unsupported,
             "Installer execution is disabled on this platform or mock session",
         ));
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let _reservation = app
-            .state::<AppUpdateGate>()
-            .begin_install()
-            .map_err(|error| UpdateError::new(UpdateErrorKind::Busy, error))?;
+        let _reservation = app.state::<AppUpdateGate>().begin_install()?;
         if crate::commands::deck_info(app.state()).is_some() {
             return Err(UpdateError::new(
                 UpdateErrorKind::Busy,
@@ -299,17 +350,14 @@ pub(crate) async fn app_update_install(app: AppHandle) -> Result<(), UpdateError
         let state = app.state::<AppUpdates>();
         let previous = take_pending(&state)?;
         let Pending::Downloaded { update, bytes } = previous else {
-            *state.0.lock().unwrap() = previous;
+            *state.pending.lock().unwrap() = previous;
             return Err(UpdateError::new(
                 UpdateErrorKind::Busy,
                 "Download and verify the app update before installing",
             ));
         };
-        // On Windows this exits only after the installer launches. Do not request a relaunch.
-        let result = update
-            .install(&bytes)
-            .map_err(|error| UpdateError::new(UpdateErrorKind::Installer, error.to_string()));
-        *state.0.lock().unwrap() = Pending::Downloaded { update, bytes };
+        let result = update.install(&bytes);
+        *state.pending.lock().unwrap() = Pending::Downloaded { update, bytes };
         result
     })
     .await
@@ -354,6 +402,22 @@ mod tests {
         assert!(gate.begin_install().is_err());
         drop(install);
         assert!(gate.begin_transfer().is_ok());
+    }
+
+    #[test]
+    fn active_transfer_returns_the_typed_install_refusal_and_allows_retry() {
+        let gate = AppUpdateGate::default();
+        let transfer = gate.begin_transfer().unwrap();
+        let Err(error) = gate.begin_install() else {
+            panic!("an active transfer must refuse installation");
+        };
+        assert_eq!(error.kind, UpdateErrorKind::Busy);
+        assert_eq!(
+            error.message,
+            "Wait for deck operations to finish before installing the app update"
+        );
+        drop(transfer);
+        assert!(gate.begin_install().is_ok());
     }
 
     #[test]
