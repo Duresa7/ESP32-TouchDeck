@@ -1,0 +1,68 @@
+name: installer lifecycle
+
+on:
+  pull_request:
+    paths:
+      - app/src-tauri/windows/installer-hooks.nsh
+      - app/src-tauri/tauri.conf.json
+      - app/scripts/package_windows.py
+      - app/scripts/installer_lifecycle.ps1
+      - .github/workflows/installer-lifecycle.yml
+      - .github/actions/windows-release-build/action.yml
+      - app/crates/td-core/src/statusline.rs
+      - app/crates/td-core/src/app_dirs.rs
+      - app/crates/td-core/examples/installer_statusline_fixture.rs
+      - app/crates/td-link/src/bin/td-statusline.rs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-lifecycle-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installer-lifecycle:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      # Reuse #43's build recipe, pinned at its main merge so every uses line has a full SHA.
+      # The composite builds the checked-out PR code; durable signing inputs stay empty.
+      - name: Build and verify disposable test-signed candidate
+        uses: Duresa7/ESP32-TouchDeck/.github/actions/windows-release-build@6d10864379c17db21de0ca148b20716f11c2aeb7
+        with:
+          release-mode: test-signing
+          build-ref: ${{ github.ref }}
+
+      - name: Build shared status-line fixture
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/touchdeck-release/build/app
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          cargo build --manifest-path app/Cargo.toml --locked --release --target x86_64-pc-windows-msvc -p td-core --example installer_statusline_fixture
+          exit $LASTEXITCODE
+
+      - name: Install, update with a locked helper, and uninstall
+        shell: pwsh
+        run: |
+          & app/scripts/installer_lifecycle.ps1 `
+            -InstallerPath "$env:RUNNER_TEMP/touchdeck-release/release-assets/TouchDeck-windows-x64-TEST-ONLY-setup.exe" `
+            -StatuslineFixture "$env:RUNNER_TEMP/touchdeck-release/build/app/x86_64-pc-windows-msvc/release/examples/installer_statusline_fixture.exe" `
+            -ArtifactDir "$env:RUNNER_TEMP/installer-lifecycle"
+          exit $LASTEXITCODE
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: installer-lifecycle
+          # These are sanitized by the script; never upload profiles, settings, or signing material.
+          path: |
+            ${{ runner.temp }}/installer-lifecycle/summary.json
+            ${{ runner.temp }}/installer-lifecycle/lifecycle.log
+          if-no-files-found: warn
+          retention-days: 14
