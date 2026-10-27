@@ -206,7 +206,7 @@ fn three_failed_polls_mark_the_readings_stale_and_the_next_good_poll_clears_it()
 }
 
 #[test]
-fn the_source_only_reads_auth_files_with_the_bearer_key_and_shows_its_last_four() {
+fn auth_file_refreshes_use_bearer_authorization_and_redact_the_key() {
     let fetch = FakeFetch::default();
     let (mut proxy, _) = proxy_with(&fetch, Some("fixture-key-1234"));
     fetch.script(vec![
@@ -216,8 +216,13 @@ fn the_source_only_reads_auth_files_with_the_bearer_key_and_shows_its_last_four(
     proxy.poll_at(SystemTime::now());
     proxy.refresh();
     proxy.refresh();
+    // Provider POSTs have separate coverage; this log records auth-file GETs.
     let calls = fetch.calls.lock().unwrap().clone();
-    assert_eq!(calls.len(), 2);
+    assert_eq!(
+        calls.len(),
+        2,
+        "a second refresh inside the floor does not poll again"
+    );
     for (url, bearer) in &calls {
         assert_eq!(url, &format!("http://127.0.0.1:8317{AUTH_FILES}"));
         assert_eq!(bearer, "fixture-key-1234");

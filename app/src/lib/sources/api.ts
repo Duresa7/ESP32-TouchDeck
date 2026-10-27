@@ -1,16 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 
-export interface Reading {
-  source: string;
-  account: string;
-  field: string;
-  value: string;
-  bar: number;
-  updated: number;
-  stale: boolean;
-}
-
-export interface UsageWindow {
+interface UsageWindow {
   pct: number;
   resets_at: number | null;
   reset_in: string | null;
@@ -18,7 +8,7 @@ export interface UsageWindow {
 
 export const PROXY_FIELDS = ['five_hour_pct', 'seven_day_pct', 'five_hour_reset', 'seven_day_reset', 'plan', 'status', 'success', 'failed', 'recent_10m'];
 
-export interface Account {
+interface Account {
   key: string;
   provider: string;
   email: string;
@@ -45,7 +35,7 @@ export interface ProxyInfo {
   accounts: Account[];
 }
 
-export interface LayoutInfo {
+interface LayoutInfo {
   name: string | null;
   widgets: number;
   dashboards: number;
@@ -80,7 +70,6 @@ export const sourcesSave = (config: Config) => invoke<SourcesView>('sources_save
 export const setManagementKey = (key: string) => invoke<string | null>('sources_set_key', { key });
 export const clearManagementKey = () => invoke<void>('sources_clear_key');
 export const refreshSource = (source: 'cliproxyapi') => invoke<void>('sources_refresh', { source });
-export const useLayout = (json: string) => invoke<void>('sources_use_layout', { json });
 
 export function ago(unixMs: number | null, now = Date.now()): string {
   if (unixMs === null) return 'never';

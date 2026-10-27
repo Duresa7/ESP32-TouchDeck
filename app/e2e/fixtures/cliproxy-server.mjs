@@ -17,7 +17,7 @@ export const API_CALL = '/v0/management/api-call';
 export const CODEX_USAGE = 'https://chatgpt.com/backend-api/wham/usage';
 export const CLAUDE_USAGE = 'https://api.anthropic.com/api/oauth/usage';
 export const DEFAULT_KEY = 'fixture-key-0123';
-export const DEFAULT_FIXTURE = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', 'crates', 'td-host', 'tests', 'fixtures', 'auth-files-usage.json');
+const DEFAULT_FIXTURE = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', 'crates', 'td-host', 'tests', 'fixtures', 'auth-files-usage.json');
 
 /** Starts the server on `port`, or on a free one when `port` is 0, and resolves once it listens. */
 export async function start({ port = 0, key = DEFAULT_KEY, fixture = DEFAULT_FIXTURE, host = '127.0.0.1' } = {}) {

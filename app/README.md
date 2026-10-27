@@ -106,7 +106,7 @@ serial permissions, keyboard input, credential storage, or physical panel behavi
 
 | Path | Responsibility |
 | --- | --- |
-| `crates/td-core` | Frame codec, link messages, layout validation, and settings with no I/O. |
+| `crates/td-core` | Frame codec, link messages, layout validation, settings, and source-config path/storage helpers. |
 | `crates/td-link` | Serial and mock transports, transfers, firmware update and ROM recovery, and the link CLI. |
 | `crates/td-host` | Host input, actions, approvals, icon processing, and Sources. |
 | `src-tauri` | Desktop shell, app commands, and per-user storage integration. |

@@ -204,15 +204,3 @@ pub async fn sources_clear_key(app: AppHandle) -> Result<(), String> {
 pub fn sources_refresh(app: AppHandle, source: String) {
     app.state::<SourcesState>().hub.refresh(&source);
 }
-
-/// Feeds the tiles of a layout, such as the one the editor just pushed.
-#[tauri::command]
-pub fn sources_use_layout(app: AppHandle, json: String) -> Result<(), String> {
-    let layout = Layout::parse(json.as_bytes()).map_err(|errors| {
-        errors
-            .first()
-            .map_or_else(|| "invalid layout".to_owned(), ToString::to_string)
-    })?;
-    app.state::<SourcesState>().hub.use_layout(layout);
-    Ok(())
-}

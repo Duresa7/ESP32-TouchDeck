@@ -18,12 +18,12 @@ import {
   type Orientation,
 } from './validate.ts';
 
-export interface Status {
+interface Status {
   kind: 'info' | 'ok' | 'error';
   text: string;
 }
 
-export interface LayoutState {
+interface LayoutState {
   source: string;
   name: string;
   orientation: Orientation;
@@ -32,7 +32,7 @@ export interface LayoutState {
   error?: string | null;
 }
 
-export interface PutReport {
+interface PutReport {
   state: LayoutState;
   bytes: number;
   chunks: number;
@@ -44,7 +44,7 @@ export interface PutReport {
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** One layout per orientation plus a selection. Every layout it holds is valid. */
-export interface EditorState {
+interface EditorState {
   layouts: Record<Orientation, Layout | null>;
   orientation: Orientation;
   page: string | null;
@@ -69,7 +69,7 @@ const describe = (layout: Layout) => {
   return `${pages} pages, ${tiles} tiles`;
 };
 
-export function createEditor() {
+function createEditor() {
   const store = writable<EditorState>(initial());
   const state = () => get(store);
   const current = () => state().layouts[state().orientation];

@@ -1,5 +1,4 @@
 pub mod app_dirs;
-pub mod edit;
 pub mod frame;
 pub mod layout;
 pub mod settings;

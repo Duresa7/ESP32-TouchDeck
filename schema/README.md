@@ -186,10 +186,14 @@ The schema does not check installed programs, URLs, accounts, or source availabi
 A widget's `account` picks one reading from its source. An empty account means the
 source's single or aggregate value. Source plugins interpret `field`.
 
-A `cliproxyapi` account is a provider-prefixed key such as `codex:alice@example.com`. An empty account
-means the aggregate across all entries. Its `status` is the worst entry's status,
-and its counts are summed. It supplies usage fields `five_hour_pct` and
-`seven_day_pct`, reset fields, `plan`, `status`, and counts such as `recent_10m`.
+A `cliproxyapi` account uses a `provider:email` key, such as
+`codex:alice@example.com`. Usage fields are `five_hour_pct`, `seven_day_pct`,
+`five_hour_reset`, `seven_day_reset`, and `plan`. An empty account selects the
+highest available percentage for each usage window across accounts. A missing
+window is unavailable, not zero; plans and reset times belong to individual accounts.
+
+The `status`, `success`, `failed`, and `recent_10m` fields remain available. With
+an empty account, `status` is the worst entry's status and counts are summed.
 
 The schema does not check accounts. The app resolves them.
 

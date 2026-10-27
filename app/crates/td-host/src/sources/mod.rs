@@ -10,14 +10,13 @@ pub mod scheduler;
 
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use td_core::app_dirs::Dirs;
 use td_core::{Layout, Request};
 
 pub use td_core::app_dirs::write_atomic;
@@ -128,11 +127,6 @@ pub fn key_hint(key: &str) -> String {
 pub fn unix_ms(time: SystemTime) -> u64 {
     time.duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_millis() as u64)
-}
-
-/// `sources.json` in the app's config folder. See [`td_core::app_dirs`].
-pub fn config_path() -> PathBuf {
-    Dirs::current().sources_config()
 }
 
 /// What the sources page saves. The management key is never part of it.

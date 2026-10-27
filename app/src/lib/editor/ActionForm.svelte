@@ -1,13 +1,13 @@
 <script lang="ts" module>
   import type { Action, ActionType, Modifier } from './validate.ts';
 
-  export interface Choice {
+  interface Choice {
     usage: number;
     name: string;
   }
 
   /** HID keyboard usages: F1 to F24, letters, and digits. */
-  export const KEYS: Choice[] = [
+  const KEYS: Choice[] = [
     ...Array.from({ length: 12 }, (_, i) => ({ usage: 58 + i, name: `F${i + 1}` })),
     ...Array.from({ length: 12 }, (_, i) => ({ usage: 104 + i, name: `F${i + 13}` })),
     ...Array.from({ length: 26 }, (_, i) => ({ usage: 4 + i, name: String.fromCharCode(65 + i) })),
@@ -16,7 +16,7 @@
   ];
 
   /** HID consumer usages for the media keys. */
-  export const MEDIA: Choice[] = [
+  const MEDIA: Choice[] = [
     { usage: 205, name: 'Play/Pause' },
     { usage: 181, name: 'Next track' },
     { usage: 182, name: 'Previous track' },
@@ -26,9 +26,9 @@
     { usage: 234, name: 'Volume down' },
   ];
 
-  export const SOURCES = ['cliproxyapi'];
+  const SOURCES = ['cliproxyapi'];
 
-  export function fresh(type: ActionType, pages: string[]): Action {
+  function fresh(type: ActionType, pages: string[]): Action {
     switch (type) {
       case 'key':
         return { type, usage: 58, mods: [] };

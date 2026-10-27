@@ -75,10 +75,6 @@ struct Entry {
     provider: String,
     r#type: String,
     status: String,
-    #[serde(rename = "status_message")]
-    _status_message: Option<String>,
-    #[serde(rename = "account_type")]
-    _account_type: Option<String>,
     disabled: bool,
     unavailable: bool,
     success: u64,

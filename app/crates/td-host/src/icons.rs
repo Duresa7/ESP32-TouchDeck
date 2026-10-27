@@ -140,10 +140,6 @@ impl IconCache {
         IconCache { dir }
     }
 
-    pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-
     /// Stores an icon file and returns its id.
     pub fn put(&self, file: &[u8]) -> Result<String, String> {
         if !icon_pack::is_icon(file) {
