@@ -86,11 +86,7 @@ impl SourcesState {
                 Arc::new(MemoryKeys::default()),
             )
         } else {
-            let dirs = Dirs::current();
-            for problem in dirs.migrate() {
-                eprintln!("touchdeck: cannot move old source data: {problem}");
-            }
-            let file = dirs.sources_config();
+            let file = Dirs::current().sources_config();
             (file.clone(), Config::load(&file), Arc::new(OsKeys))
         };
         SourcesState {

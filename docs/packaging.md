@@ -12,7 +12,7 @@ Before **Install and close TouchDeck**, export any unsaved layout edits, disconn
 
 The application identifier remains `io.github.duresa7.touchdeck`. Upgrades replace binaries/resources and retain per-user config, approvals, source settings/state and icon cache. They do not modify the deck's stored layouts. No profile deletion or explicit uninstall is part of updating. Unsaved editor state is in memory: export before closing. Actual installed upgrade/preservation needs a disposable Windows environment; source/fixture checks alone do not establish it.
 
-The bundled firmware always installs as `firmware/touchdeck.tdfw`. `install-manifest.json` records its version, source revision, bundle SHA-256, and image/ELF hashes. The NSIS preinstall hook removes older `.tdfw` resources.
+The bundled firmware always installs as `firmware/touchdeck.tdfw`. `install-manifest.json` records its version, source revision, bundle SHA-256, and image/ELF hashes.
 
 Updater signatures authenticate artifacts using the embedded public key. `requireSignedVersion` binds metadata version to the signed version, preventing an old artifact from being advertised under a newer number. TLS and signature checks remain enabled. Metadata checks have a 15-second total deadline. Installer downloads have no total deadline, with a 15-second connect timeout and a 30-second read timeout that resets as data arrives. A failed installer launch keeps the app window and verified download available. Offline retry guidance appears only for network or unavailable-release errors. Updater signatures are separate from Windows Authenticode signing: this work supplies no Authenticode certificate, SmartScreen reputation or store approval.
 
@@ -23,9 +23,9 @@ See the [usage guide](usage.md) for the one-time cleanup note for earlier pre-re
 
 The NSIS template deletes `touchdeck.exe` once. Right after an update another process can hold the new binary for a moment, so the postuninstall hook retries the delete for up to 10 seconds, then marks it for deletion at reboot, and removes the install folder when it is empty. Update mode skips this.
 
-Source config lives in `%APPDATA%\io.github.duresa7.touchdeck\sources.json`, outside the install folder. The first start after an upgrade moves `sources.json` from the old `%APPDATA%\touchdeck` folder if the new config is absent. The uninstaller's **Delete app data** option removes the Tauri identifier folders; a silent uninstall keeps that data. The CLIProxyAPI management key stays in Windows Credential Manager (`touchdeck` / `cliproxyapi-management-key`) after uninstall.
+Source config lives in `%APPDATA%\io.github.duresa7.touchdeck\sources.json`, outside the install folder. The uninstaller's **Delete app data** option removes the Tauri identifier folders; a silent uninstall keeps that data. The CLIProxyAPI management key stays in Windows Credential Manager (`touchdeck` / `cliproxyapi-management-key`) after uninstall.
 
-The `installer-lifecycle` CI job runs only on a disposable GitHub-hosted Windows runner. It proves fresh installation, a passive `/P /UPDATE` replacement, byte-for-byte config/data preservation, stale firmware cleanup, absence of the removed usage helper, and clean uninstall. Five additional update/uninstall rounds retain coverage of the main-executable deletion retry. Never run the lifecycle script on an operator's PC.
+The `installer-lifecycle` CI job runs only on a disposable GitHub-hosted Windows runner. It proves fresh installation, a passive `/P /UPDATE` replacement, byte-for-byte config/data preservation, absence of the removed usage helper, and clean uninstall. Five additional update/uninstall rounds retain coverage of the main-executable deletion retry. Never run the lifecycle script on an operator's PC.
 
 ## Release-owner bootstrap and publication
 

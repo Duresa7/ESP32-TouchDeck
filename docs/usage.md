@@ -322,9 +322,7 @@ Sources configuration lives in
 `%APPDATA%/io.github.duresa7.touchdeck/sources.json` on Windows and
 `${XDG_CONFIG_HOME:-~/.config}/io.github.duresa7.touchdeck/sources.json` on Linux.
 These are the app's per-user Tauri folders, which also hold approvals; the icon
-cache is in the matching Tauri cache folder. Earlier builds kept `sources.json`
-in `%APPDATA%/touchdeck` or `~/.config/touchdeck`. The app moves that file to the
-new config folder the first time it starts. Moving the executable folder does not move
+cache is in the matching Tauri cache folder. Moving the executable folder does not move
 these files. Re-enter the management key through Sources on another PC; it is not
 in the JSON configuration.
 

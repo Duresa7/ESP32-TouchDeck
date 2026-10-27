@@ -327,8 +327,6 @@ public sealed class TouchDeckFileWatch {
         [IO.File]::WriteAllBytes($path, $bytes)
         $sentinels[$path] = $bytes
     }
-    $stale = Join-Path $installDir 'firmware/touchdeck-old.tdfw'
-    [IO.File]::WriteAllText($stale, 'stale firmware fixture')
     # tauri-plugin-updater 2.12.0: config.rs nsis_args (Passive => /P), updater.rs updater_parameters adds /UPDATE.
     # tauri.conf.json selects passive mode; app_updates.rs disables restart, so no /R or /ARGS.
     $uninstaller = Join-Path $installDir 'uninstall.exe'
@@ -337,7 +335,6 @@ public sealed class TouchDeckFileWatch {
     $script:watch.Mark('update exited')
     Write-Diagnostics 'after passive update'
     Assert-Payload
-    Assert-That (-not (Test-Path -LiteralPath $stale)) 'Update removes the stale firmware bundle.'
     foreach ($path in $sentinels.Keys) {
         $label = $(if ($path.StartsWith($configDir)) { 'config' } else { 'state' })
         Assert-That (Same-Bytes $path $sentinels[$path]) "Update preserves the $label sentinel byte-for-byte."

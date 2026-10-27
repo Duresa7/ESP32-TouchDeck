@@ -1,9 +1,3 @@
-!macro NSIS_HOOK_PREINSTALL
-  ; Remove bundles installed by older releases before copying the fixed resource name.
-  Delete "$INSTDIR\firmware\*.tdfw"
-  ClearErrors
-!macroend
-
 !macro NSIS_HOOK_POSTUNINSTALL
   ; The template deletes the main binary once. Right after an update another process can still hold
   ; it for a moment, which left touchdeck.exe behind; retry for 10 seconds, then defer to reboot.
