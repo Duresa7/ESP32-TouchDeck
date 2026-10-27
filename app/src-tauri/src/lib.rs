@@ -25,7 +25,8 @@ fn app_data_override(value: Option<OsString>) -> io::Result<Option<PathBuf>> {
         ));
     }
     std::fs::create_dir_all(&path)?;
-    path.canonicalize().map(Some)
+    // Prefer conventional Windows paths when they can safely represent the canonical path.
+    dunce::canonicalize(path).map(Some)
 }
 
 pub fn run() {
@@ -33,9 +34,13 @@ pub fn run() {
     let app_data = app_data_override(std::env::var_os("TOUCHDECK_APP_DATA_DIR"))
         .expect("invalid TOUCHDECK_APP_DATA_DIR");
     let mut context = tauri::generate_context!();
-    if let Some(base) = &app_data {
+    let mut isolated_windows = Vec::new();
+    if app_data.is_some() {
         for window in &mut context.config_mut().app.windows {
-            window.data_directory = Some(base.join("webview"));
+            if window.create {
+                isolated_windows.push(window.clone());
+                window.create = false;
+            }
         }
     }
     let mock = std::env::var("TOUCHDECK_MOCK").is_ok_and(|value| value == "1");
@@ -146,6 +151,15 @@ pub fn run() {
             };
             app.state::<commands::AppState>().use_dirs(config, logs)?;
             app.state::<commands::AppState>().use_icon_dir(cache);
+            if let Some(base) = &app_data {
+                // tauri-runtime 2.11.3 drops WindowConfig.data_directory during conversion.
+                // Set the builder attribute directly before any isolated WebView starts.
+                for config in &isolated_windows {
+                    tauri::WebviewWindowBuilder::from_config(app, config)?
+                        .data_directory(base.join("webview"))
+                        .build()?;
+                }
+            }
             if let Some(window) = app.get_webview_window("main") {
                 window.set_title(&format!("TouchDeck {BUILD_SHA}"))?;
             }
@@ -178,7 +192,12 @@ mod packaging_tests {
         let resolved = app_data_override(Some(path.clone().into_os_string()))
             .unwrap()
             .unwrap();
-        assert_eq!(resolved, path.canonicalize().unwrap());
+        assert_eq!(
+            resolved.canonicalize().unwrap(),
+            path.canonicalize().unwrap()
+        );
+        #[cfg(windows)]
+        assert!(!resolved.to_string_lossy().starts_with(r"\\?\"));
         let file = scratch.join("file");
         std::fs::write(&file, "fixture").unwrap();
         assert!(app_data_override(Some(file.into_os_string())).is_err());

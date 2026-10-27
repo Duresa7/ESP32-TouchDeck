@@ -39,7 +39,9 @@ impl UpdateError {
     fn updater(error: tauri_plugin_updater::Error) -> Self {
         use tauri_plugin_updater::Error;
         let kind = match &error {
-            Error::Reqwest(error) if !error.is_builder() && !error.is_decode() => {
+            Error::Reqwest(error)
+                if error.is_timeout() || (!error.is_builder() && !error.is_decode()) =>
+            {
                 UpdateErrorKind::Network
             }
             Error::Network(_) | Error::ReleaseNotFound => UpdateErrorKind::Network,
