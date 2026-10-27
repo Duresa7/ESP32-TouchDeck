@@ -20,6 +20,17 @@ async function cardShot(name: string) {
   mkdirSync(out, { recursive: true });
   await card.saveScreenshot(join(out, `${name}.png`));
 }
+// The app's embedded WebDriver does not dispatch change when clicking an option.
+// Use the editor spec's event-driving convention for native selects.
+async function choose(testid: string, value: string) {
+  await browser.execute((id, next) => {
+    const select = document.querySelector(`[data-testid="${id}"]`);
+    if (!(select instanceof HTMLSelectElement)) throw new Error(`missing select: ${id}`);
+    select.value = next;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  }, testid, value);
+  await browser.waitUntil(async () => (await $(`[data-testid="${testid}"]`).getValue()) === value, { timeout: 5_000 });
+}
 const dashboards = (sets: Set[]) => sets.filter((set) => set.m === 'dashboard.set');
 const tile = (sets: Set[], id: string) => sets.filter((set) => set.m === 'widget.set' && set.tile === id);
 
@@ -196,10 +207,13 @@ describe('cliproxyapi source', () => {
     expect(fields).toEqual(PROXY_FIELDS);
     const accounts = await $$('[data-testid="action-account"] option').map((option) => option.getValue());
     expect(accounts).toEqual(['', ...ACCOUNTS, 'codex:disabled@example.com']);
-    await $('[data-testid="action-account"]').selectByAttribute('value', 'claude:alice@example.com');
-    await $('[data-testid="action-field"]').selectByAttribute('value', 'seven_day_pct');
+    await choose('action-account', 'claude:alice@example.com');
+    await choose('action-field', 'seven_day_pct');
+    await $('[data-testid="tile"][data-id="claude"]').click();
+    await $('[data-testid="tile"][data-id="codex"]').click();
     expect(await $('[data-testid="action-account"]').getValue()).toBe('claude:alice@example.com');
-    await $('[data-testid="action-source"]').selectByAttribute('value', 'claude-status');
+    expect(await $('[data-testid="action-field"]').getValue()).toBe('seven_day_pct');
+    await choose('action-source', 'claude-status');
     expect(await $('[data-testid="action-field"]').getTagName()).toBe('input');
     expect(await $('[data-testid="action-account"]').getTagName()).toBe('input');
     await openSources();

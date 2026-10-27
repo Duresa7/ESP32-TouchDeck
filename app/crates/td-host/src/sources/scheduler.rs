@@ -139,7 +139,12 @@ impl Scheduler {
             {
                 let status = readings
                     .iter()
-                    .find(|r| r.field == "status" && r.account == binding.account)?;
+                    .find(|r| r.field == "status" && r.account == binding.account)
+                    .or_else(|| {
+                        readings
+                            .iter()
+                            .find(|r| r.field == "status" && r.account.is_empty())
+                    })?;
                 return Some(Request::WidgetSet {
                     tile: binding.tile.clone(),
                     value: "unavailable".to_owned(),

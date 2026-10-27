@@ -322,6 +322,7 @@ fn the_source_only_reads_auth_files_with_the_bearer_key_and_shows_its_last_four(
     ]);
     proxy.poll_at(SystemTime::now());
     proxy.refresh();
+    proxy.refresh();
     let calls = fetch.calls.lock().unwrap().clone();
     assert_eq!(calls.len(), 2);
     for (url, bearer) in &calls {
@@ -652,6 +653,12 @@ fn a_failed_usage_window_clears_the_previous_widget_value_and_recovers() {
             Some(expected)
         );
     }
+    fetch.script(vec![Ok("[]".to_owned())]);
+    scheduler.update("cliproxyapi", proxy.poll());
+    assert_eq!(
+        tile_value(&scheduler.due(start + Duration::from_secs(6)), "usage").as_deref(),
+        Some("unavailable")
+    );
 }
 
 #[test]

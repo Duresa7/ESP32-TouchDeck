@@ -10,7 +10,9 @@ use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use url::{Host, Url};
 
-use super::{CLIPROXYAPI, FAILS_TO_STALE, Info, KeyStore, Reading, Source, key_hint, unix_ms};
+use super::{
+    CLIPROXYAPI, FAILS_TO_STALE, Info, KeyStore, Reading, RefreshGate, Source, key_hint, unix_ms,
+};
 
 pub const AUTH_FILES: &str = "/v0/management/auth-files";
 pub const API_CALL: &str = "/v0/management/api-call";
@@ -542,6 +544,7 @@ pub struct CliProxy {
     fetch: Box<dyn Fetch>,
     last: Vec<Reading>,
     info: ProxyInfo,
+    refresh_gate: RefreshGate,
 }
 
 impl CliProxy {
@@ -557,6 +560,7 @@ impl CliProxy {
             keys,
             fetch,
             last: Vec::new(),
+            refresh_gate: RefreshGate::default(),
         }
     }
 
@@ -652,6 +656,15 @@ impl Source for CliProxy {
     }
     fn poll(&mut self) -> Vec<Reading> {
         self.poll_at(SystemTime::now())
+    }
+    fn refresh(&mut self) -> Vec<Reading> {
+        // Also gate execution: requests queued behind a slow poll must not bunch up
+        // into provider calls less than 15 s apart when that poll finally finishes.
+        if self.refresh_gate.allow(std::time::Instant::now()) {
+            self.poll()
+        } else {
+            self.last.clone()
+        }
     }
     fn info(&self) -> Info {
         Info::Proxy(self.info.clone())
