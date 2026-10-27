@@ -49,8 +49,9 @@ candidates. A candidate is not a published release.
 Desktop app installation and deck firmware installation are separate. The app's
 **Update** view takes a `.tdfw` bundle, not the desktop installer or the app update
 metadata. Use the bundle that accompanies the intended firmware build for this
-board. A published release is planned to list a `touchdeck-<version>.tdfw` asset,
-and the Windows installer places one in its `firmware/` folder. Neither exists
+board. A published release is planned to list a `touchdeck.tdfw` asset,
+and the Windows installer places it at `firmware/touchdeck.tdfw`. Its version and
+SHA-256 are recorded in `install-manifest.json`. Neither exists
 until a release is published, so build a bundle yourself until then.
 
 If you build firmware yourself, use ESP-IDF 6.1 and the

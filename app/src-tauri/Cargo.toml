@@ -14,7 +14,9 @@ crate-type = ["rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+dunce = "1"
 keyring = "4"
+reqwest = { version = "0.13", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = [] }
@@ -31,4 +33,3 @@ updater-fixture = []
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
-reqwest = { version = "0.13", default-features = false }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createAppUpdater, type UpdateInfo, type UpdateState } from './controller.ts';
+import { createAppUpdater, parseUpdateError, type UpdateError, type UpdateInfo, type UpdateState } from './controller.ts';
 
 const update: UpdateInfo = { version: '0.2.0', currentVersion: '0.1.0', notes: 'Fixture release' };
 
@@ -28,17 +28,35 @@ test('offline checks and signature failure keep the app usable and never offer i
   const states: UpdateState[] = [];
   let offline = true;
   const updater = createAppUpdater({ changed: (state) => states.push(state), api: {
-    check: async () => { if (offline) throw new Error('offline fixture'); return update; },
-    download: async () => { throw new Error('signature fixture'); },
+    check: async () => { if (offline) throw { kind: 'network', message: 'offline fixture' } satisfies UpdateError; return update; },
+    download: async () => { throw { kind: 'signature', message: 'signature fixture' } satisfies UpdateError; },
     install: async () => { assert.fail('unverified installer must not run'); },
   } });
   await updater.check();
-  assert.equal(states.at(-1)?.kind, 'error');
+  assert.deepEqual(states.at(-1), { kind: 'error', error: { kind: 'network', message: 'offline fixture' } });
   offline = false;
   await updater.check();
   await updater.download();
-  assert.equal(states.at(-1)?.kind, 'error');
+  assert.deepEqual(states.at(-1), { kind: 'error', error: { kind: 'signature', message: 'signature fixture' } });
   await updater.install();
+});
+
+test('permanent configuration and platform errors retain their kind instead of suggesting an offline retry', async () => {
+  for (const kind of ['unconfigured', 'unsupported'] satisfies UpdateError['kind'][]) {
+    const states: UpdateState[] = [];
+    const error: UpdateError = { kind, message: `${kind} fixture` };
+    const updater = createAppUpdater({ changed: (state) => states.push(state), api: {
+      check: async () => { throw error; },
+      download: async () => assert.fail('no update is available'),
+      install: async () => assert.fail('no installer is available'),
+    } });
+    await updater.check();
+    assert.deepEqual(states.at(-1), { kind: 'error', error });
+    await updater.download();
+    await updater.install();
+  }
+  assert.deepEqual(parseUpdateError({ kind: 'future', message: 'unknown' }), { kind: 'internal', message: '[object Object]' });
+  assert.deepEqual(parseUpdateError(new Error('unexpected')), { kind: 'internal', message: 'Error: unexpected' });
 });
 
 test('current version and rejected transfer reservation are recoverable states', async () => {
