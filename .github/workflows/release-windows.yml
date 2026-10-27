@@ -1,0 +1,95 @@
+name: draft Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v<app-version> tag created by the release owner
+        required: true
+      notes:
+        description: Release notes shown in App updates
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: draft-windows-release
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_NOTES: ${{ inputs.notes }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: app/package.json
+      - name: Validate release identity and existing signing configuration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $config = Get-Content app/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          if ($env:RELEASE_TAG -ne "v$($config.version)") { throw 'Tag must match the app version.' }
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY -or -not $env:UPDATER_PUBLIC_KEY) { throw 'Release owner must configure the durable updater keypair first.' }
+          $env:UPDATER_PUBLIC_KEY | Set-Content "$env:RUNNER_TEMP/updater.pub"
+          $env:RELEASE_NOTES | Set-Content "$env:RUNNER_TEMP/release-notes.md"
+          git diff --exit-code
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Install locked build dependencies on disposable runner
+        shell: pwsh
+        run: |
+          pnpm --dir app install --frozen-lockfile
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          git clone --branch v6.1 --recursive --depth 1 https://github.com/espressif/esp-idf.git "$env:RUNNER_TEMP/esp-idf"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP/esp-idf/install.ps1" esp32s3
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Build production installer, helper and matching radio-free firmware
+        shell: pwsh
+        run: |
+          . "$env:RUNNER_TEMP/esp-idf/export.ps1"
+          python app/scripts/package_windows.py build --out "$env:RUNNER_TEMP/touchdeck-release" --public-key-file "$env:RUNNER_TEMP/updater.pub" --notes-file "$env:RUNNER_TEMP/release-notes.md"
+          exit $LASTEXITCODE
+      - name: Verify signed installer with local HTTPS fixture without installing
+        shell: pwsh
+        run: |
+          python app/scripts/verify_updater.py --assets "$env:RUNNER_TEMP/touchdeck-release/release-assets" --out "$env:RUNNER_TEMP/updater-fixture" --cargo-target "$env:RUNNER_TEMP/touchdeck-release/build/app" --openssl 'C:/Program Files/Git/usr/bin/openssl.exe'
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-candidate
+          path: ${{ runner.temp }}/touchdeck-release/release-assets/*
+          if-no-files-found: error
+      - name: Create or update draft only; release owner publishes separately
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $existing = gh release view $env:RELEASE_TAG --json isDraft 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            if (-not ($existing | ConvertFrom-Json).isDraft) { throw 'Refusing to replace assets of a published release.' }
+          } else {
+            gh release create $env:RELEASE_TAG --draft --verify-tag --title "TouchDeck $env:RELEASE_TAG" --notes-file "$env:RUNNER_TEMP/release-notes.md"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          $assets = Get-ChildItem "$env:RUNNER_TEMP/touchdeck-release/release-assets" -File | ForEach-Object FullName
+          gh release upload $env:RELEASE_TAG @assets --clobber
+          exit $LASTEXITCODE

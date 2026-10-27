@@ -488,6 +488,47 @@ mod tests {
     }
 
     #[test]
+    fn displayed_layout_state_ignores_inactive_pushes_and_saved_orientation_until_reboot() {
+        let deck = MockDeck::new();
+        let session = open(&deck);
+        let fixture = |orientation: &str| {
+            Layout::parse(
+                &serde_json::to_vec(&json!({
+                    "schema": 1, "name": orientation, "orientation": orientation,
+                    "pages": [{"id": "shared", "title": "Fixture", "kind": "grid",
+                        "rows": 1, "cols": 1, "tiles": [{"id": "action", "label": "Harmless",
+                            "row": 0, "col": 0, "rowSpan": 1, "colSpan": 1, "icon": null,
+                            "action": {"type": "none"}}]}]
+                }))
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        let landscape = fixture("landscape");
+        let portrait = fixture("portrait");
+        put_layout(&session, Orientation::Landscape, &landscape).unwrap();
+        let inactive = put_layout(&session, Orientation::Portrait, &portrait).unwrap();
+        assert_eq!(inactive.state.name, landscape.name);
+        assert_eq!(inactive.state.orientation, Orientation::Landscape);
+        session
+            .request(
+                &Request::SettingsPut(td_core::Settings {
+                    orientation: Orientation::Portrait,
+                    ..td_core::Settings::default()
+                }),
+                Duration::from_secs(1),
+            )
+            .unwrap();
+        let shown = session.layout_state(Duration::from_secs(1)).unwrap();
+        assert_eq!(shown.name, landscape.name);
+        assert_eq!(shown.orientation, Orientation::Landscape);
+        session.send_line("reboot").unwrap();
+        let shown = session.layout_state(Duration::from_secs(1)).unwrap();
+        assert_eq!(shown.name, portrait.name);
+        assert_eq!(shown.orientation, Orientation::Portrait);
+    }
+
+    #[test]
     fn a_lost_chunk_goes_again() {
         let deck = MockDeck::new();
         deck.lose_chunks([1, 1, 3]);

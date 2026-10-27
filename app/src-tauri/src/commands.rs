@@ -18,6 +18,7 @@ use td_link::mock::MOCK_PORT;
 use td_link::xfer::{IconSync, PutReport, get_layout, prune_icons, push_icons, put_layout};
 use td_link::{Incoming, MockDeck, Serial, Session, SessionConfig, Transport};
 
+use crate::app_updates::AppUpdateGate;
 use crate::sources::SourcesState;
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(1);
@@ -155,9 +156,10 @@ async fn blocking<T: Send + 'static>(
 #[tauri::command]
 pub async fn list_decks(app: AppHandle) -> Result<Vec<Candidate>, String> {
     blocking(move || {
+        let _transfer = app.state::<AppUpdateGate>().begin_transfer()?;
         let state = app.state::<AppState>();
         if state.updating.load(Ordering::Acquire) {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         let connected = state.connected();
         let ports: Vec<String> = match &state.mock {
@@ -165,9 +167,9 @@ pub async fn list_decks(app: AppHandle) -> Result<Vec<Candidate>, String> {
             None => td_link::discover::candidate_ports(),
         };
         if state.mock.is_none() && connected.is_none() {
-            return discover();
+            return Ok(discover());
         }
-        ports
+        Ok(ports
             .into_iter()
             .map(|port| match &connected {
                 Some((info, _)) if info.port == port => Candidate {
@@ -184,14 +186,15 @@ pub async fn list_decks(app: AppHandle) -> Result<Vec<Candidate>, String> {
                     Candidate { port, probe }
                 }
             })
-            .collect()
+            .collect())
     })
-    .await
+    .await?
 }
 
 #[tauri::command]
 pub async fn connect(app: AppHandle, port: String) -> Result<DeckInfo, String> {
     blocking(move || {
+        let _transfer = app.state::<AppUpdateGate>().begin_transfer()?;
         let state = app.state::<AppState>();
         if state.updating.load(Ordering::Acquire) {
             return Err("firmware update in progress".into());
@@ -338,6 +341,7 @@ pub struct PushReport {
 #[tauri::command]
 pub async fn push_layout(app: AppHandle, layout: String) -> Result<PushReport, String> {
     blocking(move || {
+        let _transfer = app.state::<AppUpdateGate>().begin_transfer()?;
         let parsed = parse_layout(&layout)?;
         let session = session(&app)?;
         let cache = app.state::<AppState>().icon_cache()?;
@@ -345,9 +349,9 @@ pub async fn push_layout(app: AppHandle, layout: String) -> Result<PushReport, S
             .map_err(|error| format!("icons: {error}"))?;
         let put =
             put_layout(&session, parsed.orientation, &parsed).map_err(|error| error.to_string())?;
-        app.state::<SourcesState>().use_layout(parsed);
-        // The deck may now show another layout, so the next press reads it again.
-        *app.state::<AppState>().action_layout.lock().unwrap() = None;
+        if put.state.source == "storage" && put.state.orientation == parsed.orientation {
+            use_deck_layout(&app, parsed);
+        }
         Ok(PushReport { put, icons })
     })
     .await?
@@ -360,6 +364,7 @@ pub async fn remove_unused_icons(
     layouts: Vec<String>,
 ) -> Result<Vec<String>, String> {
     blocking(move || {
+        let _transfer = app.state::<AppUpdateGate>().begin_transfer()?;
         let session = session(&app)?;
         let mut keep = std::collections::BTreeSet::new();
         for text in &layouts {
@@ -419,6 +424,7 @@ pub async fn take_app_icon(app: AppHandle, path: String) -> Result<String, Strin
 #[tauri::command]
 pub async fn pull_layout(app: AppHandle, orientation: Orientation) -> Result<String, String> {
     blocking(move || {
+        let _transfer = app.state::<AppUpdateGate>().begin_transfer()?;
         let report =
             get_layout(&*session(&app)?, orientation).map_err(|error| error.to_string())?;
         String::from_utf8(report.data).map_err(|_| "the deck's layout is not UTF-8".to_owned())
@@ -638,24 +644,30 @@ fn summary(layout: &Layout, source: &str) -> LayoutSummary {
 /// Reads the layout the deck shows, so a press resolves to the tile's action. A deck that
 /// stores no layout shows the built-in one, which has no PC actions, and this keeps what it had.
 fn pull_action_layout(app: &AppHandle, session: &Session) -> bool {
-    let orientation = session
-        .request(&Request::SettingsGet, LAYOUT_PULL_TIMEOUT)
-        .ok()
-        .and_then(|reply| reply.fields::<Settings>().ok())
-        .map_or(td_core::Orientation::Landscape, |settings| {
-            settings.orientation
-        });
-    let Ok(report) = td_link::xfer::get_layout(session, orientation) else {
+    let Ok(_transfer) = app.state::<AppUpdateGate>().begin_transfer() else {
+        return false;
+    };
+    let Ok(shown) = session.layout_state(LAYOUT_PULL_TIMEOUT) else {
+        return false;
+    };
+    if shown.source != "storage" {
+        return false;
+    }
+    let Ok(report) = td_link::xfer::get_layout(session, shown.orientation) else {
         return false;
     };
     let Ok(layout) = Layout::parse(&report.data) else {
         return false;
     };
+    use_deck_layout(app, layout);
+    true
+}
+
+fn use_deck_layout(app: &AppHandle, layout: Layout) {
     app.state::<SourcesState>().use_layout(layout.clone());
     let summary = summary(&layout, "deck");
     *app.state::<AppState>().action_layout.lock().unwrap() = Some((layout, "deck".into()));
     let _ = app.emit("action-layout", summary);
-    true
 }
 
 fn resolve(app: &AppHandle, page: &str, tile: &str) -> Option<Plan> {
@@ -1004,6 +1016,7 @@ pub async fn update_firmware(
     recover: bool,
 ) -> Result<(), String> {
     blocking(move || {
+        let _transfer = app.state::<AppUpdateGate>().begin_transfer()?;
         let bundle = td_link::bundle::Bundle::parse(&bytes)?;
         let state = app.state::<AppState>();
         if state.updating.swap(true, Ordering::AcqRel) {

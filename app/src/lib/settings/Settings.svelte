@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AppUpdates from '../updates/AppUpdates.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import type { Orientation } from '../editor/validate.ts';
 
@@ -99,6 +100,7 @@
       {online ? (status?.text ?? '') : 'Connect a deck to change its settings.'}
     </p>
   </form>
+  <AppUpdates {online} />
 </section>
 
 <style>
