@@ -18,6 +18,7 @@ keyring = "4"
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = [] }
+tauri-plugin-updater = "~2.12.0"
 tauri-plugin-wdio-webdriver = { version = "1.5", optional = true }
 td-core.workspace = true
 td-host.workspace = true
@@ -25,3 +26,9 @@ td-link.workspace = true
 
 [features]
 e2e = ["dep:tauri-plugin-wdio-webdriver"]
+# Compiles only the ignored HTTPS fixture test; no runtime hooks or WebDriver.
+updater-fixture = []
+
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+reqwest = { version = "0.13", default-features = false }

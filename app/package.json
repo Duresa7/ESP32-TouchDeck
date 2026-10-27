@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "package:windows": "python scripts/package_windows.py build",
+    "package:verify": "python scripts/package_windows.py verify",
     "tauri": "tauri",
     "lint": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
     "test": "node --test \"src/lib/*.test.ts\" \"src/lib/*/*.test.ts\" \"e2e/*.test.ts\"",
