@@ -81,4 +81,22 @@ describe('statusline install', () => {
     expect(readFileSync(settings, 'utf8')).toBe(installed);
     expect(await $('[data-testid="statusline-install"]').isEnabled()).toBe(false);
   });
+
+  it('removes the shim, puts the old command back byte for byte, then has nothing to do', async () => {
+    await $('[data-testid="statusline-remove"]').click();
+    const removal = $('[data-testid="statusline-removal"]');
+    await removal.waitForExist({ timeout: 5_000 });
+    expect(await removal.getAttribute('data-changed')).toBe('true');
+    expect(await $('[data-testid="statusline-restored"]').getText()).toBe(OLD_COMMAND);
+    expect(readFileSync(settings, 'utf8')).toBe(BEFORE);
+    copyFileSync(settings, join(out, 'settings-removed.json'));
+    await shot('remove');
+
+    await $('[data-testid="statusline-remove"]').click();
+    await browser.waitUntil(async () => (await $('[data-testid="statusline-removal"]').getAttribute('data-changed')) === 'false', {
+      timeout: 5_000,
+      timeoutMsg: 'a second remove still changed the file',
+    });
+    expect(readFileSync(settings, 'utf8')).toBe(BEFORE);
+  });
 });

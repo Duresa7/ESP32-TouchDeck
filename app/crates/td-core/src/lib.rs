@@ -1,7 +1,9 @@
+pub mod app_dirs;
 pub mod edit;
 pub mod frame;
 pub mod layout;
 pub mod settings;
+pub mod statusline;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};

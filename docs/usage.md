@@ -266,6 +266,14 @@ running. Before the first replacement of an existing file, it keeps a
 `settings.json.touchdeck.bak` beside the settings file if no such backup exists.
 Review the entry again if you move the app or helper.
 
+To undo Install, select **Remove** in the same card. It puts the wrapped command
+back as the status-line command, or removes the status-line entry if there was no
+earlier command. It leaves the settings file alone if the entry does not run
+`td-statusline`. Select Remove before you uninstall TouchDeck, or before you move
+the app or helper, so that the provider does not keep calling a helper that is
+gone. `td-statusline --unwrap` does the same thing from a terminal; see
+[packaging](packaging.md#uninstall).
+
 For a widget, choose Source `claude-status`, leave Account empty, and set Field to
 `model`, `context_pct`, `cost_usd`, `five_hour_pct`, or `seven_day_pct`. The app reads
 the newest session file. Fields appear only when the status-line document supplies
@@ -314,13 +322,18 @@ location rather than relying on the **Exported** status alone. A layout export
 does not include bitmap files, device settings, source configuration, management
 keys, command approvals, or logs.
 
-Sources configuration lives in `%APPDATA%/touchdeck/sources.json` on Windows and
-`${XDG_CONFIG_HOME:-~/.config}/touchdeck/sources.json` on Linux. Status-line state
-uses `%LOCALAPPDATA%/touchdeck/claude-status` or
-`${XDG_STATE_HOME:-~/.local/state}/touchdeck/claude-status`. The app stores approvals
-and icon caches in its separate per-user Tauri config and cache directories.
-Moving the executable folder does not move these files. Re-enter the management
-key through Sources on another PC; it is not in the JSON configuration.
+Sources configuration lives in
+`%APPDATA%/io.github.duresa7.touchdeck/sources.json` on Windows and
+`${XDG_CONFIG_HOME:-~/.config}/io.github.duresa7.touchdeck/sources.json` on Linux.
+Status-line state uses `%LOCALAPPDATA%/io.github.duresa7.touchdeck/claude-status`
+or `${XDG_DATA_HOME:-~/.local/share}/io.github.duresa7.touchdeck/claude-status`.
+These are the app's per-user Tauri folders, which also hold approvals; the icon
+cache is in the matching Tauri cache folder. Earlier builds kept the Sources files
+in `touchdeck` folders (`%APPDATA%/touchdeck` and `%LOCALAPPDATA%/touchdeck`, or
+`~/.config/touchdeck` and `~/.local/state/touchdeck`). The app moves them to the
+new folders the first time it starts. Moving the executable folder does not move
+these files. Re-enter the management key through Sources on another PC; it is not
+in the JSON configuration.
 
 ## Update the desktop app
 

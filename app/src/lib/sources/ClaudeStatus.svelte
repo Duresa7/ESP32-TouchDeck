@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { ago, statuslineInstall, statuslinePreview, type ClaudeInfo, type Config, type InstallPreview, type SourcesView } from './api.ts';
+  import { ago, statuslineInstall, statuslinePreview, statuslineRemove, type ClaudeInfo, type Config, type InstallPreview, type RemoveResult, type SourcesView } from './api.ts';
 
   let { view, draft, info }: { view: SourcesView; draft: Config; info: ClaudeInfo | undefined } = $props();
 
   let preview = $state<InstallPreview | null>(null);
+  let removal = $state<RemoveResult | null>(null);
   let problem = $state<string | null>(null);
   let busy = $state(false);
 
@@ -13,8 +14,22 @@
   async function run(action: typeof statuslinePreview) {
     busy = true;
     problem = null;
+    removal = null;
     try {
       preview = await action(draft.claude_settings);
+    } catch (error) {
+      problem = String(error);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function remove() {
+    busy = true;
+    problem = null;
+    preview = null;
+    try {
+      removal = await statuslineRemove(draft.claude_settings);
     } catch (error) {
       problem = String(error);
     } finally {
@@ -65,7 +80,8 @@
 
   <h4>Status line entry</h4>
   <p class="note">
-    Put this in <code>~/.claude/settings.json</code>. Install wraps the command already there with <code>--then</code>, so it keeps running.
+    Put this in <code>~/.claude/settings.json</code>. Install wraps the command already there with <code>--then</code>, so it keeps running. Remove puts that command back, or
+    removes the entry when there was none. Uninstalling TouchDeck does the same.
     {#if !view.shim.found}The <code>td-statusline</code> binary is not next to the app, so the entry names it bare and expects it on PATH.{/if}
   </p>
   <pre data-testid="statusline-entry">{entry}</pre>
@@ -84,6 +100,7 @@
     <button class="primary" onclick={() => run(statuslineInstall)} disabled={busy || !preview?.changed || preview.installed} data-testid="statusline-install">
       Install
     </button>
+    <button onclick={remove} disabled={busy} data-testid="statusline-remove">Remove</button>
   </div>
   {#if problem}<p class="bad" data-testid="statusline-error">{problem}</p>{/if}
   {#if preview}
@@ -99,6 +116,23 @@
       </p>
       <pre class="diff" data-testid="statusline-diff">{#each preview.diff as line}<span data-kind={line.kind}>{line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' '} {line.text}
 </span>{/each}</pre>
+    </div>
+  {/if}
+  {#if removal}
+    <div data-testid="statusline-removal" data-changed={removal.changed}>
+      <p class="note">
+        {#if !removal.changed}
+          <code>{removal.path}</code> does not run the shim. Nothing to change.
+        {:else if removal.restored !== null}
+          Removed from <code>{removal.path}</code>. The command is back to <code data-testid="statusline-restored">{removal.restored}</code>.
+        {:else}
+          Removed the status line entry from <code>{removal.path}</code>.
+        {/if}
+      </p>
+      {#if removal.changed}
+        <pre class="diff" data-testid="statusline-removal-diff">{#each removal.diff as line}<span data-kind={line.kind}>{line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' '} {line.text}
+</span>{/each}</pre>
+      {/if}
     </div>
   {/if}
 </section>
