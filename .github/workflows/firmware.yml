@@ -1,18 +1,23 @@
 name: firmware
 
+# Pull requests run these checks once; merging to main does not rerun them.
+# The windows release workflow calls this again on the exact commit it releases.
 on:
-  push:
-    branches: [main]
-    paths: ["firmware/**", "schema/**", "app/scripts/package_windows.py", ".github/workflows/firmware.yml"]
   pull_request:
     paths: ["firmware/**", "schema/**", "app/scripts/package_windows.py", ".github/workflows/firmware.yml"]
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit or tag to check (empty means the triggering ref)
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
   group: firmware-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   firmware:
@@ -28,6 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - name: Build the firmware
@@ -92,6 +98,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:

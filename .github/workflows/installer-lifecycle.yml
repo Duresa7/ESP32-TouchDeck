@@ -1,23 +1,27 @@
 name: installer lifecycle
 
+# Release-time only: the windows release workflow calls this before it publishes.
+# Run it by hand from the Actions tab to check an installer change before a release.
 on:
-  pull_request:
-    paths:
-      - app/src-tauri/windows/installer-hooks.nsh
-      - app/src-tauri/tauri.conf.json
-      - app/scripts/package_windows.py
-      - app/scripts/installer_lifecycle.ps1
-      - .github/workflows/installer-lifecycle.yml
-      - .github/actions/windows-release-build/action.yml
-      - app/crates/td-core/src/app_dirs.rs
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit or tag to test (empty means the triggering ref)
+        type: string
+        default: ""
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit, branch or tag to test (empty means the selected branch)
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
   group: installer-lifecycle-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   installer-lifecycle:
@@ -26,14 +30,16 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
-      # Reuse #43's build recipe, pinned at its main merge so every uses line has a full SHA.
-      # The composite builds the checked-out PR code; durable signing inputs stay empty.
+      # The release build recipe from the same checkout; durable signing inputs stay empty.
       - name: Build and verify disposable test-signed candidate
-        uses: Duresa7/ESP32-TouchDeck/.github/actions/windows-release-build@6d10864379c17db21de0ca148b20716f11c2aeb7
+        uses: ./.github/actions/windows-release-build
         with:
           release-mode: test-signing
-          build-ref: ${{ github.ref }}
+          build-ref: ${{ inputs.ref || github.ref }}
+          # Must differ from windows-release-assets, which the release publish job downloads.
+          artifact-name: installer-lifecycle-candidate
 
       - name: Install, passively update, and uninstall
         shell: pwsh
