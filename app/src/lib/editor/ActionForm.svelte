@@ -53,6 +53,8 @@
 </script>
 
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { PROXY_FIELDS, sourcesStatus } from '../sources/api.ts';
   import { ACTION_TYPES, MODIFIERS } from './validate.ts';
 
   interface Props {
@@ -68,6 +70,30 @@
   // path while typing, without the layout ever holding it.
   let draft = $state<Action>({ type: 'none' });
   let problem = $state<string | null>(null);
+  let accountKeys = $state<string[]>([]);
+
+  onMount(() => {
+    let active = true;
+    const poll = async () => {
+      try {
+        const status = await sourcesStatus();
+        if (active) accountKeys = [...new Set(status.proxy.accounts.map((a) => a.key))];
+      } catch { /* No poll data: keep the free-text account input available. */ }
+    };
+    void poll();
+    const timer = setInterval(poll, 1000);
+    return () => { active = false; clearInterval(timer); };
+  });
+
+  function setSource(source: string) {
+    if (draft.type !== 'widget') return;
+    if (source === 'cliproxyapi') {
+      draft = { ...draft, source, field: PROXY_FIELDS.includes(draft.field) ? draft.field : 'five_hour_pct' };
+      problem = onchange($state.snapshot(draft));
+    } else {
+      set('source', source);
+    }
+  }
 
   $effect.pre(() => {
     const next = JSON.parse(JSON.stringify(action)) as Action;
@@ -196,14 +222,33 @@
   {:else if draft.type === 'widget'}
     <label>
       <span>Source</span>
-      <select value={draft.source} onchange={(e) => set('source', e.currentTarget.value)} data-testid="action-source">
+      <select value={draft.source} onchange={(e) => setSource(e.currentTarget.value)} data-testid="action-source">
         {#each SOURCES as source (source)}
           <option value={source}>{source}</option>
         {/each}
       </select>
     </label>
-    <label><span>Field</span><input value={draft.field} oninput={(e) => set('field', e.currentTarget.value)} data-testid="action-field" spellcheck="false" /></label>
-    <label><span>Account</span><input value={draft.account} oninput={(e) => set('account', e.currentTarget.value)} data-testid="action-account" spellcheck="false" /></label>
+    <label><span>Field</span>
+      {#if draft.source === 'cliproxyapi'}
+        <select value={draft.field} onchange={(e) => set('field', e.currentTarget.value)} data-testid="action-field">
+          {#if !PROXY_FIELDS.includes(draft.field)}<option value={draft.field}>{draft.field} (unknown)</option>{/if}
+          {#each PROXY_FIELDS as field (field)}<option value={field}>{field}</option>{/each}
+        </select>
+      {:else}
+        <input value={draft.field} oninput={(e) => set('field', e.currentTarget.value)} data-testid="action-field" spellcheck="false" />
+      {/if}
+    </label>
+    <label><span>Account</span>
+      {#if draft.source === 'cliproxyapi' && accountKeys.length}
+        <select value={draft.account} onchange={(e) => set('account', e.currentTarget.value)} data-testid="action-account">
+          <option value="">All accounts</option>
+          {#if draft.account && !accountKeys.includes(draft.account)}<option value={draft.account}>{draft.account} (not in latest poll)</option>{/if}
+          {#each accountKeys as account (account)}<option value={account}>{account}</option>{/each}
+        </select>
+      {:else}
+        <input value={draft.account} oninput={(e) => set('account', e.currentTarget.value)} data-testid="action-account" spellcheck="false" />
+      {/if}
+    </label>
   {/if}
 
   {#if problem}

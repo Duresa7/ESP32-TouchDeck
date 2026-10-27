@@ -283,25 +283,49 @@ older than ten minutes becomes stale.
 
 ### Connect CLIProxyAPI
 
-1. Use an existing CLIProxyAPI service with its management API enabled. TouchDeck
-   does not install the service or sign accounts into it.
-2. Turn **On** in the CLIProxyAPI card and set **Base URL**. The default is
-   `http://localhost:8317`. Set **Poll every (s)** as needed, then select **Save**.
-3. Enter the service's management key and select **Save key**. This is separate
-   from the Sources configuration Save. The key uses the OS credential store.
-4. Select **Refresh now** and inspect the accounts table or the reported error.
-5. In Editor, set a widget's Source to `cliproxyapi`. Set Field to `status`,
-   `success`, `failed`, or `recent_10m`. Copy the exact **Account** value shown
-   in Sources for a single account, or leave Account empty for the aggregate.
-6. Push the matching layout and check the Sources feed status.
+TouchDeck shows your Codex and Claude usage limits through your own
+[CLIProxyAPI hub](https://github.com/router-for-me/CLIProxyAPI).
 
-This Source reads `GET /v0/management/auth-files`. Counts reflect fields supplied
-by that response. `recent_10m` uses its newest recent-request bucket. An individual
-account's bar is relative to the busiest account, not a quota percentage. No
-remaining quota or credit balance is provided. After three failed polls, cached
-readings become stale and the deck dims the affected widgets. A widget tap asks
-the Source to refresh. Imported CLIProxyAPI dashboard pages show up to eight
-account rows. Other Source dashboards are not implemented.
+1. Run CLIProxyAPI and enable its management API with a management secret key.
+   Allow remote management only if the hub is not on this PC.
+2. Sign your Codex and Claude accounts into CLIProxyAPI using its login commands
+   or management center. TouchDeck does not handle provider login credentials.
+3. In Sources, turn **On** in **CLIProxyAPI usage limits**, set **Hub URL**, and
+   select **Save**. A local hub can use `http://127.0.0.1:8317`. Use HTTPS for a
+   remote hub; plain HTTP sends the management key unencrypted. HTTPS uses the
+   operating system's certificate trust store, including private CAs installed
+   in the Windows certificate store.
+4. Enter the hub's management key and select **Save key**, then **Refresh now**.
+   The key is stored in Windows Credential Manager, separate from the configuration.
+5. Inspect the table for each account's plan, percentage used, and reset times.
+   In Editor, select Source `cliproxyapi`, then a Field and Account. The copyable
+   account key includes the provider, such as `codex:alice@example.com` or
+   `claude:alice@example.com`, so the same email can be used with both providers.
+6. Push the layout to feed its widgets and CLIProxyAPI dashboard pages.
+
+The usage fields are `five_hour_pct`, `seven_day_pct`, `five_hour_reset`,
+`seven_day_reset`, and `plan`. Reset fields show time remaining at the last poll.
+Codex windows of up to one day use the five-hour fields; longer windows use the
+seven-day fields. **All accounts** (an empty account value) shows the highest
+available percentage for each window. Plans and reset times belong to individual
+accounts. A missing window is unavailable, not zero.
+
+`status`, `success`, `failed`, and `recent_10m` remain available. Aggregate status
+is the worst account status, and aggregate counts are summed. `recent_10m` uses
+the newest request bucket, with each account's bar relative to the busiest account.
+Gemini and other providers show status and counts only for now. Disabled accounts
+are listed but their usage is not polled. Dashboard pages show up to eight rows,
+with provider, account local part, and available usage percentages.
+
+Polling defaults to 120 seconds, with a 60-second minimum. Every poll lists the
+hub's auth files and asks the hub to fetch usage from Codex and Claude; it makes
+provider calls, not just a local cache read. **Refresh now** and widget taps share
+a 15-second refresh limit; extra requests in that window are ignored. A provider
+failure affects only that account and shows a short reason. After three failed
+auth-files polls, cached readings become stale and the deck dims the widgets.
+
+Uninstall leaves the management key in Windows Credential Manager. Select
+**Clear** in Sources before uninstalling to remove it.
 
 ## Back up layouts and restore them
 

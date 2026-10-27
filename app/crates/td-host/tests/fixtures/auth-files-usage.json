@@ -1,0 +1,25 @@
+{
+  "files": [
+    {
+      "id": "codex-alice.json", "auth_index": "codex-alice", "name": "codex-alice.json",
+      "provider": "codex", "email": "alice@example.com", "status": "active",
+      "account_type": "oauth", "disabled": false, "unavailable": false,
+      "id_token": { "chatgpt_account_id": "fixture-account-alice", "plan_type": "plus" },
+      "success": 80, "failed": 0, "recent_requests": [{ "success": 10, "failed": 2 }]
+    },
+    {
+      "id": "claude-alice.json", "auth_index": "claude-alice", "provider": "claude",
+      "email": "alice@example.com", "status": "active", "success": 120, "failed": 3,
+      "recent_requests": [{ "success": 4, "failed": 1 }]
+    },
+    {
+      "id": "gemini-linus.json", "auth_index": "gemini-linus", "provider": "gemini-cli",
+      "email": "linus@example.com", "status": "error", "status_message": "token refresh failed",
+      "unavailable": true, "success": 5, "failed": 9
+    },
+    {
+      "id": "codex-disabled.json", "auth_index": "codex-disabled", "provider": "codex",
+      "email": "disabled@example.com", "disabled": true, "status": "active"
+    }
+  ]
+}

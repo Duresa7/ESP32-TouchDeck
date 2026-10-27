@@ -7,6 +7,7 @@
   let hint = $state<string | null>(null);
   let problem = $state<string | null>(null);
   let busy = $state(false);
+  let copied = $state<string | null>(null);
 
   const shownHint = $derived(hint ?? info?.key_hint ?? view.key_hint);
   const phase = $derived(!draft.cliproxy ? 'off' : info?.ok == null ? 'idle' : info.ok ? 'ok' : info.stale ? 'stale' : 'failing');
@@ -36,11 +37,20 @@
       busy = false;
     }
   }
+
+  async function copyAccount(account: string) {
+    try {
+      await navigator.clipboard.writeText(account);
+      copied = account;
+    } catch {
+      problem = 'Could not copy the account key. Select and copy the text in the table.';
+    }
+  }
 </script>
 
 <section class="card" data-testid="proxy-card">
   <header>
-    <h3>CLIProxyAPI</h3>
+    <h3>CLIProxyAPI usage limits</h3>
     <label class="switch">
       <input type="checkbox" bind:checked={draft.cliproxy} data-testid="proxy-enabled" />
       <span>On</span>
@@ -63,13 +73,16 @@
   {#if info?.error && phase !== 'ok'}<p class="bad" data-testid="proxy-error">{info.error}</p>{/if}
 
   <label class="row">
-    <span>Base URL</span>
+    <span>Hub URL</span>
     <input bind:value={draft.cliproxy_url} spellcheck="false" data-testid="proxy-url" />
   </label>
   <label class="row">
     <span>Poll every (s)</span>
-    <input type="number" min="1" bind:value={draft.cliproxy_interval_s} data-testid="proxy-interval" />
+    <input type="number" min="60" bind:value={draft.cliproxy_interval_s} data-testid="proxy-interval" />
   </label>
+  {#if info?.insecure_http}
+    <p class="warning" role="status" data-testid="proxy-http-warning">This hub uses plain HTTP outside this PC. The management key travels unencrypted. Use HTTPS to protect it.</p>
+  {/if}
   <div class="row">
     <span>Management key</span>
     <div class="key">
@@ -85,24 +98,44 @@
 
   <div class="actions">
     <button onclick={() => refreshSource('cliproxyapi')} disabled={!draft.cliproxy} data-testid="proxy-refresh">Refresh now</button>
+    <span class="note">Each poll asks the providers through your hub. Refreshes are limited to once every 15 s.</span>
   </div>
 
   {#if info && info.accounts.length}
+    <div class="accounts-scroll">
     <table data-testid="proxy-accounts">
-      <thead><tr><th>Account</th><th>Provider</th><th>Status</th><th>OK</th><th>Failed</th><th>Last 10 min</th></tr></thead>
+      <thead><tr><th>Account key</th><th>Provider</th><th>Plan</th><th>5-hour</th><th>7-day</th><th>Status</th></tr></thead>
       <tbody>
-        {#each info.accounts as account (account.email)}
-          <tr data-testid="proxy-account" data-email={account.email} data-status={account.status} data-stale={info.stale}>
-            <td>{account.email}</td>
-            <td>{account.provider}</td>
-            <td>{account.status}</td>
-            <td>{account.success}</td>
-            <td>{account.failed}</td>
-            <td>{account.recent_10m}</td>
+        {#each info.accounts as account, index (`${account.key}:${index}`)}
+          <tr data-testid="proxy-account" data-email={account.email} data-account-key={account.key} data-status={account.status} data-stale={info.stale}>
+            <td class="account-key">
+              <code data-testid="proxy-account-key">{account.key}</code>
+              <button class="copy" onclick={() => copyAccount(account.key)} aria-label={`Copy ${account.key}`} data-testid="proxy-account-copy">{copied === account.key ? 'Copied' : 'Copy'}</button>
+            </td>
+            <td data-testid="proxy-account-provider">{account.provider}</td>
+            <td data-testid="proxy-account-plan">{account.plan ?? '—'}</td>
+            {#each [{ name: 'five-hour', window: account.five_hour }, { name: 'seven-day', window: account.seven_day }] as { name, window } (name)}
+              <td class="window" data-testid={`proxy-account-${name}`}>
+                {#if window}
+                  <strong>{Math.round(window.pct)}%</strong>
+                  <div class="meter" aria-hidden="true"><span style:width={`${window.pct}%`}></span></div>
+                  <small>{window.reset_in === 'now' ? 'resets now' : window.reset_in ? `resets in ${window.reset_in}` : 'reset time unavailable'}</small>
+                {:else}
+                  <span class="muted">—</span>
+                {/if}
+              </td>
+            {/each}
+            <td class="account-status" data-testid="proxy-account-status">
+              <span class="badge">{account.status}</span>
+              {#if account.usage_error}<small class="bad" data-testid="proxy-account-usage-error">{account.usage_error}</small>{/if}
+              <small>{account.success} OK · {account.failed} failed · {account.recent_10m} / 10m</small>
+            </td>
           </tr>
         {/each}
       </tbody>
     </table>
+    </div>
+    <p class="note">Usage is the percentage used. Gemini and other providers show request counts only for now.</p>
   {/if}
 </section>
 
@@ -162,6 +195,8 @@
     display: flex;
     gap: 8px;
     margin: 8px 0;
+    align-items: center;
+    flex-wrap: wrap;
   }
   .switch {
     display: flex;
@@ -170,12 +205,13 @@
   }
   table {
     width: 100%;
+    min-width: 730px;
     border-collapse: collapse;
     font-size: 13px;
   }
   th,
   td {
-    padding: 4px 8px;
+    padding: 10px 8px;
     border-bottom: 1px solid var(--line);
     text-align: left;
   }
@@ -187,4 +223,17 @@
   tr[data-stale='true'] td {
     opacity: 0.6;
   }
+  .accounts-scroll { overflow-x: auto; margin-top: 12px; }
+  .account-key { max-width: 230px; }
+  .account-key code { display: block; overflow-wrap: anywhere; user-select: text; }
+  .copy { padding: 2px 7px; margin-top: 5px; font-size: 11px; }
+  .window { min-width: 100px; }
+  .window strong { font-variant-numeric: tabular-nums; font-weight: 600; }
+  small { display: block; margin-top: 4px; font-size: 11px; color: var(--muted); }
+  .account-status { max-width: 190px; }
+  .badge { font-size: 12px; }
+  .muted { color: var(--muted); }
+  .meter { height: 4px; margin-top: 5px; border-radius: 4px; background: var(--line); overflow: hidden; }
+  .meter span { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+  .warning { padding: 8px 10px; border: 1px solid var(--bad); border-radius: 8px; font-size: 13px; color: var(--bad); }
 </style>

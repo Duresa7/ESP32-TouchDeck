@@ -33,6 +33,14 @@ function Invoke-Checked($name, [string[]]$arguments, $helpText) {
     $output
 }
 
+function Test-PnpmPlaceholderShim($command) {
+    if (-not $command -or [IO.Path]::GetExtension($command.Source) -ne '.cmd') { return $false }
+    # npm 12 can leave pnpm's extensionless shell placeholder when scripts are blocked.
+    # Read the selected shim instead of executing it: ShellExecute would open Pick an app.
+    $shim = Get-Content -LiteralPath $command.Source -Raw
+    $shim -match 'node_modules[\\/]pnpm[\\/]pnpm(?=["''\s]|$)'
+}
+
 function Install-WingetPackage($id, [string[]]$extra = @()) {
     Invoke-Checked 'winget' (@('install', '--id', $id, '--exact', '--source', 'winget', '--silent',
         '--accept-package-agreements', '--accept-source-agreements') + $extra) `
@@ -92,22 +100,34 @@ function Invoke-TouchDeckSetup {
         throw "Expected Node.js 24; got '$($node.Trim())'. $nodeHelp"
     }
 
-    $pnpmHelp = "Repair npm with Node.js 24, then run npm install --global pnpm@$pnpmVersion and rerun setup."
+    $pnpmHelp = "Repair npm with Node.js 24, then run npm install --global pnpm@$pnpmVersion --allow-scripts=pnpm --foreground-scripts and rerun setup. On npm 11, omit --allow-scripts=pnpm."
     $pnpm = ''
-    if (Find-Tool 'pnpm') {
-        # A broken existing shim is diagnosed instead of silently continuing or replacing it.
+    $pnpmCommand = Find-Tool 'pnpm'
+    if (Test-PnpmPlaceholderShim $pnpmCommand) {
+        Write-Host 'Repairing pnpm: its npm shim targets an extensionless shell placeholder.'
+    } elseif ($pnpmCommand) {
         $pnpm = (Invoke-Checked 'pnpm' @('--version') $pnpmHelp) -join "`n"
         if ([string]::IsNullOrWhiteSpace($pnpm)) {
             throw "pnpm --version returned no version (a no-op shim). Inspect Get-Command pnpm -All; remove/repair the stale shim. $pnpmHelp"
         }
     }
     if ($pnpm.Trim() -ne $pnpmVersion) {
-        Invoke-Checked 'npm' @('install', '--global', "pnpm@$pnpmVersion") $pnpmHelp | Out-Host
+        $npm = (Invoke-Checked 'npm' @('--version') $pnpmHelp) -join "`n"
+        if ($npm.Trim() -notmatch '^(\d+)\.\d+\.\d+(?:-[\w.-]+)?$') {
+            throw "npm --version returned no valid version. $pnpmHelp"
+        }
+        $installArguments = @('install', '--global', "pnpm@$pnpmVersion", '--foreground-scripts')
+        # npm 12 defaults to blocking dependency scripts. Earlier npm may not know this flag.
+        if ([int]$Matches[1] -ge 12) { $installArguments += '--allow-scripts=pnpm' }
+        Invoke-Checked 'npm' $installArguments $pnpmHelp | Out-Host
         Update-ProcessPath
+        if (Test-PnpmPlaceholderShim (Find-Tool 'pnpm')) {
+            throw "pnpm shim still targets the extensionless shell placeholder. Inspect Get-Command pnpm -All; repair PATH/shims. $pnpmHelp"
+        }
         $pnpm = (Invoke-Checked 'pnpm' @('--version') $pnpmHelp) -join "`n"
     }
     if ($pnpm.Trim() -ne $pnpmVersion) {
-        throw "Expected pnpm $pnpmVersion; got '$($pnpm.Trim())' (possibly a stale/no-op shim). Inspect Get-Command pnpm -All; repair PATH/shims, open a new PowerShell, and rerun setup."
+        throw "Expected pnpm $pnpmVersion; got '$($pnpm.Trim())' (possibly a stale/no-op shim). Inspect Get-Command pnpm -All; repair PATH/shims, open a new PowerShell, and rerun setup. $pnpmHelp"
     }
 
     if (-not (Find-Tool 'rustup')) { Install-WingetPackage 'Rustlang.Rustup' }

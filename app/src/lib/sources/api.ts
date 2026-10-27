@@ -19,17 +19,32 @@ export interface ClaudeInfo {
   readings: Reading[];
 }
 
+export interface UsageWindow {
+  pct: number;
+  resets_at: number | null;
+  reset_in: string | null;
+}
+
+export const PROXY_FIELDS = ['five_hour_pct', 'seven_day_pct', 'five_hour_reset', 'seven_day_reset', 'plan', 'status', 'success', 'failed', 'recent_10m'];
+
 export interface Account {
+  key: string;
   provider: string;
   email: string;
   status: string;
   success: number;
   failed: number;
   recent_10m: number;
+  plan: string | null;
+  five_hour: UsageWindow | null;
+  seven_day: UsageWindow | null;
+  usage_error: string | null;
+  insecure_http: boolean;
 }
 
 export interface ProxyInfo {
   url: string;
+  insecure_http: boolean;
   key_hint: string | null;
   ok: boolean | null;
   fails: number;
