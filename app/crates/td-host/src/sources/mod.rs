@@ -4,7 +4,7 @@
 //! thread, hands the readings to a [`Scheduler`], and sends the `widget.set` and
 //! `dashboard.set` requests that come due to a [`Sink`], which is the connected deck.
 //! Both sources are passive: the status line one reads files that `td-statusline` writes,
-//! and the CLIProxyAPI one only issues `GET`s.
+//! and CLIProxyAPI lists auth files, then POSTs read-only provider GETs through the hub.
 
 pub mod claude_status;
 pub mod cliproxy;
@@ -32,7 +32,8 @@ pub use scheduler::Scheduler;
 pub const CLAUDE_STATUS: &str = "claude-status";
 pub const CLIPROXYAPI: &str = "cliproxyapi";
 pub const DEFAULT_PROXY_URL: &str = "http://localhost:8317";
-pub const DEFAULT_PROXY_INTERVAL_S: u64 = 300;
+pub const DEFAULT_PROXY_INTERVAL_S: u64 = 120;
+pub const PROXY_REFRESH_FLOOR: Duration = Duration::from_secs(15);
 
 /// A source that fails this many polls in a row marks its readings stale.
 pub const FAILS_TO_STALE: u32 = 3;
@@ -194,7 +195,7 @@ impl Config {
     }
 
     pub fn interval(&self) -> Duration {
-        Duration::from_secs(self.cliproxy_interval_s.max(1))
+        Duration::from_secs(self.cliproxy_interval_s.max(60))
     }
 }
 
@@ -269,7 +270,11 @@ fn spawn_worker(
             }
             refresh = match rx.recv_timeout(every) {
                 Ok(WorkerCmd::Refresh) => {
-                    while let Ok(WorkerCmd::Refresh) = rx.try_recv() {}
+                    while let Ok(cmd) = rx.try_recv() {
+                        if matches!(cmd, WorkerCmd::Stop) {
+                            return;
+                        }
+                    }
                     true
                 }
                 Err(RecvTimeoutError::Timeout) => false,
@@ -291,6 +296,23 @@ struct Core {
     handles: Vec<JoinHandle<()>>,
     generation: u64,
     retry_at: Option<Instant>,
+    proxy_refresh: RefreshGate,
+}
+
+#[derive(Default)]
+struct RefreshGate(Option<Instant>);
+
+impl RefreshGate {
+    fn allow(&mut self, now: Instant) -> bool {
+        if self
+            .0
+            .is_some_and(|last| now.saturating_duration_since(last) < PROXY_REFRESH_FLOOR)
+        {
+            return false;
+        }
+        self.0 = Some(now);
+        true
+    }
 }
 
 impl Core {
@@ -306,6 +328,7 @@ impl Core {
             };
             status.proxy = ProxyInfo {
                 url: self.config.cliproxy_url.clone(),
+                insecure_http: cliproxy::insecure_http(&self.config.cliproxy_url),
                 ..ProxyInfo::default()
             };
         }
@@ -416,7 +439,13 @@ impl Core {
         true
     }
 
-    fn refresh(&self, source: &str) {
+    fn refresh(&mut self, source: &str) {
+        if !self.workers.iter().any(|worker| worker.id == source) {
+            return;
+        }
+        if source == CLIPROXYAPI && !self.proxy_refresh.allow(Instant::now()) {
+            return;
+        }
         for worker in self.workers.iter().filter(|worker| worker.id == source) {
             let _ = worker.tx.send(WorkerCmd::Refresh);
         }
@@ -512,6 +541,7 @@ impl Hub {
             handles: Vec::new(),
             generation: 0,
             retry_at: None,
+            proxy_refresh: RefreshGate::default(),
         };
         core.apply(config);
         let thread = thread::spawn(move || core_loop(core, &rx));
@@ -535,7 +565,7 @@ impl Hub {
         let _ = self.tx.send(Cmd::Sink(sink));
     }
 
-    /// A tap on a tile. The tile's source polls at once when the tile names one.
+    /// A tap asks the tile's source to refresh. CLIProxyAPI accepts at most one per 15 s.
     pub fn pressed(&self, tile: &str) {
         let _ = self.tx.send(Cmd::Press(tile.to_owned()));
     }
@@ -559,5 +589,23 @@ impl Hub {
 impl Drop for Hub {
     fn drop(&mut self) {
         let _ = self.tx.send(Cmd::Stop);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proxy_refresh_ignores_bursts_and_accepts_the_fifteen_second_boundary() {
+        let start = Instant::now();
+        let mut gate = RefreshGate::default();
+        assert!(gate.allow(start));
+        for ms in [0, 1, 100, 14_999] {
+            assert!(!gate.allow(start + Duration::from_millis(ms)));
+        }
+        assert!(gate.allow(start + Duration::from_secs(15)));
+        assert!(!gate.allow(start + Duration::from_secs(29)));
+        assert!(gate.allow(start + Duration::from_secs(30)));
     }
 }
