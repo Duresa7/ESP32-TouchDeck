@@ -36,6 +36,8 @@ def write_json(path, value):
 
 
 def bundle_tool():
+    # Importing the existing tool must not dirty the source checkout with __pycache__.
+    sys.dont_write_bytecode = True
     spec = importlib.util.spec_from_file_location("make_bundle", ROOT / "firmware/tools/make_bundle.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
