@@ -69,8 +69,6 @@ impl Outbound {
 #[derive(Debug)]
 struct State {
     hello: Hello,
-    wifi: td_core::radios::WifiState,
-    wifi_due: Option<Instant>,
     settings: Settings,
     icons: BTreeSet<String>,
     icon_files: HashMap<String, Vec<u8>>,
@@ -140,21 +138,10 @@ impl MockDeck {
             sinks: vec!["log".into(), "link".into()],
             recovery: false,
             layout: "builtin".into(),
-            wifi: None,
         };
         MockDeck {
             state: Arc::new(Mutex::new(State {
                 hello,
-                wifi: td_core::radios::WifiState {
-                    configured: false,
-                    ssid: String::new(),
-                    state: td_core::radios::WifiStatus::Off,
-                    ip: None,
-                    rssi: None,
-                    reason: None,
-                    host: "touchdeck-aabbcc".into(),
-                },
-                wifi_due: None,
                 settings: Settings::default(),
                 icons: BTreeSet::new(),
                 icon_files: HashMap::new(),
@@ -820,11 +807,7 @@ impl MockDeck {
                 return Vec::new();
             }
         };
-        let mut recorded = request.clone();
-        if recorded.get("m").and_then(Value::as_str) == Some("wifi.set") {
-            recorded.remove("password");
-        }
-        self.state().received.push(Value::Object(recorded));
+        self.state().received.push(Value::Object(request.clone()));
         let m = request["m"].as_str().unwrap_or_default().to_owned();
         let fields = self.dispatch(&m, &request);
         let mut reply = Map::from_iter([
@@ -834,9 +817,6 @@ impl MockDeck {
         match fields {
             Ok(fields) => reply.extend(fields),
             Err(error) => {
-                if m == "wifi.set" {
-                    reply.insert("reason".into(), json!("args"));
-                }
                 reply.insert("error".into(), json!(error));
             }
         }
@@ -846,68 +826,6 @@ impl MockDeck {
             .expect("mock replies fit one frame");
         self.state().frames_tx += 1;
         wire
-    }
-
-    fn wifi_request(
-        &self,
-        m: &str,
-        request: &Map<String, Value>,
-    ) -> Result<Map<String, Value>, String> {
-        use td_core::radios::WifiStatus;
-        let mut state = self.state();
-        if m == "wifi.scan" {
-            return Ok(json!({"aps": [
-                {"ssid": "Mock home", "rssi": -42, "auth": "wpa2"},
-                {"ssid": "Mock rejected", "rssi": -65, "auth": "wpa2"},
-                {"ssid": "Mock open", "rssi": -70, "auth": "open"}
-            ]})
-            .as_object()
-            .unwrap()
-            .clone());
-        }
-        if m == "wifi.set" {
-            let ssid = request
-                .get("ssid")
-                .and_then(Value::as_str)
-                .ok_or("invalid network name")?;
-            let password = request
-                .get("password")
-                .and_then(Value::as_str)
-                .ok_or("invalid password length")?;
-            if !td_core::radios::valid_credentials(ssid, password) {
-                return Err("invalid network name or password length".into());
-            }
-            state.wifi.configured = true;
-            state.wifi.ssid = ssid.into();
-            state.wifi.state = WifiStatus::Connecting;
-            state.wifi.ip = None;
-            state.wifi.rssi = None;
-            state.wifi.reason = None;
-            state.wifi_due = Some(Instant::now() + Duration::from_millis(700));
-        } else if m == "wifi.forget" {
-            state.wifi.configured = false;
-            state.wifi.ssid.clear();
-            state.wifi.state = WifiStatus::Off;
-            state.wifi.ip = None;
-            state.wifi.rssi = None;
-            state.wifi.reason = None;
-            state.wifi_due = None;
-        } else if state.wifi_due.is_some_and(|due| Instant::now() >= due) {
-            state.wifi_due = None;
-            if state.wifi.ssid == "Mock rejected" {
-                state.wifi.state = WifiStatus::Failed;
-                state.wifi.reason = Some("auth".into());
-            } else {
-                state.wifi.state = WifiStatus::Connected;
-                state.wifi.ip = Some("192.168.50.42".into());
-                state.wifi.rssi = Some(-42);
-            }
-        }
-        Ok(serde_json::to_value(&state.wifi)
-            .unwrap()
-            .as_object()
-            .unwrap()
-            .clone())
     }
 
     fn dispatch(
@@ -920,10 +838,6 @@ impl MockDeck {
             "hello" => {
                 let mut state = self.state();
                 state.online_since_hello = true;
-                state.hello.wifi = Some(td_core::radios::WifiHello {
-                    state: state.wifi.state,
-                    ip: state.wifi.ip.clone(),
-                });
                 Ok(object(
                     serde_json::to_value(&state.hello).expect("hello serializes"),
                 ))
@@ -933,9 +847,6 @@ impl MockDeck {
                 Ok(object(
                     json!({"t": t, "n": request.get("n").cloned().unwrap_or(Value::Null)}),
                 ))
-            }
-            "wifi.state" | "wifi.set" | "wifi.forget" | "wifi.scan" => {
-                self.wifi_request(m, request)
             }
             "link.state" => Ok(self.link_state()),
             "icon.list" => {
@@ -1142,57 +1053,6 @@ mod tests {
     use super::*;
     use crate::{Session, SessionConfig};
     use td_core::Orientation;
-
-    #[test]
-    fn radios_use_the_fixed_shapes_and_never_record_passwords() {
-        use td_core::radios::{WifiState, WifiStatus};
-        let deck = MockDeck::new();
-        let (session, _incoming) = Session::open(
-            Box::new(deck.connect()),
-            SessionConfig {
-                ping_every: None,
-                ..SessionConfig::default()
-            },
-        )
-        .unwrap();
-        let call = |request: Value| session.call(&request, Duration::from_secs(1)).unwrap();
-        let initial = session.hello(Duration::from_secs(1)).unwrap();
-        assert_eq!(initial.wifi.unwrap().state, WifiStatus::Off);
-        let scan = call(json!({"m":"wifi.scan"}))
-            .fields::<td_core::radios::WifiScan>()
-            .unwrap();
-        assert_eq!(scan.aps.len(), 3);
-        for (ssid, target) in [
-            ("Mock home", WifiStatus::Connected),
-            ("Mock rejected", WifiStatus::Failed),
-        ] {
-            let joining: WifiState =
-                call(json!({"m":"wifi.set", "ssid":ssid, "password":"mock-only-pass"}))
-                    .fields()
-                    .unwrap();
-            assert_eq!(joining.state, WifiStatus::Connecting);
-            deck.state().wifi_due = Some(Instant::now());
-            let joined: WifiState = call(json!({"m":"wifi.state"})).fields().unwrap();
-            assert_eq!(joined.state, target);
-            assert_eq!(joined.ip.is_some(), target == WifiStatus::Connected);
-        }
-        assert!(
-            !serde_json::to_string(&deck.received())
-                .unwrap()
-                .contains("mock-only-pass")
-        );
-        assert!(
-            deck.received()
-                .iter()
-                .all(|request| request.get("password").is_none())
-        );
-        let bad = call(json!({"m":"wifi.set", "ssid":"home", "password":"short"}));
-        assert!(!bad.ok);
-        assert_eq!(bad.fields["reason"], "args");
-        let forgotten: WifiState = call(json!({"m":"wifi.forget"})).fields().unwrap();
-        assert!(!forgotten.configured);
-        assert_eq!(forgotten.state, WifiStatus::Off);
-    }
 
     #[test]
     fn settings_put_stores_firmware_values_and_flags_an_orientation_change() {

@@ -36,6 +36,10 @@ describe('deck settings on the mock deck', () => {
     await $('[data-testid="nav-settings"]').click();
     await browser.waitUntil(async () => /Read the settings/.test(await statusText()), { timeout: 5_000, timeoutMsg: 'the page never read the settings' });
     expect(await $('[data-testid="settings-idle"]').getValue()).toBe('600');
+    expect(await $('[data-testid="wireless"]').isExisting()).toBe(false);
+    const initial = await record();
+    expect(initial.received.some(({ m }) => /^(wifi|ble)\./.test(m))).toBe(false);
+    note('usb_settings', { wireless_controls: false, unsupported_requests: 0 });
     await setField('settings-idle', '120');
     await setField('settings-orientation', 'portrait');
     await $('[data-testid="settings-save"]').click();
