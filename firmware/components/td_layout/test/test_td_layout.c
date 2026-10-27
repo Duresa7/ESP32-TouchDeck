@@ -142,10 +142,10 @@ TEST_CASE("dev.json parses with every action type, its spans, its chord and its 
         TEST_ASSERT_EQUAL_MESSAGE(TD_ACTION_APP, t->action.type, app[i][0]);
         TEST_ASSERT_EQUAL_STRING(app[i][1], td_action_name(&t->action));
     }
-    const ui_tile_t *context = tile(layout, "context");
+    const ui_tile_t *context = tile(layout, "five_hour");
     TEST_ASSERT_EQUAL(TD_ACTION_WIDGET, context->action.type);
-    TEST_ASSERT_EQUAL_STRING("claude-status", context->action.widget.source);
-    TEST_ASSERT_EQUAL_STRING("context_pct", context->action.widget.field);
+    TEST_ASSERT_EQUAL_STRING("cliproxyapi", context->action.widget.source);
+    TEST_ASSERT_EQUAL_STRING("five_hour_pct", context->action.widget.field);
     TEST_ASSERT_EQUAL_STRING("", context->action.widget.account);
     TEST_ASSERT_EQUAL_STRING("cliproxyapi", tile(layout, "proxy")->action.widget.source);
 
