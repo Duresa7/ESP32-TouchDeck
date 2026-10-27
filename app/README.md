@@ -11,6 +11,8 @@ identifies the app's source revision. **Deck** reports the connected firmware's
 version and image identity. Desktop app updates and deck firmware updates are
 separate operations.
 
+Built with Tauri 2, Svelte 5, and Rust, the app discovers USB decks and provides a debug console pane.
+
 ## Install a published build
 
 Once a release is published, the Windows installer will be at

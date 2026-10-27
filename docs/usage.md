@@ -54,7 +54,7 @@ SHA-256 are recorded in `install-manifest.json`. Neither exists
 until a release is published, so build a bundle yourself until then.
 
 If you build firmware yourself, use ESP-IDF 6.1 and the
-[firmware build instructions](../README.md#building). From the checkout root,
+[firmware build instructions](firmware.md#build-and-flash). From the checkout root,
 after building `firmware/`, create and check a bundle:
 
 ```sh
@@ -92,7 +92,7 @@ recovery implementation needs no separate Python or esptool at runtime.
 
 The deck's ten-second touch hold is a different recovery feature. It boots the
 built-in layout and default settings from RAM while keeping stored files. See
-[Recovery](../README.md#recovery) for its behavior.
+[Recovery](firmware.md#recovery) for its behavior.
 
 ## Connect and keep the USB port available
 
