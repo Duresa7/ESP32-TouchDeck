@@ -7,8 +7,8 @@ or Linux desktop session.
 Keep the app running and connected for keyboard and media input, PC actions, and
 live Sources. The app mirrors USB key reports into the host session. The deck
 does not act as a standalone USB HID keyboard. Page navigation works on the deck
-without the app. Wi-Fi, Bluetooth, battery support, and standalone USB HID
-(direct TinyUSB) are deferred to the post-product update.
+without the app. Bluetooth is not supported. Wi-Fi, battery support, and standalone
+USB HID (direct TinyUSB) are deferred to the post-product update.
 
 ## Obtain and install the desktop app
 
@@ -20,14 +20,13 @@ This section is for people who run the app. If you build it from source, use
 on [the latest GitHub release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest).
 No release has been published yet, so that link does not work today. When it does,
 run the installer. It installs for your user, by default under
-`%LOCALAPPDATA%/TouchDeck`, with `touchdeck.exe`, the `td-statusline.exe` helper
-beside it, and a `firmware/` folder with the matching `.tdfw` bundle. You need no Node, pnpm, Rust,
+`%LOCALAPPDATA%/TouchDeck`, with `touchdeck.exe` and a `firmware/` folder with the matching `.tdfw` bundle. You need no Node, pnpm, Rust,
 Python, or ESP-IDF. If Windows lacks the WebView2 runtime, the installer downloads
 it, so that step needs network access. The [packaging guide](packaging.md) lists
 the installer's contents.
 
 Until a release exists, use the source build below. Linux has no installer. Run
-`touchdeck` from a source build and keep `td-statusline` beside it. The
+`touchdeck` from a source build. The
 [desktop setup guide](setup.md) lists the Linux runtime libraries, the serial and
 `/dev/uinput` permissions, and the desktop credential store that the optional
 CLIProxyAPI Source needs.
@@ -238,7 +237,8 @@ check. Keep custom icon backups before pruning.
 
 ## Set up optional Sources
 
-Sources feed widget tiles and imported dashboard pages while the app runs.
+CLIProxyAPI is the AI usage source. It feeds widget tiles and imported dashboard
+pages while the app runs.
 Open **Sources** to check readings and errors. While the
 deck is connected, the app takes widget bindings from the layout the deck displays,
 so a push to the other orientation's slot does not interrupt the feeds. To load
@@ -247,39 +247,10 @@ of the layout that the deck actually displays, then select **Save**. This loads
 local bindings; it does not push a layout to the deck. Keep that file aligned with
 your pushed layout.
 
-### Connect the local status-line Source
-
-1. Keep `td-statusline.exe` beside the Windows app, or `td-statusline` beside the
-   Linux app. A source build needs the separate helper build in
-   [app/README.md](../app/README.md#build-the-desktop-app). If no sibling helper is
-   found, the displayed entry expects `td-statusline` on PATH.
-2. In **Claude Code status line**, turn **On** and select **Save** at the bottom
-   of Sources.
-3. Check **Settings file**. The default follows `CLAUDE_CONFIG_DIR`, or
-   `~/.claude/settings.json` when that variable is unset.
-4. Select **Show diff**. Review the proposed status-line entry, then select
-   **Install** to write it. This step changes that provider's settings file.
-5. Use the provider so it emits a status-line update. Check that Sources shows a
-   session and readings instead of **Waiting for a status line update**.
-
-Install wraps an existing status-line command with `--then` so that command keeps
-running. Before the first replacement of an existing file, it keeps a
-`settings.json.touchdeck.bak` beside the settings file if no such backup exists.
-Review the entry again if you move the app or helper.
-
-To undo Install, select **Remove** in the same card. It puts the wrapped command
-back as the status-line command, or removes the status-line entry if there was no
-earlier command. It leaves the settings file alone if the entry does not run
-`td-statusline`. Select Remove before you uninstall TouchDeck, or before you move
-the app or helper, so that the provider does not keep calling a helper that is
-gone. `td-statusline --unwrap` does the same thing from a terminal; see
-[packaging](packaging.md#uninstall).
-
-For a widget, choose Source `claude-status`, leave Account empty, and set Field to
-`model`, `context_pct`, `cost_usd`, `five_hour_pct`, or `seven_day_pct`. The app reads
-the newest session file. Fields appear only when the status-line document supplies
-them. Missing rate-limit fields are not inferred from account credentials. Data
-older than ten minutes becomes stale.
+Earlier pre-release builds could wrap your Claude Code status line. Before removing
+that build, run its old `td-statusline --unwrap` helper (with `--settings <file>` for
+a custom settings file), or restore the `settings.json.touchdeck.bak` beside your
+Claude settings. Current builds do not edit Claude settings.
 
 ### Connect CLIProxyAPI
 
@@ -350,13 +321,8 @@ keys, command approvals, or logs.
 Sources configuration lives in
 `%APPDATA%/io.github.duresa7.touchdeck/sources.json` on Windows and
 `${XDG_CONFIG_HOME:-~/.config}/io.github.duresa7.touchdeck/sources.json` on Linux.
-Status-line state uses `%LOCALAPPDATA%/io.github.duresa7.touchdeck/claude-status`
-or `${XDG_DATA_HOME:-~/.local/share}/io.github.duresa7.touchdeck/claude-status`.
 These are the app's per-user Tauri folders, which also hold approvals; the icon
-cache is in the matching Tauri cache folder. Earlier builds kept the Sources files
-in `touchdeck` folders (`%APPDATA%/touchdeck` and `%LOCALAPPDATA%/touchdeck`, or
-`~/.config/touchdeck` and `~/.local/state/touchdeck`). The app moves them to the
-new folders the first time it starts. Moving the executable folder does not move
+cache is in the matching Tauri cache folder. Moving the executable folder does not move
 these files. Re-enter the management key through Sources on another PC; it is not
 in the JSON configuration.
 
@@ -383,8 +349,7 @@ The app can check for its own updates in **Settings > App updates**:
 
 An update keeps your per-user settings, command approvals, Sources configuration,
 and icon cache. It does not change layouts stored on the deck or flash the board.
-After restarting, reconnect in **Deck**, and review the Sources helper path if the
-installation folder changed.
+After restarting, reconnect in **Deck**.
 
 The app update path needs a published release signed with the project's updater
 key. No release exists yet, so **Check for updates** finds no update until the

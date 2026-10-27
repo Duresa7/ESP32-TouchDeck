@@ -3,7 +3,7 @@ export type ConsoleEntry =
   | { kind: 'reply'; text: string; ok: boolean }
   | { kind: 'log'; text: string };
 
-export const CONSOLE_LIMIT = 500;
+const CONSOLE_LIMIT = 500;
 
 const PROMPT = /^(?:td> )+/;
 const REPLY = /@td (\{.*\})\s*$/;

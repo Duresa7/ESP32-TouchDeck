@@ -145,8 +145,8 @@ fn actions_suggest_their_default_glyph() {
         Some("terminal")
     );
     assert_eq!(
-        suggest(serde_json::json!({"type": "widget", "source": "claude-status"})),
-        Some("bot")
+        suggest(serde_json::json!({"type": "widget", "source": "cliproxyapi"})),
+        Some("server")
     );
     assert_eq!(suggest(serde_json::json!({"type": "none"})), None);
     for name in ["browser", "folder", "terminal", "bot", "server", "gauge"] {

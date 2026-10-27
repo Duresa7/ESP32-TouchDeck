@@ -217,9 +217,7 @@ describe('cliproxyapi source', () => {
     { timeout: 5_000, timeoutMsg: 'the edited account and field did not survive reselecting the tile' });
     expect(await $('[data-testid="action-account"]').getValue()).toBe('claude:alice@example.com');
     expect(await $('[data-testid="action-field"]').getValue()).toBe('seven_day_pct');
-    await choose('action-source', 'claude-status');
-    expect(await $('[data-testid="action-field"]').getTagName()).toBe('input');
-    expect(await $('[data-testid="action-account"]').getTagName()).toBe('input');
+    expect(await $$('[data-testid="action-source"] option').map((option) => option.getValue())).toEqual(['cliproxyapi']);
     await openSources();
   });
 

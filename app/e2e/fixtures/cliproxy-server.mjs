@@ -17,12 +17,13 @@ export const API_CALL = '/v0/management/api-call';
 export const CODEX_USAGE = 'https://chatgpt.com/backend-api/wham/usage';
 export const CLAUDE_USAGE = 'https://api.anthropic.com/api/oauth/usage';
 export const DEFAULT_KEY = 'fixture-key-0123';
-export const DEFAULT_FIXTURE = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', 'crates', 'td-host', 'tests', 'fixtures', 'auth-files-usage.json');
+const DEFAULT_FIXTURE = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', 'crates', 'td-host', 'tests', 'fixtures', 'auth-files-usage.json');
 
 /** Starts the server on `port`, or on a free one when `port` is 0, and resolves once it listens. */
 export async function start({ port = 0, key = DEFAULT_KEY, fixture = DEFAULT_FIXTURE, host = '127.0.0.1' } = {}) {
   const body = readFileSync(fixture, 'utf8');
   const requests = [];
+  let fiveHourPercent = 42;
   const server = createServer(async (request, response) => {
     const bearer = request.headers.authorization ?? '';
     const authorized = bearer === `Bearer ${key}`;
@@ -42,7 +43,7 @@ export async function start({ port = 0, key = DEFAULT_KEY, fixture = DEFAULT_FIX
     let usage;
     if (json?.auth_index === 'codex-alice' && json?.url === CODEX_USAGE && json?.method === 'GET') {
       usage = { plan_type: 'pro', rate_limit: {
-        primary_window: { used_percent: 42, reset_at: now + 7800, limit_window_seconds: 18000 },
+        primary_window: { used_percent: fiveHourPercent, reset_at: now + 7800, limit_window_seconds: 18000 },
         secondary_window: { used_percent: 10, reset_at: now + 273600, limit_window_seconds: 604800 },
       } };
     } else if (json?.auth_index === 'claude-alice' && json?.url === CLAUDE_USAGE && json?.method === 'GET') {
@@ -61,6 +62,7 @@ export async function start({ port = 0, key = DEFAULT_KEY, fixture = DEFAULT_FIX
     url: `http://${host}:${address.port}`,
     port: address.port,
     requests,
+    setFiveHourPercent: (percent) => { fiveHourPercent = percent; },
     stop: () =>
       new Promise((resolve) => {
         server.closeAllConnections();

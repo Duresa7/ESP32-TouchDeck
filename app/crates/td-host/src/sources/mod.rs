@@ -3,33 +3,27 @@
 //! A [`Source`] yields [`Reading`]s. The [`Hub`] polls every enabled source on its own
 //! thread, hands the readings to a [`Scheduler`], and sends the `widget.set` and
 //! `dashboard.set` requests that come due to a [`Sink`], which is the connected deck.
-//! Both sources are passive: the status line one reads files that `td-statusline` writes,
-//! and CLIProxyAPI lists auth files, then POSTs read-only provider GETs through the hub.
+//! CLIProxyAPI lists auth files, then POSTs read-only provider GETs through the hub.
 
-pub mod claude_status;
 pub mod cliproxy;
 pub mod scheduler;
 
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use td_core::app_dirs::Dirs;
 use td_core::{Layout, Request};
 
 pub use td_core::app_dirs::write_atomic;
-pub use td_core::statusline::claude_settings_path;
 
-pub use claude_status::{ClaudeInfo, ClaudeStatus};
 pub use cliproxy::{Account, CliProxy, Fetch, HttpFetch, ProxyInfo};
 pub use scheduler::Scheduler;
 
-pub const CLAUDE_STATUS: &str = "claude-status";
 pub const CLIPROXYAPI: &str = "cliproxyapi";
 pub const DEFAULT_PROXY_URL: &str = "http://localhost:8317";
 pub const DEFAULT_PROXY_INTERVAL_S: u64 = 120;
@@ -39,8 +33,6 @@ pub const PROXY_REFRESH_FLOOR: Duration = Duration::from_secs(15);
 pub const FAILS_TO_STALE: u32 = 3;
 /// The least time between two sends for one tile or page.
 pub const SEND_FLOOR: Duration = Duration::from_secs(2);
-/// How often the status line directory is looked at.
-pub const CLAUDE_POLL: Duration = Duration::from_millis(500);
 
 /// One value a source reports. `bar` is a fraction from 0 to 1, or -1 for none.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -79,7 +71,6 @@ impl Reading {
 
 #[derive(Debug, Clone)]
 pub enum Info {
-    Claude(ClaudeInfo),
     Proxy(ProxyInfo),
 }
 
@@ -138,37 +129,24 @@ pub fn unix_ms(time: SystemTime) -> u64 {
         .map_or(0, |since| since.as_millis() as u64)
 }
 
-/// `sources.json` in the app's config folder. See [`td_core::app_dirs`].
-pub fn config_path() -> PathBuf {
-    Dirs::current().sources_config()
-}
-
 /// What the sources page saves. The management key is never part of it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    pub claude_status: bool,
-    /// The directory `td-statusline` writes to. `None` is the default.
-    pub claude_dir: Option<String>,
     pub cliproxy: bool,
     pub cliproxy_url: String,
     pub cliproxy_interval_s: u64,
     /// The layout whose widget and dashboard tiles the sources feed.
     pub layout_path: Option<String>,
-    /// The Claude Code settings file `Install` edits. `None` is the default.
-    pub claude_settings: Option<String>,
 }
 
 impl Default for Config {
     fn default() -> Config {
         Config {
-            claude_status: true,
-            claude_dir: None,
             cliproxy: false,
             cliproxy_url: DEFAULT_PROXY_URL.to_owned(),
             cliproxy_interval_s: DEFAULT_PROXY_INTERVAL_S,
             layout_path: None,
-            claude_settings: None,
         }
     }
 }
@@ -187,13 +165,6 @@ impl Config {
         write_atomic(path, text.as_bytes())
     }
 
-    pub fn claude_dir(&self) -> PathBuf {
-        self.claude_dir
-            .as_deref()
-            .filter(|dir| !dir.trim().is_empty())
-            .map_or_else(claude_status::default_dir, PathBuf::from)
-    }
-
     pub fn interval(&self) -> Duration {
         Duration::from_secs(self.cliproxy_interval_s.max(60))
     }
@@ -209,7 +180,6 @@ pub struct LayoutInfo {
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Status {
-    pub claude: ClaudeInfo,
     pub proxy: ProxyInfo,
     pub layout: LayoutInfo,
     pub deck: bool,
@@ -322,10 +292,6 @@ impl Core {
         self.config = config;
         {
             let mut status = self.status.lock().unwrap();
-            status.claude = ClaudeInfo {
-                dir: self.config.claude_dir().display().to_string(),
-                ..ClaudeInfo::default()
-            };
             status.proxy = ProxyInfo {
                 url: self.config.cliproxy_url.clone(),
                 insecure_http: cliproxy::insecure_http(&self.config.cliproxy_url),
@@ -333,10 +299,6 @@ impl Core {
             };
         }
         self.load_layout();
-        if self.config.claude_status {
-            let source = ClaudeStatus::new(self.config.claude_dir());
-            self.start(Box::new(source), CLAUDE_POLL);
-        }
         if self.config.cliproxy {
             let source = CliProxy::new(
                 &self.config.cliproxy_url,
@@ -409,13 +371,11 @@ impl Core {
             } => {
                 if generation == self.generation {
                     let source = match &info {
-                        Info::Claude(_) => CLAUDE_STATUS,
                         Info::Proxy(_) => CLIPROXYAPI,
                     };
                     self.scheduler.update(source, readings);
                     let mut status = self.status.lock().unwrap();
                     match info {
-                        Info::Claude(info) => status.claude = info,
                         Info::Proxy(info) => status.proxy = info,
                     }
                 }

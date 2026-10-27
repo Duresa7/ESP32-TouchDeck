@@ -40,7 +40,7 @@ export interface GridPage {
   tiles: Tile[];
 }
 
-export interface DashboardPage {
+interface DashboardPage {
   id: string;
   title: string;
   kind: 'dashboard';
@@ -56,14 +56,14 @@ export interface Layout {
   pages: Page[];
 }
 
-export interface LayoutError {
+interface LayoutError {
   key: string;
   message: string;
 }
 
-export const UPLOAD_MAX = 32768;
+const UPLOAD_MAX = 32768;
 export const PAGES_MAX = 8;
-export const TILES_MAX = 64;
+const TILES_MAX = 64;
 export const MODIFIERS: readonly Modifier[] = ['ctrl', 'shift', 'alt', 'win'];
 export const ICONS = ['lv:prev', 'lv:play_pause', 'lv:next', 'lv:mute', 'lv:volume_mid', 'lv:volume_max'] as const;
 export const ACTION_TYPES: readonly ActionType[] = ['none', 'key', 'mod', 'consumer', 'page', 'launch', 'open', 'command', 'widget'];

@@ -159,8 +159,8 @@
       "cols": 3,
       "tiles": [
         {
-          "id": "context",
-          "label": "Context",
+          "id": "five_hour",
+          "label": "5h usage",
           "row": 0,
           "col": 0,
           "rowSpan": 1,
@@ -168,14 +168,14 @@
           "icon": null,
           "action": {
             "type": "widget",
-            "source": "claude-status",
-            "field": "context_pct",
+            "source": "cliproxyapi",
+            "field": "five_hour_pct",
             "account": ""
           }
         },
         {
-          "id": "cost",
-          "label": "Cost",
+          "id": "seven_day",
+          "label": "7d usage",
           "row": 0,
           "col": 1,
           "rowSpan": 1,
@@ -183,8 +183,8 @@
           "icon": null,
           "action": {
             "type": "widget",
-            "source": "claude-status",
-            "field": "cost_usd",
+            "source": "cliproxyapi",
+            "field": "seven_day_pct",
             "account": ""
           }
         },
@@ -204,8 +204,8 @@
           }
         },
         {
-          "id": "model",
-          "label": "Model",
+          "id": "claude_5h",
+          "label": "Claude 5h",
           "row": 1,
           "col": 0,
           "rowSpan": 1,
@@ -213,9 +213,9 @@
           "icon": null,
           "action": {
             "type": "widget",
-            "source": "claude-status",
-            "field": "model",
-            "account": ""
+            "source": "cliproxyapi",
+            "field": "five_hour_pct",
+            "account": "claude:alice@example.com"
           }
         }
       ]

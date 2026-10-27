@@ -1,6 +1,6 @@
 # Windows distribution and app updates
 
-End users download the [Windows x64 installer](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe) from the latest published GitHub release and run it. That link becomes usable when the release owner publishes the first release with that asset. The NSIS installer defaults to `%LOCALAPPDATA%/TouchDeck`, per user. It installs `touchdeck.exe` and `td-statusline.exe` as siblings, with `firmware/`, `licenses/`, `LICENSE.txt`, `PACKAGING.md` and `install-manifest.json`.
+End users download the [Windows x64 installer](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe) from the latest published GitHub release and run it. That link becomes usable when the release owner publishes the first release with that asset. The NSIS installer defaults to `%LOCALAPPDATA%/TouchDeck`, per user. It installs `touchdeck.exe`, with `firmware/`, `licenses/`, `LICENSE.txt`, `PACKAGING.md` and `install-manifest.json`.
 
 Users need no Node, pnpm, Rust, Python, ESP-IDF, compiler, or developer setup script. The installer embeds the Microsoft WebView2 bootstrapper: if WebView2 is missing it downloads/installs the Evergreen runtime, requiring network access and possibly local approval. An existing runtime is reused. Rust binaries use a static MSVC CRT. This is not a fully offline installer. The companion ZIP assumes WebView2 is already available. See [developer setup](https://github.com/Duresa7/ESP32-TouchDeck/blob/main/docs/setup.md) only for source builds; packaging never runs that setup script on this host.
 
@@ -10,37 +10,28 @@ Open **Settings → App updates → Check for updates**. A newer release display
 
 Before **Install and close TouchDeck**, export any unsaved layout edits, disconnect the deck and finish deck operations. A backend reservation excludes installation from active deck transfers and blocks new transfers while installation starts. A connected deck also prevents installation. Windows then starts the installer and closes TouchDeck; installation progress appears in the installer. TouchDeck does not automatically relaunch. Open it again when installation finishes. The separate **Update** tab selects `.tdfw` bundles for the deck, not desktop app updates.
 
-The application identifier remains `io.github.duresa7.touchdeck`. Upgrades replace binaries/resources and retain per-user config, approvals, source settings/state and icon cache. They do not modify the deck's stored layouts. No profile deletion or explicit uninstall is part of updating. Unsaved editor state is in memory: export before closing. The helper stays beside the app; changing the install folder may require reviewing its absolute-path source configuration. Actual installed upgrade/preservation needs a disposable Windows environment; source/fixture checks alone do not establish it.
+The application identifier remains `io.github.duresa7.touchdeck`. Upgrades replace binaries/resources and retain per-user config, approvals, source settings/state and icon cache. They do not modify the deck's stored layouts. No profile deletion or explicit uninstall is part of updating. Unsaved editor state is in memory: export before closing. Actual installed upgrade/preservation needs a disposable Windows environment; source/fixture checks alone do not establish it.
 
-The bundled firmware always installs as `firmware/touchdeck.tdfw`. `install-manifest.json` records its version, source revision, bundle SHA-256, and image/ELF hashes. The NSIS preinstall hook removes older `.tdfw` resources. If the old status line helper is running, the hook renames it within the install folder and requests deletion on reboot before copying its replacement.
-
-The **installer lifecycle** job installs a disposable test-signed candidate on a GitHub-hosted Windows runner, starts the installed app in mock mode, updates with a locked helper while checking firmware cleanup and data/status-line preservation, then uninstalls and checks status-line restoration. Only documented leftovers may remain: identifier-folder data, which a silent uninstall keeps, the Claude settings backup, and the renamed helper awaiting reboot deletion. Five more rounds install, update, and uninstall immediately, and each must remove `touchdeck.exe`. Its `app/scripts/installer_lifecycle.ps1` script refuses to run outside GitHub-hosted Actions runners because it changes the real user profile and uninstall registry.
+The bundled firmware always installs as `firmware/touchdeck.tdfw`. `install-manifest.json` records its version, source revision, bundle SHA-256, and image/ELF hashes.
 
 Updater signatures authenticate artifacts using the embedded public key. `requireSignedVersion` binds metadata version to the signed version, preventing an old artifact from being advertised under a newer number. TLS and signature checks remain enabled. Metadata checks have a 15-second total deadline. Installer downloads have no total deadline, with a 15-second connect timeout and a 30-second read timeout that resets as data arrives. A failed installer launch keeps the app window and verified download available. Offline retry guidance appears only for network or unavailable-release errors. Updater signatures are separate from Windows Authenticode signing: this work supplies no Authenticode certificate, SmartScreen reputation or store approval.
 
 ## Uninstall
 
-The status-line Install on the Sources page writes the absolute path of `td-statusline.exe` into Claude Code's `settings.json`, so it must be undone before the helper is deleted. Users can select **Remove** in Sources. The NSIS preuninstall hook calls the helper before deleting files, only when the helper exists and update mode is off. It logs the result and ignores the exit code, so a settings-file error never blocks uninstall:
-
-```text
-td-statusline.exe --unwrap [--settings <file>]
-```
-
-- `--settings` defaults to `%CLAUDE_CONFIG_DIR%\settings.json`, else `%USERPROFILE%\.claude\settings.json` (`$HOME` first when set). It is the only flag allowed with `--unwrap`. A custom settings file chosen in Sources is not read from the source config, so pass it explicitly if needed.
-- If the file's `statusLine` command runs `td-statusline`, the helper writes back the command it wrapped with `--then`, or removes the `statusLine` entry when there was none. Only the command string, or that one member, changes. Every other byte stays the same. It writes through a temporary file and a rename. `settings.json.touchdeck.bak` is left in place.
-- It never reads stdin and never waits for input, so it can run with no console. One line of status goes to stdout, and writing it never fails the run.
-- Exit codes: `0` when it restored the command, removed the entry, or had nothing to do (the file is missing, has no entry, or the entry does not run the helper); `1` when the file cannot be read, is not a JSON object, has a `--then` command it cannot parse, or cannot be written, in which case the file is unchanged; `2` for bad arguments.
-- Skip it when the uninstaller runs in update mode. An update keeps the helper in the same place.
+Uninstall removes the app and its installed resources without editing Claude settings.
+See the [usage guide](usage.md) for the one-time cleanup note for earlier pre-release builds.
 
 The NSIS template deletes `touchdeck.exe` once. Right after an update another process can hold the new binary for a moment, so the postuninstall hook retries the delete for up to 10 seconds, then marks it for deletion at reboot, and removes the install folder when it is empty. Update mode skips this.
 
-Source config and status-line state live in the Tauri identifier folders, `%APPDATA%\io.github.duresa7.touchdeck` and `%LOCALAPPDATA%\io.github.duresa7.touchdeck`, never under the install folder, so the uninstaller's **Delete app data** option removes them. The first start after an upgrade moves `sources.json` and `claude-status\*.json` out of the old `%APPDATA%\touchdeck` and `%LOCALAPPDATA%\touchdeck` folders. Because NTFS ignores case, the second of those is the install folder. The CLIProxyAPI management key stays in Windows Credential Manager (`touchdeck` / `cliproxyapi-management-key`) after uninstall.
+Source config lives in `%APPDATA%\io.github.duresa7.touchdeck\sources.json`, outside the install folder. The uninstaller's **Delete app data** option removes the Tauri identifier folders; a silent uninstall keeps that data. The CLIProxyAPI management key stays in Windows Credential Manager (`touchdeck` / `cliproxyapi-management-key`) after uninstall.
+
+The `installer-lifecycle` CI job runs only on a disposable GitHub-hosted Windows runner. It proves fresh installation, a passive `/P /UPDATE` replacement, byte-for-byte config/data preservation, absence of the removed usage helper, and clean uninstall. Five additional update/uninstall rounds retain coverage of the main-executable deletion retry. Never run the lifecycle script on an operator's PC.
 
 ## Release-owner bootstrap and publication
 
 The repository contains no durable private key or disposable test public key. The base updater `pubkey` is empty; development candidates report that release signing is not configured. The release recipe injects the selected public key through an external build configuration. Before the first real release, the owner must generate/back up a durable Tauri updater keypair, configure `TAURI_UPDATER_PUBLIC_KEY` and matching secrets `TAURI_SIGNING_PRIVATE_KEY` and optionally `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the `release` GitHub environment. Losing that private key prevents updates to clients trusting it; do not replace it casually. Root owns durable secret bootstrap and publication.
 
-The **windows release** workflow (`.github/workflows/release-windows.yml`) builds the installer, helper and matching radio-free firmware on a disposable Windows runner, then verifies the signed installer with the real Tauri updater against local HTTPS fixtures. A pull request that changes the release inputs builds a `--test-signing` candidate with no secrets and keeps it as a workflow artifact. A manual run is a dry run with the durable key. Pushing a `vX.Y.Z` tag builds with the durable key and publishes. The build job holds only a read token. A separate publish job, which runs no build code, creates a draft, uploads every asset, checks them and only then publishes the release as latest. It refuses to replace a published release. A release contains:
+The **windows release** workflow (`.github/workflows/release-windows.yml`) builds the installer and matching radio-free firmware on a disposable Windows runner, then verifies the signed installer with the real Tauri updater against local HTTPS fixtures. A pull request that changes the release inputs builds a `--test-signing` candidate with no secrets and keeps it as a workflow artifact. A manual run is a dry run with the durable key. Pushing a `vX.Y.Z` tag builds with the durable key and publishes. The build job holds only a read token. A separate publish job, which runs no build code, creates a draft, uploads every asset, checks them and only then publishes the release as latest. It refuses to replace a published release. A release contains:
 
 ```text
 TouchDeck-windows-x64-setup.exe
@@ -105,7 +96,7 @@ For an unpublished candidate, pass **`--test-signing` instead of `--public-key-f
 
 The recipe atomically holds shared `m3-build.lock` during firmware compilation, and removes only its own lock on success/failure. Retry after another owner releases it; never delete a foreign lock. Fresh external Cargo/firmware directories prevent e2e binary reuse. Cargo uses `--locked --no-default-features` and static CRT; the production dependency graph excludes WebDriver. Tauri embeds frontend assets and built-in icons. Firmware config and actual linked components exclude Wi-Fi/Bluetooth and retain USB-Serial/JTAG. The existing `firmware/tools/make_bundle.py` creates/checks `.tdfw`; its format is unchanged.
 
-The companion ZIP contains app/helper, install resources, firmware, `manifest.json`, `SHA256SUMS` and `build/production-dependencies.txt`. Manifests identify the full source SHA, target/features, tools, resources, firmware image/ELF hashes and radio audit. Release checksums cover uploaded assets. Checksums detect corruption, not publisher authenticity. ZIP order/times/permissions are fixed; compiler paths/times can vary, so cross-machine bit identity is not promised.
+The companion ZIP contains the app, install resources, firmware, `manifest.json`, `SHA256SUMS` and `build/production-dependencies.txt`. Manifests identify the full source SHA, target/features, tools, resources, firmware image/ELF hashes and radio audit. Release checksums cover uploaded assets. Checksums detect corruption, not publisher authenticity. ZIP order/times/permissions are fixed; compiler paths/times can vary, so cross-machine bit identity is not promised.
 
 ```powershell
 python app/scripts/package_windows.py verify '<out>/touchdeck-<sha>-windows-x64-candidate.zip'
@@ -122,18 +113,11 @@ Extract the companion ZIP and use scripts from its source revision:
 
 ```powershell
 pwsh -NoProfile -File app/scripts/smoke_windows.ps1 -PackageDir '<extracted-folder>' -Scratch E:/touchdeck-artifacts/smoke-001
-# Inspect Editor/icons, Sources helper discovery and Settings/App updates in the production window.
+# Inspect Editor/icons, Sources usage limits and Settings/App updates in the production window.
 pwsh -NoProfile -File app/scripts/smoke_windows.ps1 -Scratch E:/touchdeck-artifacts/smoke-001 -Stop
 ```
 
-The launcher uses mock transport, fake input, an empty working directory and scratch source/temp paths. `TOUCHDECK_APP_DATA_DIR` redirects Tauri config/log/cache and WebView storage before initialization; it requires an absolute directory and fails closed if invalid. It also redirects source config (`config/`) and status-line state (`state/`) for the app and `td-statusline` when `TOUCHDECK_CONFIG_DIR` and `TOUCHDECK_STATE_DIR` are unset, and a run with it set never moves files out of the old source folders. Unset preserves normal paths. The smoke removes `WEBVIEW2_USER_DATA_FOLDER` from the child's environment and requires `app/webview/EBWebView` under scratch, exercising the app's `data_directory` override. `APPDATA` alone cannot override Windows Known Folders. Source/temp paths have separate launcher overrides. Default app/source paths are snapshotted before/after; changes fail smoke. This does not measure all OS/WebView incidental writes. Installer execution is disabled in mock sessions. Do not install a status line, change credentials or trigger real input.
-
-```powershell
-$scratch = Join-Path ([IO.Path]::GetTempPath()) ('touchdeck-helper-' + [guid]::NewGuid())
-'{"session_id":"packaging-fixture","model":{"display_name":"fixture"}}' |
-  & '<extracted-folder>/td-statusline.exe' --dir $scratch
-Get-Content (Join-Path $scratch 'packaging-fixture.json')
-```
+The launcher uses mock transport, fake input, an empty working directory and scratch source/temp paths. `TOUCHDECK_APP_DATA_DIR` redirects Tauri config/log/cache and WebView storage before initialization; it requires an absolute directory and fails closed if invalid. It also redirects source config (`config/`) when `TOUCHDECK_CONFIG_DIR` is unset, and a run with it set never moves files out of the old source folders. Unset preserves normal paths. The smoke removes `WEBVIEW2_USER_DATA_FOLDER` from the child's environment and requires `app/webview/EBWebView` under scratch, exercising the app's `data_directory` override. `APPDATA` alone cannot override Windows Known Folders. Source/temp paths have separate launcher overrides. Default app/source paths are snapshotted before/after; changes fail smoke. This does not measure all OS/WebView incidental writes. Installer execution is disabled in mock sessions. Do not change credentials or trigger real input.
 
 Repeat final-head builds/checks after dependent fixes land. Current artifacts are candidates. Board flashing, real input and physical checks are excluded. Linux/macOS installers/updater delivery are not implemented here. Fresh-machine installation, real upgrade/preservation and published endpoint behavior must remain unverified without their evidence.
 

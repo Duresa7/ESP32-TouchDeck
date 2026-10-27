@@ -104,22 +104,22 @@ test('dev exercises every action, both spanning directions, and all requested wi
   assert.ok(tiles.some((tile) => tile.colSpan > 1));
   assert.ok(actions.some((action) => action.type === 'key' && action.mods.length > 0));
   assert.ok(actions.some((action) => action.type === 'page' && action.page === dev.pages[3].id));
-  assert.equal(actions.filter((action) => action.type === 'widget' && action.source === 'claude-status').length, 3);
-  assert.equal(actions.filter((action) => action.type === 'widget' && action.source === 'cliproxyapi').length, 1);
+  assert.equal(actions.filter((action) => action.type === 'widget' && action.source === 'cliproxyapi').length, 4);
   assert.deepEqual(actions.find((action) => action.type === 'command'), { type: 'command', program: 'cmd', args: ['/c', 'echo', 'TouchDeck'], cwd: '', shell: false });
 });
 
-test('dev names no file icon and gives every widget an empty account', () => {
+test('dev names no file icon and uses aggregate and provider-specific widget accounts', () => {
   const tiles = dev.pages.flatMap((page) => page.tiles ?? []);
   assert.ok(tiles.every((tile) => tile.icon === null || tile.icon.startsWith('lv:')));
   const widgets = tiles.map((tile) => tile.action).filter((action) => action.type === 'widget');
   assert.equal(widgets.length, 4);
-  assert.ok(widgets.every((action) => action.account === ''));
+  assert.equal(widgets.filter((action) => action.account === '').length, 3);
+  assert.equal(widgets.find((action) => action.account !== '').account, 'claude:alice@example.com');
 });
 
 test('dev preserves the ids and roles used by later milestone lanes', () => {
   const tiles = new Map(dev.pages.flatMap((page) => (page.tiles ?? []).map((tile) => [tile.id, { page: page.id, action: tile.action }])));
-  for (const id of ['f5', 'shift', 'chord', 'launch', 'command', 'open', 'context', 'cost', 'model', 'proxy']) {
+  for (const id of ['f5', 'shift', 'chord', 'launch', 'command', 'open', 'five_hour', 'seven_day', 'claude_5h', 'proxy']) {
     assert.ok(tiles.has(id), `missing fixture tile ${id}`);
   }
   assert.deepEqual(tiles.get('f5').action, { type: 'key', usage: 62, mods: [] });
@@ -131,9 +131,9 @@ test('dev preserves the ids and roles used by later milestone lanes', () => {
   assert.equal(tiles.get('open').action.type, 'open');
   assert.deepEqual(tiles.get('command').action, { type: 'command', program: 'cmd', args: ['/c', 'echo', 'TouchDeck'], cwd: '', shell: false });
   for (const [id, source, field] of [
-    ['context', 'claude-status', 'context_pct'],
-    ['cost', 'claude-status', 'cost_usd'],
-    ['model', 'claude-status', 'model'],
+    ['five_hour', 'cliproxyapi', 'five_hour_pct'],
+    ['seven_day', 'cliproxyapi', 'seven_day_pct'],
+    ['claude_5h', 'cliproxyapi', 'five_hour_pct'],
     ['proxy', 'cliproxyapi', 'status'],
   ]) {
     const action = tiles.get(id).action;

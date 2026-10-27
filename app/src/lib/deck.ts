@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
-export interface Hello {
+interface Hello {
   product: string;
   proto: number;
   elf_sha256: string;
@@ -27,7 +27,7 @@ export interface DeckInfo {
   online: boolean;
 }
 
-export interface LinkClosed {
+interface LinkClosed {
   session: number;
   port: string;
   reason: string;

@@ -5,7 +5,7 @@ export interface UpdateInfo {
 }
 
 export type Progress = { downloaded: number; total: number | null };
-export type UpdateErrorKind = 'unconfigured' | 'unsupported' | 'network' | 'signature' | 'metadata' | 'busy' | 'installer' | 'internal';
+type UpdateErrorKind = 'unconfigured' | 'unsupported' | 'network' | 'signature' | 'metadata' | 'busy' | 'installer' | 'internal';
 export interface UpdateError { kind: UpdateErrorKind; message: string }
 
 export function parseUpdateError(error: unknown): UpdateError {
@@ -29,7 +29,7 @@ export type UpdateState =
   | { kind: 'installing'; update: UpdateInfo }
   | { kind: 'error'; error: UpdateError };
 
-export interface UpdateApi {
+interface UpdateApi {
   check(): Promise<UpdateInfo | null>;
   download(progress: (value: Progress) => void): Promise<void>;
   install(): Promise<void>;

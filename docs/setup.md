@@ -4,7 +4,7 @@ TouchDeck connects through USB-Serial/JTAG. The running desktop app mirrors the 
 
 ## Running a distributed app versus building it
 
-A distributed app does not need Node, pnpm, Rust, or a C++ compiler. Windows needs the [Microsoft WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution). Linux needs a graphical desktop, the matching WebKitGTK/GTK runtime libraries, USB serial access, and permission to create a virtual keyboard through `/dev/uinput`. Keep any supplied helper beside the app when extracting a portable distribution.
+A distributed app does not need Node, pnpm, Rust, or a C++ compiler. Windows needs the [Microsoft WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution). Linux needs a graphical desktop, the matching WebKitGTK/GTK runtime libraries, USB serial access, and permission to create a virtual keyboard through `/dev/uinput`.
 
 Source builds use **Node.js 24**, matching [app CI](../.github/workflows/app.yml), and the **exact pnpm version in [app/package.json](../app/package.json)** (currently `12.12.1`). Use stable Rust, at least the workspace's declared minimum in [app/Cargo.toml](../app/Cargo.toml). Firmware build prerequisites are separate from desktop setup.
 
@@ -61,10 +61,9 @@ From `app/`, the ordinary source build is:
 ```sh
 pnpm install --frozen-lockfile
 pnpm tauri build
-cargo build --release -p td-link --bin td-statusline
 ```
 
-Do not enable the `e2e` feature for a distributed app. For a manual source deployment, place `app/target/release/td-statusline` beside `touchdeck`, or make it available on PATH. The helper supports the optional status-line source; building only the desktop binary does not build/install it automatically.
+Do not enable the `e2e` feature for a distributed app.
 
 ## Linux runtime libraries and device access
 
@@ -99,7 +98,7 @@ See the [udev rule and permission reference](https://www.freedesktop.org/softwar
 
 The CLIProxyAPI management key is stored through the OS credential store, not in the ordinary Sources JSON configuration ([implementation](../app/src-tauri/src/sources.rs)). The locked `keyring` 4.2 backend uses **Windows Credential Manager** on Windows, **Keychain Services** on macOS, and **Secret Service** on Linux ([upstream platform mapping](https://docs.rs/keyring/4.2.0/keyring/v1/index.html)). This is a credential-store mapping, not a claim that every app feature supports macOS.
 
-On Linux, run the app in the intended user's desktop login session with a session D-Bus and an available Secret Service provider, such as GNOME Keyring or a compatible configured wallet. Its default collection must be usable/unlocked when saving or reading the key; an unlock prompt may be required. See the [Secret Service specification](https://specifications.freedesktop.org/secret-service/latest/description.html). Minimal desktops, headless sessions, containers, and CI may lack that service. Install/configure the provider through the distribution's documented desktop setup if you want this optional source. Do not work around credential-store errors by saving keys in scripts, logs, or world-readable files. The local status-line helper does not need the CLIProxyAPI management key.
+On Linux, run the app in the intended user's desktop login session with a session D-Bus and an available Secret Service provider, such as GNOME Keyring or a compatible configured wallet. Its default collection must be usable/unlocked when saving or reading the key; an unlock prompt may be required. See the [Secret Service specification](https://specifications.freedesktop.org/secret-service/latest/description.html). Minimal desktops, headless sessions, containers, and CI may lack that service. Install/configure the provider through the distribution's documented desktop setup if you want this optional source. Do not work around credential-store errors by saving keys in scripts, logs, or world-readable files.
 
 ## Verification boundary
 

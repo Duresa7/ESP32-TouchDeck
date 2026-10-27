@@ -107,7 +107,6 @@ pub fn default_for(action: &serde_json::Value) -> Option<&'static str> {
         }
         "command" => Some("terminal"),
         "widget" => match field("source")? {
-            "claude-status" => Some("bot"),
             "cliproxyapi" => Some("server"),
             _ => Some("gauge"),
         },
@@ -139,10 +138,6 @@ pub struct IconCache {
 impl IconCache {
     pub fn new(dir: PathBuf) -> IconCache {
         IconCache { dir }
-    }
-
-    pub fn dir(&self) -> &Path {
-        &self.dir
     }
 
     /// Stores an icon file and returns its id.

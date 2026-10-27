@@ -3,7 +3,7 @@ export const API_CALL: string;
 export const CODEX_USAGE: string;
 export const CLAUDE_USAGE: string;
 export const DEFAULT_KEY: string;
-export const DEFAULT_FIXTURE: string;
+declare const DEFAULT_FIXTURE: string;
 
 export interface LoggedRequest {
   at: number;
@@ -18,6 +18,7 @@ export interface FixtureServer {
   url: string;
   port: number;
   requests: LoggedRequest[];
+  setFiveHourPercent(percent: number): void;
   stop(): Promise<void>;
 }
 

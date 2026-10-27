@@ -1,5 +1,5 @@
 name: windows release build
-description: Build and verify the TouchDeck Windows installer, helper and matching radio-free firmware.
+description: Build and verify the TouchDeck Windows installer and matching radio-free firmware.
 
 inputs:
   release-mode:
@@ -121,7 +121,7 @@ runs:
         & "$env:RUNNER_TEMP/esp-idf/install.ps1" esp32s3
         if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-    - name: Build test-signed installer, helper and matching radio-free firmware
+    - name: Build test-signed installer and matching radio-free firmware
       if: inputs.release-mode == 'test-signing'
       shell: pwsh
       run: |
@@ -129,7 +129,7 @@ runs:
         python app/scripts/package_windows.py build --out "$env:RUNNER_TEMP/touchdeck-release" --test-signing --notes-file "$env:RUNNER_TEMP/release-notes.md"
         exit $LASTEXITCODE
 
-    - name: Build durable-key installer, helper and matching radio-free firmware
+    - name: Build durable-key installer and matching radio-free firmware
       if: inputs.release-mode != 'test-signing'
       shell: pwsh
       env:
