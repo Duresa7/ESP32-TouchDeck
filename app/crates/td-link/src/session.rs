@@ -11,6 +11,7 @@ use serde_json::Value;
 use td_core::{Body, Frame, Hello, Item, Reply, ReplyError, Request, Role, StreamDecoder};
 
 use crate::Transport;
+use crate::xfer::LayoutState;
 
 const WRITE_DEADLINE: Duration = Duration::from_secs(2);
 
@@ -58,6 +59,7 @@ pub enum LinkError {
     Closed(String),
     Busy,
     TransferBusy,
+    ConsoleBusy,
     Io(String),
     Reply(ReplyError),
 }
@@ -69,6 +71,7 @@ impl fmt::Display for LinkError {
             LinkError::Closed(reason) => write!(f, "link closed: {reason}"),
             LinkError::Busy => f.write_str("255 requests are already waiting"),
             LinkError::TransferBusy => f.write_str("a transfer is already running"),
+            LinkError::ConsoleBusy => f.write_str("a layout state reply is still pending"),
             LinkError::Io(error) => write!(f, "write failed: {error}"),
             LinkError::Reply(error) => error.fmt(f),
         }
@@ -89,6 +92,7 @@ struct Shared {
     reason: Mutex<String>,
     incoming: Sender<Incoming>,
     xfer: Mutex<Option<Sender<XferFrame>>>,
+    layout_reply: Mutex<Option<SyncSender<Value>>>,
 }
 
 impl Shared {
@@ -96,6 +100,7 @@ impl Shared {
         if self.open.swap(false, Ordering::AcqRel) {
             *self.reason.lock().unwrap() = reason.to_owned();
             self.pending.lock().unwrap().waiting.clear();
+            self.layout_reply.lock().unwrap().take();
             let _ = self.incoming.send(Incoming::Closed(reason.to_owned()));
         }
     }
@@ -176,6 +181,14 @@ impl Shared {
                             String::from_utf8_lossy(line.strip_suffix(b"\r").unwrap_or(line))
                                 .into_owned();
                         line.clear();
+                        if let Some(at) = text.find("@td ")
+                            && let Ok(reply) = serde_json::from_str::<Value>(&text[at + 4..])
+                            && reply["cmd"] == "layout"
+                            && (reply["op"] == "state" || reply["ok"] == false)
+                            && let Some(waiting) = self.layout_reply.lock().unwrap().take()
+                        {
+                            let _ = waiting.send(reply);
+                        }
                         let _ = self.incoming.send(Incoming::Line(text));
                     } else {
                         line.push(byte);
@@ -280,6 +293,7 @@ impl Drop for Transfer<'_> {
 /// the port.
 pub struct Session {
     shared: Arc<Shared>,
+    console: Mutex<()>,
     stop: Mutex<Option<Sender<()>>>,
     threads: Mutex<Vec<JoinHandle<()>>>,
 }
@@ -301,6 +315,7 @@ impl Session {
             reason: Mutex::new(String::new()),
             incoming,
             xfer: Mutex::new(None),
+            layout_reply: Mutex::new(None),
         });
         let (stop, stopped) = mpsc::channel::<()>();
         let mut threads = vec![thread::spawn({
@@ -316,6 +331,7 @@ impl Session {
         Ok((
             Session {
                 shared,
+                console: Mutex::new(()),
                 stop: Mutex::new(Some(stop)),
                 threads: Mutex::new(threads),
             },
@@ -359,6 +375,41 @@ impl Session {
 
     /// Writes one console line. The deck answers it as text on the [`Incoming`] channel.
     pub fn send_line(&self, line: &str) -> Result<(), LinkError> {
+        let _console = self.console.lock().unwrap();
+        self.write_line(line)
+    }
+
+    /// Reads the displayed layout through the firmware's existing `layout state` console
+    /// command. Its reply still reaches [`Incoming`], including when an event handler asks.
+    pub fn layout_state(&self, timeout: Duration) -> Result<LayoutState, LinkError> {
+        let _console = self.console.lock().unwrap();
+        let (waiting, reply) = mpsc::sync_channel(1);
+        {
+            let mut slot = self.shared.layout_reply.lock().unwrap();
+            if slot.is_some() {
+                return Err(LinkError::ConsoleBusy);
+            }
+            *slot = Some(waiting);
+        }
+        if let Err(error) = self.write_line("layout state") {
+            self.shared.layout_reply.lock().unwrap().take();
+            return Err(error);
+        }
+        let value = match reply.recv_timeout(timeout) {
+            Ok(value) => value,
+            // Console replies have no request ID. Drain this reply before allowing another
+            // query, so a late reply cannot satisfy a query for a newly displayed layout.
+            Err(RecvTimeoutError::Timeout) => return Err(LinkError::Timeout(timeout)),
+            Err(RecvTimeoutError::Disconnected) => return Err(self.shared.closed()),
+        };
+        if value["ok"] != true {
+            return Err(LinkError::Reply(ReplyError::Fields(value.to_string())));
+        }
+        serde_json::from_value(value)
+            .map_err(|error| LinkError::Reply(ReplyError::Fields(error.to_string())))
+    }
+
+    fn write_line(&self, line: &str) -> Result<(), LinkError> {
         if line.contains(['\r', '\n']) {
             return Err(LinkError::Io("a console line holds no CR or LF".into()));
         }
@@ -640,6 +691,69 @@ mod tests {
             (Some("version"), Some(true))
         );
         assert_eq!(deck.lines(), ["version"]);
+    }
+
+    #[test]
+    fn layout_state_can_be_read_from_an_event_handler_without_consuming_console_text() {
+        let deck = MockDeck::new();
+        let (session, events) = Session::open(Box::new(deck.connect()), quiet()).unwrap();
+        deck.emit_press("shared", "feed_land", "widget");
+        until(&events, |item| {
+            matches!(item, Incoming::Event(_)).then_some(())
+        });
+        // Like the app's event handler, do not drain Incoming while waiting for state.
+        let state = session.layout_state(Duration::from_secs(1)).unwrap();
+        assert_eq!(state, deck.layout_state());
+        let line = until(&events, |item| match item {
+            Incoming::Line(line) if line.contains("@td ") => Some(line),
+            _ => None,
+        });
+        assert!(line.contains("\"op\":\"state\""));
+        assert_eq!(deck.lines(), ["layout state"]);
+        assert!(session.hello(Duration::from_secs(1)).unwrap().is_deck());
+    }
+
+    #[test]
+    fn a_layout_state_timeout_releases_the_console_and_the_next_query_can_succeed() {
+        let deck = MockDeck::new();
+        deck.delay_replies(Duration::from_millis(80));
+        let (session, events) = Session::open(Box::new(deck.connect()), quiet()).unwrap();
+        assert_eq!(
+            session.layout_state(Duration::from_millis(10)),
+            Err(LinkError::Timeout(Duration::from_millis(10)))
+        );
+        assert_eq!(
+            session.layout_state(Duration::from_secs(1)),
+            Err(LinkError::ConsoleBusy)
+        );
+        until(&events, |item| {
+            matches!(item, Incoming::Line(_)).then_some(())
+        });
+        deck.delay_replies(Duration::ZERO);
+        session.send_line("version").unwrap();
+        assert_eq!(
+            session.layout_state(Duration::from_secs(1)).unwrap(),
+            deck.layout_state()
+        );
+    }
+
+    #[test]
+    fn closing_the_connection_wakes_a_layout_state_waiter() {
+        let deck = MockDeck::new();
+        deck.stop();
+        let (session, _events) = Session::open(Box::new(deck.connect()), quiet()).unwrap();
+        let session = Arc::new(session);
+        let query = {
+            let session = session.clone();
+            thread::spawn(move || session.layout_state(Duration::from_secs(5)))
+        };
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while session.shared.layout_reply.lock().unwrap().is_none() {
+            assert!(Instant::now() < deadline, "the query did not start");
+            thread::sleep(Duration::from_millis(1));
+        }
+        session.close();
+        assert!(matches!(query.join().unwrap(), Err(LinkError::Closed(_))));
     }
 
     #[test]
