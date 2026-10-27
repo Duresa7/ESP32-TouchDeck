@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "ui_pages.h"
 
@@ -32,6 +33,10 @@ typedef struct {
  * margin. The title, the dot row, the gap, the slop and the swipe threshold scale with the short side, which is 600
  * in both orientations. The dashboard's value and bar columns sit at the same fractions of the grid width. Landscape
  * gives the milestone 1 pixel values exactly.
+ *
+ * A full-screen layout draws no title and no dots, so the band and the grid are both the whole screen, with no
+ * margin. The gap, the pager distances and the title and dot fields keep their values, and the dashboard columns
+ * follow the wider grid.
  */
 typedef struct {
     ui_size_t screen;
@@ -54,7 +59,7 @@ typedef struct {
 /* 1024 by 600 in landscape and 600 by 1024 in portrait. */
 ui_size_t ui_screen_size(ui_orientation_t orientation);
 
-ui_geometry_t ui_geometry(ui_size_t screen);
+ui_geometry_t ui_geometry(ui_size_t screen, bool full_screen);
 
 /* The x of the centre of dot `index` when `count` dots sit in a row centred on the screen. */
 int16_t ui_geometry_dot_x(const ui_geometry_t *g, uint8_t index, uint8_t count);

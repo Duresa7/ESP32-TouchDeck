@@ -115,5 +115,9 @@ const ui_styles_t *ui_styles(void);
 /* The band, the grid, the title, the dots and the pager distances for the screen display_start set up. */
 const ui_geometry_t *ui_geo(void);
 
+/* Picks the full-screen geometry, with no title or dot strips, or the default one, and works it out at once. A layout
+ * load calls it under the layout lock before it builds anything, so readers under that lock see one geometry. */
+void ui_geo_set_full_screen(bool full_screen);
+
 /* The x of the centre of dot `index` when `count` dots sit in a row centred on the screen. */
 int16_t ui_dot_x(uint8_t index, uint8_t count);

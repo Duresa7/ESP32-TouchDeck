@@ -9,6 +9,7 @@
     "schema": { "const": 1, "x-rules": { "const": "layout.schema-version" } },
     "name": { "$ref": "#/$defs/name" },
     "orientation": { "enum": ["landscape", "portrait"], "x-rules": { "enum": "layout.orientation" } },
+    "fullScreen": { "type": "boolean" },
     "pages": {
       "type": "array",
       "minItems": 1,

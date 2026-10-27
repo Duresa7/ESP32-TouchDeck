@@ -35,11 +35,13 @@ typedef struct {
 /*
  * A loaded layout. One arena owns this header, the pages, the tiles and every string they point to, so LVGL's
  * static labels stay valid as long as the layout lives. Free it with td_layout_free(). The built-in layout is never
- * freed.
+ * freed. `full_screen` is the file's optional `fullScreen`, false when the file leaves it out: the deck then draws no
+ * page title and no page dots, and the tiles fill the whole screen.
  */
 typedef struct td_layout {
     const char *name;
     const char *orientation;
+    bool full_screen;
     const ui_page_t *pages;
     uint8_t page_count;
     uint16_t tile_count;

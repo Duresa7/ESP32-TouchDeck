@@ -54,6 +54,7 @@ static void cmd_state(void)
     td_reply_str(&r, "source", info.from_storage ? "storage" : "builtin");
     td_reply_str(&r, "name", info.name);
     td_reply_str(&r, "orientation", info.orientation);
+    td_reply_bool(&r, "full_screen", info.full_screen);
     td_reply_int(&r, "pages", info.pages);
     td_reply_int(&r, "tiles", info.tiles);
     td_reply_int(&r, "icons_loaded", info.icons_loaded);

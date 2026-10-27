@@ -1,0 +1,272 @@
+{
+  "schema": 1,
+  "name": "Full screen",
+  "orientation": "landscape",
+  "fullScreen": true,
+  "pages": [
+    {
+      "id": "keys",
+      "title": "Keys",
+      "kind": "grid",
+      "rows": 3,
+      "cols": 4,
+      "tiles": [
+        {
+          "id": "f13",
+          "label": "F13",
+          "row": 0,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "key",
+            "usage": 104,
+            "mods": []
+          }
+        },
+        {
+          "id": "f14",
+          "label": "F14",
+          "row": 0,
+          "col": 1,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "key",
+            "usage": 105,
+            "mods": []
+          }
+        },
+        {
+          "id": "f15",
+          "label": "F15",
+          "row": 0,
+          "col": 2,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "key",
+            "usage": 106,
+            "mods": []
+          }
+        },
+        {
+          "id": "f16",
+          "label": "F16",
+          "row": 0,
+          "col": 3,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "key",
+            "usage": 107,
+            "mods": []
+          }
+        },
+        {
+          "id": "f17",
+          "label": "F17",
+          "row": 1,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "key",
+            "usage": 108,
+            "mods": []
+          }
+        },
+        {
+          "id": "f18",
+          "label": "F18",
+          "row": 1,
+          "col": 1,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "key",
+            "usage": 109,
+            "mods": []
+          }
+        },
+        {
+          "id": "f19",
+          "label": "F19",
+          "row": 1,
+          "col": 2,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "key",
+            "usage": 110,
+            "mods": []
+          }
+        },
+        {
+          "id": "f20",
+          "label": "F20",
+          "row": 1,
+          "col": 3,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "key",
+            "usage": 111,
+            "mods": []
+          }
+        },
+        {
+          "id": "f21",
+          "label": "F21",
+          "row": 2,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "key",
+            "usage": 112,
+            "mods": []
+          }
+        },
+        {
+          "id": "f22",
+          "label": "F22",
+          "row": 2,
+          "col": 1,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "key",
+            "usage": 113,
+            "mods": []
+          }
+        },
+        {
+          "id": "f23",
+          "label": "F23",
+          "row": 2,
+          "col": 2,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "key",
+            "usage": 114,
+            "mods": []
+          }
+        },
+        {
+          "id": "f24",
+          "label": "F24",
+          "row": 2,
+          "col": 3,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "action": {
+            "type": "key",
+            "usage": 115,
+            "mods": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "media",
+      "title": "Media",
+      "kind": "grid",
+      "rows": 2,
+      "cols": 3,
+      "tiles": [
+        {
+          "id": "prev",
+          "label": "Prev",
+          "row": 0,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": "lv:prev",
+          "action": {
+            "type": "consumer",
+            "usage": 182
+          }
+        },
+        {
+          "id": "playpause",
+          "label": "Play",
+          "row": 0,
+          "col": 1,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": "lv:play_pause",
+          "action": {
+            "type": "consumer",
+            "usage": 205
+          }
+        },
+        {
+          "id": "next",
+          "label": "Next",
+          "row": 0,
+          "col": 2,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": "lv:next",
+          "action": {
+            "type": "consumer",
+            "usage": 181
+          }
+        },
+        {
+          "id": "mute",
+          "label": "Mute",
+          "row": 1,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": "lv:mute",
+          "action": {
+            "type": "consumer",
+            "usage": 226
+          }
+        },
+        {
+          "id": "voldown",
+          "label": "Vol -",
+          "row": 1,
+          "col": 1,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": "lv:volume_mid",
+          "action": {
+            "type": "consumer",
+            "usage": 234
+          }
+        },
+        {
+          "id": "volup",
+          "label": "Vol +",
+          "row": 1,
+          "col": 2,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": "lv:volume_max",
+          "action": {
+            "type": "consumer",
+            "usage": 233
+          }
+        }
+      ]
+    }
+  ]
+}
