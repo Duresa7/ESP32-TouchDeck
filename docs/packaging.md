@@ -32,7 +32,7 @@ Source config and status-line state live in the Tauri identifier folders, `%APPD
 
 ## Release-owner bootstrap and publication
 
-The repository contains no durable private key or disposable test public key. The base updater `pubkey` is empty; development candidates report that release signing is not configured. The release recipe injects the selected public key through an external build configuration. Before the first real release, the owner must generate/back up a durable Tauri updater keypair, configure repository variable `TAURI_UPDATER_PUBLIC_KEY` and matching secrets `TAURI_SIGNING_PRIVATE_KEY` and optionally `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Losing that private key prevents updates to clients trusting it; do not replace it casually. Root owns durable secret bootstrap and publication.
+The repository contains no durable private key or disposable test public key. The base updater `pubkey` is empty; development candidates report that release signing is not configured. The release recipe injects the selected public key through an external build configuration. Before the first real release, the owner must generate/back up a durable Tauri updater keypair, configure `TAURI_UPDATER_PUBLIC_KEY` and matching secrets `TAURI_SIGNING_PRIVATE_KEY` and optionally `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the `release` GitHub environment. Losing that private key prevents updates to clients trusting it; do not replace it casually. Root owns durable secret bootstrap and publication.
 
 The **windows release** workflow (`.github/workflows/release-windows.yml`) builds the installer, helper and matching radio-free firmware on a disposable Windows runner, then verifies the signed installer with the real Tauri updater against local HTTPS fixtures. A pull request that changes the release inputs builds a `--test-signing` candidate with no secrets and keeps it as a workflow artifact. A manual run is a dry run with the durable key. Pushing a `vX.Y.Z` tag builds with the durable key and publishes. The build job holds only a read token. A separate publish job, which runs no build code, creates a draft, uploads every asset, checks them and only then publishes the release as latest. It refuses to replace a published release. A release contains:
 
@@ -68,11 +68,13 @@ Clients check `https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/downlo
 
 3. The tag push runs the **windows release** workflow. It checks the tag against the app version, builds, signs with the durable key, verifies the installer against the local HTTPS fixtures and publishes the release. Installed apps then find the update in **Settings → App updates**.
 
-To rehearse a release without publishing, open the Actions tab, choose **windows release**, then **Run workflow**, and give it a branch, tag or commit (default `main`). That dry run builds and verifies with the durable key and keeps the assets as a workflow artifact. It never creates a tag or a release. From a terminal:
+To rehearse a release without publishing, open the Actions tab, choose **windows release**, then **Run workflow**, and give it a commit or tag on `main` (default `main`). That dry run builds and verifies with the durable key and keeps the assets as a workflow artifact. It never creates a tag or a release. From a terminal:
 
 ```sh
 gh workflow run release-windows.yml --ref main -f ref=main
 ```
+
+The updater signing key (`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) and `TAURI_UPDATER_PUBLIC_KEY` live in the `release` GitHub environment, which only `main` and `v*` tags can deploy to, and dry runs only build commits already on `main`.
 
 Never regenerate the updater signing key. Every installed app trusts the public key it was built with, so assets signed by a new key are rejected and those installs can no longer update themselves. If a tag's run fails for a transient reason, re-run it from the Actions tab; the publish job reuses its own leftover draft. If the source needs a fix, land it on `main` and ship the next patch version instead of moving the tag.
 
