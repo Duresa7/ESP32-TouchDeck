@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import uuid
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -193,7 +194,16 @@ def build(args):
                 env["TAURI_SIGNING_PRIVATE_KEY"] = env["TAURI_SIGNING_PRIVATE_KEY_PATH"]
         if not public_key:
             raise ValueError("Updater public key is empty")
-    resources = {str(path.resolve()).replace("\\", "/"): path.relative_to(payload).as_posix()
+    # Tauri's Windows resource normalizer drops drive prefixes. A task-owned junction gives
+    # it relative paths while keeping all resource bytes staged outside the checkout.
+    junction = app_dir / "target" / ("package-resources-" + uuid.uuid4().hex)
+    junction.parent.mkdir(parents=True, exist_ok=True)
+    junction_env = env.copy()
+    junction_env["TD_PACKAGE_LINK"] = str(junction)
+    junction_env["TD_PACKAGE_PAYLOAD"] = str(payload)
+    run(["pwsh", "-NoProfile", "-NonInteractive", "-Command",
+         "New-Item -ItemType Junction -Path $env:TD_PACKAGE_LINK -Target $env:TD_PACKAGE_PAYLOAD -ErrorAction Stop | Out-Null"], env=junction_env)
+    resources = {os.path.relpath(junction / path.relative_to(payload), app_dir / "src-tauri").replace("\\", "/"): path.relative_to(payload).as_posix()
                  for path in payload.rglob("*") if path.is_file()}
     overlay = out / "installer-config.json"
     write_json(overlay, {"bundle": {"active": not args.portable_only, "resources": resources,
@@ -205,6 +215,8 @@ def build(args):
     finally:
         if test_key and test_key.exists():
             test_key.unlink()
+        # rmdir removes this junction only, never its external target or payload.
+        os.rmdir(junction)
     if not args.portable_only:
         installers = list((out / "build/app" / TARGET / "release/bundle/nsis").glob("*-setup.exe"))
         if len(installers) != 1:

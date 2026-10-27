@@ -123,6 +123,7 @@ pub(crate) async fn app_update_check(app: AppHandle) -> Result<Option<UpdateInfo
         app.updater_builder()
             .timeout(Duration::from_secs(15))
             .restart_after_install(false)
+            .configure_client(|client| client.https_only(true))
             .build()
             .map_err(|error| error.to_string())?
             .check()

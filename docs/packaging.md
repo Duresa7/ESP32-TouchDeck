@@ -2,7 +2,7 @@
 
 End users download the [Windows x64 installer](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe) from the latest published GitHub release and run it. That link becomes usable when the release owner publishes the first release with that asset. The NSIS installer defaults to `%LOCALAPPDATA%/TouchDeck`, per user. It installs `touchdeck.exe` and `td-statusline.exe` as siblings, with `firmware/`, `licenses/`, `LICENSE.txt`, `PACKAGING.md` and `install-manifest.json`.
 
-Users need no Node, pnpm, Rust, Python, ESP-IDF, compiler, or developer setup script. The installer embeds the Microsoft WebView2 bootstrapper: if WebView2 is missing it downloads/installs the Evergreen runtime, requiring network access and possibly local approval. An existing runtime is reused. Rust binaries use a static MSVC CRT. This is not a fully offline installer. The companion ZIP assumes WebView2 is already available. See [developer setup](setup.md) only for source builds; packaging never runs that setup script on this host.
+Users need no Node, pnpm, Rust, Python, ESP-IDF, compiler, or developer setup script. The installer embeds the Microsoft WebView2 bootstrapper: if WebView2 is missing it downloads/installs the Evergreen runtime, requiring network access and possibly local approval. An existing runtime is reused. Rust binaries use a static MSVC CRT. This is not a fully offline installer. The companion ZIP assumes WebView2 is already available. See [developer setup](https://github.com/Duresa7/ESP32-TouchDeck/blob/main/docs/setup.md) only for source builds; packaging never runs that setup script on this host.
 
 ## App updates versus deck firmware
 
