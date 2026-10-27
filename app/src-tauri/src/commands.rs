@@ -427,69 +427,6 @@ pub async fn pull_layout(app: AppHandle, orientation: Orientation) -> Result<Str
 }
 
 #[tauri::command]
-pub async fn wifi_state(app: AppHandle) -> Result<td_core::radios::WifiState, String> {
-    blocking(move || {
-        session(&app)?
-            .call(&serde_json::json!({"m":"wifi.state"}), SETTINGS_TIMEOUT)
-            .map_err(|error| error.to_string())?
-            .fields()
-            .map_err(|error| error.to_string())
-    })
-    .await?
-}
-
-#[tauri::command]
-pub async fn wifi_scan(app: AppHandle) -> Result<td_core::radios::WifiScan, String> {
-    blocking(move || {
-        session(&app)?
-            .call(
-                &serde_json::json!({"m":"wifi.scan"}),
-                Duration::from_secs(15),
-            )
-            .map_err(|error| error.to_string())?
-            .fields()
-            .map_err(|error| error.to_string())
-    })
-    .await?
-}
-
-#[tauri::command]
-pub async fn wifi_set(
-    app: AppHandle,
-    ssid: String,
-    password: String,
-) -> Result<td_core::radios::WifiState, String> {
-    if !td_core::radios::valid_credentials(&ssid, &password) {
-        return Err(
-            "Use a 1 to 32 byte network name and an empty or 8 to 63 byte password.".into(),
-        );
-    }
-    blocking(move || {
-        session(&app)?
-            .call(
-                &serde_json::json!({"m":"wifi.set", "ssid":ssid, "password":password}),
-                SETTINGS_TIMEOUT,
-            )
-            .map_err(|_| "Could not send the Wi-Fi settings.".to_owned())?
-            .fields()
-            .map_err(|_| "The deck refused the Wi-Fi settings.".to_owned())
-    })
-    .await?
-}
-
-#[tauri::command]
-pub async fn wifi_forget(app: AppHandle) -> Result<td_core::radios::WifiState, String> {
-    blocking(move || {
-        session(&app)?
-            .call(&serde_json::json!({"m":"wifi.forget"}), SETTINGS_TIMEOUT)
-            .map_err(|error| error.to_string())?
-            .fields()
-            .map_err(|error| error.to_string())
-    })
-    .await?
-}
-
-#[tauri::command]
 pub async fn settings_get(app: AppHandle) -> Result<Settings, String> {
     blocking(move || {
         session(&app)?
