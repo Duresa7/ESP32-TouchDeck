@@ -7,8 +7,8 @@ or Linux desktop session.
 Keep the app running and connected for keyboard and media input, PC actions, and
 live Sources. The app mirrors USB key reports into the host session. The deck
 does not act as a standalone USB HID keyboard. Page navigation works on the deck
-without the app. Wi-Fi, Bluetooth, battery support, and standalone USB HID
-(direct TinyUSB) are deferred to the post-product update.
+without the app. Bluetooth is not supported. Wi-Fi, battery support, and standalone
+USB HID (direct TinyUSB) are deferred to the post-product update.
 
 ## Obtain and install the desktop app
 

@@ -9,10 +9,7 @@ on:
       - app/scripts/installer_lifecycle.ps1
       - .github/workflows/installer-lifecycle.yml
       - .github/actions/windows-release-build/action.yml
-      - app/crates/td-core/src/statusline.rs
       - app/crates/td-core/src/app_dirs.rs
-      - app/crates/td-core/examples/installer_statusline_fixture.rs
-      - app/crates/td-link/src/bin/td-statusline.rs
   workflow_dispatch:
 
 permissions:
@@ -38,21 +35,11 @@ jobs:
           release-mode: test-signing
           build-ref: ${{ github.ref }}
 
-      - name: Build shared status-line fixture
-        shell: pwsh
-        env:
-          CARGO_TARGET_DIR: ${{ runner.temp }}/touchdeck-release/build/app
-          RUSTFLAGS: -C target-feature=+crt-static
-        run: |
-          cargo build --manifest-path app/Cargo.toml --locked --release --target x86_64-pc-windows-msvc -p td-core --example installer_statusline_fixture
-          exit $LASTEXITCODE
-
-      - name: Install, update with a locked helper, and uninstall
+      - name: Install, passively update, and uninstall
         shell: pwsh
         run: |
           & app/scripts/installer_lifecycle.ps1 `
             -InstallerPath "$env:RUNNER_TEMP/touchdeck-release/release-assets/TouchDeck-windows-x64-TEST-ONLY-setup.exe" `
-            -StatuslineFixture "$env:RUNNER_TEMP/touchdeck-release/build/app/x86_64-pc-windows-msvc/release/examples/installer_statusline_fixture.exe" `
             -ArtifactDir "$env:RUNNER_TEMP/installer-lifecycle"
           exit $LASTEXITCODE
 

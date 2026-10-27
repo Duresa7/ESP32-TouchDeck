@@ -3,8 +3,8 @@
 TouchDeck runs on Windows and Linux. It connects to the deck over USB-Serial/JTAG,
 edits and transfers layouts, runs PC actions, feeds CLIProxyAPI usage widgets, and updates deck
 firmware. The running, connected app mirrors keys and media controls into the host
-session. The deck does not type as a standalone USB HID keyboard. Wi-Fi, Bluetooth,
-battery support, and standalone USB HID are deferred to the post-product update.
+session. The deck does not type as a standalone USB HID keyboard. Bluetooth is not
+supported. Wi-Fi, battery support, and standalone USB HID are deferred to the post-product update.
 
 For everyday use, follow the [USB user guide](../docs/usage.md). The window title
 identifies the app's source revision. **Deck** reports the connected firmware's
