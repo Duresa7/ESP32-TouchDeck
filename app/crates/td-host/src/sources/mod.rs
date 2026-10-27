@@ -19,7 +19,11 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use td_core::app_dirs::Dirs;
 use td_core::{Layout, Request};
+
+pub use td_core::app_dirs::write_atomic;
+pub use td_core::statusline::claude_settings_path;
 
 pub use claude_status::{ClaudeInfo, ClaudeStatus};
 pub use cliproxy::{Account, CliProxy, Fetch, HttpFetch, ProxyInfo};
@@ -133,68 +137,9 @@ pub fn unix_ms(time: SystemTime) -> u64 {
         .map_or(0, |since| since.as_millis() as u64)
 }
 
-fn env_dir(name: &str) -> Option<PathBuf> {
-    std::env::var_os(name)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-}
-
-fn home() -> Option<PathBuf> {
-    env_dir("HOME").or_else(|| env_dir("USERPROFILE"))
-}
-
-/// The state directory: `TOUCHDECK_STATE_DIR`, else `%LOCALAPPDATA%` on Windows and
-/// `$XDG_STATE_HOME` or `~/.local/state` elsewhere. `td-statusline` resolves the same path.
-pub fn state_base() -> PathBuf {
-    env_dir("TOUCHDECK_STATE_DIR")
-        .or_else(|| {
-            if cfg!(windows) {
-                env_dir("LOCALAPPDATA")
-            } else {
-                env_dir("XDG_STATE_HOME").or_else(|| home().map(|home| home.join(".local/state")))
-            }
-        })
-        .unwrap_or_else(std::env::temp_dir)
-}
-
-/// The config directory: `TOUCHDECK_CONFIG_DIR`, else `%APPDATA%` on Windows and
-/// `$XDG_CONFIG_HOME` or `~/.config` elsewhere.
-pub fn config_base() -> PathBuf {
-    env_dir("TOUCHDECK_CONFIG_DIR")
-        .or_else(|| {
-            if cfg!(windows) {
-                env_dir("APPDATA")
-            } else {
-                env_dir("XDG_CONFIG_HOME").or_else(|| home().map(|home| home.join(".config")))
-            }
-        })
-        .unwrap_or_else(std::env::temp_dir)
-}
-
+/// `sources.json` in the app's config folder. See [`td_core::app_dirs`].
 pub fn config_path() -> PathBuf {
-    config_base().join("touchdeck").join("sources.json")
-}
-
-/// Where Claude Code reads its settings: `$CLAUDE_CONFIG_DIR`, else `~/.claude`.
-pub fn claude_settings_path() -> PathBuf {
-    env_dir("CLAUDE_CONFIG_DIR")
-        .or_else(|| home().map(|home| home.join(".claude")))
-        .unwrap_or_else(|| PathBuf::from(".claude"))
-        .join("settings.json")
-}
-
-/// Writes through a temporary file in the same directory and renames it into place.
-pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let dir = path.parent().unwrap_or(Path::new("."));
-    fs::create_dir_all(dir)?;
-    let name = path
-        .file_name()
-        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-    let temp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
-    fs::write(&temp, bytes)?;
-    fs::rename(&temp, path).inspect_err(|_| {
-        let _ = fs::remove_file(&temp);
-    })
+    Dirs::current().sources_config()
 }
 
 /// What the sources page saves. The management key is never part of it.

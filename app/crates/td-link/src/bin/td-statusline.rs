@@ -1,27 +1,39 @@
 //! The status line shim.
 //!
 //! Claude Code pipes a JSON document to its status line command. This command saves the
-//! document to `<state dir>/touchdeck/claude-status/<session_id>.json`, where the app reads
-//! it, and with `--then "<command>"` also pipes the same document to that command and prints
-//! its stdout, so an existing status line keeps working. It exits with the command's code,
-//! and with 0 when there is none, so it never breaks the status line.
+//! document to `<local data dir>/io.github.duresa7.touchdeck/claude-status/<session_id>.json`,
+//! where the app reads it, and with `--then "<command>"` also pipes the same document to that
+//! command and prints its stdout, so an existing status line keeps working. It exits with the
+//! command's code, and with 0 when there is none, so it never breaks the status line.
+//!
+//! `--unwrap` undoes the app's Install for an uninstaller: it puts the `--then` command back
+//! in Claude Code's settings file, or removes the entry. It never reads stdin.
 
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::thread;
 
 use serde_json::Value;
+use td_core::app_dirs::{Dirs, write_atomic};
+use td_core::statusline::{claude_settings_path, unwrap_settings};
 
 const USAGE: &str = "usage: td-statusline [--dir <dir>] [--then \"<command>\"] [--shell cmd|sh]
+       td-statusline --unwrap [--settings <file>]
   reads Claude Code's status line JSON on stdin and writes it to
-  <state dir>/touchdeck/claude-status/<session_id>.json
+  <local data dir>/io.github.duresa7.touchdeck/claude-status/<session_id>.json
   --dir <dir>        write to this directory instead
   --then \"<cmd>\"     pipe the same JSON to cmd and print its stdout
   --shell cmd|sh     the shell for --then: cmd on Windows, sh elsewhere by default
-state dir: $TOUCHDECK_STATE_DIR, else %LOCALAPPDATA% on Windows and
-$XDG_STATE_HOME or ~/.local/state elsewhere";
+  --unwrap           do not read stdin; if the settings file's statusLine runs
+                     td-statusline, put its --then command back, or remove the entry
+  --settings <file>  the file --unwrap edits: $CLAUDE_CONFIG_DIR/settings.json,
+                     else ~/.claude/settings.json
+local data dir: $TOUCHDECK_STATE_DIR, else %LOCALAPPDATA% on Windows and
+$XDG_DATA_HOME or ~/.local/share elsewhere
+exit codes for --unwrap: 0 restored, removed, or nothing to do; 1 the file could
+not be read, parsed, or written; 2 bad arguments";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Shell {
@@ -34,6 +46,8 @@ struct Options {
     dir: Option<PathBuf>,
     then: Option<String>,
     shell: Option<Shell>,
+    unwrap: bool,
+    settings: Option<PathBuf>,
 }
 
 fn parse(mut argv: impl Iterator<Item = String>) -> Result<Options, String> {
@@ -49,40 +63,26 @@ fn parse(mut argv: impl Iterator<Item = String>) -> Result<Options, String> {
                     _ => return Err("--shell is cmd or sh".into()),
                 });
             }
+            "--unwrap" => options.unwrap = true,
+            "--settings" => {
+                options.settings = Some(argv.next().ok_or("--settings needs a file")?.into());
+            }
             _ => return Err(format!("unknown argument {arg:?}")),
         }
+    }
+    if options.unwrap
+        && (options.dir.is_some() || options.then.is_some() || options.shell.is_some())
+    {
+        return Err("--unwrap takes only --settings".into());
+    }
+    if !options.unwrap && options.settings.is_some() {
+        return Err("--settings goes with --unwrap".into());
     }
     Ok(options)
 }
 
-fn env_dir(name: &str) -> Option<PathBuf> {
-    std::env::var_os(name)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-}
-
-/// Mirrors `td_host::sources::state_base`, so the app finds what this writes.
-fn state_base() -> PathBuf {
-    env_dir("TOUCHDECK_STATE_DIR")
-        .or_else(|| {
-            if cfg!(windows) {
-                env_dir("LOCALAPPDATA")
-            } else {
-                env_dir("XDG_STATE_HOME").or_else(|| {
-                    env_dir("HOME")
-                        .or_else(|| env_dir("USERPROFILE"))
-                        .map(|home| home.join(".local/state"))
-                })
-            }
-        })
-        .unwrap_or_else(std::env::temp_dir)
-}
-
 fn status_dir(explicit: Option<&Path>) -> PathBuf {
-    explicit.map_or_else(
-        || state_base().join("touchdeck").join("claude-status"),
-        Path::to_path_buf,
-    )
+    explicit.map_or_else(|| Dirs::current().claude_status(), Path::to_path_buf)
 }
 
 fn file_stem(session: &str) -> String {
@@ -190,14 +190,57 @@ fn run(options: &Options, input: &[u8], out: &mut dyn Write) -> i32 {
     }
 }
 
+/// Undoes Install in a settings file. An uninstaller runs this with no console, so every
+/// write to `out` may go nowhere and is never allowed to fail the run.
+fn unwrap_file(path: &Path, out: &mut dyn Write) -> i32 {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
+        Err(error) => {
+            let _ = writeln!(out, "td-statusline: {}: {error}", path.display());
+            return 1;
+        }
+    };
+    let edit = match unwrap_settings(text.as_deref()) {
+        Ok(edit) => edit,
+        Err(error) => {
+            let _ = writeln!(out, "td-statusline: {}: {error}", path.display());
+            return 1;
+        }
+    };
+    let said = if !edit.changed {
+        format!(
+            "{} does not run td-statusline, nothing to do",
+            path.display()
+        )
+    } else if let Err(error) = write_atomic(path, edit.text.as_bytes()) {
+        let _ = writeln!(out, "td-statusline: {}: {error}", path.display());
+        return 1;
+    } else if edit.command.is_empty() {
+        format!("removed the statusLine entry from {}", path.display())
+    } else {
+        format!("restored {:?} in {}", edit.command, path.display())
+    };
+    let _ = writeln!(out, "td-statusline: {said}");
+    0
+}
+
 fn main() -> ExitCode {
     let options = match parse(std::env::args().skip(1)) {
         Ok(options) => options,
         Err(error) => {
-            eprintln!("td-statusline: {error}\n{USAGE}");
+            let _ = writeln!(io::stderr(), "td-statusline: {error}\n{USAGE}");
             return ExitCode::from(2);
         }
     };
+    if options.unwrap {
+        let path = options
+            .settings
+            .clone()
+            .unwrap_or_else(claude_settings_path);
+        let code = unwrap_file(&path, &mut io::stdout().lock());
+        return ExitCode::from(u8::try_from(code).unwrap_or(1));
+    }
     let mut input = Vec::new();
     if let Err(error) = io::stdin().read_to_end(&mut input) {
         eprintln!("td-statusline: cannot read stdin: {error}");
@@ -301,7 +344,7 @@ mod tests {
         let options = Options {
             dir: Some(dir.clone()),
             then: Some(ECHO.into()),
-            shell: None,
+            ..Options::default()
         };
         let mut out = Vec::new();
         assert_eq!(run(&options, &input, &mut out), 0);
@@ -316,7 +359,7 @@ mod tests {
         let options = Options {
             dir: Some(dir),
             then: Some(COPY.into()),
-            shell: None,
+            ..Options::default()
         };
         let mut out = Vec::new();
         assert_eq!(run(&options, &input, &mut out), 0);
@@ -331,14 +374,14 @@ mod tests {
         let options = Options {
             dir: Some(dir.clone()),
             then: Some("exit 3".into()),
-            shell: None,
+            ..Options::default()
         };
         assert_eq!(run(&options, &document("c", 1), &mut Vec::new()), 3);
 
         let options = Options {
             dir: Some(dir.clone()),
             then: Some(ECHO.into()),
-            shell: None,
+            ..Options::default()
         };
         let mut out = Vec::new();
         assert_eq!(run(&options, b"not json", &mut out), 0);
@@ -368,6 +411,39 @@ mod tests {
         assert!(args(&["--then"]).is_err());
         assert!(args(&["--shell", "fish"]).is_err());
         assert!(args(&["--nope"]).is_err());
-        assert!(status_dir(None).ends_with(Path::new("touchdeck").join("claude-status")));
+        assert!(
+            status_dir(None).ends_with(Path::new(td_core::app_dirs::APP_ID).join("claude-status"))
+        );
+
+        let options = args(&["--unwrap", "--settings", "s.json"]).unwrap();
+        assert!(options.unwrap && options.settings == Some(PathBuf::from("s.json")));
+        assert!(args(&["--unwrap", "--then", "x"]).is_err());
+        assert!(args(&["--settings", "s.json"]).is_err());
+        assert!(args(&["--unwrap", "--settings"]).is_err());
+    }
+
+    #[test]
+    fn unwrap_restores_the_old_command_and_then_has_nothing_to_do() {
+        let dir = scratch("unwrap");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        let before = "{\n  \"model\": \"opus\",\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo old\"\n  }\n}\n";
+        let edit = td_core::statusline::edit_settings(Some(before), "td-statusline").unwrap();
+        fs::write(&path, &edit.text).unwrap();
+        let mut out = Vec::new();
+        assert_eq!(unwrap_file(&path, &mut out), 0);
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        assert!(String::from_utf8(out).unwrap().contains("restored"));
+        let mut out = Vec::new();
+        assert_eq!(unwrap_file(&path, &mut out), 0);
+        assert!(String::from_utf8(out).unwrap().contains("nothing to do"));
+        assert_eq!(unwrap_file(&dir.join("missing.json"), &mut Vec::new()), 0);
+        assert!(
+            !dir.join("missing.json").exists(),
+            "a missing file stays missing"
+        );
+        fs::write(&path, "{ not json").unwrap();
+        assert_eq!(unwrap_file(&path, &mut Vec::new()), 1);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{ not json");
     }
 }

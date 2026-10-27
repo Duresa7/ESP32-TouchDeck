@@ -70,6 +70,7 @@ pub fn run() {
             sources::sources_use_layout,
             sources::statusline_preview,
             sources::statusline_install,
+            sources::statusline_remove,
             commands::push_layout,
             commands::remove_unused_icons,
             commands::builtin_icons,
@@ -111,6 +112,7 @@ pub fn run() {
         sources::sources_use_layout,
         sources::statusline_preview,
         sources::statusline_install,
+        sources::statusline_remove,
         commands::push_layout,
         commands::remove_unused_icons,
         commands::builtin_icons,
@@ -168,6 +170,13 @@ mod packaging_tests {
                 io::ErrorKind::InvalidInput
             );
         }
+    }
+
+    #[test]
+    fn source_data_lives_in_the_bundle_identifier_folders() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(config["identifier"], td_core::app_dirs::APP_ID);
     }
 
     #[test]
