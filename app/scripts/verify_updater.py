@@ -10,8 +10,34 @@ import shutil
 import ssl
 import subprocess
 import threading
+import time
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+class DownloadFixture(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path not in ("/trickle.exe", "/stall.exe"):
+            return super().do_GET()
+        installer = (Path(self.directory) / "installer.exe").read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(installer)))
+        self.end_headers()
+        try:
+            if self.path == "/stall.exe":
+                self.wfile.write(installer[:1])
+                self.wfile.flush()
+                time.sleep(35)
+                self.wfile.write(installer[1:])
+            else:
+                # Deliver the real signed installer steadily for >15 s, without a 30 s idle gap.
+                chunk_size = (len(installer) + 19) // 20
+                for offset in range(0, len(installer), chunk_size):
+                    self.wfile.write(installer[offset:offset + chunk_size])
+                    self.wfile.flush()
+                    time.sleep(1)
+        except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
+            pass  # Expected when the updater closes the stalled request.
 
 
 def main():
@@ -35,7 +61,7 @@ def main():
     subprocess.run([args.openssl, "req", "-x509", "-newkey", "rsa:2048", "-sha256", "-days", "1", "-nodes",
                     "-keyout", str(private_tls), "-out", str(out / "fixture-ca.pem"), "-subj", "/CN=localhost",
                     "-addext", "subjectAltName=DNS:localhost"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(out))
+    handler = functools.partial(DownloadFixture, directory=str(out))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls.load_cert_chain(out / "fixture-ca.pem", private_tls)
@@ -43,6 +69,8 @@ def main():
     url = f"https://localhost:{server.server_port}"
     latest = json.loads((args.assets / "latest.json").read_text(encoding="utf-8"))
     for name, version, asset in [("good", manifest["version"], "installer.exe"),
+                                  ("trickle", manifest["version"], "trickle.exe"),
+                                  ("stall", manifest["version"], "stall.exe"),
                                   ("corrupt", manifest["version"], "corrupt.exe"),
                                   ("wrong-version", "999.0.0", "installer.exe"),
                                   ("current", "0.0.0", "installer.exe")]:
@@ -50,7 +78,7 @@ def main():
             "windows-x86_64": {"url": f"{url}/{asset}",
                                   "signature": latest["platforms"]["windows-x86_64"]["signature"]}}}
         (out / f"{name}.json").write_text(json.dumps(value), encoding="utf-8", newline="\n")
-    (out / "malformed.json").write_text('{"version": false}', encoding="utf-8")
+    (out / "malformed.json").write_text('{"version": false}', encoding="utf-8", newline="\n")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     env = os.environ.copy()
@@ -81,7 +109,7 @@ def main():
                               '<dependency><dependentAssembly><assemblyIdentity type="win32" '
                               'name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" '
                               'publicKeyToken="6595b64144ccf1df" language="*"/>'
-                              '</dependentAssembly></dependency></assembly>', encoding="utf-8")
+                              '</dependentAssembly></dependency></assembly>', encoding="utf-8", newline="\n")
         subprocess.run([str(mt), "-manifest", str(activation), f"-outputresource:{executables[0]};#1"], check=True)
         return subprocess.run([str(executables[0]), "app_updates::tests::signed_https_fixture", "--ignored", "--exact",
                                "--nocapture"], cwd=ROOT / "app", env=env).returncode

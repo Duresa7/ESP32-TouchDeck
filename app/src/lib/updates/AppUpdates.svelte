@@ -2,6 +2,7 @@
   import { getVersion } from '@tauri-apps/api/app';
   import { onMount } from 'svelte';
   import { appUpdater, appUpdateState } from './api.ts';
+  import { parseUpdateError } from './controller.ts';
 
   let { online }: { online: boolean } = $props();
   let version = $state('');
@@ -12,7 +13,7 @@
   async function install() {
     installError = '';
     try { await appUpdater.install(); }
-    catch (error) { installError = String(error); }
+    catch (error) { installError = parseUpdateError(error).message; }
   }
 </script>
 
@@ -25,8 +26,10 @@
   {#if $appUpdateState.kind === 'current'}
     <p role="status">You’re on the latest app version.</p>
   {:else if $appUpdateState.kind === 'error'}
-    <p class="problem" role="alert">{$appUpdateState.message}</p>
-    <p>Offline or a release may be unavailable. You can keep using this version and try again later.</p>
+    <p class="problem" role="alert">{$appUpdateState.error.message}</p>
+    {#if $appUpdateState.error.kind === 'network'}
+      <p>Offline or a release may be unavailable. You can keep using this version and try again later.</p>
+    {/if}
   {:else if 'update' in $appUpdateState}
     <h3>Version {$appUpdateState.update.version}</h3>
     <pre class="notes">{$appUpdateState.update.notes || 'No release notes provided.'}</pre>

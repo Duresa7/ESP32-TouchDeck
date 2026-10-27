@@ -76,7 +76,8 @@ $start.Environment['TOUCHDECK_INPUT'] = 'fake'
 $start.Environment['TOUCHDECK_APP_DATA_DIR'] = Join-Path $scratchPath 'app'
 $start.Environment['TOUCHDECK_CONFIG_DIR'] = Join-Path $scratchPath 'source-config'
 $start.Environment['TOUCHDECK_STATE_DIR'] = Join-Path $scratchPath 'source-state'
-$start.Environment['WEBVIEW2_USER_DATA_FOLDER'] = Join-Path $scratchPath 'app/webview'
+# Prove lib.rs data_directory rather than WebView2's higher-priority environment override.
+$null = $start.Environment.Remove('WEBVIEW2_USER_DATA_FOLDER')
 foreach ($name in @('TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA')) {
     $folder = Join-Path $scratchPath $name.ToLowerInvariant()
     New-Item -ItemType Directory -Path $folder | Out-Null
@@ -86,5 +87,19 @@ $child = [Diagnostics.Process]::Start($start)
 $record = [ordered]@{ pid = $child.Id; executable = $executable;
     started_ticks = $child.StartTime.ToUniversalTime().Ticks; scratch = $scratchPath;
     mock = $true; input = 'fake'; os_incidental_writes_measured = $false }
+$record | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $recordPath
+$webview = Join-Path $scratchPath 'app/webview/EBWebView'
+$deadline = [DateTime]::UtcNow.AddSeconds(30)
+while (-not (Test-Path -LiteralPath $webview -PathType Container)) {
+    if ($child.HasExited) { throw "TouchDeck exited before creating isolated WebView data (exit $($child.ExitCode))." }
+    if ([DateTime]::UtcNow -ge $deadline) {
+        $child.Kill()
+        $child.WaitForExit()
+        throw "WebView data_directory override did not create $webview."
+    }
+    Start-Sleep -Milliseconds 200
+}
+$record['webview_data_directory'] = $webview
+$record['webview_environment_override'] = $false
 $record | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $recordPath
 $record | ConvertTo-Json -Depth 6

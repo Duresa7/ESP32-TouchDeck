@@ -4,7 +4,84 @@ use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, ipc::Channel};
-use tauri_plugin_updater::{Update, UpdaterExt};
+use tauri_plugin_updater::{Update, UpdaterBuilder, UpdaterExt};
+
+const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum UpdateErrorKind {
+    Unconfigured,
+    Unsupported,
+    Network,
+    Signature,
+    Metadata,
+    Busy,
+    Installer,
+    Internal,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct UpdateError {
+    kind: UpdateErrorKind,
+    message: String,
+}
+
+impl UpdateError {
+    fn new(kind: UpdateErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    fn updater(error: tauri_plugin_updater::Error) -> Self {
+        use tauri_plugin_updater::Error;
+        let kind = match &error {
+            Error::Reqwest(error) if !error.is_builder() && !error.is_decode() => {
+                UpdateErrorKind::Network
+            }
+            Error::Network(_) | Error::ReleaseNotFound => UpdateErrorKind::Network,
+            Error::Minisign(_)
+            | Error::Base64(_)
+            | Error::SignatureUtf8(_)
+            | Error::SignedVersionMismatch { .. }
+            | Error::MissingSignedVersion => UpdateErrorKind::Signature,
+            Error::UnsupportedArch | Error::UnsupportedOs => UpdateErrorKind::Unsupported,
+            _ => UpdateErrorKind::Metadata,
+        };
+        Self::new(kind, error.to_string())
+    }
+}
+
+fn updater_builder<R: tauri::Runtime>(app: &AppHandle<R>) -> UpdaterBuilder {
+    app.updater_builder()
+        .timeout(CHECK_TIMEOUT)
+        .restart_after_install(false)
+        // The default hook destroys resources and hides windows before ShellExecuteW can fail.
+        // The Windows updater exits itself immediately after a successful launch.
+        .on_before_exit(|| {})
+        .configure_client(configure_client)
+}
+
+fn configure_client(client: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    client
+        .https_only(true)
+        .connect_timeout(CHECK_TIMEOUT)
+        .read_timeout(READ_TIMEOUT)
+}
+
+async fn check_release(
+    updater: tauri_plugin_updater::Updater,
+) -> Result<Option<Update>, UpdateError> {
+    let mut update = updater.check().await.map_err(UpdateError::updater)?;
+    if let Some(update) = &mut update {
+        // The metadata deadline is copied into Update. Downloads are bounded by idle reads instead.
+        update.timeout = None;
+    }
+    Ok(update)
+}
 
 #[derive(Default)]
 struct GateState {
@@ -93,18 +170,24 @@ fn metadata(update: &Update) -> UpdateInfo {
     }
 }
 
-fn take_pending(state: &AppUpdates) -> Result<Pending, String> {
+fn take_pending(state: &AppUpdates) -> Result<Pending, UpdateError> {
     let mut pending = state.0.lock().unwrap();
     if matches!(*pending, Pending::Busy) {
-        return Err("An app update operation is already running".into());
+        return Err(UpdateError::new(
+            UpdateErrorKind::Busy,
+            "An app update operation is already running",
+        ));
     }
     Ok(std::mem::replace(&mut *pending, Pending::Busy))
 }
 
 #[tauri::command]
-pub(crate) async fn app_update_check(app: AppHandle) -> Result<Option<UpdateInfo>, String> {
+pub(crate) async fn app_update_check(app: AppHandle) -> Result<Option<UpdateInfo>, UpdateError> {
     if !cfg!(windows) {
-        return Err("Desktop app updates are currently packaged for Windows x64 only".into());
+        return Err(UpdateError::new(
+            UpdateErrorKind::Unsupported,
+            "Desktop app updates are currently packaged for Windows x64 only",
+        ));
     }
     let key = app
         .config()
@@ -115,27 +198,30 @@ pub(crate) async fn app_update_check(app: AppHandle) -> Result<Option<UpdateInfo
         .and_then(|key| key.as_str())
         .unwrap_or_default();
     if key.is_empty() {
-        return Err("This candidate has no release signing public key. Install an official release to enable app updates".into());
+        return Err(UpdateError::new(
+            UpdateErrorKind::Unconfigured,
+            "This candidate has no release signing public key. Install an official release to enable app updates",
+        ));
     }
     let state = app.state::<AppUpdates>();
     let _previous = take_pending(&state)?;
     let result = async {
-        app.updater_builder()
-            .timeout(Duration::from_secs(15))
-            .restart_after_install(false)
-            .configure_client(|client| client.https_only(true))
-            .build()
-            .map_err(|error| error.to_string())?
-            .check()
-            .await
-            .map_err(|error| error.to_string())
+        check_release(
+            updater_builder(&app)
+                .build()
+                .map_err(UpdateError::updater)?,
+        )
+        .await
     }
     .await;
     match result {
         Ok(Some(update)) => {
             if update.download_url.scheme() != "https" {
                 *state.0.lock().unwrap() = Pending::Empty;
-                return Err("App update download must use HTTPS".into());
+                return Err(UpdateError::new(
+                    UpdateErrorKind::Metadata,
+                    "App update download must use HTTPS",
+                ));
             }
             let info = metadata(&update);
             *state.0.lock().unwrap() = Pending::Available(update);
@@ -147,9 +233,7 @@ pub(crate) async fn app_update_check(app: AppHandle) -> Result<Option<UpdateInfo
         }
         Err(error) => {
             *state.0.lock().unwrap() = Pending::Empty;
-            Err(format!(
-                "Could not check for app updates. Check your connection and try again. {error}"
-            ))
+            Err(error)
         }
     }
 }
@@ -158,14 +242,16 @@ pub(crate) async fn app_update_check(app: AppHandle) -> Result<Option<UpdateInfo
 pub(crate) async fn app_update_download(
     app: AppHandle,
     progress: Channel<DownloadProgress>,
-) -> Result<(), String> {
+) -> Result<(), UpdateError> {
     let state = app.state::<AppUpdates>();
     let previous = take_pending(&state)?;
-    let Pending::Available(mut update) = previous else {
+    let Pending::Available(update) = previous else {
         *state.0.lock().unwrap() = previous;
-        return Err("Check for a newer app version before downloading".into());
+        return Err(UpdateError::new(
+            UpdateErrorKind::Busy,
+            "Check for a newer app version before downloading",
+        ));
     };
-    update.timeout = Some(Duration::from_secs(120));
     let mut downloaded = 0;
     let result = update
         .download(
@@ -184,41 +270,73 @@ pub(crate) async fn app_update_download(
         }
         Err(error) => {
             *state.0.lock().unwrap() = Pending::Available(update);
-            Err(format!(
-                "App update download or signature verification failed: {error}"
-            ))
+            Err(UpdateError::updater(error))
         }
     }
 }
 
 #[tauri::command]
-pub(crate) async fn app_update_install(app: AppHandle) -> Result<(), String> {
+pub(crate) async fn app_update_install(app: AppHandle) -> Result<(), UpdateError> {
     if !cfg!(windows) || std::env::var("TOUCHDECK_MOCK").is_ok_and(|value| value == "1") {
-        return Err("Installer execution is disabled on this platform or mock session".into());
+        return Err(UpdateError::new(
+            UpdateErrorKind::Unsupported,
+            "Installer execution is disabled on this platform or mock session",
+        ));
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let _reservation = app.state::<AppUpdateGate>().begin_install()?;
+        let _reservation = app
+            .state::<AppUpdateGate>()
+            .begin_install()
+            .map_err(|error| UpdateError::new(UpdateErrorKind::Busy, error))?;
         if crate::commands::deck_info(app.state()).is_some() {
-            return Err("Disconnect the deck before installing the app update".into());
+            return Err(UpdateError::new(
+                UpdateErrorKind::Busy,
+                "Disconnect the deck before installing the app update",
+            ));
         }
         let state = app.state::<AppUpdates>();
         let previous = take_pending(&state)?;
         let Pending::Downloaded { update, bytes } = previous else {
             *state.0.lock().unwrap() = previous;
-            return Err("Download and verify the app update before installing".into());
+            return Err(UpdateError::new(
+                UpdateErrorKind::Busy,
+                "Download and verify the app update before installing",
+            ));
         };
         // On Windows this exits only after the installer launches. Do not request a relaunch.
-        let result = update.install(&bytes).map_err(|error| error.to_string());
+        let result = update
+            .install(&bytes)
+            .map_err(|error| UpdateError::new(UpdateErrorKind::Installer, error.to_string()));
         *state.0.lock().unwrap() = Pending::Downloaded { update, bytes };
         result
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| UpdateError::new(UpdateErrorKind::Internal, error.to_string()))?
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn updater_errors_preserve_their_kind_across_ipc() {
+        use tauri_plugin_updater::Error;
+        for (error, kind) in [
+            (Error::ReleaseNotFound, UpdateErrorKind::Network),
+            (Error::UnsupportedOs, UpdateErrorKind::Unsupported),
+            (Error::MissingSignedVersion, UpdateErrorKind::Signature),
+            (Error::EmptyEndpoints, UpdateErrorKind::Metadata),
+        ] {
+            assert_eq!(UpdateError::updater(error).kind, kind);
+        }
+        let error = UpdateError::new(UpdateErrorKind::Unconfigured, "Install an official release");
+        assert_eq!(
+            serde_json::to_value(error).unwrap(),
+            serde_json::json!({
+                "kind": "unconfigured", "message": "Install an official release"
+            })
+        );
+    }
 
     #[test]
     fn installer_reservation_and_transfers_exclude_each_other_and_release_on_error() {
@@ -265,14 +383,13 @@ mod tests {
             .build(context)
             .unwrap();
         let make = |name: &str| {
-            app.updater_builder()
+            updater_builder(app.handle())
                 .no_proxy()
-                .timeout(Duration::from_secs(5))
                 .endpoints(vec![format!("{endpoint}/{name}.json").parse().unwrap()])
                 .unwrap()
                 .configure_client({
                     let cert = certificate.clone();
-                    move |client| client.add_root_certificate(cert.clone())
+                    move |client| configure_client(client).add_root_certificate(cert.clone())
                 })
                 .build()
                 .unwrap()
@@ -289,30 +406,39 @@ mod tests {
                     .await
                     .is_err()
             );
-            let update = make("good").check().await.unwrap().unwrap();
+            let update = check_release(make("good")).await.unwrap().unwrap();
             assert_eq!(update.version, version);
+            assert_eq!(update.timeout, None);
             let verified = update.download(|_, _| {}, || {}).await.unwrap();
             assert_eq!(verified, std::fs::read(dir.join("installer.exe")).unwrap());
-            assert!(
-                make("corrupt")
-                    .check()
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .download(|_, _| {}, || {})
-                    .await
-                    .is_err()
+            let trickle = check_release(make("trickle")).await.unwrap().unwrap();
+            let started = std::time::Instant::now();
+            assert_eq!(trickle.download(|_, _| {}, || {}).await.unwrap(), verified);
+            assert!(started.elapsed() > CHECK_TIMEOUT);
+            println!(
+                "steady trickle verified after {:?} (metadata deadline {:?})",
+                started.elapsed(),
+                CHECK_TIMEOUT
             );
+            let stalled = check_release(make("stall")).await.unwrap().unwrap();
+            let started = std::time::Instant::now();
+            let error = stalled.download(|_, _| {}, || {}).await.unwrap_err();
             assert!(
-                make("wrong-version")
-                    .check()
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .download(|_, _| {}, || {})
-                    .await
-                    .is_err()
+                matches!(&error, tauri_plugin_updater::Error::Reqwest(error) if error.is_timeout())
             );
+            assert_eq!(UpdateError::updater(error).kind, UpdateErrorKind::Network);
+            assert!(started.elapsed() >= READ_TIMEOUT);
+            assert!(started.elapsed() < READ_TIMEOUT + Duration::from_secs(3));
+            println!(
+                "stalled download rejected after {:?} (idle deadline {:?})",
+                started.elapsed(),
+                READ_TIMEOUT
+            );
+            for name in ["corrupt", "wrong-version"] {
+                let update = check_release(make(name)).await.unwrap().unwrap();
+                let error = update.download(|_, _| {}, || {}).await.unwrap_err();
+                assert_eq!(UpdateError::updater(error).kind, UpdateErrorKind::Signature);
+            }
             assert!(make("malformed").check().await.is_err());
             assert!(make("current").check().await.unwrap().is_none());
             let offline = app
