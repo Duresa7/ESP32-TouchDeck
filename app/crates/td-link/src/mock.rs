@@ -736,6 +736,14 @@ impl MockDeck {
                 continue;
             };
             let reply = match word {
+                "layout" if command.split_whitespace().eq(["layout", "state"]) => {
+                    let mut reply =
+                        serde_json::to_value(self.layout_state()).expect("layout state serializes");
+                    reply["cmd"] = json!("layout");
+                    reply["op"] = json!("state");
+                    reply["ok"] = json!(true);
+                    reply
+                }
                 "update" => {
                     let state = self.state();
                     json!({"cmd":"update","op":"state","ok":true,"running":state.hello.running,

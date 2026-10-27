@@ -345,9 +345,9 @@ pub async fn push_layout(app: AppHandle, layout: String) -> Result<PushReport, S
             .map_err(|error| format!("icons: {error}"))?;
         let put =
             put_layout(&session, parsed.orientation, &parsed).map_err(|error| error.to_string())?;
-        app.state::<SourcesState>().use_layout(parsed);
-        // The deck may now show another layout, so the next press reads it again.
-        *app.state::<AppState>().action_layout.lock().unwrap() = None;
+        if put.state.source == "storage" && put.state.orientation == parsed.orientation {
+            use_deck_layout(&app, parsed);
+        }
         Ok(PushReport { put, icons })
     })
     .await?
@@ -638,24 +638,27 @@ fn summary(layout: &Layout, source: &str) -> LayoutSummary {
 /// Reads the layout the deck shows, so a press resolves to the tile's action. A deck that
 /// stores no layout shows the built-in one, which has no PC actions, and this keeps what it had.
 fn pull_action_layout(app: &AppHandle, session: &Session) -> bool {
-    let orientation = session
-        .request(&Request::SettingsGet, LAYOUT_PULL_TIMEOUT)
-        .ok()
-        .and_then(|reply| reply.fields::<Settings>().ok())
-        .map_or(td_core::Orientation::Landscape, |settings| {
-            settings.orientation
-        });
-    let Ok(report) = td_link::xfer::get_layout(session, orientation) else {
+    let Ok(shown) = session.layout_state(LAYOUT_PULL_TIMEOUT) else {
+        return false;
+    };
+    if shown.source != "storage" {
+        return false;
+    }
+    let Ok(report) = td_link::xfer::get_layout(session, shown.orientation) else {
         return false;
     };
     let Ok(layout) = Layout::parse(&report.data) else {
         return false;
     };
+    use_deck_layout(app, layout);
+    true
+}
+
+fn use_deck_layout(app: &AppHandle, layout: Layout) {
     app.state::<SourcesState>().use_layout(layout.clone());
     let summary = summary(&layout, "deck");
     *app.state::<AppState>().action_layout.lock().unwrap() = Some((layout, "deck".into()));
     let _ = app.emit("action-layout", summary);
-    true
 }
 
 fn resolve(app: &AppHandle, page: &str, tile: &str) -> Option<Plan> {
