@@ -1,7 +1,7 @@
 # TouchDeck desktop app
 
 TouchDeck runs on Windows and Linux. It connects to the deck over USB-Serial/JTAG,
-edits and transfers layouts, runs PC actions, feeds widgets, and updates deck
+edits and transfers layouts, runs PC actions, feeds CLIProxyAPI usage widgets, and updates deck
 firmware. The running, connected app mirrors keys and media controls into the host
 session. The deck does not type as a standalone USB HID keyboard. Wi-Fi, Bluetooth,
 battery support, and standalone USB HID are deferred to the post-product update.
@@ -20,9 +20,7 @@ No release has been published yet, so use the source-build path below until one
 is. The installer installs per user and needs no Node, pnpm, Rust, or ESP-IDF. It
 downloads the WebView2 runtime if Windows lacks it. Linux has no installer.
 
-Keep `td-statusline.exe` beside `touchdeck.exe` on Windows, or `td-statusline`
-beside `touchdeck` on Linux, for the optional status-line Source. A portable
-archive must be fully extracted before you start the app. Per-user settings,
+A portable archive must be fully extracted before you start the app. Per-user settings,
 approvals, Sources state, and icon caches live outside the executable directory.
 Copying that directory alone does not migrate your setup.
 
@@ -54,17 +52,15 @@ open a new PowerShell afterward. It is a developer setup script, not the desktop
 app installer. Linux builds also need the WebKitGTK 4.1, GTK, and libudev development
 packages described in the setup guide.
 
-From `app/`, build the production app and helper:
+From `app/`, build the production app:
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm tauri build
-cargo build --release -p td-link --bin td-statusline
 ```
 
 The executable is `target/release/touchdeck.exe` on Windows or
-`target/release/touchdeck` on Linux. The helper is in the same directory after its
-separate build. Keep them together for a manual source deployment. Frontend
+`target/release/touchdeck` on Linux. Frontend
 assets and built-in icons are embedded in the app. Building the app does not flash
 the deck or create a published release. Firmware build and `.tdfw` instructions
 are in the [USB user guide](../docs/usage.md#install-or-update-deck-firmware).
@@ -111,7 +107,7 @@ serial permissions, keyboard input, credential storage, or physical panel behavi
 | Path | Responsibility |
 | --- | --- |
 | `crates/td-core` | Frame codec, link messages, layout validation, and settings with no I/O. |
-| `crates/td-link` | Serial and mock transports, transfers, firmware update and ROM recovery, CLI tools, and `td-statusline`. |
+| `crates/td-link` | Serial and mock transports, transfers, firmware update and ROM recovery, and the link CLI. |
 | `crates/td-host` | Host input, actions, approvals, icon processing, and Sources. |
 | `src-tauri` | Desktop shell, app commands, and per-user storage integration. |
 | `src` | Svelte window and its Deck, Editor, Actions, Settings, Sources, and Update views. |

@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import ClaudeStatus from '../lib/sources/ClaudeStatus.svelte';
   import CliProxy from '../lib/sources/CliProxy.svelte';
   import { sourcesSave, sourcesStatus, sourcesView, type Config, type SourcesView, type Status } from '../lib/sources/api.ts';
 
@@ -59,6 +58,7 @@
   </div>
 
   <div class="body">
+    <p class="note">Feed AI usage limits from your CLIProxyAPI hub to widget tiles and dashboard pages.</p>
     {#if view && draft}
       <section class="card" data-testid="layout-card">
         <h3>Tiles to feed</h3>
@@ -89,7 +89,6 @@
         {#if status?.send_error}<p class="bad" data-testid="send-error">{status.send_error}</p>{/if}
       </section>
 
-      <ClaudeStatus {view} {draft} info={status?.claude} />
       <CliProxy {view} {draft} info={status?.proxy} />
 
       <div class="save">

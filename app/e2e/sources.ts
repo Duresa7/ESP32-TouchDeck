@@ -75,8 +75,6 @@ export async function useLayout(path: string) {
   });
 }
 
-export const claudeDir = () => $('[data-testid="claude-dir"]').getText();
-
 export function saveJson(name: string, value: unknown) {
   mkdirSync(out, { recursive: true });
   const path = join(out, name);

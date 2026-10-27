@@ -26,7 +26,7 @@
     { usage: 234, name: 'Volume down' },
   ];
 
-  export const SOURCES = ['claude-status', 'cliproxyapi'];
+  export const SOURCES = ['cliproxyapi'];
 
   export function fresh(type: ActionType, pages: string[]): Action {
     switch (type) {
@@ -45,7 +45,7 @@
       case 'command':
         return { type, program: '', args: [], cwd: '', shell: false };
       case 'widget':
-        return { type, source: 'claude-status', field: 'context_pct', account: '' };
+        return { type, source: 'cliproxyapi', field: 'five_hour_pct', account: '' };
       default:
         return { type: 'none' };
     }

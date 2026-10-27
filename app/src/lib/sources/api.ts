@@ -10,15 +10,6 @@ export interface Reading {
   stale: boolean;
 }
 
-export interface ClaudeInfo {
-  dir: string;
-  session: string | null;
-  updated: number | null;
-  stale: boolean;
-  error: string | null;
-  readings: Reading[];
-}
-
 export interface UsageWindow {
   pct: number;
   resets_at: number | null;
@@ -62,7 +53,6 @@ export interface LayoutInfo {
 }
 
 export interface Status {
-  claude: ClaudeInfo;
   proxy: ProxyInfo;
   layout: LayoutInfo;
   deck: boolean;
@@ -71,48 +61,17 @@ export interface Status {
 }
 
 export interface Config {
-  claude_status: boolean;
-  claude_dir: string | null;
   cliproxy: boolean;
   cliproxy_url: string;
   cliproxy_interval_s: number;
   layout_path: string | null;
-  claude_settings: string | null;
 }
 
 export interface SourcesView {
   config: Config;
   key_hint: string | null;
-  claude_dir: string;
-  settings_path: string;
   config_file: string;
-  shim: { command: string; found: boolean };
   mock: boolean;
-}
-
-export interface DiffLine {
-  kind: 'ctx' | 'del' | 'add';
-  text: string;
-}
-
-export interface InstallPreview {
-  path: string;
-  exists: boolean;
-  before: string | null;
-  command: string;
-  changed: boolean;
-  installed: boolean;
-  shim_found: boolean;
-  diff: DiffLine[];
-}
-
-export interface RemoveResult {
-  path: string;
-  exists: boolean;
-  before: string | null;
-  restored: string | null;
-  changed: boolean;
-  diff: DiffLine[];
 }
 
 export const sourcesView = () => invoke<SourcesView>('sources_view');
@@ -120,11 +79,8 @@ export const sourcesStatus = () => invoke<Status>('sources_status');
 export const sourcesSave = (config: Config) => invoke<SourcesView>('sources_save', { config });
 export const setManagementKey = (key: string) => invoke<string | null>('sources_set_key', { key });
 export const clearManagementKey = () => invoke<void>('sources_clear_key');
-export const refreshSource = (source: 'claude-status' | 'cliproxyapi') => invoke<void>('sources_refresh', { source });
+export const refreshSource = (source: 'cliproxyapi') => invoke<void>('sources_refresh', { source });
 export const useLayout = (json: string) => invoke<void>('sources_use_layout', { json });
-export const statuslinePreview = (settings: string | null) => invoke<InstallPreview>('statusline_preview', { settings });
-export const statuslineInstall = (settings: string | null) => invoke<InstallPreview>('statusline_install', { settings });
-export const statuslineRemove = (settings: string | null) => invoke<RemoveResult>('statusline_remove', { settings });
 
 export function ago(unixMs: number | null, now = Date.now()): string {
   if (unixMs === null) return 'never';

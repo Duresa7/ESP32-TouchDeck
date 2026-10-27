@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use td_core::layout::{Action, Page};
 use td_core::{DashboardRow, Layout, Request};
 
-use super::{CLAUDE_STATUS, CLIPROXYAPI, Reading, SEND_FLOOR};
+use super::{CLIPROXYAPI, Reading, SEND_FLOOR};
 
 const VALUE_MAX: usize = 24;
 const CAPTION_MAX: usize = 16;
@@ -121,10 +121,9 @@ impl Scheduler {
 
     fn widget(&self, binding: &WidgetBinding) -> Option<Request> {
         let readings = self.readings.get(&binding.source)?;
-        let reading = readings.iter().find(|reading| {
-            reading.field == binding.field
-                && (binding.source == CLAUDE_STATUS || reading.account == binding.account)
-        });
+        let reading = readings
+            .iter()
+            .find(|reading| reading.field == binding.field && reading.account == binding.account);
         // A failed provider or a missing window must clear the previous quota on deck.
         let Some(reading) = reading else {
             if binding.source == CLIPROXYAPI

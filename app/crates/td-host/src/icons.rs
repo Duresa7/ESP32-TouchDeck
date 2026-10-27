@@ -107,7 +107,6 @@ pub fn default_for(action: &serde_json::Value) -> Option<&'static str> {
         }
         "command" => Some("terminal"),
         "widget" => match field("source")? {
-            "claude-status" => Some("bot"),
             "cliproxyapi" => Some("server"),
             _ => Some("gauge"),
         },

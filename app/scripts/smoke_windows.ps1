@@ -62,8 +62,7 @@ if (-not $PackageDir) { throw 'Pass -PackageDir for a start, or -Stop for an exi
 if (Test-Path -LiteralPath $scratchPath) { throw 'Scratch must be a new directory.' }
 $package = (Resolve-Path -LiteralPath $PackageDir).Path
 $executable = Join-Path $package 'touchdeck.exe'
-$helper = Join-Path $package 'td-statusline.exe'
-if (-not (Test-Path -LiteralPath $executable) -or -not (Test-Path -LiteralPath $helper)) { throw 'Extract the entire production archive first.' }
+if (-not (Test-Path -LiteralPath $executable)) { throw 'Extract the entire production archive first.' }
 New-Item -ItemType Directory -Path $scratchPath | Out-Null
 Get-DefaultSnapshot | Set-Content -LiteralPath (Join-Path $scratchPath 'default-paths-before.json')
 $working = Join-Path $scratchPath 'empty-working-directory'
@@ -75,7 +74,6 @@ $start.Environment['TOUCHDECK_MOCK'] = '1'
 $start.Environment['TOUCHDECK_INPUT'] = 'fake'
 $start.Environment['TOUCHDECK_APP_DATA_DIR'] = Join-Path $scratchPath 'app'
 $start.Environment['TOUCHDECK_CONFIG_DIR'] = Join-Path $scratchPath 'source-config'
-$start.Environment['TOUCHDECK_STATE_DIR'] = Join-Path $scratchPath 'source-state'
 # Prove lib.rs data_directory rather than WebView2's higher-priority environment override.
 $null = $start.Environment.Remove('WEBVIEW2_USER_DATA_FOLDER')
 foreach ($name in @('TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA')) {

@@ -186,11 +186,10 @@ The schema does not check installed programs, URLs, accounts, or source availabi
 A widget's `account` picks one reading from its source. An empty account means the
 source's single or aggregate value. Source plugins interpret `field`.
 
-- `claude-status` has no accounts and always uses an empty account. It supplies
-  fields such as `context_pct`, `cost_usd`, and `model` for the current session.
-- A `cliproxyapi` account is the `email` of one auth-file entry. An empty account
-  means the aggregate across all entries. Its `status` is the worst entry's status,
-  and its counts are summed. It supplies fields such as `status` and `recent_10m`.
+A `cliproxyapi` account is a provider-prefixed key such as `codex:alice@example.com`. An empty account
+means the aggregate across all entries. Its `status` is the worst entry's status,
+and its counts are summed. It supplies usage fields `five_hour_pct` and
+`seven_day_pct`, reset fields, `plan`, `status`, and counts such as `recent_10m`.
 
 The schema does not check accounts. The app resolves them.
 
@@ -203,17 +202,18 @@ The 22 tile IDs, labels, cell positions, and usages match the milestone 1 tables
 
 [dev.json](examples/dev.json) has three grid pages and a CLIProxyAPI dashboard.
 It covers all nine action types, a horizontal span, a vertical span, a key chord,
-a dashboard jump, three Claude status widgets, and one CLIProxyAPI widget.
+a dashboard jump, and four CLIProxyAPI widgets.
 Its command tile describes `cmd /c echo TouchDeck` on Windows. It names no `file:`
 icon, because no app cache holds a bitmap whose hash is not a real file's.
 
 Later milestone lanes depend on these fixture IDs and roles. `f5` sends F5 with
 usage 62, and `shift` applies Shift on the same page. `chord` is a key with `ctrl`
 and `shift`. `launch`, `command`, and `open` each use their matching app action.
-The `claude-status` widgets `context`, `cost`, and `model` use fields `context_pct`,
-`cost_usd`, and `model`. The `proxy` widget uses `cliproxyapi` field `status`. All
-four use an empty account. The `accounts` dashboard uses source `cliproxyapi`, and
-`accounts_jump` opens it.
+The `five_hour` and `seven_day` widgets use CLIProxyAPI fields `five_hour_pct`
+and `seven_day_pct` with an empty account for aggregate usage. `claude_5h`
+uses `five_hour_pct` for the fixture account `claude:alice@example.com`. The
+`proxy` widget uses `cliproxyapi` field `status` with an empty account. The
+`accounts` dashboard uses source `cliproxyapi`, and `accounts_jump` opens it.
 
 The [invalid examples](examples/invalid/) each break one rule and have one file per
 rule key. The first line of each file is plain text, not JSON:

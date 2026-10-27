@@ -16,7 +16,7 @@ keyboard. Wi-Fi, Bluetooth, battery support, and standalone USB HID are deferred
 to the post-product update.
 
 Start with the [USB user guide](docs/usage.md) to obtain or build the app, install
-firmware, connect, edit and push layouts, configure Sources, and back up your work.
+firmware, connect, edit and push layouts, configure CLIProxyAPI usage limits, and back up your work.
 Once a release is published, the Windows installer will be at
 [TouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe)
 on [GitHub Releases](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest).

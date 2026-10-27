@@ -129,8 +129,8 @@ def verify(archive_path):
             raise ValueError("Executable source marker does not match manifest")
         graph = archive.read("build/production-dependencies.txt").decode("utf-8")
         verify_production_app(app, graph)
-        if not archive.read("td-statusline.exe").startswith(b"MZ") or not app.startswith(b"MZ"):
-            raise ValueError("Windows executables missing")
+        if not app.startswith(b"MZ"):
+            raise ValueError("Windows executable missing")
         fw = manifest["firmware"]
         if fw["source_revision"] != manifest["source_revision"]:
             raise ValueError("Firmware source revision differs")
@@ -177,15 +177,11 @@ def build(args):
     tauri = app_dir / "node_modules/@tauri-apps/cli/tauri.js"
     if not tauri.is_file():
         raise ValueError("Install locked app dependencies first (see docs/packaging.md)")
-    run(["cargo", "build", "--release", "--locked", "--no-default-features", "--target", TARGET,
-         "-p", "td-link", "--bin", "td-statusline"], cwd=app_dir, env=env)
-    shutil.copyfile(out / "build/app" / TARGET / "release/td-statusline.exe", payload / "td-statusline.exe")
     shutil.copyfile(ROOT / "LICENSE", payload / "LICENSE.txt")
     (payload / "licenses").mkdir()
     shutil.copyfile(ROOT / "app/icons/builtin/LICENSE-lucide.txt", payload / "licenses/LICENSE-lucide.txt")
     shutil.copyfile(ROOT / "docs/packaging.md", payload / "PACKAGING.md")
-    write_json(payload / "install-manifest.json", {"source_revision": revision, "firmware": fw,
-        "helper_sha256": sha((payload / "td-statusline.exe").read_bytes())})
+    write_json(payload / "install-manifest.json", {"source_revision": revision, "firmware": fw})
     public_key = ""
     test_key = None
     if not args.portable_only:

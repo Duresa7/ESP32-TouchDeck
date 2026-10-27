@@ -1096,7 +1096,7 @@ mod tests {
                 "tiles":[{"id":"f1","label":"Never run","row":0,"col":0,"rowSpan":1,"colSpan":1,
                     "icon":null,"action":{"type":"command","program":"never-run-fixture","args":[],"cwd":"","shell":false}},
                     {"id":"feed","label":"Context","row":0,"col":1,"rowSpan":1,"colSpan":1,
-                    "icon":null,"action":{"type":"widget","source":"claude-status","field":"context_pct","account":""}}]}]}
+                    "icon":null,"action":{"type":"widget","source":"cliproxyapi","field":"five_hour_pct","account":""}}]}]}
         "#).unwrap();
         bind_deck_layout(&state, &sources, previous);
         assert!(matches!(

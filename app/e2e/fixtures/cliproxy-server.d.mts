@@ -18,6 +18,7 @@ export interface FixtureServer {
   url: string;
   port: number;
   requests: LoggedRequest[];
+  setFiveHourPercent(percent: number): void;
   stop(): Promise<void>;
 }
 

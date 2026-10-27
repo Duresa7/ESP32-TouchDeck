@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fs::{self, File};
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -10,16 +10,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 use td_core::{DashboardRow, Layout, Request};
-use td_host::sources::claude_status::{
-    STALE_AFTER, edit_settings, line_diff, quote, shim_command, wrap,
-};
 use td_host::sources::cliproxy::{
     API_CALL, AUTH_FILES, CLAUDE_USAGE, CODEX_USAGE, ProxyInfo, insecure_http, parse_accounts,
     readings as proxy_readings,
 };
 use td_host::sources::{
-    ClaudeStatus, CliProxy, Config, Fetch, Hub, KeyStore, MemoryKeys, Reading, Scheduler, Sink,
-    Source, key_hint,
+    CliProxy, Config, Fetch, Hub, KeyStore, MemoryKeys, Reading, Scheduler, Sink, Source, key_hint,
 };
 
 fn fixture(name: &str) -> String {
@@ -53,113 +49,12 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
-fn age(path: &Path, by: Duration) {
-    let file = File::options().write(true).open(path).unwrap();
-    file.set_modified(SystemTime::now() - by).unwrap();
-}
-
 fn by_field(readings: &[Reading]) -> HashMap<String, Reading> {
     readings
         .iter()
         .filter(|reading| reading.account.is_empty())
         .map(|reading| (reading.field.clone(), reading.clone()))
         .collect()
-}
-
-#[test]
-fn the_status_fixture_yields_every_field() {
-    let dir = scratch("fields");
-    fs::write(
-        dir.join("8f3c1a52-fixture.json"),
-        fixture("statusline.json"),
-    )
-    .unwrap();
-    let readings = ClaudeStatus::new(&dir).poll_at(SystemTime::now());
-    assert_eq!(readings.len(), 5);
-    let fields = by_field(&readings);
-    let show = |field: &str| {
-        let reading = &fields[field];
-        (reading.value.as_str(), reading.bar, reading.stale)
-    };
-    assert_eq!(show("model"), ("Opus", -1.0, false));
-    assert_eq!(show("context_pct"), ("42%", 0.42, false));
-    assert_eq!(show("cost_usd"), ("$0.43", -1.0, false));
-    assert_eq!(show("five_hour_pct"), ("24%", 0.235, false));
-    assert_eq!(show("seven_day_pct"), ("61%", 0.612, false));
-    assert!(
-        readings
-            .iter()
-            .all(|r| r.source == "claude-status" && r.updated > 0)
-    );
-}
-
-#[test]
-fn a_missing_rate_limits_yields_no_reading_for_it() {
-    let dir = scratch("no-limits");
-    let mut document: Value = serde_json::from_str(&fixture("statusline.json")).unwrap();
-    document.as_object_mut().unwrap().remove("rate_limits");
-    fs::write(dir.join("s.json"), document.to_string()).unwrap();
-    let fields = by_field(&ClaudeStatus::new(&dir).poll_at(SystemTime::now()));
-    let mut names: Vec<_> = fields.keys().cloned().collect();
-    names.sort();
-    assert_eq!(names, ["context_pct", "cost_usd", "model"]);
-
-    document["rate_limits"] = serde_json::json!({"five_hour": {"used_percentage": null}});
-    document["context_window"]["used_percentage"] = Value::Null;
-    fs::write(dir.join("s.json"), document.to_string()).unwrap();
-    let fields = by_field(&ClaudeStatus::new(&dir).poll_at(SystemTime::now()));
-    let mut names: Vec<_> = fields.keys().cloned().collect();
-    names.sort();
-    assert_eq!(names, ["cost_usd", "model"]);
-}
-
-#[test]
-fn a_ten_minute_old_file_is_stale_and_a_nine_minute_old_one_is_not() {
-    let dir = scratch("stale");
-    let file = dir.join("s.json");
-    fs::write(&file, fixture("statusline.json")).unwrap();
-    let mut source = ClaudeStatus::new(&dir);
-    age(&file, STALE_AFTER);
-    let readings = source.poll_at(SystemTime::now());
-    assert!(!readings.is_empty() && readings.iter().all(|reading| reading.stale));
-    age(&file, STALE_AFTER - Duration::from_secs(60));
-    let readings = source.poll_at(SystemTime::now());
-    assert!(readings.iter().all(|reading| !reading.stale));
-}
-
-#[test]
-fn the_newest_file_wins_and_a_missing_directory_yields_nothing() {
-    let dir = scratch("newest");
-    let mut older: Value = serde_json::from_str(&fixture("statusline.json")).unwrap();
-    older["context_window"]["used_percentage"] = 10.into();
-    fs::write(dir.join("older.json"), older.to_string()).unwrap();
-    age(&dir.join("older.json"), Duration::from_secs(120));
-    fs::write(dir.join("newer.json"), fixture("statusline.json")).unwrap();
-    fs::write(dir.join(".newer.json.1.tmp"), "{").unwrap();
-    let mut source = ClaudeStatus::new(&dir);
-    assert_eq!(
-        by_field(&source.poll_at(SystemTime::now()))["context_pct"].value,
-        "42%"
-    );
-    assert!(
-        ClaudeStatus::new(dir.join("nope"))
-            .poll_at(SystemTime::now())
-            .is_empty()
-    );
-}
-
-#[test]
-fn a_file_that_is_not_json_keeps_the_last_good_reading_and_reports_the_error() {
-    let dir = scratch("broken");
-    fs::write(dir.join("s.json"), fixture("statusline.json")).unwrap();
-    let mut source = ClaudeStatus::new(&dir);
-    assert_eq!(source.poll_at(SystemTime::now()).len(), 5);
-    fs::write(dir.join("s.json"), "{ not json").unwrap();
-    assert_eq!(source.poll_at(SystemTime::now()).len(), 5);
-    let td_host::sources::Info::Claude(info) = source.info() else {
-        panic!("claude info expected");
-    };
-    assert!(info.error.is_some());
 }
 
 #[test]
@@ -303,9 +198,7 @@ fn three_failed_polls_mark_the_readings_stale_and_the_next_good_poll_clears_it()
     let third = proxy.poll_at(now);
     assert_eq!(third.len(), first.len());
     assert!(stale(&third));
-    let td_host::sources::Info::Proxy(info) = proxy.info() else {
-        panic!("proxy info expected");
-    };
+    let td_host::sources::Info::Proxy(info) = proxy.info();
     assert_eq!((info.ok, info.fails, info.stale), (Some(false), 3, true));
     assert_eq!(info.error.as_deref(), Some("connection refused"));
     let back = proxy.poll_at(now);
@@ -330,9 +223,7 @@ fn the_source_only_reads_auth_files_with_the_bearer_key_and_shows_its_last_four(
         assert_eq!(bearer, "fixture-key-1234");
         assert!(!url.contains("usage-queue"));
     }
-    let td_host::sources::Info::Proxy(info) = proxy.info() else {
-        panic!("proxy info expected");
-    };
+    let td_host::sources::Info::Proxy(info) = proxy.info();
     let shown = serde_json::to_string(&info).unwrap();
     assert!(shown.contains("…1234") && !shown.contains("fixture-key"));
     assert_eq!(key_hint("ab"), "…ab");
@@ -344,16 +235,12 @@ fn no_key_is_a_failed_poll_that_makes_no_request() {
     let (mut proxy, _) = proxy_with(&fetch, None);
     assert!(proxy.poll_at(SystemTime::now()).is_empty());
     assert!(fetch.calls.lock().unwrap().is_empty());
-    let td_host::sources::Info::Proxy(info) = proxy.info() else {
-        panic!("proxy info expected");
-    };
+    let td_host::sources::Info::Proxy(info) = proxy.info();
     assert_eq!(info.error.as_deref(), Some("no management key is set"));
 }
 
 fn proxy_info(proxy: &CliProxy) -> ProxyInfo {
-    let td_host::sources::Info::Proxy(info) = proxy.info() else {
-        panic!("proxy info expected")
-    };
+    let td_host::sources::Info::Proxy(info) = proxy.info();
     info
 }
 
@@ -860,9 +747,7 @@ fn http_fetch_sends_one_authorized_get_and_reports_a_refusal() {
     }
     keys.set("fixture-wrong-key").unwrap();
     proxy.poll_at(SystemTime::now());
-    let td_host::sources::Info::Proxy(info) = proxy.info() else {
-        panic!("proxy info expected");
-    };
+    let td_host::sources::Info::Proxy(info) = proxy.info();
     assert_eq!(info.error.as_deref(), Some("HTTP 401"));
 }
 
@@ -895,7 +780,7 @@ fn https_urls_are_accepted_and_http_warnings_only_apply_off_loopback() {
 }
 
 fn widget(value: &str, bar: f64, stale: bool) -> Reading {
-    Reading::new("claude-status", "", "context_pct", value, bar, 1, stale)
+    Reading::new("cliproxyapi", "", "five_hour_pct", value, bar, 1, stale)
 }
 
 fn context_sets(requests: &[Request]) -> Vec<(String, bool)> {
@@ -904,7 +789,7 @@ fn context_sets(requests: &[Request]) -> Vec<(String, bool)> {
         .filter_map(|request| match request {
             Request::WidgetSet {
                 tile, value, stale, ..
-            } if tile == "context" => Some((value.clone(), *stale)),
+            } if tile == "five_hour" => Some((value.clone(), *stale)),
             _ => None,
         })
         .collect()
@@ -915,7 +800,7 @@ fn dev_json_binds_four_widget_tiles_and_one_dashboard() {
     let scheduler = Scheduler::from_layout(&dev_layout());
     assert_eq!(scheduler.counts(), (4, 1));
     assert_eq!(scheduler.source_of_tile("proxy"), Some("cliproxyapi"));
-    assert_eq!(scheduler.source_of_tile("context"), Some("claude-status"));
+    assert_eq!(scheduler.source_of_tile("five_hour"), Some("cliproxyapi"));
     assert_eq!(scheduler.source_of_tile("f5"), None);
 }
 
@@ -926,14 +811,14 @@ fn the_scheduler_sends_once_per_change_and_respects_the_two_second_floor() {
     let at = |ms: u64| start + Duration::from_millis(ms);
     assert!(scheduler.due(at(0)).is_empty(), "nothing is known yet");
 
-    scheduler.update("claude-status", vec![widget("42%", 0.42, false)]);
+    scheduler.update("cliproxyapi", vec![widget("42%", 0.42, false)]);
     let first = scheduler.due(at(0));
     assert_eq!(
         first,
         [Request::WidgetSet {
-            tile: "context".into(),
+            tile: "five_hour".into(),
             value: "42%".into(),
-            caption: "Context".into(),
+            caption: "5h usage".into(),
             bar: 0.42,
             stale: false
         }]
@@ -945,7 +830,7 @@ fn the_scheduler_sends_once_per_change_and_respects_the_two_second_floor() {
     );
     assert_eq!(scheduler.pending_in(at(5000)), None);
 
-    scheduler.update("claude-status", vec![widget("43%", 0.43, false)]);
+    scheduler.update("cliproxyapi", vec![widget("43%", 0.43, false)]);
     assert_eq!(
         context_sets(&scheduler.due(at(5100))),
         [("43%".to_owned(), false)]
@@ -958,13 +843,13 @@ fn a_change_inside_the_floor_waits_and_a_burst_sends_only_the_last_value() {
     let mut scheduler = Scheduler::from_layout(&dev_layout());
     let start = Instant::now();
     let at = |ms: u64| start + Duration::from_millis(ms);
-    scheduler.update("claude-status", vec![widget("42%", 0.42, false)]);
+    scheduler.update("cliproxyapi", vec![widget("42%", 0.42, false)]);
     let mut sent = scheduler.due(at(0));
-    scheduler.update("claude-status", vec![widget("43%", 0.43, false)]);
+    scheduler.update("cliproxyapi", vec![widget("43%", 0.43, false)]);
     sent.extend(scheduler.due(at(500)));
-    scheduler.update("claude-status", vec![widget("44%", 0.44, false)]);
+    scheduler.update("cliproxyapi", vec![widget("44%", 0.44, false)]);
     sent.extend(scheduler.due(at(900)));
-    scheduler.update("claude-status", vec![widget("45%", 0.45, false)]);
+    scheduler.update("cliproxyapi", vec![widget("45%", 0.45, false)]);
     sent.extend(scheduler.due(at(1500)));
     assert_eq!(context_sets(&sent), [("42%".to_owned(), false)]);
     assert_eq!(
@@ -986,11 +871,11 @@ fn a_stale_flip_is_sent_and_so_is_its_recovery() {
     let mut scheduler = Scheduler::from_layout(&dev_layout());
     let start = Instant::now();
     let at = |ms: u64| start + Duration::from_millis(ms);
-    scheduler.update("claude-status", vec![widget("42%", 0.42, false)]);
+    scheduler.update("cliproxyapi", vec![widget("42%", 0.42, false)]);
     let mut sent = scheduler.due(at(0));
-    scheduler.update("claude-status", vec![widget("42%", 0.42, true)]);
+    scheduler.update("cliproxyapi", vec![widget("42%", 0.42, true)]);
     sent.extend(scheduler.due(at(2000)));
-    scheduler.update("claude-status", vec![widget("42%", 0.42, false)]);
+    scheduler.update("cliproxyapi", vec![widget("42%", 0.42, false)]);
     sent.extend(scheduler.due(at(4000)));
     assert_eq!(
         context_sets(&sent),
@@ -1006,7 +891,7 @@ fn a_stale_flip_is_sent_and_so_is_its_recovery() {
 fn a_resync_and_a_failed_send_both_come_due_again() {
     let mut scheduler = Scheduler::from_layout(&dev_layout());
     let now = Instant::now();
-    scheduler.update("claude-status", vec![widget("42%", 0.42, false)]);
+    scheduler.update("cliproxyapi", vec![widget("42%", 0.42, false)]);
     let sent = scheduler.due(now);
     assert_eq!(sent.len(), 1);
     scheduler.forget(&sent[0]);
@@ -1103,17 +988,16 @@ fn a_dashboard_keeps_eight_rows_and_cuts_long_text() {
 }
 
 #[test]
-fn a_widget_names_its_account_but_a_claude_widget_ignores_it() {
+fn a_widget_only_matches_its_account() {
     let layout = Layout::parse(
         br#"{"schema":1,"name":"t","orientation":"landscape","pages":[{"id":"p","title":"P","kind":"grid","rows":1,"cols":2,"tiles":[
         {"id":"grace","label":"Grace","row":0,"col":0,"rowSpan":1,"colSpan":1,"icon":null,"action":{"type":"widget","source":"cliproxyapi","field":"recent_10m","account":"codex:grace@example.com"}},
-        {"id":"ctx","label":"Ctx","row":0,"col":1,"rowSpan":1,"colSpan":1,"icon":null,"action":{"type":"widget","source":"claude-status","field":"context_pct","account":"anyone"}}]}]}"#,
+        {"id":"ctx","label":"Ctx","row":0,"col":1,"rowSpan":1,"colSpan":1,"icon":null,"action":{"type":"widget","source":"cliproxyapi","field":"recent_10m","account":"anyone"}}]}]}"#,
     )
     .unwrap();
     let mut scheduler = Scheduler::from_layout(&layout);
     let accounts = parse_accounts(&fixture("auth-files.json")).unwrap();
     scheduler.update("cliproxyapi", proxy_readings(&accounts, 1, false));
-    scheduler.update("claude-status", vec![widget("42%", 0.42, false)]);
     let sent = scheduler.due(Instant::now());
     assert!(sent.contains(&Request::WidgetSet {
         tile: "grace".into(),
@@ -1122,122 +1006,11 @@ fn a_widget_names_its_account_but_a_claude_widget_ignores_it() {
         bar: 1.0,
         stale: false
     }));
-    assert!(sent.iter().any(
-        |r| matches!(r, Request::WidgetSet { tile, value, .. } if tile == "ctx" && value == "42%")
-    ));
-}
-
-const OLD_SETTINGS: &str = "{\n  \"model\": \"opus\",\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"sh 'C:\\\\Users\\\\dev\\\\.claude\\\\statusline.sh' | tee \\\"$HOME/x\\\"\",\n    \"padding\": 0\n  },\n  \"env\": {\n    \"A\": \"1\"\n  }\n}\n";
-
-fn without_status_line(text: &str) -> Value {
-    let mut value: Value = serde_json::from_str(text).unwrap();
-    value.as_object_mut().unwrap().remove("statusLine");
-    value
-}
-
-#[test]
-fn install_wraps_the_old_command_with_then_and_changes_nothing_else() {
-    let edit = edit_settings(Some(OLD_SETTINGS), "td-statusline").unwrap();
-    assert!(edit.changed);
-    let old = r#"sh 'C:\Users\dev\.claude\statusline.sh' | tee "$HOME/x""#;
-    assert_eq!(edit.before.as_deref(), Some(old));
-    assert_eq!(edit.command, format!("td-statusline --then {}", quote(old)));
-    let after: Value = serde_json::from_str(&edit.text).unwrap();
-    assert_eq!(after["statusLine"]["command"], edit.command);
-    assert_eq!(after["statusLine"]["padding"], 0);
-    assert_eq!(after["statusLine"]["type"], "command");
-    assert_eq!(
-        without_status_line(&edit.text),
-        without_status_line(OLD_SETTINGS)
-    );
-    let head = OLD_SETTINGS.find("\"statusLine\"").unwrap();
     assert!(
-        edit.text.starts_with(&OLD_SETTINGS[..head]),
-        "bytes before the entry are untouched"
+        !sent
+            .iter()
+            .any(|r| matches!(r, Request::WidgetSet { tile, .. } if tile == "ctx"))
     );
-    let tail = &OLD_SETTINGS[OLD_SETTINGS.find("  },\n  \"env\"").unwrap() + 4..];
-    assert!(
-        edit.text.ends_with(tail),
-        "bytes after the entry are untouched"
-    );
-    let diff = line_diff(OLD_SETTINGS, &edit.text);
-    assert!(
-        diff.iter()
-            .any(|line| line.kind == "del" && line.text.contains("statusline.sh"))
-    );
-    assert!(
-        diff.iter()
-            .any(|line| line.kind == "add" && line.text.contains("--then"))
-    );
-}
-
-#[test]
-fn quoting_survives_a_posix_shell() {
-    assert_eq!(quote(r#"a "b" $c `d` \e"#), r#""a \"b\" \$c \`d\` \\e""#);
-    assert_eq!(wrap("td-statusline", None), "td-statusline");
-    assert_eq!(
-        wrap("td-statusline", Some("echo old")),
-        r#"td-statusline --then "echo old""#
-    );
-}
-
-#[test]
-fn install_adds_the_entry_when_there_is_none() {
-    let text = "{\n  \"model\": \"opus\"\n}\n";
-    let edit = edit_settings(Some(text), "td-statusline").unwrap();
-    assert!(edit.changed && edit.before.is_none());
-    assert!(
-        edit.text
-            .starts_with("{\n  \"model\": \"opus\",\n  \"statusLine\": {")
-    );
-    assert!(edit.text.ends_with("}\n}\n"));
-    let after: Value = serde_json::from_str(&edit.text).unwrap();
-    assert_eq!(after["statusLine"]["command"], "td-statusline");
-    assert_eq!(after["model"], "opus");
-
-    for empty in [Some("{}"), Some("{ }\n"), Some(""), None] {
-        let edit = edit_settings(empty, "td-statusline").unwrap();
-        let after: Value = serde_json::from_str(&edit.text).unwrap();
-        assert_eq!(after["statusLine"]["command"], "td-statusline", "{empty:?}");
-        assert!(after.as_object().unwrap().len() == 1);
-    }
-}
-
-#[test]
-fn install_leaves_a_file_that_already_runs_the_shim() {
-    let text = "{\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"\\\"C:\\\\Program Files\\\\TouchDeck\\\\td-statusline.exe\\\" --then \\\"x\\\"\"\n  }\n}\n";
-    let edit = edit_settings(Some(text), "td-statusline").unwrap();
-    assert!(!edit.changed);
-    assert_eq!(edit.text, text);
-}
-
-#[test]
-fn install_refuses_a_file_it_cannot_edit_safely() {
-    for bad in [
-        "{ not json",
-        "[1,2]",
-        "{\"statusLine\": \"just a string\"}",
-        "{\"statusLine\": {\"command\": 3}}",
-    ] {
-        assert!(edit_settings(Some(bad), "td-statusline").is_err(), "{bad}");
-    }
-}
-
-#[test]
-fn the_shim_command_names_a_sibling_binary_or_falls_back_to_the_bare_name() {
-    let dir = scratch("shim");
-    assert_eq!(
-        shim_command(Some(&dir)),
-        ("td-statusline".to_owned(), false)
-    );
-    let name = if cfg!(windows) {
-        "td-statusline.exe"
-    } else {
-        "td-statusline"
-    };
-    fs::write(dir.join(name), "").unwrap();
-    let (command, found) = shim_command(Some(&dir));
-    assert!(found && command.contains("td-statusline"));
 }
 
 #[derive(Default)]
@@ -1302,86 +1075,21 @@ fn tile_value(requests: &[Request], tile: &str) -> Option<String> {
     })
 }
 
-fn claude_config(dir: &Path) -> Config {
+fn proxy_config(url: &str) -> Config {
     Config {
-        claude_dir: Some(dir.display().to_string()),
+        cliproxy: true,
+        cliproxy_url: url.to_owned(),
         layout_path: Some(dev_layout_path()),
         ..Config::default()
     }
 }
 
 #[test]
-fn the_hub_sends_the_claude_tiles_within_two_seconds_of_a_status_line_update() {
-    let dir = scratch("hub");
-    let hub = Hub::start(claude_config(&dir), Arc::new(MemoryKeys::default()));
-    let sink = Arc::new(Recorder::default());
-    hub.set_sink(Some(sink.clone()));
-    let wrote = Instant::now();
-    fs::write(dir.join("s.json"), fixture("statusline.json")).unwrap();
-    let took = sink.wait_for("the three Claude tiles", Duration::from_secs(2), |sent| {
-        ["context", "cost", "model"]
-            .iter()
-            .all(|tile| tile_value(sent, tile).is_some())
-    });
-    assert!(wrote.elapsed() < Duration::from_secs(2), "{took:?}");
-    let sent = sink.sent();
-    assert_eq!(tile_value(&sent, "context").as_deref(), Some("42%"));
-    assert_eq!(tile_value(&sent, "cost").as_deref(), Some("$0.43"));
-    assert_eq!(tile_value(&sent, "model").as_deref(), Some("Opus"));
-
-    let mut document: Value = serde_json::from_str(&fixture("statusline.json")).unwrap();
-    document["context_window"]["used_percentage"] = 50.into();
-    fs::write(dir.join("s.json"), document.to_string()).unwrap();
-    sink.wait_for("the context update", Duration::from_secs(4), |sent| {
-        tile_value(sent, "context").as_deref() == Some("50%")
-    });
-    thread::sleep(Duration::from_millis(1200));
-    let contexts = context_sets(&sink.sent());
-    assert_eq!(contexts.len(), 2, "one send per change: {contexts:?}");
-    let times: Vec<Instant> = sink
-        .0
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(
-            |(_, request)| matches!(request, Request::WidgetSet { tile, .. } if tile == "context"),
-        )
-        .map(|(at, _)| *at)
-        .collect();
-    assert!(times[1] - times[0] >= Duration::from_millis(1900));
-    let status = hub.status();
-    assert_eq!(status.layout.widgets, 4);
-    assert!(status.deck && status.sent >= 4);
-    hub.stop();
-}
-
-#[test]
-fn the_hub_sends_stale_true_for_every_claude_tile_when_the_file_is_old() {
-    let dir = scratch("hub-stale");
-    fs::write(dir.join("s.json"), fixture("statusline.json")).unwrap();
-    age(&dir.join("s.json"), Duration::from_secs(11 * 60));
-    let hub = Hub::start(claude_config(&dir), Arc::new(MemoryKeys::default()));
-    let sink = Arc::new(Recorder::default());
-    hub.set_sink(Some(sink.clone()));
-    sink.wait_for("three stale tiles", Duration::from_secs(2), |sent| {
-        sent.iter()
-            .filter(|r| matches!(r, Request::WidgetSet { stale: true, .. }))
-            .count()
-            == 3
-    });
-    assert!(
-        sink.sent()
-            .iter()
-            .all(|r| !matches!(r, Request::WidgetSet { stale: false, .. }))
-    );
-    hub.stop();
-}
-
-#[test]
 fn a_failed_send_loses_nothing_and_every_tile_arrives_once_the_link_is_back() {
-    let dir = scratch("hub-flaky");
-    fs::write(dir.join("s.json"), fixture("statusline.json")).unwrap();
-    let hub = Hub::start(claude_config(&dir), Arc::new(MemoryKeys::default()));
+    let server = serve("fixture-proxy-key", fixture("auth-files.json"));
+    let keys = Arc::new(MemoryKeys::default());
+    keys.set("fixture-proxy-key").unwrap();
+    let hub = Hub::start(proxy_config(&server.url), keys);
     let sink = Arc::new(Flaky {
         fail: AtomicBool::new(true),
         taken: Mutex::new(Vec::new()),
@@ -1395,7 +1103,7 @@ fn a_failed_send_loses_nothing_and_every_tile_arrives_once_the_link_is_back() {
     assert!(sink.taken.lock().unwrap().is_empty());
     sink.fail.store(false, Ordering::Relaxed);
     let started = Instant::now();
-    while sink.taken.lock().unwrap().len() < 3 && started.elapsed() < Duration::from_secs(3) {
+    while sink.taken.lock().unwrap().len() < 5 && started.elapsed() < Duration::from_secs(3) {
         thread::sleep(Duration::from_millis(20));
     }
     thread::sleep(Duration::from_millis(300));
@@ -1408,27 +1116,32 @@ fn a_failed_send_loses_nothing_and_every_tile_arrives_once_the_link_is_back() {
         })
         .collect();
     tiles.sort();
-    assert_eq!(tiles, ["context", "cost", "model"]);
+    assert_eq!(tiles, ["claude_5h", "five_hour", "proxy", "seven_day"]);
     assert_eq!(hub.status().send_error, None);
     hub.stop();
 }
 
 #[test]
 fn a_new_sink_gets_every_tile_again() {
-    let dir = scratch("hub-resync");
-    fs::write(dir.join("s.json"), fixture("statusline.json")).unwrap();
-    let hub = Hub::start(claude_config(&dir), Arc::new(MemoryKeys::default()));
+    let server = serve("fixture-proxy-key", fixture("auth-files.json"));
+    let keys = Arc::new(MemoryKeys::default());
+    keys.set("fixture-proxy-key").unwrap();
+    let hub = Hub::start(proxy_config(&server.url), keys);
     let first = Arc::new(Recorder::default());
     hub.set_sink(Some(first.clone()));
-    first.wait_for("three tiles", Duration::from_secs(2), |sent| {
-        sent.len() == 3
-    });
+    first.wait_for(
+        "four tiles and a dashboard",
+        Duration::from_secs(2),
+        |sent| sent.len() == 5,
+    );
     hub.set_sink(None);
     let second = Arc::new(Recorder::default());
     hub.set_sink(Some(second.clone()));
-    second.wait_for("three tiles again", Duration::from_secs(2), |sent| {
-        sent.len() == 3
-    });
+    second.wait_for(
+        "four tiles and a dashboard again",
+        Duration::from_secs(2),
+        |sent| sent.len() == 5,
+    );
     hub.stop();
 }
 
@@ -1439,7 +1152,6 @@ fn a_tap_on_a_proxy_tile_polls_once_at_once_and_the_dashboard_lists_each_account
     keys.set("fixture-proxy-key").unwrap();
     let hub = Hub::start(
         Config {
-            claude_status: false,
             cliproxy: true,
             cliproxy_url: server.url.clone(),
             layout_path: Some(dev_layout_path()),
@@ -1489,10 +1201,10 @@ fn a_tap_on_a_proxy_tile_polls_once_at_once_and_the_dashboard_lists_each_account
 #[test]
 fn configure_swaps_the_layout_and_reports_a_bad_one() {
     let dir = scratch("hub-config");
-    let hub = Hub::start(claude_config(&dir), Arc::new(MemoryKeys::default()));
+    let hub = Hub::start(Config::default(), Arc::new(MemoryKeys::default()));
     hub.configure(Config {
         layout_path: Some(dir.join("missing.json").display().to_string()),
-        ..claude_config(&dir)
+        ..Config::default()
     });
     let started = Instant::now();
     while hub.status().layout.error.is_none() && started.elapsed() < Duration::from_secs(2) {
@@ -1521,27 +1233,27 @@ fn the_config_file_round_trips_and_never_holds_the_key() {
 }
 
 #[test]
-fn claude_poll_failures_keep_cached_values_and_mark_them_stale_after_three() {
-    for missing in [false, true] {
-        let dir = scratch("claude-poll-failures");
-        let file = dir.join("session.json");
-        fs::write(&file, fixture("statusline.json")).unwrap();
-        let mut source = ClaudeStatus::new(&dir);
-        let now = SystemTime::now();
-        assert!(source.poll_at(now).iter().all(|r| !r.stale));
-        if missing {
-            fs::remove_file(&file).unwrap();
-        } else {
-            fs::write(&file, "{ invalid").unwrap();
-        }
-        for attempt in 1..=3 {
-            let readings = source.poll_at(now);
-            assert_eq!(readings.len(), 5);
-            assert!(readings.iter().all(|r| r.stale == (attempt == 3)));
-        }
-        fs::write(&file, fixture("statusline.json")).unwrap();
-        let recovered = source.poll_at(SystemTime::now());
-        assert_eq!(recovered.len(), 5);
-        assert!(recovered.iter().all(|r| !r.stale));
-    }
+fn old_source_config_ignores_removed_keys_and_keeps_proxy_settings() {
+    let dir = scratch("old-config");
+    let path = dir.join("sources.json");
+    fs::write(
+        &path,
+        r#"{
+        "claude_status": true, "claude_dir": "old-state", "claude_settings": "old-settings.json",
+        "cliproxy": true, "cliproxy_url": "http://localhost:8318", "cliproxy_interval_s": 240,
+        "layout_path": "layout.json"
+    }"#,
+    )
+    .unwrap();
+    let expected = Config {
+        cliproxy: true,
+        cliproxy_url: "http://localhost:8318".to_owned(),
+        cliproxy_interval_s: 240,
+        layout_path: Some("layout.json".to_owned()),
+    };
+    assert_eq!(Config::load(&path), expected);
+    expected.save(&path).unwrap();
+    let saved: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(saved.as_object().unwrap().len(), 4);
+    fs::remove_dir_all(dir).unwrap();
 }
