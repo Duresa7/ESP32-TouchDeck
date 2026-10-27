@@ -40,7 +40,7 @@ if ($Stop) {
     $record = Get-Content -LiteralPath $recordPath -Raw | ConvertFrom-Json
     $child = Get-Process -Id $record.pid -ErrorAction SilentlyContinue
     if ($child) {
-        if ($child.Path -ne $record.executable -or $child.StartTime.ToUniversalTime().ToString('o') -ne $record.started) {
+        if ($child.Path -ne $record.executable -or $child.StartTime.ToUniversalTime().Ticks -ne $record.started_ticks) {
             throw 'Recorded process identity changed; refusing to stop another process.'
         }
         # CloseMainWindow sends WM_CLOSE, not keyboard input.
@@ -84,7 +84,7 @@ foreach ($name in @('TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA')) {
 }
 $child = [Diagnostics.Process]::Start($start)
 $record = [ordered]@{ pid = $child.Id; executable = $executable;
-    started = $child.StartTime.ToUniversalTime().ToString('o'); scratch = $scratchPath;
+    started_ticks = $child.StartTime.ToUniversalTime().Ticks; scratch = $scratchPath;
     mock = $true; input = 'fake'; os_incidental_writes_measured = $false }
 $record | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $recordPath
 $record | ConvertTo-Json -Depth 6

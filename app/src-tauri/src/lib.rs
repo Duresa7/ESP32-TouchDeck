@@ -1,3 +1,4 @@
+mod app_updates;
 mod commands;
 mod sources;
 
@@ -39,12 +40,18 @@ pub fn run() {
     }
     let mock = std::env::var("TOUCHDECK_MOCK").is_ok_and(|value| value == "1");
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(app_updates::AppUpdates::default())
+        .manage(app_updates::AppUpdateGate::default())
         .manage(commands::AppState::new(mock))
         .manage(sources::SourcesState::new(mock));
     #[cfg(feature = "e2e")]
     let builder = builder
         .plugin(tauri_plugin_wdio_webdriver::init())
         .invoke_handler(tauri::generate_handler![
+            app_updates::app_update_check,
+            app_updates::app_update_download,
+            app_updates::app_update_install,
             commands::update_firmware,
             commands::list_decks,
             commands::connect,
@@ -86,6 +93,9 @@ pub fn run() {
         ]);
     #[cfg(not(feature = "e2e"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        app_updates::app_update_check,
+        app_updates::app_update_download,
+        app_updates::app_update_install,
         commands::update_firmware,
         commands::list_decks,
         commands::connect,

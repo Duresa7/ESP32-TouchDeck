@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and verify a Windows x64 production candidate; never publish or touch a port."""
+"""Build/verify a signed Windows x64 installer and companion archive; never publish or touch a port."""
 
 import argparse
 import hashlib
@@ -139,6 +139,11 @@ def verify(archive_path):
 def build(args):
     if sys.platform != "win32":
         raise ValueError("This portable recipe supports Windows x64 only")
+    signing_present = os.environ.get("TAURI_SIGNING_PRIVATE_KEY") or os.environ.get("TAURI_SIGNING_PRIVATE_KEY_PATH")
+    if args.test_signing and (args.portable_only or args.public_key_file or signing_present):
+        raise ValueError("Disposable signing cannot be combined with portable-only or existing signing configuration")
+    if not args.portable_only and not args.test_signing and not (args.public_key_file and signing_present):
+        raise ValueError("Configure a durable public key and signing environment, or use --test-signing for an unpublished candidate")
     revision = clean_revision()
     out = args.out.resolve()
     if out.is_relative_to(ROOT) or ROOT.is_relative_to(out):
@@ -154,38 +159,95 @@ def build(args):
     # Do not inherit feature/target overrides from an e2e developer shell.
     for key in ("CARGO_BUILD_TARGET", "CARGO_ENCODED_RUSTFLAGS", "RUSTFLAGS"):
         env.pop(key, None)
+    env["RUSTFLAGS"] = "-C target-feature=+crt-static"
     app_dir = ROOT / "app"
     tauri = app_dir / "node_modules/@tauri-apps/cli/tauri.js"
     if not tauri.is_file():
         raise ValueError("Install locked app dependencies first (see docs/packaging.md)")
-    run(["node", tauri, "build", "--ci", "--no-bundle", "--target", TARGET,
-         "--", "--locked", "--no-default-features"], cwd=app_dir, env=env)
     run(["cargo", "build", "--release", "--locked", "--no-default-features", "--target", TARGET,
          "-p", "td-link", "--bin", "td-statusline"], cwd=app_dir, env=env)
-    graph = capture(["cargo", "tree", "--locked", "--target", TARGET, "-p", "touchdeck",
-                     "--no-default-features", "-e", "normal,build,features"], cwd=app_dir, env=env)
-    if "tauri-plugin-wdio-webdriver" in graph:
-        raise ValueError("WebDriver dependency enabled")
-    for name in ("touchdeck.exe", "td-statusline.exe"):
-        shutil.copyfile(out / "build/app" / TARGET / "release" / name, payload / name)
-    (payload / "build").mkdir()
-    (payload / "build/production-dependencies.txt").write_text(graph + "\n", encoding="utf-8", newline="\n")
+    shutil.copyfile(out / "build/app" / TARGET / "release/td-statusline.exe", payload / "td-statusline.exe")
     shutil.copyfile(ROOT / "LICENSE", payload / "LICENSE.txt")
     (payload / "licenses").mkdir()
     shutil.copyfile(ROOT / "app/icons/builtin/LICENSE-lucide.txt", payload / "licenses/LICENSE-lucide.txt")
     shutil.copyfile(ROOT / "docs/packaging.md", payload / "PACKAGING.md")
+    write_json(payload / "install-manifest.json", {"source_revision": revision, "firmware": fw,
+        "helper_sha256": sha((payload / "td-statusline.exe").read_bytes())})
+    public_key = ""
+    test_key = None
+    if not args.portable_only:
+        if args.test_signing:
+            test_key = out / "disposable-test-signing.key"
+            # The signer prints key material: capture and discard, never send it to build logs.
+            subprocess.run(["node", str(tauri), "signer", "generate", "--ci", "--password", "",
+                            "--write-keys", str(test_key)], cwd=app_dir, check=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            public_key = test_key.with_suffix(".key.pub").read_text(encoding="utf-8").strip()
+            env["TAURI_SIGNING_PRIVATE_KEY"] = str(test_key)
+            env["TAURI_SIGNING_PRIVATE_KEY_PASSWORD"] = ""
+        else:
+            if not args.public_key_file or not (env.get("TAURI_SIGNING_PRIVATE_KEY") or env.get("TAURI_SIGNING_PRIVATE_KEY_PATH")):
+                raise ValueError("Installer builds require a public-key file and existing signing-key environment; use --test-signing only for disposable candidates")
+            public_key = args.public_key_file.read_text(encoding="utf-8").strip()
+            if not env.get("TAURI_SIGNING_PRIVATE_KEY"):
+                env["TAURI_SIGNING_PRIVATE_KEY"] = env["TAURI_SIGNING_PRIVATE_KEY_PATH"]
+        if not public_key:
+            raise ValueError("Updater public key is empty")
+    resources = {str(path.resolve()).replace("\\", "/"): path.relative_to(payload).as_posix()
+                 for path in payload.rglob("*") if path.is_file()}
+    overlay = out / "installer-config.json"
+    write_json(overlay, {"bundle": {"active": not args.portable_only, "resources": resources,
+                                    "createUpdaterArtifacts": not args.portable_only},
+                         "plugins": {"updater": {"pubkey": public_key}}})
+    try:
+        run(["node", tauri, "build", "--ci", "--target", TARGET, "--config", overlay,
+             "--", "--locked", "--no-default-features"], cwd=app_dir, env=env)
+    finally:
+        if test_key and test_key.exists():
+            test_key.unlink()
+    if not args.portable_only:
+        installers = list((out / "build/app" / TARGET / "release/bundle/nsis").glob("*-setup.exe"))
+        if len(installers) != 1:
+            raise ValueError("Expected exactly one NSIS installer")
+        assets = out / "release-assets"
+        assets.mkdir()
+        installer = assets / ("TouchDeck-windows-x64-TEST-ONLY-setup.exe" if args.test_signing else "TouchDeck-windows-x64-setup.exe")
+        shutil.copyfile(installers[0], installer)
+        signature = installers[0].with_suffix(".exe.sig").read_text(encoding="utf-8").strip()
+        installer.with_suffix(".exe.sig").write_text(signature + "\n", encoding="utf-8", newline="\n")
+        version = json.loads((app_dir / "src-tauri/tauri.conf.json").read_text())["version"]
+        notes = args.notes_file.read_text(encoding="utf-8") if args.notes_file else "TouchDeck desktop app update."
+        write_json(assets / "latest.json", {"version": version, "notes": notes,
+            "platforms": {"windows-x86_64": {"signature": signature,
+                "url": f"https://github.com/Duresa7/ESP32-TouchDeck/releases/download/v{version}/{installer.name}"}}})
+        write_json(assets / "release-manifest.json", {"source_revision": revision, "version": version,
+            "test_signing": args.test_signing, "updater_public_key": public_key,
+            "installer": installer.name, "installer_sha256": sha(installer.read_bytes()), "firmware": fw})
+        for bundle in (payload / "firmware").glob("*.tdfw"):
+            shutil.copyfile(bundle, assets / bundle.name)
+    graph = capture(["cargo", "tree", "--locked", "--target", TARGET, "-p", "touchdeck",
+                     "--no-default-features", "-e", "normal,build,features"], cwd=app_dir, env=env)
+    if "tauri-plugin-wdio-webdriver" in graph:
+        raise ValueError("WebDriver dependency enabled")
+    for name in ("touchdeck.exe",):
+        shutil.copyfile(out / "build/app" / TARGET / "release" / name, payload / name)
+    (payload / "build").mkdir()
+    (payload / "build/production-dependencies.txt").write_text(graph + "\n", encoding="utf-8", newline="\n")
     entries = [{"path": path.relative_to(payload).as_posix(), "bytes": path.stat().st_size,
                 "sha256": sha(path.read_bytes())} for path in sorted(payload.rglob("*")) if path.is_file()]
     write_json(payload / "manifest.json", {
         "format": 1, "product": "TouchDeck", "candidate": True, "source_revision": revision,
         "target": TARGET, "cargo_features": [], "firmware": fw,
-        "runtime": {"webview2": "Evergreen runtime required; not included", "settings": "per-user, not portable"},
+        "test_signing": args.test_signing, "updater_public_key": public_key,
+        "runtime": {"webview2": "Evergreen runtime; installer embeds bootstrapper (download requires network)",
+                    "crt": "statically linked", "settings": "per-user, not portable"},
         "tools": {"rustc": capture(["rustc", "--version"]), "cargo": capture(["cargo", "--version"]),
                   "node": capture(["node", "--version"]), "python": sys.version,
                   "tauri": capture(["node", str(tauri), "--version"], cwd=app_dir)},
         "files": entries,
     })
-    paths = sorted(path for path in payload.rglob("*") if path.is_file())
+    paths = sorted((path for path in payload.rglob("*") if path.is_file()),
+                   key=lambda path: path.relative_to(payload).as_posix())
     (payload / "SHA256SUMS").write_text("".join(
         f"{sha(path.read_bytes())}  {path.relative_to(payload).as_posix()}\n" for path in paths
     ), encoding="utf-8", newline="\n")
@@ -202,6 +264,11 @@ def build(args):
     verify(archive_path)
     archive_path.with_suffix(".zip.sha256").write_text(
         f"{sha(archive_path.read_bytes())}  {archive_path.name}\n", encoding="utf-8", newline="\n")
+    if not args.portable_only:
+        shutil.copyfile(archive_path, assets / archive_path.name)
+        paths = sorted(path for path in assets.iterdir() if path.is_file())
+        (assets / "SHA256SUMS").write_text("".join(f"{sha(path.read_bytes())}  {path.name}\n" for path in paths),
+                                         encoding="utf-8", newline="\n")
 
 
 def main():
@@ -210,6 +277,10 @@ def main():
     builder = commands.add_parser("build")
     builder.add_argument("--out", type=Path, required=True, help="new directory outside checkout")
     builder.add_argument("--build-lock", type=Path, help="shared ESP-IDF build lock; defaults to primary checkout .verify")
+    builder.add_argument("--portable-only", action="store_true", help="diagnostic archive without installer/updater signing")
+    builder.add_argument("--test-signing", action="store_true", help="generate and delete a disposable candidate-only signing key")
+    builder.add_argument("--public-key-file", type=Path, help="durable updater public key; private key comes from existing signing environment")
+    builder.add_argument("--notes-file", type=Path, help="release notes for latest.json")
     checker = commands.add_parser("verify")
     checker.add_argument("archive", type=Path)
     args = parser.parse_args()
