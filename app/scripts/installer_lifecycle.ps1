@@ -28,6 +28,7 @@ $stateDir = Join-Path $env:LOCALAPPDATA 'io.github.duresa7.touchdeck'
 $claudeDir = Join-Path $env:USERPROFILE '.claude'
 $settingsPath = Join-Path $claudeDir 'settings.json'
 $children = [Collections.Generic.List[object]]::new()
+$watch = $null
 $checks = [Collections.Generic.List[object]]::new()
 $summary = [ordered]@{
     status = 'running'; scenario = 'preconditions'; checks = $checks
@@ -151,14 +152,41 @@ function Remove-Probe([string]$Path, [string]$Label) {
     catch { Write-Log "DIAG ${Label}: deleting touchdeck.exe fails: $($_.Exception.InnerException.Message ?? $_.Exception.Message)" }
 }
 
+function Wait-Uninstaller {
+    # NSIS copies the uninstaller to %TEMP%\~nsu*.tmp and lets the original exit; wait for the copy to finish.
+    $copies = [Collections.Generic.HashSet[string]]::new()
+    $deadline = [DateTime]::UtcNow.AddSeconds(60)
+    do {
+        $running = @(Get-Process | Where-Object { $_.Path -like '*\~nsu*.tmp\*' })
+        foreach ($copy in $running) { $null = $copies.Add($copy.ProcessName) }
+        if ($running.Count -eq 0 -and @(Get-UninstallEntries).Count -eq 0 -and
+            -not (Test-Path -LiteralPath (Join-Path $installDir 'uninstall.exe')) -and
+            -not (Test-Path -LiteralPath (Join-Path $installDir 'touchdeck.exe'))) { break }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    Write-Log "Uninstaller copies seen: [$(@($copies) -join ', ')]"
+}
+
+function Stop-Watch([string]$Label) {
+    if (-not $script:watch) { return }
+    $events = $script:watch.Stop()
+    $mainGone = $script:watch.AbsentAt(0)
+    $uninstallerGone = $script:watch.AbsentAt(1)
+    $script:watch = $null
+    Write-Log "$Label file events: $($events -join '; ')"
+    if ($mainGone -gt $uninstallerGone -and $uninstallerGone -gt 0) {
+        Write-Log "${Label}: touchdeck.exe outlived the template's delete; the postuninstall retry removed it $($mainGone - $uninstallerGone) ms after uninstall.exe."
+    }
+}
+
 function Write-Diagnostics([string]$Label) {
     # Evidence for lock failures: which processes hold the main binary or run from the install directory.
     $running = @(Get-CimInstance Win32_Process | Where-Object {
         $_.ExecutablePath -and $_.ExecutablePath.StartsWith("$installDir\", [StringComparison]::OrdinalIgnoreCase)
     } | ForEach-Object { "$($_.Name)#$($_.ProcessId)<-$($_.ParentProcessId)" })
-    $uninstallers = @(Get-Process | Where-Object ProcessName -Match '^(Un_[A-Z]|Au_)$' | ForEach-Object { "$($_.ProcessName)#$($_.Id)" })
+    $uninstallers = @(Get-Process | Where-Object { $_.Path -like '*\~nsu*.tmp\*' } | ForEach-Object { "$($_.ProcessName)#$($_.Id)" })
     $webviews = @(Get-Process -Name msedgewebview2 -ErrorAction SilentlyContinue).Count
-    $shells = @(Get-Process -Name explorer -ErrorAction SilentlyContinue | ForEach-Object Id)
+    $shells = @(Get-Process -Name explorer -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id)/s$($_.SessionId)" })
     Write-Log ("DIAG ${Label}: touchdeck.exe $(Get-FileUsers (Join-Path $installDir 'touchdeck.exe')); " +
         "install-dir processes [$($running -join ', ')]; uninstallers [$($uninstallers -join ', ')]; " +
         "explorer [$($shells -join ', ')]; msedgewebview2 x$webviews")
@@ -173,14 +201,17 @@ try {
     $elevated = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
         [Security.Principal.WindowsBuiltInRole]::Administrator)
     $realtime = try { (Get-MpComputerStatus -ErrorAction Stop).RealTimeProtectionEnabled } catch { 'unknown' }
-    Write-Log "DIAG runner: elevated=$elevated defender-realtime=$realtime"
+    Write-Log "DIAG runner: elevated=$elevated defender-realtime=$realtime session=$((Get-Process -Id $PID).SessionId)"
     Write-Diagnostics 'before install'
 
     # An identical installer produces identical hashes/timestamps: NTFS file identity proves replacement.
     Add-Type -TypeDefinition @'
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 public static class TouchDeckFileIdentity {
@@ -224,6 +255,71 @@ public static class TouchDeckFileUsers {
                 } finally { Marshal.FreeHGlobal(buffer); }
             }
             throw new InvalidOperationException("Too many processes use the file.");
+        }
+    }
+}
+// Polls with attribute-only handles, which Restart Manager does not report, so NSIS never closes this script.
+public sealed class TouchDeckFileWatch {
+    private readonly string[] paths;
+    private readonly long[] absentAt;
+    private readonly Stopwatch clock = Stopwatch.StartNew();
+    private readonly List<string> events = new List<string>();
+    private readonly Dictionary<long, string> names = new Dictionary<long, string>();
+    private readonly Thread thread;
+    private volatile bool stopping;
+    public TouchDeckFileWatch(string[] paths) {
+        this.paths = paths;
+        absentAt = new long[paths.Length];
+        thread = new Thread(Run) { IsBackground = true };
+        thread.Start();
+    }
+    public void Mark(string label) { Add(label); }
+    // Milliseconds since the watch started when the file last disappeared; -1 while it exists.
+    public long AbsentAt(int index) { return absentAt[index]; }
+    public string[] Stop() {
+        stopping = true;
+        thread.Join();
+        lock (events) return events.ToArray();
+    }
+    private void Add(string text) {
+        lock (events) if (events.Count < 400) events.Add(clock.ElapsedMilliseconds + "ms " + text);
+    }
+    private string Describe(long id) {
+        string name;
+        if (!names.TryGetValue(id, out name)) {
+            try { using (var process = Process.GetProcessById((int)id)) name = process.ProcessName + "#" + id + "/s" + process.SessionId; }
+            catch (ArgumentException) { name = "#" + id; }
+            names[id] = name;
+        }
+        return name;
+    }
+    private void Run() {
+        var present = new bool[paths.Length];
+        var users = new HashSet<string>[paths.Length];
+        for (int i = 0; i < paths.Length; i++) {
+            present[i] = File.Exists(paths[i]);
+            absentAt[i] = present[i] ? -1 : 0;
+            users[i] = new HashSet<string>();
+        }
+        while (!stopping) {
+            for (int i = 0; i < paths.Length; i++) {
+                string file = Path.GetFileName(paths[i]);
+                bool exists = File.Exists(paths[i]);
+                if (exists != present[i]) {
+                    present[i] = exists;
+                    absentAt[i] = exists ? -1 : clock.ElapsedMilliseconds;
+                    Add(file + (exists ? " appears" : " disappears"));
+                }
+                var now = new HashSet<string>();
+                if (exists) {
+                    try { foreach (long id in TouchDeckFileUsers.Read(paths[i])) now.Add(Describe(id)); }
+                    catch (Exception) { }  // The file can vanish between the two calls.
+                }
+                foreach (string user in now) if (!users[i].Contains(user)) Add(file + " used by " + user);
+                foreach (string user in users[i]) if (!now.Contains(user)) Add(file + " released by " + user);
+                users[i] = now;
+            }
+            Thread.Sleep(1);
         }
     }
 }
@@ -287,7 +383,11 @@ public static class TouchDeckFileUsers {
     Assert-That $writeLocked 'The running helper image is locked against overwriting.'
     # tauri-plugin-updater 2.12.0: config.rs nsis_args (Passive => /P), updater.rs updater_parameters adds /UPDATE.
     # tauri.conf.json selects passive mode; app_updates.rs disables restart, so no /R or /ARGS.
+    $main = Join-Path $installDir 'touchdeck.exe'
+    $uninstaller = Join-Path $installDir 'uninstall.exe'
+    $script:watch = [TouchDeckFileWatch]::new([string[]]@($main, $uninstaller))
     Finish-Child (Start-Child $installer @('/P', '/UPDATE')) 'Passive updater-mode install'
+    $script:watch.Mark('update exited')
     Write-Diagnostics 'after passive update'
     Assert-Payload
     $renamed = @(Get-ChildItem -LiteralPath $installDir -Filter 'ns*.tmp' -File | ForEach-Object Name)
@@ -312,16 +412,10 @@ public static class TouchDeckFileUsers {
 
     $summary.scenario = 'uninstall'
     Write-Diagnostics 'before uninstall'
-    Finish-Child (Start-Child (Join-Path $installDir 'uninstall.exe') @('/S')) 'Silent uninstall'
-    # NSIS copies the uninstaller to %TEMP%\~nsu*.tmp\Un_*.exe and lets the original exit; wait for the copy.
-    $deadline = [DateTime]::UtcNow.AddSeconds(60)
-    do {
-        $done = @(Get-Process | Where-Object ProcessName -Match '^(Un_[A-Z]|Au_)$').Count -eq 0 -and
-            @(Get-UninstallEntries).Count -eq 0 -and (Same-Bytes $settingsPath $originalBytes) -and
-            -not (Test-Path -LiteralPath (Join-Path $installDir 'uninstall.exe'))
-        if ($done) { break }
-        Start-Sleep -Milliseconds 250
-    } while ([DateTime]::UtcNow -lt $deadline)
+    $script:watch.Mark('uninstall starts')
+    Finish-Child (Start-Child $uninstaller @('/S')) 'Silent uninstall'
+    Wait-Uninstaller
+    Stop-Watch 'Update and uninstall'
     Write-Diagnostics 'after uninstall'
     Assert-That (Same-Bytes $settingsPath $originalBytes) 'Uninstall restores the entire original Claude settings file byte-for-byte.'
     Assert-That (@(Get-UninstallEntries).Count -eq 0) 'Uninstall removes the per-user registry entry.'
@@ -342,12 +436,30 @@ public static class TouchDeckFileUsers {
         $label = $(if ($path.StartsWith($configDir)) { 'config' } else { 'state' })
         Assert-That (Same-Bytes $path $sentinels[$path]) "Silent uninstall keeps the $label sentinel byte-for-byte."
     }
+
+    # Uninstalling right after an update once left touchdeck.exe behind while another process briefly held it.
+    # Repeat that sequence so the race is likely to recur, and require the uninstaller to finish the job each time.
+    $summary.scenario = 'update-then-uninstall'
+    foreach ($round in 1..5) {
+        Finish-Child (Start-Child $installer @('/S')) "Round $round silent install"
+        Start-Sleep -Seconds 3  # Like the lifecycle above, update an installation that has settled.
+        $script:watch = [TouchDeckFileWatch]::new([string[]]@($main, $uninstaller))
+        Finish-Child (Start-Child $installer @('/P', '/UPDATE')) "Round $round passive update"
+        $script:watch.Mark('uninstall starts')
+        Finish-Child (Start-Child $uninstaller @('/S')) "Round $round silent uninstall"
+        Wait-Uninstaller
+        Stop-Watch "Round $round"
+        Write-Diagnostics "after round $round"
+        Assert-That (-not (Test-Path -LiteralPath $main) -and @(Get-UninstallEntries).Count -eq 0) "Round ${round}: uninstall right after an update removes touchdeck.exe and the registry entry."
+    }
+    Assert-That (Same-Bytes $settingsPath $originalBytes) 'The rounds leave the original Claude settings byte-for-byte.'
     $summary.status = 'passed'
 } catch {
     $summary.status = 'failed'
     $summary.failure = Protect-Log $_.Exception.Message
     Write-Log "FAIL: $($summary.failure)"
 } finally {
+    Stop-Watch 'Interrupted'
     $summary.remaining = @(Get-Remaining)
     Write-Log ('Remaining fixture/install entries: ' + (ConvertTo-Json -InputObject $summary.remaining -Depth 5 -Compress))
     # Diagnostics only, after the assertions: does a leftover main binary unlock once this script's child handles close?
