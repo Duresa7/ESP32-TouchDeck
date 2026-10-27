@@ -1,6 +1,6 @@
 # Desktop setup for USB TouchDeck
 
-TouchDeck connects through USB-Serial/JTAG. The running desktop app mirrors the deck's keys into the host session. Wi-Fi, Bluetooth, and battery support are postponed.
+TouchDeck connects through USB-Serial/JTAG. The running desktop app mirrors the deck's keys into the host session. Bluetooth is not supported. Wi-Fi and battery support are postponed.
 
 ## Running a distributed app versus building it
 
