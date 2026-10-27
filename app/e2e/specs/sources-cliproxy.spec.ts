@@ -211,6 +211,10 @@ describe('cliproxyapi source', () => {
     await choose('action-field', 'seven_day_pct');
     await $('[data-testid="tile"][data-id="claude"]').click();
     await $('[data-testid="tile"][data-id="codex"]').click();
+    await browser.waitUntil(async () =>
+      (await $('[data-testid="action-account"]').getValue()) === 'claude:alice@example.com' &&
+      (await $('[data-testid="action-field"]').getValue()) === 'seven_day_pct',
+    { timeout: 5_000, timeoutMsg: 'the edited account and field did not survive reselecting the tile' });
     expect(await $('[data-testid="action-account"]').getValue()).toBe('claude:alice@example.com');
     expect(await $('[data-testid="action-field"]').getValue()).toBe('seven_day_pct');
     await choose('action-source', 'claude-status');
