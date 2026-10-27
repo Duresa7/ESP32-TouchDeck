@@ -3,7 +3,10 @@ AGENTS.md
 
 # Local agent skills and installation metadata
 /.agents/
-/.claude/
+/.claude/*
+!/.claude/skills/
+/.claude/skills/*
+!/.claude/skills/frontend-design/
 /skills-lock.json
 
 # Build output
