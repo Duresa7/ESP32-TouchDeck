@@ -91,6 +91,15 @@ export interface InstallPreview {
   diff: DiffLine[];
 }
 
+export interface RemoveResult {
+  path: string;
+  exists: boolean;
+  before: string | null;
+  restored: string | null;
+  changed: boolean;
+  diff: DiffLine[];
+}
+
 export const sourcesView = () => invoke<SourcesView>('sources_view');
 export const sourcesStatus = () => invoke<Status>('sources_status');
 export const sourcesSave = (config: Config) => invoke<SourcesView>('sources_save', { config });
@@ -100,6 +109,7 @@ export const refreshSource = (source: 'claude-status' | 'cliproxyapi') => invoke
 export const useLayout = (json: string) => invoke<void>('sources_use_layout', { json });
 export const statuslinePreview = (settings: string | null) => invoke<InstallPreview>('statusline_preview', { settings });
 export const statuslineInstall = (settings: string | null) => invoke<InstallPreview>('statusline_install', { settings });
+export const statuslineRemove = (settings: string | null) => invoke<RemoveResult>('statusline_remove', { settings });
 
 export function ago(unixMs: number | null, now = Date.now()): string {
   if (unixMs === null) return 'never';

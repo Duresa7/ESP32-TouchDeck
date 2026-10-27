@@ -12,9 +12,25 @@ Before **Install and close TouchDeck**, export any unsaved layout edits, disconn
 
 The application identifier remains `io.github.duresa7.touchdeck`. Upgrades replace binaries/resources and retain per-user config, approvals, source settings/state and icon cache. They do not modify the deck's stored layouts. No profile deletion or explicit uninstall is part of updating. Unsaved editor state is in memory: export before closing. The helper stays beside the app; changing the install folder may require reviewing its absolute-path source configuration. Actual installed upgrade/preservation needs a disposable Windows environment; source/fixture checks alone do not establish it.
 
-The bundled firmware always installs as `firmware/touchdeck.tdfw`. `install-manifest.json` records its version, source revision, bundle SHA-256, and image/ELF hashes. The NSIS preinstall hook removes older `.tdfw` resources. If the old status line helper is running, the hook renames it within the install folder and requests deletion on reboot before copying its replacement. Uninstall hook support waits for the helper's `--unwrap` mode.
+The bundled firmware always installs as `firmware/touchdeck.tdfw`. `install-manifest.json` records its version, source revision, bundle SHA-256, and image/ELF hashes. The NSIS preinstall hook removes older `.tdfw` resources. If the old status line helper is running, the hook renames it within the install folder and requests deletion on reboot before copying its replacement.
 
 Updater signatures authenticate artifacts using the embedded public key. `requireSignedVersion` binds metadata version to the signed version, preventing an old artifact from being advertised under a newer number. TLS and signature checks remain enabled. Metadata checks have a 15-second total deadline. Installer downloads have no total deadline, with a 15-second connect timeout and a 30-second read timeout that resets as data arrives. A failed installer launch keeps the app window and verified download available. Offline retry guidance appears only for network or unavailable-release errors. Updater signatures are separate from Windows Authenticode signing: this work supplies no Authenticode certificate, SmartScreen reputation or store approval.
+
+## Uninstall
+
+The status-line Install on the Sources page writes the absolute path of `td-statusline.exe` into Claude Code's `settings.json`, so it must be undone before the helper is deleted. Users can select **Remove** in Sources. The NSIS preuninstall hook calls the helper before deleting files, only when the helper exists and update mode is off. It logs the result and ignores the exit code, so a settings-file error never blocks uninstall:
+
+```text
+td-statusline.exe --unwrap [--settings <file>]
+```
+
+- `--settings` defaults to `%CLAUDE_CONFIG_DIR%\settings.json`, else `%USERPROFILE%\.claude\settings.json` (`$HOME` first when set). It is the only flag allowed with `--unwrap`. A custom settings file chosen in Sources is not read from the source config, so pass it explicitly if needed.
+- If the file's `statusLine` command runs `td-statusline`, the helper writes back the command it wrapped with `--then`, or removes the `statusLine` entry when there was none. Only the command string, or that one member, changes. Every other byte stays the same. It writes through a temporary file and a rename. `settings.json.touchdeck.bak` is left in place.
+- It never reads stdin and never waits for input, so it can run with no console. One line of status goes to stdout, and writing it never fails the run.
+- Exit codes: `0` when it restored the command, removed the entry, or had nothing to do (the file is missing, has no entry, or the entry does not run the helper); `1` when the file cannot be read, is not a JSON object, has a `--then` command it cannot parse, or cannot be written, in which case the file is unchanged; `2` for bad arguments.
+- Skip it when the uninstaller runs in update mode. An update keeps the helper in the same place.
+
+Source config and status-line state live in the Tauri identifier folders, `%APPDATA%\io.github.duresa7.touchdeck` and `%LOCALAPPDATA%\io.github.duresa7.touchdeck`, never under the install folder, so the uninstaller's **Delete app data** option removes them. The first start after an upgrade moves `sources.json` and `claude-status\*.json` out of the old `%APPDATA%\touchdeck` and `%LOCALAPPDATA%\touchdeck` folders. Because NTFS ignores case, the second of those is the install folder. The CLIProxyAPI management key stays in Windows Credential Manager (`touchdeck` / `cliproxyapi-management-key`) after uninstall.
 
 ## Release-owner bootstrap and publication
 
@@ -104,7 +120,7 @@ pwsh -NoProfile -File app/scripts/smoke_windows.ps1 -PackageDir '<extracted-fold
 pwsh -NoProfile -File app/scripts/smoke_windows.ps1 -Scratch E:/touchdeck-artifacts/smoke-001 -Stop
 ```
 
-The launcher uses mock transport, fake input, an empty working directory and scratch source/temp paths. `TOUCHDECK_APP_DATA_DIR` redirects Tauri config/log/cache and WebView storage before initialization; it requires an absolute directory and fails closed if invalid. Unset preserves normal paths. The smoke removes `WEBVIEW2_USER_DATA_FOLDER` from the child's environment and requires `app/webview/EBWebView` under scratch, exercising the app's `data_directory` override. `APPDATA` alone cannot override Windows Known Folders. Source/temp paths have separate launcher overrides. Default app/source paths are snapshotted before/after; changes fail smoke. This does not measure all OS/WebView incidental writes. Installer execution is disabled in mock sessions. Do not install a status line, change credentials or trigger real input.
+The launcher uses mock transport, fake input, an empty working directory and scratch source/temp paths. `TOUCHDECK_APP_DATA_DIR` redirects Tauri config/log/cache and WebView storage before initialization; it requires an absolute directory and fails closed if invalid. It also redirects source config (`config/`) and status-line state (`state/`) for the app and `td-statusline` when `TOUCHDECK_CONFIG_DIR` and `TOUCHDECK_STATE_DIR` are unset, and a run with it set never moves files out of the old source folders. Unset preserves normal paths. The smoke removes `WEBVIEW2_USER_DATA_FOLDER` from the child's environment and requires `app/webview/EBWebView` under scratch, exercising the app's `data_directory` override. `APPDATA` alone cannot override Windows Known Folders. Source/temp paths have separate launcher overrides. Default app/source paths are snapshotted before/after; changes fail smoke. This does not measure all OS/WebView incidental writes. Installer execution is disabled in mock sessions. Do not install a status line, change credentials or trigger real input.
 
 ```powershell
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('touchdeck-helper-' + [guid]::NewGuid())

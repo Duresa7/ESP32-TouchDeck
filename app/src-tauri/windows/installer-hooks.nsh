@@ -22,5 +22,13 @@ touchdeck_helper_ready:
   ClearErrors
 !macroend
 
-; NSIS_HOOK_PREUNINSTALL: reserved for td-statusline --unwrap support.
-; Restore the wrapped status line before removing its helper once that mode is available.
+!macro NSIS_HOOK_PREUNINSTALL
+  StrCmp $UpdateMode "1" touchdeck_unwrap_done
+  IfFileExists "$INSTDIR\td-statusline.exe" 0 touchdeck_unwrap_done
+  Push $R0
+  nsExec::ExecToLog '"$INSTDIR\td-statusline.exe" --unwrap'
+  Pop $R0
+  Pop $R0
+touchdeck_unwrap_done:
+  ClearErrors
+!macroend

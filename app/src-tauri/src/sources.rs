@@ -9,11 +9,13 @@ use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
+use td_core::app_dirs::{APP_ID, Dirs};
 use td_core::{Layout, Request};
-use td_host::sources::claude_status::{DiffLine, edit_settings, line_diff, shim_command};
+use td_host::sources::claude_status::{
+    DiffLine, edit_settings, line_diff, shim_command, unwrap_settings,
+};
 use td_host::sources::{
-    Config, Hub, KeyStore, MemoryKeys, Sink, Status, claude_settings_path, config_path, key_hint,
-    write_atomic,
+    Config, Hub, KeyStore, MemoryKeys, Sink, Status, claude_settings_path, key_hint, write_atomic,
 };
 use td_link::Session;
 
@@ -88,7 +90,9 @@ impl SourcesState {
             let base = std::env::temp_dir().join(format!("touchdeck-mock-{}", std::process::id()));
             let config = Config {
                 claude_dir: Some(
-                    base.join("state/touchdeck/claude-status")
+                    base.join("state")
+                        .join(APP_ID)
+                        .join("claude-status")
                         .display()
                         .to_string(),
                 ),
@@ -105,7 +109,11 @@ impl SourcesState {
                 Arc::new(MemoryKeys::default()),
             )
         } else {
-            let file = config_path();
+            let dirs = Dirs::current();
+            for problem in dirs.migrate() {
+                eprintln!("touchdeck: cannot move old source data: {problem}");
+            }
+            let file = dirs.sources_config();
             (file.clone(), Config::load(&file), Arc::new(OsKeys))
         };
         SourcesState {
@@ -127,6 +135,10 @@ impl SourcesState {
 
     pub fn use_layout(&self, layout: Layout) {
         self.hub.use_layout(layout);
+    }
+
+    pub fn status(&self) -> Status {
+        self.hub.status()
     }
 
     pub fn pressed(&self, tile: &str) {
@@ -177,6 +189,18 @@ pub struct InstallPreview {
     diff: Vec<DiffLine>,
 }
 
+#[derive(Serialize)]
+pub struct RemoveResult {
+    path: String,
+    exists: bool,
+    /// The command the entry ran, if it had one.
+    before: Option<String>,
+    /// The command put back, or `None` when the entry went.
+    restored: Option<String>,
+    changed: bool,
+    diff: Vec<DiffLine>,
+}
+
 async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, String> {
@@ -205,19 +229,26 @@ fn view(state: &SourcesState) -> SourcesView {
     }
 }
 
+fn read_settings(
+    state: &SourcesState,
+    settings: Option<String>,
+) -> Result<(PathBuf, Option<String>), String> {
+    let path = settings
+        .filter(|path| !path.trim().is_empty())
+        .map_or_else(|| state.settings_path(), PathBuf::from);
+    match fs::read_to_string(&path) {
+        Ok(text) => Ok((path, Some(text))),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok((path, None)),
+        Err(error) => Err(format!("{}: {error}", path.display())),
+    }
+}
+
 fn preview(
     state: &SourcesState,
     write: bool,
     settings: Option<String>,
 ) -> Result<InstallPreview, String> {
-    let path = settings
-        .filter(|path| !path.trim().is_empty())
-        .map_or_else(|| state.settings_path(), PathBuf::from);
-    let current = match fs::read_to_string(&path) {
-        Ok(text) => Some(text),
-        Err(error) if error.kind() == ErrorKind::NotFound => None,
-        Err(error) => return Err(format!("{}: {error}", path.display())),
-    };
+    let (path, current) = read_settings(state, settings)?;
     let (shim, shim_found) = shim_command(exe_dir().as_deref());
     let edit = edit_settings(current.as_deref(), &shim)?;
     let diff = line_diff(current.as_deref().unwrap_or(""), &edit.text);
@@ -245,6 +276,25 @@ fn preview(
     })
 }
 
+/// Undoes Install the way `td-statusline --unwrap` does: the `--then` command goes back in,
+/// or the entry goes when the shim ran alone.
+fn remove(state: &SourcesState, settings: Option<String>) -> Result<RemoveResult, String> {
+    let (path, current) = read_settings(state, settings)?;
+    let edit = unwrap_settings(current.as_deref())?;
+    if edit.changed {
+        write_atomic(&path, edit.text.as_bytes())
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+    }
+    Ok(RemoveResult {
+        path: path.display().to_string(),
+        exists: current.is_some(),
+        diff: line_diff(current.as_deref().unwrap_or(""), &edit.text),
+        restored: (edit.changed && !edit.command.is_empty()).then_some(edit.command),
+        before: edit.before,
+        changed: edit.changed,
+    })
+}
+
 #[tauri::command]
 pub fn sources_view(app: AppHandle) -> SourcesView {
     view(&app.state::<SourcesState>())
@@ -252,7 +302,7 @@ pub fn sources_view(app: AppHandle) -> SourcesView {
 
 #[tauri::command]
 pub fn sources_status(app: AppHandle) -> Status {
-    app.state::<SourcesState>().hub.status()
+    app.state::<SourcesState>().status()
 }
 
 #[tauri::command]
@@ -323,4 +373,12 @@ pub async fn statusline_install(
     settings: Option<String>,
 ) -> Result<InstallPreview, String> {
     blocking(move || preview(&app.state::<SourcesState>(), true, settings)).await?
+}
+
+#[tauri::command]
+pub async fn statusline_remove(
+    app: AppHandle,
+    settings: Option<String>,
+) -> Result<RemoveResult, String> {
+    blocking(move || remove(&app.state::<SourcesState>(), settings)).await?
 }

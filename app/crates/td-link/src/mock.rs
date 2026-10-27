@@ -79,6 +79,7 @@ struct State {
     lines: Vec<String>,
     silent: bool,
     reply_delay: Duration,
+    lose_console_replies: u32,
     frames_rx: u64,
     frames_tx: u64,
     dropped: u64,
@@ -152,6 +153,7 @@ impl MockDeck {
                 lines: Vec::new(),
                 silent: false,
                 reply_delay: Duration::ZERO,
+                lose_console_replies: 0,
                 frames_rx: 0,
                 frames_tx: 0,
                 dropped: 0,
@@ -229,6 +231,11 @@ impl MockDeck {
 
     pub fn delay_replies(&self, delay: Duration) {
         self.state().reply_delay = delay;
+    }
+
+    /// Drops the next `count` console replies, as input or output lost on the wire.
+    pub fn lose_console_replies(&self, count: u32) {
+        self.state().lose_console_replies = count;
     }
 
     pub fn emit(&self, event: &Event) {
@@ -410,7 +417,7 @@ impl MockDeck {
         LayoutState {
             source: source.into(),
             name: layout.name.clone(),
-            orientation: state.shown,
+            orientation: layout.orientation,
             pages: layout.pages.len() as u32,
             tiles,
             icons_loaded: Some(icons.len() as u32 - missing),
@@ -778,7 +785,14 @@ impl MockDeck {
                 }
                 _ => json!({"cmd": word, "ok": false, "error": "unknown command"}),
             };
-            self.state().lines.push(command.clone());
+            {
+                let mut state = self.state();
+                state.lines.push(command.clone());
+                if state.lose_console_replies > 0 {
+                    state.lose_console_replies -= 1;
+                    continue;
+                }
+            }
             out.extend(format!("@td {reply}\r\ntd> ").into_bytes());
         }
         out
@@ -1061,6 +1075,21 @@ mod tests {
     use super::*;
     use crate::{Session, SessionConfig};
     use td_core::Orientation;
+
+    #[test]
+    fn layout_state_reports_declared_orientation_for_mismatched_storage_and_builtin() {
+        let deck = MockDeck::new();
+        deck.state().shown = Orientation::Portrait;
+        assert_eq!(deck.layout_state().source, "builtin");
+        assert_eq!(deck.layout_state().orientation, Orientation::Landscape);
+        // A legacy or external writer may have placed landscape JSON in the portrait slot.
+        deck.state()
+            .layouts
+            .insert(Orientation::Portrait, BUILTIN.to_vec());
+        let shown = deck.layout_state();
+        assert_eq!(shown.source, "storage");
+        assert_eq!(shown.orientation, Orientation::Landscape);
+    }
 
     #[test]
     fn settings_put_stores_firmware_values_and_flags_an_orientation_change() {
