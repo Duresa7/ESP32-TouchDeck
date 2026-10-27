@@ -16,6 +16,7 @@ import {
   removeTile,
   resizeTile,
   setAction,
+  setFullScreen,
   setIcon,
   setLabel,
   validateLayout,
@@ -207,4 +208,21 @@ test('dev.json edits keep its frozen ids', () => {
   const dashboard = layout.pages.find((p) => p.kind === 'dashboard')!.id;
   assert.equal(refused(addTile(layout, dashboard, newTile('x', 0, 0))), `page ${dashboard} is a dashboard`);
   assert.ok(ok(removePage(layout, dashboard)).pages.every((p) => p.id !== dashboard));
+});
+
+test('full screen is written only when on, sits before the pages, and must be a boolean', () => {
+  const on = setFullScreen(dev(), true);
+  assert.ok(on.ok);
+  assert.equal(on.layout.fullScreen, true);
+  assert.deepEqual(Object.keys(on.layout), ['schema', 'name', 'orientation', 'fullScreen', 'pages']);
+  assert.deepEqual(validateSource(canonical(on.layout)), []);
+  const off = setFullScreen(on.layout, false);
+  assert.ok(off.ok);
+  assert.equal(Object.hasOwn(off.layout, 'fullScreen'), false);
+  assert.equal(canonical(off.layout), canonical(dev()));
+  assert.deepEqual(
+    validateLayout({ ...dev(), fullScreen: 'yes' }).map((error) => error.key),
+    ['shape.type'],
+  );
+  assert.deepEqual(validateLayout({ ...dev(), fullScreen: false }), []);
 });

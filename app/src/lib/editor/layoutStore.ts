@@ -154,11 +154,11 @@ function createEditor() {
       return layout ? `${JSON.stringify(layout, null, 2)}\n` : null;
     },
 
-    addTile() {
+    addTile(at?: [number, number]) {
       const { page } = state();
       const layout = current();
       if (!layout || !page) return;
-      const cell = freeCell(layout, page);
+      const cell = at ?? freeCell(layout, page);
       if (!cell) {
         say('error', 'no free cell on this page');
         return;

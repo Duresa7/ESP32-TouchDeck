@@ -1,3 +1,22 @@
+/* The deck's own face: Montserrat Medium, the font LVGL draws every label with (SIL OFL 1.1, assets/fonts). */
+@font-face {
+  font-family: 'TouchDeck Montserrat';
+  src: url('./assets/fonts/montserrat-medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+}
+
+/* The seven media symbols LVGL merges into its fonts, from Font Awesome 5 Free Solid (SIL OFL 1.1, assets/fonts). */
+@font-face {
+  font-family: 'TouchDeck Symbols';
+  src: url('./assets/fonts/touchdeck-symbols.woff2?no-inline') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+  unicode-range: U+F026-F051;
+}
+
 :root {
   --bg: #0f131b;
   --panel: #161c27;

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Grid from '../lib/editor/Grid.svelte';
+  import DeckScreen from '../lib/deck/DeckScreen.svelte';
   import PageTabs from '../lib/editor/PageTabs.svelte';
   import TileProps from '../lib/editor/TileProps.svelte';
   import { editor } from '../lib/editor/layoutStore.ts';
@@ -103,17 +103,17 @@
     />
     <div class="work">
       <div class="canvas">
-        {#if page?.kind === 'grid'}
-          <Grid
-            {page}
-            orientation={layout.orientation}
+        {#if page}
+          <DeckScreen
+            {layout}
+            page={page.id}
+            mode="edit"
             selected={$editor.selected}
             onselect={(id) => editor.select(id)}
             onmove={(id, row, col) => editor.apply((l) => moveTile(l, page.id, id, row, col))}
             onresize={(id, rowSpan, colSpan) => editor.apply((l) => resizeTile(l, page.id, id, rowSpan, colSpan))}
+            onadd={(row, col) => editor.addTile([row, col])}
           />
-        {:else if page}
-          <div class="dashboard" data-testid="dashboard-page">Dashboard page fed by <code>{page.source}</code>. The deck draws it as one panel.</div>
         {/if}
       </div>
       <aside class="side">
@@ -215,23 +215,17 @@
   }
 
   .hint,
-  .empty,
-  .dashboard {
+  .empty {
     color: var(--muted);
   }
 
-  .empty,
-  .dashboard {
+  .empty {
     display: grid;
     flex: 1;
     place-items: center;
     border: 1px dashed var(--line);
     border-radius: 12px;
     text-align: center;
-  }
-
-  .dashboard {
-    height: 100%;
   }
 
   .statusbar {

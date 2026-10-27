@@ -53,6 +53,8 @@ export interface Layout {
   schema: 1;
   name: string;
   orientation: Orientation;
+  /** True gives the tiles the whole screen, with no page title and no page dots. A file writes it only when true. */
+  fullScreen?: boolean;
   pages: Page[];
 }
 
@@ -131,7 +133,7 @@ function structuralErrors(root: unknown): LayoutError[] {
   const at = (key: string, pointer: string, message: string) => errors.push(fail(key, `${place(pointer)} ${message}`));
   const wrongType = (pointer: string, expected: string) => at('shape.type', pointer, `must be ${expected} (type)`);
 
-  const object = (value: unknown, pointer: string, fields: string[]) => {
+  const object = (value: unknown, pointer: string, fields: string[], optional: string[] = []) => {
     if (!isObject(value)) {
       wrongType(pointer, 'object');
       return undefined;
@@ -140,7 +142,7 @@ function structuralErrors(root: unknown): LayoutError[] {
       if (!Object.hasOwn(value, field)) at('shape.missing-field', pointer, `must have required property '${field}' (required) ${JSON.stringify(field)}`);
     }
     for (const name of Object.keys(value)) {
-      if (!fields.includes(name)) at('shape.unknown-field', pointer, `must NOT have additional properties (additionalProperties) ${JSON.stringify(name)}`);
+      if (!fields.includes(name) && !optional.includes(name)) at('shape.unknown-field', pointer, `must NOT have additional properties (additionalProperties) ${JSON.stringify(name)}`);
     }
     return value;
   };
@@ -262,8 +264,9 @@ function structuralErrors(root: unknown): LayoutError[] {
     tiles.forEach((item, index) => tile(item, `${pointer}/tiles/${index}`));
   };
 
-  const layout = object(root, '', ['schema', 'name', 'orientation', 'pages']);
+  const layout = object(root, '', ['schema', 'name', 'orientation', 'pages'], ['fullScreen']);
   if (!layout) return errors;
+  if (Object.hasOwn(layout, 'fullScreen') && typeof layout.fullScreen !== 'boolean') wrongType('/fullScreen', 'boolean');
   if (Object.hasOwn(layout, 'schema') && layout.schema !== 1) at('layout.schema-version', '/schema', 'must be equal to constant (const)');
   if (Object.hasOwn(layout, 'name')) bounded(layout.name, '/name', NAME);
   if (Object.hasOwn(layout, 'orientation') && layout.orientation !== 'landscape' && layout.orientation !== 'portrait') {
@@ -520,6 +523,17 @@ export function removeTile(layout: Layout, page: string, id: string): Edit {
     grid.tiles.splice(index, 1);
     return null;
   });
+}
+
+/** Turns the full-screen look on or off. Off removes the member, so the file matches one written before it existed. */
+export function setFullScreen(layout: Layout, on: boolean): Edit {
+  const next = copy(layout);
+  if (on) {
+    const { pages, ...head } = next;
+    return checked({ ...head, fullScreen: true, pages });
+  }
+  delete next.fullScreen;
+  return checked(next);
 }
 
 export function addPage(layout: Layout, page: Page): Edit {
