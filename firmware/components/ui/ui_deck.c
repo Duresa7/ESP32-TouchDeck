@@ -104,9 +104,12 @@ static int tile_ref(const ui_tile_t *tile)
 }
 
 /* The title belongs to whichever page is nearer the middle of the screen, so it changes halfway through a slide
- * instead of naming the new page over the old one. */
+ * instead of naming the new page over the old one. A full-screen layout has no title. */
 static void sync_title(int32_t track_x)
 {
+    if (s.title == NULL) {
+        return;
+    }
     const int32_t page_w = s.pager.cfg.page_w;
     int32_t nearest = (page_w / 2 - track_x) / page_w;
     nearest = nearest >= s.page_count ? s.page_count - 1 : nearest;
@@ -131,7 +134,7 @@ static void show_page(uint8_t index)
     if (changed) {
         ui_tile_keys_page_changed();
     }
-    for (uint8_t i = 0; i < s.page_count; i++) {
+    for (uint8_t i = 0; i < s.page_count && s.dots[i] != NULL; i++) {
         if (i == index) {
             lv_obj_add_state(s.dots[i], LV_STATE_CHECKED);
         } else {
@@ -521,7 +524,7 @@ static void tear_down(void)
     memset(s.dots, 0, sizeof s.dots);
 }
 
-static void build_objects(void)
+static void build_objects(bool full_screen)
 {
     const ui_geometry_t *g = ui_geo();
     lv_obj_t *screen = lv_screen_active();
@@ -544,17 +547,22 @@ static void build_objects(void)
         build_page(i);
     }
 
-    s.title = lv_label_create(screen);
-    s.title_page = 0;
-    lv_label_set_text_static(s.title, s.pages[0].title);
-    lv_obj_add_style(s.title, &ui_styles()->title, 0);
-    lv_obj_set_pos(s.title, g->title_x, g->title_y);
+    /* A full-screen layout gives the title and dot strips to the tiles, so it draws neither. */
+    if (!full_screen) {
+        s.title = lv_label_create(screen);
+        s.title_page = 0;
+        lv_label_set_text_static(s.title, s.pages[0].title);
+        lv_obj_add_style(s.title, &ui_styles()->title, 0);
+        lv_obj_set_pos(s.title, g->title_x, g->title_y);
+    }
     if (td_recovery_mode()) {
         build_recovery_caption(screen, g);
     }
     touch_set_recovery_cb(on_recovery_armed);
 
-    build_dots(screen);
+    if (!full_screen) {
+        build_dots(screen);
+    }
     if (s.recovery_armed) {
         draw_recovery_band();
     }
@@ -580,13 +588,14 @@ static void load_locked(const td_layout_t *layout, const ui_layout_info_t *info,
     s.info = *info;
     atomic_store(&s.pressed, -1);
     atomic_store(&s.page, 0);
+    ui_geo_set_full_screen(layout->full_screen);
     layout_unlock();
 
     const ui_geometry_t *g = ui_geo();
     const ui_pager_cfg_t cfg = { .page_w = g->screen.w, .slop = g->slop, .swipe = g->swipe };
     ui_pager_init(&s.pager, &cfg, count > 0 ? count : 1);
     if (count > 0) {
-        build_objects();
+        build_objects(layout->full_screen);
         show_page(0);
     }
     td_layout_free(old);
@@ -608,6 +617,7 @@ static void fill_info(ui_layout_info_t *info, const td_layout_t *layout, bool fr
     info->from_storage = from_storage;
     snprintf(info->name, sizeof info->name, "%s", layout->name);
     snprintf(info->orientation, sizeof info->orientation, "%s", layout->orientation);
+    info->full_screen = layout->full_screen;
     info->pages = layout->page_count;
     info->tiles = layout->tile_count;
     info->icons_loaded = icons.loaded;

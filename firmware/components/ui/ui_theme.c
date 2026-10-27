@@ -206,16 +206,28 @@ const ui_styles_t *ui_styles(void)
 }
 
 /* Only the band slides, so a slide redraws the band and leaves the strips above and below it alone. It is taller than
- * the grid by 20 px each side, and a pressed tile's glow reaches 17 px (glow_width / 2 + 1 + glow_spread). The screen
- * size is fixed once display_start has run, so the geometry is worked out again only when it differs from the last. */
+ * the grid by 20 px each side, and a pressed tile's glow reaches 17 px (glow_width / 2 + 1 + glow_spread). A
+ * full-screen band is the screen itself, so the glow of an edge tile only loses what falls off the glass. The screen
+ * size is fixed once display_start has run, so the geometry is worked out again only when the size or the full-screen
+ * choice differs from the last. */
+static ui_geometry_t s_geo;
+static bool s_geo_full_screen;
+static bool s_want_full_screen;
+
 const ui_geometry_t *ui_geo(void)
 {
-    static ui_geometry_t geo;
     const ui_size_t screen = { .w = (int16_t)display_width(), .h = (int16_t)display_height() };
-    if (geo.screen.w != screen.w || geo.screen.h != screen.h) {
-        geo = ui_geometry(screen);
+    if (s_geo.screen.w != screen.w || s_geo.screen.h != screen.h || s_geo_full_screen != s_want_full_screen) {
+        s_geo = ui_geometry(screen, s_want_full_screen);
+        s_geo_full_screen = s_want_full_screen;
     }
-    return &geo;
+    return &s_geo;
+}
+
+void ui_geo_set_full_screen(bool full_screen)
+{
+    s_want_full_screen = full_screen;
+    ui_geo();
 }
 
 int16_t ui_dot_x(uint8_t index, uint8_t count)
