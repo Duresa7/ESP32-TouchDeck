@@ -9,8 +9,9 @@
  * each. */
 #define INVALID_FILES(X)                                                                                              \
     X(action_missing_type) X(blank_name) X(consumer_range) X(control_character) X(duplicate_id) X(duplicate_member) \
-    X(duplicate_modifier) X(empty_label) X(empty_text) X(empty_title) X(extra_property) X(grid_bounds) X(grid_size)  \
-    X(integer_with_fraction) X(invalid_id) X(invalid_utf8) X(key_range) X(lone_surrogate) X(long_label)              \
+    X(duplicate_modifier) X(empty_label) X(empty_text) X(empty_title) X(extra_property) X(full_screen_type)          \
+    X(grid_bounds) X(grid_size) X(integer_with_fraction) X(invalid_id) X(invalid_utf8) X(key_range)                  \
+    X(lone_surrogate) X(long_label)                                                                                   \
     X(long_name) X(long_title) X(missing_field) X(missing_page) X(orientation) X(overlap) X(oversize) X(page_count)   \
     X(page_missing_kind) X(schema_version) X(tile_count) X(tile_position) X(tile_span) X(truncated_json)             \
     X(unknown_action) X(unknown_modifier) X(unknown_page_kind) X(uppercase_icon) X(wrong_type)
@@ -165,7 +166,7 @@ TEST_CASE("dev.json parses with every action type, its spans, its chord and its 
 
 TEST_CASE("every file under schema/examples/invalid fails with the key on its first line", "[td_layout]")
 {
-    TEST_ASSERT_EQUAL_UINT32(38, sizeof k_invalid / sizeof k_invalid[0]);
+    TEST_ASSERT_EQUAL_UINT32(39, sizeof k_invalid / sizeof k_invalid[0]);
     for (size_t i = 0; i < sizeof k_invalid / sizeof k_invalid[0]; i++) {
         const char *start = k_invalid[i].start;
         const size_t len = (size_t)(k_invalid[i].end - start) - 1;
