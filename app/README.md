@@ -1,88 +1,153 @@
-# TouchDeck app
+# TouchDeck desktop app
 
-The desktop app for the deck, on Windows and Linux. It finds the deck on its
-USB-Serial/JTAG port, connects over the [framed app link](../schema/protocol/link-v1.md),
-shows the build the deck runs, and gives the debug console a pane. The window title
-names the git commit the app was built from.
+TouchDeck runs on Windows and Linux. It connects to the deck over USB-Serial/JTAG,
+edits and transfers layouts, runs PC actions, feeds widgets, and updates deck
+firmware. The running, connected app mirrors keys and media controls into the host
+session. The deck does not type as a standalone USB HID keyboard. Wi-Fi, Bluetooth,
+battery support, and direct TinyUSB HID are deferred.
 
-The product connects over USB. Wi-Fi and Bluetooth are deferred to a post-product update.
+For everyday use, follow the [USB user guide](../docs/usage.md). The window title
+identifies the app's source revision. **Deck** reports the connected firmware's
+version and image identity. Desktop app updates and deck firmware updates are
+separate operations.
 
-## Layout
+## Install a published build
 
-| Path | What it holds |
-| --- | --- |
-| `crates/td-core` | Pure Rust with no I/O. The frame codec and stream decoder, the link messages, the layout format with the rule keys of [schema/README.md](../schema/README.md), and the deck settings. |
-| `crates/td-link` | The transport over a serial port or the in-process mock deck, the session, discovery, and the `td-link` CLI. |
-| `src-tauri` | The Tauri shell and its commands: `list_decks`, `connect`, `disconnect`, `deck_info`, and `console_send`. |
-| `src` | The Svelte 5 window. |
-| `e2e` | WebdriverIO specs and their runner. |
+Use [the latest GitHub release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest)
+for published downloads. An installer is available only after a release that
+contains it is published. If no installer is listed, use the source-build path
+below. A distributed Windows app needs WebView2 and its required runtime libraries,
+but does not need Node, pnpm, Rust, or ESP-IDF.
 
-## What the PC needs
+Keep `td-statusline.exe` beside `touchdeck.exe` on Windows, or `td-statusline`
+beside `touchdeck` on Linux, for the optional status-line Source. A portable
+archive must be fully extracted before you start the app. Per-user settings,
+approvals, Sources state, and icon caches live outside the executable directory.
+Copying that directory alone does not migrate your setup.
 
-On Windows, run `pwsh -NoProfile -File app\scripts\setup-windows.ps1`. It installs
-what is missing:
+The [desktop setup guide](../docs/setup.md) covers prerequisites and Linux serial,
+`/dev/uinput`, and credential-store access. That link depends on
+[setup PR #34](https://github.com/Duresa7/ESP32-TouchDeck/pull/34).
+The [packaging guide](../docs/packaging.md) depends on the separate packaging
+change and describes candidate artifacts, runtime requirements, and release
+production. A successful source build or candidate package is not a published
+release.
 
-- Rust from `rustup` with the `stable-msvc` toolchain, `clippy`, and `rustfmt`.
-- The MSVC tools and the Windows SDK, from the Visual Studio C++ build tools.
-- WebView2, which Windows 11 already ships.
-- Node.js 24 and pnpm 12.
+## Build the desktop app
 
-On Linux, install the packages that [the CI workflow](../.github/workflows/app.yml)
-installs. Those are WebKitGTK 4.1, libudev, and the build tools.
+Use Node.js **24**, pnpm **12.12.1** as pinned in [package.json](package.json),
+and stable Rust meeting the minimum in [Cargo.toml](Cargo.toml). Follow the
+[desktop setup guide](../docs/setup.md) for platform dependencies.
 
-## Commands
+On Windows, from the checkout root, the setup command is:
 
-Run these from `app/`.
+```powershell
+pwsh -NoProfile -File app/scripts/setup-windows.ps1
+```
+
+The script installs missing development tools. Review it before running it, and
+open a new PowerShell afterward. It is a developer setup script, not the desktop
+app installer. Linux builds also need the WebKitGTK 4.1, GTK, and libudev development
+packages described in the setup guide.
+
+From `app/`, build the production app and helper:
 
 ```sh
-pnpm install
-pnpm tauri dev                      # the window, against the deck on USB
-TOUCHDECK_MOCK=1 pnpm tauri dev     # the window, against the mock deck
-pnpm lint                           # svelte-check, warnings fail
-pnpm test                           # node --test for the frontend and the spec picker
+pnpm install --frozen-lockfile
+pnpm tauri build
+cargo build --release -p td-link --bin td-statusline
+```
+
+The executable is `target/release/touchdeck.exe` on Windows or
+`target/release/touchdeck` on Linux. The helper is in the same directory after its
+separate build. Keep them together for a manual source deployment. Frontend
+assets and built-in icons are embedded in the app. Building the app does not flash
+the deck or create a published release. Firmware build and `.tdfw` instructions
+are in the [USB user guide](../docs/usage.md#install-or-update-deck-firmware).
+
+Do not enable the `e2e` feature for an app you distribute. The packaging recipe
+owns installer and release generation, including any updater configuration.
+
+## Develop and check changes
+
+Run these commands from `app/` after installing dependencies:
+
+```sh
+pnpm tauri dev
+pnpm lint
+pnpm test
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
 cargo fmt --check
-pnpm tauri build --features e2e     # target/release/touchdeck with the WebDriver server
-pnpm e2e                            # every spec for this OS, against the built app
 ```
 
-In PowerShell, set the mock with `$env:TOUCHDECK_MOCK = '1'`.
+`pnpm tauri dev` opens the app against real USB devices. To use the mock deck
+without a board, set the environment before starting the command. In PowerShell:
 
-## The mock deck
+```powershell
+$env:TOUCHDECK_MOCK = '1'
+$env:TOUCHDECK_INPUT = 'fake'
+pnpm tauri dev
+```
 
-`TOUCHDECK_MOCK=1` makes the app list one deck, `mock`, that speaks protocol 1 in
-process. It answers `hello`, `ping`, `link.state`, `icon.list` in pages of 32,
-`settings.get`, `settings.put`, and `widget.set`, answers `version` and `link state`
-on the console, prints a heartbeat line every 2 seconds, and records every message
-it receives. Tests also make it emit `press` and `key.report` events, go silent,
-or hang up. Each app PR that adds firmware behavior extends the mock to match, so
-the WebDriver specs never need the board.
-
-## td-link
-
-`td-link` is a second link client beside the Python one in the verification harness.
+In a POSIX shell:
 
 ```sh
-cargo run --release -p td-link -- discover
-cargo run --release -p td-link -- --port COM3 hello
-cargo run --release -p td-link -- --mock ping --count 1000
-cargo run --release -p td-link -- console "version"
-cargo run --release -p td-link -- events --seconds 10
+TOUCHDECK_MOCK=1 TOUCHDECK_INPUT=fake pnpm tauri dev
 ```
 
-It prints JSON. It exits `0` on success, `1` when the deck answers with `ok` false,
-and `2` on any other failure.
+The mock implements the app link in process, including layouts, settings,
+icons, Sources messages, and firmware update scenarios. Tests can emit key and
+press events, drop messages, or close the connection. Fake input records key
+operations without typing into the host session. Mock checks do not verify real
+serial permissions, keyboard input, credential storage, or physical panel behavior.
 
-## End-to-end tests
+## Repository layout
 
-The `e2e` cargo feature adds [tauri-plugin-wdio-webdriver](https://crates.io/crates/tauri-plugin-wdio-webdriver),
-a W3C WebDriver server inside the app on port 4445 or `TAURI_WEBDRIVER_PORT`. Never
-ship a build with that feature. `pnpm e2e` starts the built app for each spec, runs
-the spec with WebdriverIO, and writes `<spec>.json` and any screenshots to
-`TD_E2E_OUT`, which defaults to `target/e2e`. `TD_E2E_SPEC=<name>` runs one spec, and
-`TD_E2E_ATTACH_PORT=<port>` drives an app that is already running instead of
-starting one.
+| Path | Responsibility |
+| --- | --- |
+| `crates/td-core` | Frame codec, link messages, layout validation, and settings with no I/O. |
+| `crates/td-link` | Serial and mock transports, transfers, firmware update and ROM recovery, CLI tools, and `td-statusline`. |
+| `crates/td-host` | Host input, actions, approvals, icon processing, and Sources. |
+| `src-tauri` | Desktop shell, app commands, and per-user storage integration. |
+| `src` | Svelte window and its Deck, Editor, Actions, Settings, Sources, and Update views. |
+| `e2e` | WebdriverIO specs and their runner. |
 
-A spec named `name.spec.ts` runs on every OS, `name.win.spec.ts` only on Windows, and
-`name.linux.spec.ts` only on Linux.
+The [layout format](../schema/README.md) and
+[framed app link](../schema/protocol/link-v1.md) describe the files and protocol.
+
+## Use the link CLI
+
+`td-link` is another USB client. Close the desktop app's connection and any serial
+monitor before using it against the same port. These commands run from `app/`:
+
+```sh
+cargo run --release -p td-link --bin td-link -- discover
+cargo run --release -p td-link --bin td-link -- --port COM3 hello
+cargo run --release -p td-link --bin td-link -- --mock ping --count 1000
+cargo run --release -p td-link --bin td-link -- --port COM3 console "version"
+cargo run --release -p td-link --bin td-link -- --port COM3 events --seconds 10
+```
+
+Replace `COM3` with your deck's port. The CLI prints JSON and exits `0` on success,
+`1` when the deck replies with `ok` false, and `2` on another failure.
+
+## Run end-to-end tests
+
+Build a separate test app, then run the specs from `app/`:
+
+```sh
+pnpm tauri build --features e2e
+pnpm e2e
+```
+
+The `e2e` Cargo feature adds a WebDriver server on port 4445 or
+`TAURI_WEBDRIVER_PORT`. Never distribute that executable. `pnpm e2e` starts the
+built app for each spec and writes results and screenshots to `TD_E2E_OUT`,
+defaulting to `target/e2e`. `TD_E2E_SPEC=<name>` selects one spec.
+`TD_E2E_ATTACH_PORT=<port>` drives an already running test app.
+
+A spec named `name.spec.ts` runs on every OS, `name.win.spec.ts` only on Windows,
+and `name.linux.spec.ts` only on Linux. The Editor export spec substitutes a
+save-picker writer. It checks serialized content, not a native save dialog or an
+actual file saved by the installed app.
