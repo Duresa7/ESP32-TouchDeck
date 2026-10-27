@@ -43,7 +43,7 @@ describe('sources page and layout bindings', () => {
     await invoke('disconnect');
     const feed = $('[data-testid="deck-feed"]');
     await browser.waitUntil(async () => (await feed.getAttribute('data-deck')) === 'false', { timeout: 5_000 });
-    expect(await feed.getText()).toBe('Your deck isn’t connected, so nothing is being sent.');
+    expect((await feed.getText()).trim()).toBe('Your deck isn’t connected, so nothing is being sent.');
     await shot('sources-disconnected');
   });
 });
