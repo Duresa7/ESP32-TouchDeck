@@ -17,22 +17,61 @@
   unicode-range: U+F026-F051;
 }
 
+/*
+ * The app is the desk the deck sits on: a blue-slate surface a step lighter than the deck's black glass, so the
+ * preview reads as a lit screen. The accent is the deck's own glow, and headings use the deck's own face.
+ */
 :root {
-  --bg: #0f131b;
-  --panel: #161c27;
-  --raised: #1d2533;
-  --line: #273142;
-  --text: #e6e9ef;
-  --muted: #8c96a8;
-  --accent: #3b82f6;
-  --online: #22c55e;
-  --offline: #8b93a1;
-  --bad: #f87171;
+  --bg: #121722;
+  --panel: #171d29;
+  --raised: #202838;
+  --sunken: #0d1119;
+  --line: #283143;
+  --line-strong: #3a465d;
+  --text: #e8ecf8;
+  --muted: #9aa4b8;
+  --faint: #6c768b;
+  --accent: #48a0f8;
+  --accent-hover: #63b0ff;
+  --accent-ink: #061322;
+  --accent-soft: rgb(72 160 248 / 0.14);
+  --good: #5ccb8a;
+  --warn: #f0b455;
+  --bad: #f27a7a;
+  --bad-soft: rgb(242 122 122 / 0.12);
+  --warn-soft: rgb(240 180 85 / 0.12);
+
+  --font-display: 'TouchDeck Montserrat', 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
+  --font-ui: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
   --mono: ui-monospace, 'Cascadia Mono', 'JetBrains Mono', Consolas, monospace;
+
+  --text-xs: 12px;
+  --text-s: 13px;
+  --text-m: 14px;
+  --text-l: 16px;
+  --text-xl: 20px;
+  --text-2xl: 26px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --radius-s: 8px;
+  --radius-m: 12px;
+  --radius-l: 16px;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+
   color-scheme: dark;
-  font: 14px/1.45 system-ui, 'Segoe UI', Roboto, sans-serif;
+  font: 400 var(--text-m) / 1.5 var(--font-ui);
   color: var(--text);
   background: var(--bg);
+  -webkit-font-smoothing: antialiased;
 }
 
 * {
@@ -52,259 +91,406 @@ body,
   flex-direction: column;
 }
 
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 500;
+  color: var(--text);
+}
+
+h1 {
+  font-size: var(--text-2xl);
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+}
+
+h2 {
+  font-size: var(--text-xl);
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+h3 {
+  font-size: var(--text-l);
+  line-height: 1.3;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--accent);
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+
+/* Buttons: quiet by default, one primary per view. A press answers at once with a small squeeze. */
 button,
-input {
-  font: inherit;
-  color: inherit;
-}
-
-button {
-  padding: 6px 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 34px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-s);
   background: var(--raised);
-  cursor: pointer;
+  color: var(--text);
+  font: 500 var(--text-m) / 1 var(--font-ui);
   white-space: nowrap;
+  cursor: pointer;
+  transition:
+    transform 140ms var(--ease-out),
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
 }
 
-button:hover:not(:disabled) {
-  border-color: #3a475d;
+button:active:not(:disabled),
+.button:active {
+  transform: scale(0.97);
 }
 
 button:disabled {
   opacity: 0.45;
-  cursor: default;
+  cursor: not-allowed;
 }
 
 button.primary {
   border-color: transparent;
   background: var(--accent);
-  color: #fff;
-}
-
-.bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 10px 20px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
+  color: var(--accent-ink);
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.mark {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-  background: conic-gradient(#3b82f6 0 25%, #22c55e 0 50%, #f59e0b 0 75%, #a855f7 0);
-}
-
-.status {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 8px;
+button.quiet {
+  border-color: transparent;
+  background: transparent;
   color: var(--muted);
 }
 
-.dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--offline);
+button.danger {
+  color: var(--bad);
 }
 
-.dot[data-state='online'] {
-  background: var(--online);
-  box-shadow: 0 0 0 3px rgb(34 197 94 / 0.2);
+button.small {
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-s);
 }
 
-.layout {
-  display: grid;
-  flex: 1;
-  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-  gap: 16px;
-  min-height: 0;
-  padding: 16px;
+@media (hover: hover) and (pointer: fine) {
+  button:hover:not(:disabled),
+  .button:hover {
+    border-color: #4a5874;
+    background: #263046;
+  }
+
+  button.primary:hover:not(:disabled) {
+    border-color: transparent;
+    background: var(--accent-hover);
+  }
+
+  button.quiet:hover:not(:disabled) {
+    border-color: transparent;
+    background: rgb(255 255 255 / 0.05);
+    color: var(--text);
+  }
+
+  button.danger:hover:not(:disabled) {
+    border-color: rgb(242 122 122 / 0.5);
+    background: var(--bad-soft);
+  }
 }
 
-.panel {
-  display: flex;
-  flex-direction: column;
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Fields */
+input:not([type='checkbox'], [type='radio'], [type='file'], [type='range']),
+select,
+textarea {
+  width: 100%;
   min-width: 0;
-  min-height: 0;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--panel);
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-s);
+  background: var(--sunken);
+  color: var(--text);
+  font: 400 var(--text-m) / 1.4 var(--font-ui);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
 }
 
-.side {
-  overflow-y: auto;
+textarea {
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: var(--text-s);
 }
 
-.panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--line);
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-h2 {
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.55;
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+  width: 16px;
+  height: 16px;
   margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted);
+  accent-color: var(--accent);
+}
+
+/* A labelled field: the name above, an optional hint below. */
+.field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field > .name {
+  color: var(--text);
+  font-size: var(--text-s);
+  font-weight: 500;
 }
 
 .hint {
-  min-width: 0;
-  overflow: hidden;
   color: var(--muted);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: var(--text-s);
+  line-height: 1.45;
 }
 
-.decks {
-  margin: 0;
-  padding: 8px;
-  list-style: none;
-}
-
-.deck {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px;
-  border-radius: 8px;
-}
-
-.deck:hover {
-  background: var(--raised);
-}
-
-.deck-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.port {
-  font-family: var(--mono);
-  font-weight: 600;
-}
-
-.detail {
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.empty {
-  padding: 10px;
-  color: var(--muted);
-}
-
-.hello {
-  display: grid;
-  gap: 6px;
-  margin: 0 8px 12px;
-  padding: 12px;
-  border-radius: 8px;
-  background: var(--raised);
-}
-
-.field {
-  display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
-  gap: 8px;
-}
-
-.field dt {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.field dd {
-  margin: 0;
-  font-family: var(--mono);
-  font-size: 12px;
+.problem {
+  color: var(--bad);
+  font-size: var(--text-s);
+  line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
-.console {
-  overflow: hidden;
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-m);
+  cursor: pointer;
 }
 
-.log {
-  flex: 1;
+/* A switch is a checkbox drawn as a track and a thumb. */
+.switch {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  width: 38px;
+  height: 22px;
+}
+
+.switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   margin: 0;
-  padding: 10px 14px;
-  overflow: auto;
-  font-family: var(--mono);
-  font-size: 12.5px;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.switch .track {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--line-strong);
+  transition: background-color 160ms ease;
+  pointer-events: none;
+}
+
+.switch .track::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text);
+  content: '';
+  transition: transform 180ms var(--ease-out);
+}
+
+.switch input:checked + .track {
+  background: var(--accent);
+}
+
+.switch input:checked + .track::after {
+  transform: translateX(16px);
+}
+
+.switch input:focus-visible + .track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A segmented control, for two or three choices that change the view. */
+.segmented {
+  display: inline-flex;
+  flex: none;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--sunken);
+}
+
+.segmented button {
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-s);
+}
+
+.segmented button[aria-pressed='true'] {
+  background: var(--raised);
+  color: var(--text);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 1px 2px rgb(0 0 0 / 0.4);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .segmented button:hover:not(:disabled) {
+    border: 0;
+    background: rgb(255 255 255 / 0.04);
+    color: var(--text);
+  }
+
+  .segmented button[aria-pressed='true']:hover:not(:disabled) {
+    background: var(--raised);
+  }
+}
+
+/* A message strip: what happened and what to do next. */
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--panel);
+  font-size: var(--text-m);
+}
+
+.notice[data-tone='warn'] {
+  border-color: rgb(240 180 85 / 0.4);
+  background: var(--warn-soft);
+}
+
+.notice[data-tone='bad'] {
+  border-color: rgb(242 122 122 / 0.4);
+  background: var(--bad-soft);
+}
+
+.notice[data-tone='info'] {
+  border-color: rgb(72 160 248 / 0.35);
+  background: var(--accent-soft);
+}
+
+/* Technical detail stays one click away, never in the main message. */
+details.more > summary {
+  width: fit-content;
+  color: var(--muted);
+  font-size: var(--text-s);
+  cursor: pointer;
   list-style: none;
 }
 
-.log li {
-  padding: 1px 0;
+details.more > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.more > summary::before {
+  display: inline-block;
+  width: 1em;
+  content: '▸';
+  transition: transform 150ms var(--ease-out);
+}
+
+details.more[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+details.more > .body {
+  margin-top: var(--space-2);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--text-xs);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
-.log .sent {
-  color: #93c5fd;
-}
-
-.log .log {
-  color: var(--muted);
-}
-
-.log .reply[data-ok='true'] {
-  color: #86efac;
-}
-
-.log .reply[data-ok='false'] {
-  color: var(--bad);
-}
-
-.prompt {
-  display: flex;
-  gap: 8px;
-  padding: 10px 14px;
+/* A section on a settings-style page: a heading, a sentence, then its controls, separated by hairlines. */
+.section {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-5) 0;
   border-top: 1px solid var(--line);
 }
 
-.prompt input {
-  flex: 1;
-  min-width: 0;
-  padding: 7px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg);
-  font-family: var(--mono);
+.section:first-of-type {
+  border-top: 0;
+  padding-top: 0;
 }
 
-.prompt input:focus {
-  border-color: var(--accent);
-  outline: none;
+.section > header {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+::selection {
+  background: rgb(72 160 248 / 0.35);
+}
+
+* {
+  scrollbar-color: var(--line-strong) transparent;
+  scrollbar-width: thin;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button:active:not(:disabled),
+  .button:active {
+    transform: none;
+  }
+
+  .switch .track::after,
+  details.more > summary::before {
+    transition: none;
+  }
 }

@@ -17,7 +17,11 @@ import {
   resizeTile,
   setAction,
   setFullScreen,
+  setGridSize,
   setIcon,
+  setLayoutName,
+  setPageTitle,
+  starterLayout,
   setLabel,
   validateLayout,
   validateSource,
@@ -225,4 +229,30 @@ test('full screen is written only when on, sits before the pages, and must be a 
     ['shape.type'],
   );
   assert.deepEqual(validateLayout({ ...dev(), fullScreen: false }), []);
+});
+
+test('the starter layout passes the rules in both orientations', () => {
+  for (const orientation of ['landscape', 'portrait'] as const) {
+    assert.deepEqual(validateLayout(starterLayout(orientation)), []);
+  }
+});
+
+test('a page and a layout can be renamed within their limits', () => {
+  const named = setPageTitle(dev(), 'shortcuts', 'Keys');
+  assert.ok(named.ok && named.layout.pages[0].title === 'Keys');
+  const long = setPageTitle(dev(), 'shortcuts', 'x'.repeat(25));
+  assert.ok(!long.ok && long.reason.startsWith('title.too-long'));
+  const layout = setLayoutName(dev(), 'Desk');
+  assert.ok(layout.ok && layout.layout.name === 'Desk');
+});
+
+test('a grid grows freely and shrinks only past empty cells', () => {
+  const bigger = setGridSize(dev(), 'shortcuts', 4, 5);
+  assert.ok(bigger.ok);
+  const page = bigger.layout.pages[0] as GridPage;
+  assert.deepEqual([page.rows, page.cols], [4, 5]);
+  const smaller = setGridSize(dev(), 'shortcuts', 2, 3);
+  assert.ok(!smaller.ok);
+  assert.equal(smaller.reason, 'grid.too-small: quiet');
+  assert.deepEqual(setGridSize(dev(), 'shortcuts', 9, 4), { ok: false, reason: 'grid.size' });
 });

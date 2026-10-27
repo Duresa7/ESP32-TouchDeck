@@ -43,74 +43,81 @@
       await navigator.clipboard.writeText(account);
       copied = account;
     } catch {
-      problem = 'Could not copy the account key. Select and copy the text in the table.';
+      problem = "Couldn't copy. Select the account in the table and copy it instead.";
     }
   }
 </script>
 
-<section class="card" data-testid="proxy-card">
-  <header>
-    <h3>CLIProxyAPI usage limits</h3>
+<section class="section" data-testid="proxy-card">
+  <header class="head">
+    <div>
+      <h3>Connect to your CLIProxyAPI hub</h3>
+      <p class="hint">CLIProxyAPI is a hub that signs in to your AI accounts. TouchDeck asks it, read-only, how much of each limit is used.</p>
+    </div>
     <label class="switch">
-      <input type="checkbox" bind:checked={draft.cliproxy} data-testid="proxy-enabled" />
-      <span>On</span>
+      <input type="checkbox" bind:checked={draft.cliproxy} aria-label="Read usage from the hub" data-testid="proxy-enabled" />
+      <span class="track"></span>
     </label>
   </header>
 
-  <p class="note" data-testid="proxy-state" data-state={phase} data-fails={info?.fails ?? 0}>
+  <p class="state" data-testid="proxy-state" data-state={phase} data-fails={info?.fails ?? 0}>
+    <span class="dot" data-phase={phase} aria-hidden="true"></span>
     {#if phase === 'off'}
-      Off. Turn it on and save to poll the management API.
+      Off. Turn it on and save to start reading usage.
     {:else if phase === 'idle'}
-      Waiting for the first poll.
+      Checking the hub for the first time…
     {:else if phase === 'ok'}
-      {info?.accounts.length} account{info?.accounts.length === 1 ? '' : 's'}, polled {ago(info?.polled ?? null)}.
+      Reading {info?.accounts.length} account{info?.accounts.length === 1 ? '' : 's'}. Last checked {ago(info?.polled ?? null)}.
     {:else if phase === 'stale'}
-      Stale after {info?.fails} failed polls. The deck dims its CLIProxyAPI tiles.
+      The hub hasn't answered {info?.fails} times in a row, so the deck greys out its AI usage buttons until it does.
     {:else}
-      Failing, {info?.fails} in a row.
+      The hub didn't answer the last {info?.fails === 1 ? 'check' : `${info?.fails} checks`}. TouchDeck keeps trying.
     {/if}
   </p>
-  {#if info?.error && phase !== 'ok'}<p class="bad" data-testid="proxy-error">{info.error}</p>{/if}
+  {#if info?.error && phase !== 'ok'}<p class="problem" data-testid="proxy-error">{info.error}</p>{/if}
 
-  <label class="row">
-    <span>Hub URL</span>
-    <input bind:value={draft.cliproxy_url} spellcheck="false" data-testid="proxy-url" />
-  </label>
-  <label class="row">
-    <span>Poll every (s)</span>
-    <input type="number" min="60" bind:value={draft.cliproxy_interval_s} data-testid="proxy-interval" />
-  </label>
-  {#if info?.insecure_http}
-    <p class="warning" role="status" data-testid="proxy-http-warning">This hub uses plain HTTP outside this PC. The management key travels unencrypted. Use HTTPS to protect it.</p>
-  {/if}
-  <div class="row">
-    <span>Management key</span>
-    <div class="key">
-      <input type="password" bind:value={key} placeholder={shownHint ? `saved, ends in ${shownHint}` : 'not set'} autocomplete="off" data-testid="proxy-key" />
-      <button onclick={saveKey} disabled={busy || !key.trim()} data-testid="proxy-key-save">Save key</button>
-      <button onclick={clearKey} disabled={busy || !shownHint} data-testid="proxy-key-clear">Clear</button>
-    </div>
+  <div class="fields">
+    <label class="field">
+      <span class="name">Hub address</span>
+      <input bind:value={draft.cliproxy_url} spellcheck="false" placeholder="https://hub.example.com" data-testid="proxy-url" />
+    </label>
+    <label class="field short">
+      <span class="name">Check every</span>
+      <div class="with-unit">
+        <input type="number" min="60" bind:value={draft.cliproxy_interval_s} data-testid="proxy-interval" />
+        <span>seconds</span>
+      </div>
+    </label>
   </div>
-  <p class="note">
-    The key lives in the operating system's credential store, never in the config file. Last 4 characters: <code data-testid="proxy-key-hint">{shownHint ?? 'none'}</code>
-  </p>
-  {#if problem}<p class="bad" data-testid="proxy-key-error">{problem}</p>{/if}
+  {#if info?.insecure_http}
+    <p class="notice" data-tone="warn" role="status" data-testid="proxy-http-warning">This hub address starts with http:// and isn't on this computer, so the management key travels unencrypted. Use an https:// address to protect it.</p>
+  {/if}
+  <div class="field">
+    <span class="name">Management key</span>
+    <div class="key">
+      <input type="password" bind:value={key} placeholder={shownHint ? `Saved, ends in ${shownHint}` : 'Not set yet'} autocomplete="off" aria-label="Management key" data-testid="proxy-key" />
+      <button onclick={saveKey} disabled={busy || !key.trim()} data-testid="proxy-key-save">Save key</button>
+      <button class="quiet" onclick={clearKey} disabled={busy || !shownHint} data-testid="proxy-key-clear">Forget key</button>
+    </div>
+    <span class="hint">Kept in your computer's secure password store, never in a file. Last 4 characters: <code data-testid="proxy-key-hint">{shownHint ?? 'none'}</code></span>
+  </div>
+  {#if problem}<p class="problem" data-testid="proxy-key-error">{problem}</p>{/if}
 
   <div class="actions">
-    <button onclick={() => refreshSource('cliproxyapi')} disabled={!draft.cliproxy} data-testid="proxy-refresh">Refresh now</button>
-    <span class="note">Each poll asks the providers through your hub. Refreshes are limited to once every 15 s.</span>
+    <button class="small" onclick={() => refreshSource('cliproxyapi')} disabled={!draft.cliproxy} data-testid="proxy-refresh">Check now</button>
+    <span class="hint">Each check asks your AI services through the hub, so TouchDeck waits at least 15 seconds between them.</span>
   </div>
 
   {#if info && info.accounts.length}
     <div class="accounts-scroll">
     <table data-testid="proxy-accounts">
-      <thead><tr><th>Account key</th><th>Provider</th><th>Plan</th><th>5-hour</th><th>7-day</th><th>Status</th></tr></thead>
+      <thead><tr><th>Account</th><th>Service</th><th>Plan</th><th>5-hour limit</th><th>7-day limit</th><th>Status</th></tr></thead>
       <tbody>
         {#each info.accounts as account, index (`${account.key}:${index}`)}
           <tr data-testid="proxy-account" data-email={account.email} data-account-key={account.key} data-status={account.status} data-stale={info.stale}>
             <td class="account-key">
               <code data-testid="proxy-account-key">{account.key}</code>
-              <button class="copy" onclick={() => copyAccount(account.key)} aria-label={`Copy ${account.key}`} data-testid="proxy-account-copy">{copied === account.key ? 'Copied' : 'Copy'}</button>
+              <button class="copy small quiet" onclick={() => copyAccount(account.key)} aria-label={`Copy ${account.key}`} data-testid="proxy-account-copy">{copied === account.key ? 'Copied' : 'Copy'}</button>
             </td>
             <td data-testid="proxy-account-provider">{account.provider}</td>
             <td data-testid="proxy-account-plan">{account.plan ?? '—'}</td>
@@ -119,7 +126,7 @@
                 {#if window}
                   <strong>{Math.round(window.pct)}%</strong>
                   <div class="meter" aria-hidden="true"><span style:width={`${window.pct}%`}></span></div>
-                  <small>{window.reset_in === 'now' ? 'resets now' : window.reset_in ? `resets in ${window.reset_in}` : 'reset time unavailable'}</small>
+                  <small>{window.reset_in === 'now' ? 'resets now' : window.reset_in ? `resets in ${window.reset_in}` : 'reset time unknown'}</small>
                 {:else}
                   <span class="muted">—</span>
                 {/if}
@@ -127,113 +134,170 @@
             {/each}
             <td class="account-status" data-testid="proxy-account-status">
               <span class="badge">{account.status}</span>
-              {#if account.usage_error}<small class="bad" data-testid="proxy-account-usage-error">{account.usage_error}</small>{/if}
-              <small>{account.success} OK · {account.failed} failed · {account.recent_10m} / 10m</small>
+              {#if account.usage_error}<small class="problem" data-testid="proxy-account-usage-error">{account.usage_error}</small>{/if}
+              <small>{account.success} worked · {account.failed} failed · {account.recent_10m} in 10 min</small>
             </td>
           </tr>
         {/each}
       </tbody>
     </table>
     </div>
-    <p class="note">Usage is the percentage used. Gemini and other providers show request counts only for now.</p>
+    <p class="hint">Limits show the share already used. Copy an account to show only that account on a button. Gemini and some other services only report request counts for now.</p>
   {/if}
 </section>
 
 <style>
-  .card {
-    padding: 14px;
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    background: var(--raised);
+  .head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4);
   }
-  header {
+
+  .head > div {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .state {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-  }
-  h3 {
-    margin: 0;
-    font-size: 15px;
-  }
-  .note {
-    margin: 6px 0;
+    gap: var(--space-2);
     color: var(--muted);
-    font-size: 13px;
   }
-  .bad {
-    color: var(--bad);
-    font-size: 13px;
-    overflow-wrap: anywhere;
+
+  .state .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--faint);
   }
-  code {
-    font-family: var(--mono);
-    font-size: 12px;
+
+  .state .dot[data-phase='ok'] {
+    background: var(--good);
   }
-  .row {
+
+  .state .dot[data-phase='stale'],
+  .state .dot[data-phase='failing'] {
+    background: var(--warn);
+  }
+
+  .fields {
     display: grid;
-    grid-template-columns: 110px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) 200px;
+    gap: var(--space-3);
+  }
+
+  .with-unit {
+    display: flex;
     align-items: center;
-    gap: 8px;
-    margin: 8px 0;
+    gap: var(--space-2);
+    color: var(--muted);
   }
-  input:not([type='checkbox']) {
-    min-width: 0;
-    padding: 6px 10px;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: var(--bg);
-    font-size: 13px;
-  }
+
   .key {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
   }
+
   .key input {
     flex: 1;
   }
+
   .actions {
     display: flex;
-    gap: 8px;
-    margin: 8px 0;
-    align-items: center;
     flex-wrap: wrap;
-  }
-  .switch {
-    display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-3);
   }
+
   table {
     width: 100%;
     min-width: 730px;
     border-collapse: collapse;
-    font-size: 13px;
+    font-size: var(--text-s);
   }
+
   th,
   td {
     padding: 10px 8px;
     border-bottom: 1px solid var(--line);
     text-align: left;
+    vertical-align: top;
   }
+
   th {
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--text-xs);
     font-weight: 500;
   }
+
   tr[data-stale='true'] td {
     opacity: 0.6;
   }
-  .accounts-scroll { overflow-x: auto; margin-top: 12px; }
-  .account-key { max-width: 230px; }
-  .account-key code { display: block; overflow-wrap: anywhere; user-select: text; }
-  .copy { padding: 2px 7px; margin-top: 5px; font-size: 11px; }
-  .window { min-width: 100px; }
-  .window strong { font-variant-numeric: tabular-nums; font-weight: 600; }
-  small { display: block; margin-top: 4px; font-size: 11px; color: var(--muted); }
-  .account-status { max-width: 190px; }
-  .badge { font-size: 12px; }
-  .muted { color: var(--muted); }
-  .meter { height: 4px; margin-top: 5px; border-radius: 4px; background: var(--line); overflow: hidden; }
-  .meter span { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
-  .warning { padding: 8px 10px; border: 1px solid var(--bad); border-radius: 8px; font-size: 13px; color: var(--bad); }
+
+  .accounts-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-m);
+    background: var(--panel);
+  }
+
+  .account-key {
+    max-width: 230px;
+  }
+
+  .account-key code {
+    display: block;
+    overflow-wrap: anywhere;
+    user-select: text;
+  }
+
+  .copy {
+    margin-top: 4px;
+  }
+
+  .window {
+    min-width: 100px;
+  }
+
+  .window strong {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+
+  small {
+    display: block;
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .account-status {
+    max-width: 190px;
+  }
+
+  .badge {
+    font-size: var(--text-xs);
+  }
+
+  .muted {
+    color: var(--muted);
+  }
+
+  .meter {
+    height: 4px;
+    margin-top: 5px;
+    overflow: hidden;
+    border-radius: 4px;
+    background: var(--line);
+  }
+
+  .meter span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--accent);
+  }
 </style>

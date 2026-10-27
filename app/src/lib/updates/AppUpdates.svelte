@@ -18,8 +18,10 @@
 </script>
 
 <section class="app-updates" aria-labelledby="app-updates-title" data-testid="app-updates">
-  <h2 id="app-updates-title">App updates</h2>
-  <p>TouchDeck desktop app {version}. Deck firmware is updated separately in the Update tab.</p>
+  <header class="intro">
+    <h1 id="app-updates-title">This app</h1>
+    <p>You have TouchDeck {version}. Your deck's own software updates separately, under Deck software.</p>
+  </header>
   <button onclick={() => { installError = ''; appUpdater.check(); }} disabled={busy} data-testid="app-update-check">
     {$appUpdateState.kind === 'checking' ? 'Checking for updates…' : 'Check for updates'}
   </button>
@@ -54,10 +56,11 @@
 </section>
 
 <style>
-  .app-updates { margin-top: 16px; display: grid; gap: 12px; max-width: 620px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
-  p, h2, h3 { margin: 0; }
+  .app-updates { display: grid; gap: var(--space-4); max-width: 620px; }
+  .intro { display: grid; gap: var(--space-2); }
   p { color: var(--muted); }
-  .notes { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; font: inherit; }
+  .notes { margin: 0; padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-m); background: var(--sunken); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; font: inherit; }
   .problem { color: var(--bad); }
+  progress { width: 100%; accent-color: var(--accent); }
   button { justify-self: start; }
 </style>
