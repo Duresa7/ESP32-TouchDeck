@@ -22,7 +22,14 @@ async function shows(text: string) {
 }
 
 async function capture(name: string) {
-  await section().scrollIntoView();
+  await browser.execute(() => {
+    const settings = document.querySelector<HTMLElement>('[data-testid="settings"]')!;
+    settings.scrollTop = settings.scrollHeight;
+  });
+  await browser.waitUntil(async () => browser.execute(() => {
+    const bounds = document.querySelector('[data-testid="app-updates"]')!.getBoundingClientRect();
+    return bounds.top >= 0 && bounds.bottom <= window.innerHeight;
+  }), { timeout: 2_000, timeoutMsg: 'the App updates card did not fit in the screenshot' });
   await shot(name);
 }
 
