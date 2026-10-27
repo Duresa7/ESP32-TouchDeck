@@ -125,7 +125,7 @@
                 {/if}
               </td>
             {/each}
-            <td class="status" data-testid="proxy-account-status">
+            <td class="account-status" data-testid="proxy-account-status">
               <span class="badge">{account.status}</span>
               {#if account.usage_error}<small class="bad" data-testid="proxy-account-usage-error">{account.usage_error}</small>{/if}
               <small>{account.success} OK · {account.failed} failed · {account.recent_10m} / 10m</small>
@@ -230,7 +230,7 @@
   .window { min-width: 100px; }
   .window strong { font-variant-numeric: tabular-nums; font-weight: 600; }
   small { display: block; margin-top: 4px; font-size: 11px; color: var(--muted); }
-  .status { max-width: 190px; }
+  .account-status { max-width: 190px; }
   .badge { font-size: 12px; }
   .muted { color: var(--muted); }
   .meter { height: 4px; margin-top: 5px; border-radius: 4px; background: var(--line); overflow: hidden; }

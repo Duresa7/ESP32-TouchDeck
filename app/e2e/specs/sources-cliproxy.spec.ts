@@ -8,7 +8,7 @@ import { DEV_JSON, invoke, mockSets, openSources, saveJson, saveText, setChecked
 import { PROXY_FIELDS, type SourcesView, type Status } from '../../src/lib/sources/api.ts';
 
 const ACCOUNTS = ['codex:alice@example.com', 'claude:alice@example.com', 'gemini-cli:linus@example.com'];
-const accountId = (account: string) => account.split(':')[0];
+const accountId = (account: string) => account.split(':')[0].replaceAll('-', '_');
 let lastRefresh = 0;
 async function afterRefreshFloor() {
   const wait = lastRefresh + 15_100 - Date.now();
@@ -207,6 +207,7 @@ describe('cliproxyapi source', () => {
 
   it('marks the proxy tile stale after three failed polls and clears it when the server returns', async function () {
     this.timeout(90_000);
+    await openSources();
     await type('proxy-interval', '2');
     await save();
     expect(await $('[data-testid="proxy-interval"]').getValue()).toBe('60');
@@ -227,7 +228,7 @@ describe('cliproxyapi source', () => {
       expect(state.stale).toBe(attempt === 3);
     }
     const stale = await until(async () => tile(await mockSets(), 'proxy').find((set) => set.stale && set.at_ms >= stopped), 5_000, 'stale widget');
-    const dashboardStale = dashboards(await mockSets()).at(-1)!;
+    const dashboardStale = await until(async () => dashboards(await mockSets()).find((set) => set.at_ms >= stopped && set.rows?.every((row) => row.value === 'stale')), 5_000, 'stale dashboard');
     await $('[data-testid="proxy-state"][data-state="stale"]').waitForExist({ timeout: 5_000 });
     await cardShot('proxy-stale');
 
@@ -244,6 +245,7 @@ describe('cliproxyapi source', () => {
   });
 
   it('warns about an HTTP hub outside loopback without contacting it', async () => {
+    await openSources();
     const view = await invoke<SourcesView>('sources_view');
     await invoke('sources_save', { config: { ...view.config, cliproxy: false, cliproxy_url: 'http://example.com' } });
     await $('[data-testid="proxy-http-warning"]').waitForExist({ timeout: 5_000 });
