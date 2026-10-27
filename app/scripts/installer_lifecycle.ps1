@@ -134,12 +134,44 @@ function Get-Remaining {
     }
 }
 
+function Get-FileUsers([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return 'absent' }
+    try { $ids = [TouchDeckFileUsers]::Read($Path) } catch { return "query failed: $($_.Exception.Message)" }
+    $users = foreach ($id in $ids) {
+        if ($id -eq $PID) { continue }  # This query's own handle.
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $id" -ErrorAction SilentlyContinue
+        if ($process) { "$($process.Name)#$id<-$($process.ParentProcessId)" } else { "#$id" }
+    }
+    return 'used by [' + (@($users) -join ', ') + ']'
+}
+
+function Remove-Probe([string]$Path, [string]$Label) {
+    Write-Log "DIAG ${Label}: touchdeck.exe $(Get-FileUsers $Path)"
+    try { [IO.File]::Delete($Path); Write-Log "DIAG ${Label}: deleting touchdeck.exe succeeds." }
+    catch { Write-Log "DIAG ${Label}: deleting touchdeck.exe fails: $($_.Exception.InnerException.Message ?? $_.Exception.Message)" }
+}
+
+function Write-Diagnostics([string]$Label) {
+    # Evidence for lock failures: which processes hold the main binary or run from the install directory.
+    $running = @(Get-CimInstance Win32_Process | Where-Object {
+        $_.ExecutablePath -and $_.ExecutablePath.StartsWith("$installDir\", [StringComparison]::OrdinalIgnoreCase)
+    } | ForEach-Object { "$($_.Name)#$($_.ProcessId)<-$($_.ParentProcessId)" })
+    $uninstallers = @(Get-Process | Where-Object ProcessName -Match '^(Un_[A-Z]|Au_)$' | ForEach-Object { "$($_.ProcessName)#$($_.Id)" })
+    $webviews = @(Get-Process -Name msedgewebview2 -ErrorAction SilentlyContinue).Count
+    Write-Log ("DIAG ${Label}: touchdeck.exe $(Get-FileUsers (Join-Path $installDir 'touchdeck.exe')); " +
+        "install-dir processes [$($running -join ', ')]; uninstallers [$($uninstallers -join ', ')]; msedgewebview2 x$webviews")
+}
+
 try {
     Assert-That (-not (Test-Path -LiteralPath $installDir)) 'Runner starts without a TouchDeck installation.'
     Assert-That (@(Get-UninstallEntries).Count -eq 0) 'Runner starts without a TouchDeck uninstall entry.'
     Assert-That (-not (Test-Path -LiteralPath $settingsPath)) 'Runner starts without Claude settings to overwrite.'
     Assert-That (-not (Test-Path -LiteralPath $configDir) -and -not (Test-Path -LiteralPath $stateDir)) 'Runner starts without TouchDeck user data.'
     $null = New-Item -ItemType Directory -Path $scratch
+    $elevated = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+    $realtime = try { (Get-MpComputerStatus -ErrorAction Stop).RealTimeProtectionEnabled } catch { 'unknown' }
+    Write-Log "DIAG runner: elevated=$elevated defender-realtime=$realtime explorer x$(@(Get-Process -Name explorer -ErrorAction SilentlyContinue).Count)"
 
     # An identical installer produces identical hashes/timestamps: NTFS file identity proves replacement.
     Add-Type -TypeDefinition @'
@@ -165,11 +197,39 @@ public static class TouchDeckFileIdentity {
         }
     }
 }
+public static class TouchDeckFileUsers {
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IoStatus { public IntPtr Status, Information; }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("ntdll.dll")]
+    private static extern int NtQueryInformationFile(SafeFileHandle file, out IoStatus status, IntPtr info, int length, int infoClass);
+    // FileProcessIdsUsingFileInformation (47) lists every process with a handle or image mapping on the file.
+    public static long[] Read(string path) {
+        using (var file = CreateFileW(path, 0x80, 7, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
+            if (file.IsInvalid) throw new Win32Exception();
+            for (int size = 4096; size <= 1 << 20; size *= 2) {
+                IntPtr buffer = Marshal.AllocHGlobal(size);
+                try {
+                    IoStatus status;
+                    int result = NtQueryInformationFile(file, out status, buffer, size, 47);
+                    if (result == unchecked((int)0xC0000004)) continue;
+                    if (result != 0) throw new InvalidOperationException("NTSTATUS 0x" + result.ToString("X8"));
+                    var ids = new long[Marshal.ReadInt32(buffer)];
+                    for (int i = 0; i < ids.Length; i++) ids[i] = Marshal.ReadIntPtr(buffer, IntPtr.Size * (i + 1)).ToInt64();
+                    return ids;
+                } finally { Marshal.FreeHGlobal(buffer); }
+            }
+            throw new InvalidOperationException("Too many processes use the file.");
+        }
+    }
+}
 '@
 
     $summary.scenario = 'fresh-install'
     Finish-Child (Start-Child $installer @('/S')) 'Fresh silent install'
     Assert-Payload
+    Write-Diagnostics 'after fresh install'
     $app = Start-Child (Join-Path $installDir 'touchdeck.exe') -Variables @{
         TOUCHDECK_MOCK = '1'; TOUCHDECK_INPUT = 'fake'; TOUCHDECK_APP_DATA_DIR = (Join-Path $scratch 'app')
         TOUCHDECK_CONFIG_DIR = $null; TOUCHDECK_STATE_DIR = $null; WEBVIEW2_USER_DATA_FOLDER = $null
@@ -177,6 +237,7 @@ public static class TouchDeckFileIdentity {
     Assert-That (-not $app.Process.WaitForExit(10000)) 'Installed TouchDeck stays alive for 10 seconds in mock mode with scratch app data.'
     $app.Process.Kill($true)
     $app.Process.WaitForExit()
+    Write-Diagnostics 'after the mock app stopped'
 
     # Pin both resolver variables to the actual runner fixture, including child uninstall processes.
     $env:HOME = $env:USERPROFILE
@@ -224,7 +285,13 @@ public static class TouchDeckFileIdentity {
     # tauri-plugin-updater 2.12.0: config.rs nsis_args (Passive => /P), updater.rs updater_parameters adds /UPDATE.
     # tauri.conf.json selects passive mode; app_updates.rs disables restart, so no /R or /ARGS.
     Finish-Child (Start-Child $installer @('/P', '/UPDATE')) 'Passive updater-mode install'
+    Write-Diagnostics 'after passive update'
     Assert-Payload
+    $renamed = @(Get-ChildItem -LiteralPath $installDir -Filter 'ns*.tmp' -File | ForEach-Object Name)
+    $pending = @((Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -ErrorAction SilentlyContinue).PSObject.Properties |
+        Where-Object Name -EQ 'PendingFileRenameOperations' | ForEach-Object Value)
+    $scheduled = @($renamed | Where-Object { $name = $_; @($pending | Where-Object { $_ -like "*\$name" }).Count -gt 0 })
+    Write-Log "DIAG renamed helpers [$($renamed -join ', ')]; scheduled for reboot deletion [$($scheduled -join ', ')]"
     Assert-That (-not (Test-Path -LiteralPath $stale)) 'Update removes the stale firmware bundle.'
     Assert-That ([TouchDeckFileIdentity]::Read($helperPath) -cne $oldIdentity) 'Update replaces the locked helper with a different NTFS file.'
     Assert-That (-not $held.Process.HasExited) 'The old helper survives replacement until its stdin is closed.'
@@ -241,15 +308,18 @@ public static class TouchDeckFileIdentity {
         -not (Test-Path -LiteralPath (Join-Path $installDir 'sources.json'))) 'The install directory contains no source config or status state (R7).'
 
     $summary.scenario = 'uninstall'
+    Write-Diagnostics 'before uninstall'
     Finish-Child (Start-Child (Join-Path $installDir 'uninstall.exe') @('/S')) 'Silent uninstall'
-    # NSIS may self-copy and let its original process exit before the real uninstaller finishes.
+    # NSIS copies the uninstaller to %TEMP%\~nsu*.tmp\Un_*.exe and lets the original exit; wait for the copy.
     $deadline = [DateTime]::UtcNow.AddSeconds(60)
     do {
-        $done = @(Get-UninstallEntries).Count -eq 0 -and (Same-Bytes $settingsPath $originalBytes) -and
+        $done = @(Get-Process | Where-Object ProcessName -Match '^(Un_[A-Z]|Au_)$').Count -eq 0 -and
+            @(Get-UninstallEntries).Count -eq 0 -and (Same-Bytes $settingsPath $originalBytes) -and
             -not (Test-Path -LiteralPath (Join-Path $installDir 'uninstall.exe'))
         if ($done) { break }
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
+    Write-Diagnostics 'after uninstall'
     Assert-That (Same-Bytes $settingsPath $originalBytes) 'Uninstall restores the entire original Claude settings file byte-for-byte.'
     Assert-That (@(Get-UninstallEntries).Count -eq 0) 'Uninstall removes the per-user registry entry.'
     Assert-That (-not (Test-Path -LiteralPath (Join-Path $installDir 'claude-status')) -and
@@ -257,12 +327,30 @@ public static class TouchDeckFileIdentity {
     foreach ($relative in @('touchdeck.exe', 'td-statusline.exe', 'firmware/touchdeck.tdfw', 'install-manifest.json', 'uninstall.exe')) {
         Assert-That (-not (Test-Path -LiteralPath (Join-Path $installDir $relative))) "Uninstall removes $relative."
     }
+    # Documented leftovers: a silent uninstall keeps identifier-folder data (the UI's Delete app data box is separate)
+    # and the user's Claude settings with their backup; the update's renamed busy helper waits for reboot deletion.
+    $allowed = @('install|.') + @($renamed | ForEach-Object { "install|$_" }) + @('config|.', 'config|lifecycle-sentinel.bin',
+        'state|.', 'state|lifecycle-sentinel.bin', 'state|claude-status', 'state|claude-status\installer-lifecycle.json',
+        'claude|.', 'claude|settings.json', 'claude|settings.json.touchdeck.bak')
+    $unexpected = @(Get-Remaining | ForEach-Object { "$($_.root)|$($_.path)" } | Where-Object { $_ -notin $allowed })
+    if ($unexpected) { Write-Log "Unexpected leftovers: $($unexpected -join ', ')" }
+    Assert-That ($unexpected.Count -eq 0) 'Uninstall leaves only the kept user data, the Claude settings backup, and the renamed helper.'
+    foreach ($path in $sentinels.Keys) {
+        $label = $(if ($path.StartsWith($configDir)) { 'config' } else { 'state' })
+        Assert-That (Same-Bytes $path $sentinels[$path]) "Silent uninstall keeps the $label sentinel byte-for-byte."
+    }
     $summary.status = 'passed'
 } catch {
     $summary.status = 'failed'
     $summary.failure = Protect-Log $_.Exception.Message
     Write-Log "FAIL: $($summary.failure)"
 } finally {
+    $summary.remaining = @(Get-Remaining)
+    Write-Log ('Remaining fixture/install entries: ' + (ConvertTo-Json -InputObject $summary.remaining -Depth 5 -Compress))
+    # Diagnostics only, after the assertions: does a leftover main binary unlock once this script's child handles close?
+    $main = Join-Path $installDir 'touchdeck.exe'
+    $probe = $summary.scenario -eq 'uninstall' -and (Test-Path -LiteralPath $main)
+    if ($probe) { Remove-Probe $main 'with child handles open' }
     foreach ($child in $children) {
         if (-not $child.Process.HasExited) { $child.Process.Kill($true); $child.Process.WaitForExit() }
         if (-not $child.Logged) {
@@ -271,10 +359,7 @@ public static class TouchDeckFileIdentity {
         }
         $child.Process.Dispose()
     }
-    $summary.remaining = @(Get-Remaining)
-    # Silent uninstall keeps identifier-folder data by default; the UI's Delete app data option is separate.
-    # A renamed, locked old helper may remain as a temporary file pending the hook's reboot deletion.
-    Write-Log ('Remaining fixture/install entries: ' + (ConvertTo-Json -InputObject $summary.remaining -Depth 5 -Compress))
+    if ($probe -and (Test-Path -LiteralPath $main)) { Remove-Probe $main 'after child handles closed' }
     $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $summaryPath -Encoding utf8
 }
 if ($summary.status -ne 'passed') { exit 1 }
