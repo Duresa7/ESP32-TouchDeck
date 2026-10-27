@@ -1,4 +1,5 @@
-// The expected numbers are the firmware's own, from firmware/components/td_ui_core/test/test_ui_geometry.c.
+// The expected numbers are the firmware's own, from firmware/components/td_ui_core/test/test_ui_geometry.c, one test
+// case here for each one there.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -57,12 +58,35 @@ test('portrait geometry is 600 by 1024 with the band, grid and dots inside it', 
   assert.equal(g.gap, 16);
   assert.equal(g.swipe, 96);
   assert.ok(g.dashValueX < g.dashBarX && g.dashBarX < g.grid.w);
+  assert.deepEqual([g.dashValueX, g.dashBarX], [202, 337]);
   assert.equal(dotX(g, 0, 2), 283);
 });
 
-for (const orientation of ['landscape', 'portrait'] as const) {
-  test(`every built-in tile fits the screen and overlaps no other tile in ${orientation}`, () => {
-    const g = geometryOf(orientation);
+const defaults = (g: ReturnType<typeof geometryOf>) => [g.gap, g.titleX, g.titleY, g.dotPitch, g.dotSize, g.dotActiveExtra, g.bouncePx, g.slop, g.swipe];
+
+test('full-screen landscape geometry makes the band and the grid the whole 1024 by 600 screen', () => {
+  const g = geometryOf('landscape', true);
+  assert.deepEqual(g.screen, { w: 1024, h: 600 });
+  assert.deepEqual(g.band, { x: 0, y: 0, w: 1024, h: 600 });
+  assert.deepEqual(g.grid, { x: 0, y: 0, w: 1024, h: 600 });
+  assert.deepEqual(defaults(g), [16, 36, 14, 34, 12, 11, 48, 16, 96]);
+  assert.equal(g.dotY, 580);
+  assert.deepEqual([g.dashValueX, g.dashBarX], [380, 634]);
+});
+
+test('full-screen portrait geometry makes the band and the grid the whole 600 by 1024 screen', () => {
+  const g = geometryOf('portrait', true);
+  assert.deepEqual(g.screen, { w: 600, h: 1024 });
+  assert.deepEqual(g.band, { x: 0, y: 0, w: 600, h: 1024 });
+  assert.deepEqual(g.grid, { x: 0, y: 0, w: 600, h: 1024 });
+  assert.deepEqual(defaults(g), [16, 36, 14, 34, 12, 11, 48, 16, 96]);
+  assert.equal(g.dotY, 1004);
+  assert.deepEqual([g.dashValueX, g.dashBarX], [223, 371]);
+});
+
+for (const [orientation, fullScreen] of [['landscape', false], ['landscape', true], ['portrait', false], ['portrait', true]] as const) {
+  test(`every built-in tile fits the screen and overlaps no other tile in ${orientation}${fullScreen ? ', full screen' : ''}`, () => {
+    const g = geometryOf(orientation, fullScreen);
     for (const page of builtin.pages) {
       const rects = page.tiles.map((tile) => tileRect(page, tile, g.grid, g.gap));
       rects.forEach((r, i) => {
@@ -96,28 +120,11 @@ test('a tile that does not fit its grid has an empty rect', () => {
   assert.deepEqual(tileRect({ rows: 9, cols: 2 }, { row: 0, col: 0, rowSpan: 1, colSpan: 1 }, g.grid, g.gap), { x: 0, y: 0, w: 0, h: 0 });
 });
 
-test('full screen drops the title and dot strips and gives the grid the whole screen with the same gap', () => {
-  for (const orientation of ['landscape', 'portrait'] as const) {
-    const normal = geometryOf(orientation);
-    const full = geometryOf(orientation, true);
-    const whole = { x: 0, y: 0, w: full.screen.w, h: full.screen.h };
-    assert.equal(full.fullScreen, true);
-    assert.deepEqual(full.band, whole);
-    assert.deepEqual(full.grid, whole);
-    assert.equal(full.gap, normal.gap);
-  }
-  // The full-screen values from the firmware branch that adds the flag: the dashboard columns follow the wider grid,
-  // and the pager, title, and dot fields keep their defaults.
+test("full-screen F-keys tiles run from the screen's top-left corner to its bottom-right corner", () => {
+  const page = builtin.pages[0];
+  const rect = (g: ReturnType<typeof geometryOf>, id: string) => tileRect(page, page.tiles.find((tile) => tile.id === id)!, g.grid, g.gap);
   const land = geometryOf('landscape', true);
   const port = geometryOf('portrait', true);
-  assert.deepEqual([land.dashValueX, land.dashBarX], [380, 634]);
-  assert.deepEqual([port.dashValueX, port.dashBarX], [223, 371]);
-  for (const key of ['titleX', 'titleY', 'dotY', 'dotPitch', 'dotSize', 'dotActiveExtra', 'bouncePx', 'slop', 'swipe'] as const) {
-    assert.equal(land[key], geometryOf('landscape')[key], key);
-    assert.equal(port[key], geometryOf('portrait')[key], key);
-  }
-  const page = builtin.pages[0];
-  const rect = (g: typeof land, id: string) => tileRect(page, page.tiles.find((tile) => tile.id === id)!, g.grid, g.gap);
   assert.deepEqual(rect(land, 'f1'), { x: 0, y: 0, w: 244, h: 138 });
   assert.deepEqual(rect(land, 'win'), { x: 780, y: 462, w: 244, h: 138 });
   assert.deepEqual(rect(port, 'f1'), { x: 0, y: 0, w: 138, h: 244 });
