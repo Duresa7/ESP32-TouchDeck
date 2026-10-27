@@ -7,6 +7,22 @@ keyboards that lock useful features behind proprietary software or prevent
 full customization. I want a flexible, hardware-controlled interface that I
 can customize to fit the way I work.
 
+## Use TouchDeck over USB
+
+The desktop app edits layouts, runs PC actions, feeds widgets, and mirrors the
+deck's key and media reports into your desktop session. Keep the app running and
+connected over USB for typing. The deck does not provide a standalone USB HID
+keyboard. Wi-Fi, Bluetooth, battery support, and standalone USB HID are deferred
+to the post-product update.
+
+Start with the [USB user guide](docs/usage.md) to obtain or build the app, install
+firmware, connect, edit and push layouts, configure Sources, and back up your work.
+Once a release is published, the Windows installer will be at
+[TouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe)
+on [GitHub Releases](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest).
+No release has been published yet. Until one is, follow the
+[desktop source-build instructions](app/README.md#build-the-desktop-app).
+
 ## Project goals
 
 - Provide customizable controls without vendor lock-in.
@@ -19,6 +35,11 @@ can customize to fit the way I work.
   1024x600 touch display)
 
 ## Building
+
+This section builds and flashes firmware from source. To use a matching `.tdfw`
+bundle through the app instead, follow [Install or update deck firmware](docs/usage.md#install-or-update-deck-firmware).
+Close the desktop app's connection before a flash tool or serial monitor opens
+the same port.
 
 The firmware is an [ESP-IDF](https://docs.espressif.com/projects/esp-idf/)
 project in the `firmware/` folder, tested with ESP-IDF v6.1. Install ESP-IDF
@@ -283,9 +304,10 @@ near-black background, with page dots at the bottom. It has two pages,
 either end bounces back. Tiles on `F-Keys` send F1 to F12, and Shift, Ctrl, Alt,
 and Win arm a modifier for the next key. Tiles on `Media` send previous, play or
 pause, next, mute, volume down, and volume up. The reports go through the key
-engine to the console key log, because no USB keyboard exists yet. A page is
-`{id, title, rows, cols, tiles[]}`, and the built-in pages are one `const` table in
-`firmware/components/td_ui_core/ui_pages.c`. Every color, size, shadow, and
+engine to the console key log and the USB app link. The connected desktop app
+mirrors them into the host session. Built-in pages come from embedded JSON in
+[builtin.json](schema/examples/builtin.json), and saved layouts use the same
+[layout format](schema/README.md). Every color, size, shadow, and
 animation time of the look is a named token in `firmware/components/ui/ui_theme.c`.
 
 The `ui` component adds the `ui` console command: `ui state` reports the page and
@@ -375,8 +397,11 @@ Flash `firmware/` again afterwards to get the deck firmware back.
 The `app/` folder holds the TouchDeck desktop app for Windows and Linux, built
 with Tauri 2, Svelte 5, and Rust. It finds the deck on its USB-Serial/JTAG port,
 shows the build the deck runs, and gives the debug console a pane.
-[app/README.md](app/README.md) covers what the PC needs, the commands, and the
-mock deck that runs the app without a board.
+It also provides Editor, Actions, Settings, Sources, and firmware Update views.
+The [USB user guide](docs/usage.md) covers everyday use.
+[app/README.md](app/README.md) covers source builds, development commands, and
+the mock deck that runs the app without a board. Updating the desktop app and
+updating deck firmware are separate operations.
 
 ## License
 
