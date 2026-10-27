@@ -32,6 +32,8 @@ td-statusline.exe --unwrap [--settings <file>]
 - Exit codes: `0` when it restored the command, removed the entry, or had nothing to do (the file is missing, has no entry, or the entry does not run the helper); `1` when the file cannot be read, is not a JSON object, has a `--then` command it cannot parse, or cannot be written, in which case the file is unchanged; `2` for bad arguments.
 - Skip it when the uninstaller runs in update mode. An update keeps the helper in the same place.
 
+The NSIS template deletes `touchdeck.exe` once. Right after an update another process can hold the new binary for a moment, so the postuninstall hook retries the delete for up to 10 seconds, then marks it for deletion at reboot, and removes the install folder when it is empty. Update mode skips this.
+
 Source config and status-line state live in the Tauri identifier folders, `%APPDATA%\io.github.duresa7.touchdeck` and `%LOCALAPPDATA%\io.github.duresa7.touchdeck`, never under the install folder, so the uninstaller's **Delete app data** option removes them. The first start after an upgrade moves `sources.json` and `claude-status\*.json` out of the old `%APPDATA%\touchdeck` and `%LOCALAPPDATA%\touchdeck` folders. Because NTFS ignores case, the second of those is the install folder. The CLIProxyAPI management key stays in Windows Credential Manager (`touchdeck` / `cliproxyapi-management-key`) after uninstall.
 
 ## Release-owner bootstrap and publication
