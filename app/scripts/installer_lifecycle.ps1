@@ -174,8 +174,9 @@ function Stop-Watch([string]$Label) {
     $uninstallerGone = $script:watch.AbsentAt(1)
     $script:watch = $null
     Write-Log "$Label file events: $($events -join '; ')"
-    if ($mainGone -gt $uninstallerGone -and $uninstallerGone -gt 0) {
-        Write-Log "${Label}: touchdeck.exe outlived the template's delete; the postuninstall retry removed it $($mainGone - $uninstallerGone) ms after uninstall.exe."
+    # The template deletes touchdeck.exe just before uninstall.exe; the hook's first retry comes 250 ms later.
+    if ($uninstallerGone -gt 0 -and $mainGone - $uninstallerGone -ge 200) {
+        Write-Log "${Label}: the template's delete left touchdeck.exe; the postuninstall retry removed it $($mainGone - $uninstallerGone) ms after uninstall.exe."
     }
 }
 
@@ -266,6 +267,7 @@ public sealed class TouchDeckFileWatch {
     private readonly List<string> events = new List<string>();
     private readonly Dictionary<long, string> names = new Dictionary<long, string>();
     private readonly Thread thread;
+    private readonly int self = Process.GetCurrentProcess().Id;
     private volatile bool stopping;
     public TouchDeckFileWatch(string[] paths) {
         this.paths = paths;
@@ -287,7 +289,8 @@ public sealed class TouchDeckFileWatch {
     private string Describe(long id) {
         string name;
         if (!names.TryGetValue(id, out name)) {
-            try { using (var process = Process.GetProcessById((int)id)) name = process.ProcessName + "#" + id + "/s" + process.SessionId; }
+            if (id == self) name = "self#" + id;  // This script's own diagnostics or process launch.
+            else try { using (var process = Process.GetProcessById((int)id)) name = process.ProcessName + "#" + id + "/s" + process.SessionId; }
             catch (ArgumentException) { name = "#" + id; }
             names[id] = name;
         }
