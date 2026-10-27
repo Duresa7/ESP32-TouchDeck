@@ -20,7 +20,7 @@ Updater signatures authenticate artifacts using the embedded public key. `requir
 
 The repository contains no durable private key or disposable test public key. The base updater `pubkey` is empty; development candidates report that release signing is not configured. The release recipe injects the selected public key through an external build configuration. Before the first real release, the owner must generate/back up a durable Tauri updater keypair, configure repository variable `TAURI_UPDATER_PUBLIC_KEY` and matching secrets `TAURI_SIGNING_PRIVATE_KEY` and optionally `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Losing that private key prevents updates to clients trusting it; do not replace it casually. Root owns durable secret bootstrap and publication.
 
-The manual **draft Windows release** workflow uses an existing `v<app-version>` tag, builds production assets, verifies the signed installer against local HTTPS fixtures, uploads evidence and creates/updates a **draft only**. It refuses to replace published assets. It never creates tags or publishes. The owner reviews the exact source and artifacts, then publishes separately. A release contains:
+The **windows release** workflow (`.github/workflows/release-windows.yml`) builds the installer, helper and matching radio-free firmware on a disposable Windows runner, then verifies the signed installer with the real Tauri updater against local HTTPS fixtures. A pull request that changes the release inputs builds a `--test-signing` candidate with no secrets and keeps it as a workflow artifact. A manual run is a dry run with the durable key. Pushing a `vX.Y.Z` tag builds with the durable key and publishes. The build job holds only a read token. A separate publish job, which runs no build code, creates a draft, uploads every asset, checks them and only then publishes the release as latest. It refuses to replace a published release. A release contains:
 
 ```text
 TouchDeck-windows-x64-setup.exe
@@ -32,7 +32,35 @@ touchdeck.tdfw
 touchdeck-<source-sha-prefix>-windows-x64-candidate.zip
 ```
 
-Clients check `https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/latest.json`; metadata points to the versioned release's signed installer. Keep installer/signature/metadata together. Update versions in `app/package.json`, `app/src-tauri/Cargo.toml`/Cargo.lock and `tauri.conf.json` consistently before tagging. The workflow rejects a tag differing from the app version. Merging this work does not publish a release. The workflow needs validation on the final integrated/tagged head.
+Clients check `https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/latest.json`; metadata points to the versioned release's signed installer. Keep installer/signature/metadata together. Because the release is published only after all of its assets are uploaded, that URL never points at a half-uploaded release. `app/scripts/release_version.py check` fails when `app/package.json`, `app/src-tauri/Cargo.toml`, the app entry in `app/Cargo.lock` and `tauri.conf.json` disagree; the workflow also rejects a tag differing from the app version and a tagged commit that is not on `main`.
+
+## Shipping an update
+
+1. Bump every app version in one command (Python 3.11+), then open a pull request with the result and merge it:
+
+   ```sh
+   python app/scripts/release_version.py bump X.Y.Z
+   python app/scripts/release_version.py check
+   ```
+
+2. Tag the merged commit on `main` with an annotated tag. Its message becomes the release notes that **Settings → App updates** shows; a tag without a message gets `TouchDeck vX.Y.Z`.
+
+   ```sh
+   git switch main
+   git pull --ff-only
+   git tag -a vX.Y.Z -m "<notes>"
+   git push origin vX.Y.Z
+   ```
+
+3. The tag push runs the **windows release** workflow. It checks the tag against the app version, builds, signs with the durable key, verifies the installer against the local HTTPS fixtures and publishes the release. Installed apps then find the update in **Settings → App updates**.
+
+To rehearse a release without publishing, open the Actions tab, choose **windows release**, then **Run workflow**, and give it a branch, tag or commit (default `main`). That dry run builds and verifies with the durable key and keeps the assets as a workflow artifact. It never creates a tag or a release. From a terminal:
+
+```sh
+gh workflow run release-windows.yml --ref main -f ref=main
+```
+
+Never regenerate the updater signing key. Every installed app trusts the public key it was built with, so assets signed by a new key are rejected and those installs can no longer update themselves. If a tag's run fails for a transient reason, re-run it from the Actions tab; the publish job reuses its own leftover draft. If the source needs a fix, land it on `main` and ship the next patch version instead of moving the tag.
 
 ## Reproduce the build
 
