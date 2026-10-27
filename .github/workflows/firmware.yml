@@ -1,0 +1,101 @@
+name: firmware
+
+on:
+  push:
+    branches: [main]
+    paths: ["firmware/**", "schema/**", "app/scripts/package_windows.py", ".github/workflows/firmware.yml"]
+  pull_request:
+    paths: ["firmware/**", "schema/**", "app/scripts/package_windows.py", ".github/workflows/firmware.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmware-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  firmware:
+    name: esp32s3 build
+    runs-on: ubuntu-24.04
+    # The same ESP-IDF release the Windows release workflow clones.
+    container: espressif/idf:v6.1
+    timeout-minutes: 60
+    env:
+      # Relative to the workspace and git-ignored (build/): container jobs see a different absolute path.
+      FIRMWARE_BUILD: build/firmware
+      BUNDLE_OUT: build/bundle
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Build the firmware
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # Source the environment before strict mode: export.sh is not written for set -u.
+          . "$IDF_PATH/export.sh"
+          set -euo pipefail
+          idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" build
+
+      - name: Check the firmware is esp32s3 and radio-free
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          set -euo pipefail
+          if grep -E '^CONFIG_BT_ENABLED=y' firmware/sdkconfig || grep -E '^#define CONFIG_BT_ENABLED 1' "$FIRMWARE_BUILD/config/sdkconfig.h"; then
+            echo "::error::The built sdkconfig enables Bluetooth"
+            exit 1
+          fi
+          # The release recipe's own audit: no Wi-Fi or Bluetooth config, no td_ble/td_net/bt/esp_wifi/esp_phy linked.
+          python -B - <<'EOF'
+          import importlib.util, json, os, sys
+          from pathlib import Path
+          build = Path(os.environ["FIRMWARE_BUILD"])
+          settings = json.loads((build / "config/sdkconfig.json").read_text(encoding="utf-8"))
+          if settings.get("IDF_TARGET") != "esp32s3":
+              sys.exit(f"IDF_TARGET is {settings.get('IDF_TARGET')!r}, not 'esp32s3'")
+          spec = importlib.util.spec_from_file_location("package_windows", "app/scripts/package_windows.py")
+          package = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(package)
+          audit = package.audit_radio(build)
+          print(json.dumps({"radio_free": True, "usb_serial_jtag": audit["usb_serial_jtag"]}))
+          EOF
+
+      - name: Pack and check the .tdfw bundle
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          set -euo pipefail
+          python -B firmware/tools/make_bundle.py --build-dir "$FIRMWARE_BUILD" --out-dir "$BUNDLE_OUT"
+          for bundle in "$BUNDLE_OUT"/*.tdfw; do python -B firmware/tools/make_bundle.py --check "$bundle"; done
+
+      - name: Check the build left the checkout clean
+        # The release recipe refuses a dirty tree, so sdkconfig or lock drift must fail here first.
+        shell: bash
+        run: |
+          git status --porcelain --untracked-files=normal
+          test -z "$(git status --porcelain --untracked-files=normal)"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: firmware-tdfw
+          path: ${{ env.BUNDLE_OUT }}/*.tdfw
+          if-no-files-found: error
+          retention-days: 14
+
+  schema:
+    name: layout schema
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - run: npm ci --prefix schema
+      - run: node schema/check-layouts.mjs
+      - run: node --test schema/
