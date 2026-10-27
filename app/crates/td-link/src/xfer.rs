@@ -35,10 +35,25 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(2);
 pub enum XferError {
     Link(LinkError),
     TooLarge(usize),
-    Aborted { idx: u16 },
-    Stalled { received: usize, bytes: usize },
-    Crc { expected: u32, got: u32 },
-    Size { expected: usize, got: usize },
+    Orientation {
+        declared: Orientation,
+        target: Orientation,
+    },
+    Aborted {
+        idx: u16,
+    },
+    Stalled {
+        received: usize,
+        bytes: usize,
+    },
+    Crc {
+        expected: u32,
+        got: u32,
+    },
+    Size {
+        expected: usize,
+        got: usize,
+    },
 }
 
 impl fmt::Display for XferError {
@@ -48,6 +63,12 @@ impl fmt::Display for XferError {
             XferError::TooLarge(bytes) => write!(
                 f,
                 "layout is {bytes} bytes; the deck takes at most {UPLOAD_MAX}"
+            ),
+            XferError::Orientation { declared, target } => write!(
+                f,
+                "layout declares {} orientation, but the target slot is {}",
+                orientation_name(*declared),
+                orientation_name(*target)
             ),
             XferError::Aborted { idx } => write!(
                 f,
@@ -156,6 +177,17 @@ fn chunk_count(bytes: usize) -> u16 {
     u16::try_from(bytes.div_ceil(CHUNK_DATA_MAX)).expect("an upload fits 65535 chunks")
 }
 
+/// Every host writer keeps the declared orientation equal to the target storage slot.
+pub fn check_layout_orientation(layout: &Layout, target: Orientation) -> Result<(), XferError> {
+    if layout.orientation != target {
+        return Err(XferError::Orientation {
+            declared: layout.orientation,
+            target,
+        });
+    }
+    Ok(())
+}
+
 /// Pushes a layout into the deck's slot for `orientation` in its canonical compact form.
 pub fn put_layout(
     session: &Session,
@@ -174,6 +206,9 @@ pub fn put_bytes(
 ) -> Result<PutReport, XferError> {
     if data.len() > UPLOAD_MAX {
         return Err(XferError::TooLarge(data.len()));
+    }
+    if let Ok(layout) = Layout::parse(data) {
+        check_layout_orientation(&layout, orientation)?;
     }
     let started = Instant::now();
     let transfer = session.transfer()?;
@@ -583,6 +618,26 @@ mod tests {
     }
 
     #[test]
+    fn mismatched_layout_writes_are_refused_before_a_transfer_starts() {
+        let deck = MockDeck::new();
+        let session = open(&deck);
+        let layout = dev();
+        for result in [
+            put_layout(&session, Orientation::Portrait, &layout),
+            put_bytes(&session, Orientation::Portrait, &layout.to_canonical_json()),
+        ] {
+            let error = result.expect_err("a landscape layout must not be written to portrait");
+            let message = error.to_string();
+            assert!(
+                message.contains("landscape") && message.contains("portrait"),
+                "{message}"
+            );
+        }
+        assert!(deck.received().is_empty());
+        assert!(deck.layout(Orientation::Portrait).is_none());
+    }
+
+    #[test]
     fn an_invalid_layout_is_refused_at_xfer_end() {
         let deck = MockDeck::new();
         let session = open(&deck);
@@ -595,7 +650,8 @@ mod tests {
     fn a_get_returns_the_bytes_the_put_stored() {
         let deck = MockDeck::new();
         let session = open(&deck);
-        let layout = dev();
+        let mut layout = dev();
+        layout.orientation = Orientation::Portrait;
         put_layout(&session, Orientation::Portrait, &layout).unwrap();
         let report = get_layout(&session, Orientation::Portrait).unwrap();
         assert_eq!(report.data, layout.to_canonical_json());

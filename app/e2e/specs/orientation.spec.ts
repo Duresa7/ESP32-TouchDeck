@@ -58,6 +58,40 @@ describe('bindings follow the displayed orientation', () => {
     await invoke('sources_save', { config: { ...view.config, claude_status: true, cliproxy: false, layout_path: null } });
   });
 
+  it('replaces previous actions and feeds when reconnecting to built-in pages', async () => {
+    await $('[data-testid="nav-actions"]').click();
+    const previous = fixture('landscape');
+    for (const page of previous.pages) {
+      if (page.kind !== 'grid') continue;
+      page.id = 'fkeys';
+      const action = page.tiles.find((tile) => tile.id === 'action');
+      if (action) action.id = 'f1';
+    }
+    await push(previous);
+    await until(async () => (await sourceStatus()).layout.widgets === 1, 5_000, 'the previous widget binding');
+    // No portrait slot exists yet, so rebooting into it displays the firmware builtin.
+    await invoke('settings_put', { settings: { idle_timeout_s: 600, orientation: 'portrait' } });
+    await invoke('reboot_deck');
+    await invoke('disconnect');
+    await invoke('connect', { port: 'mock' });
+    await until(async () => (await invoke<{ name: string } | null>('action_layout'))?.name === 'Built-in', 5_000, 'the built-in action-layout event');
+    await until(async () => (await sourceStatus()).layout.widgets === 0, 5_000, 'cleared widget bindings');
+    const before = (await mockSets()).length;
+    writeStatus(89);
+    await until(async () => (await sourceStatus()).claude.readings.some((reading) => reading.field === 'context_pct' && reading.value === '89%'), 5_000, 'the new unbound source reading');
+    await browser.pause(2_100);
+    expect((await mockSets()).slice(before).some((set) => set.m === 'widget.set')).toBe(false);
+    saveJson('builtin-reconnect.json', { layout: await invoke('action_layout'), status: await sourceStatus(), sets: (await mockSets()).slice(before) });
+    await browser.waitUntil(async () => (await $('[data-testid="action-layout"]').getText()).includes('Built-in'), { timeout: 3_000 });
+    await shot('builtin-bindings');
+    await invoke('settings_put', { settings: { idle_timeout_s: 600, orientation: 'landscape' } });
+    await invoke('reboot_deck');
+    await invoke('disconnect');
+    await invoke('connect', { port: 'mock' });
+    await until(async () => (await invoke<{ name: string } | null>('action_layout'))?.name === 'landscape', 5_000, 'the restored landscape binding');
+    writeStatus(21);
+  });
+
   it('keeps displayed widget bindings after pushing an inactive slot, without an action press', async () => {
     await push(fixture('landscape'));
     await until(async () => (await mockSets()).find((set) => set.tile === 'feed_land' && set.value === '21%'), 5_000, 'the initial landscape feed');

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use td_core::{Layout, Orientation, Pong, Request, Settings};
 use td_link::discover::{Candidate, candidate_ports, discover, probe_transport};
 use td_link::mock::MOCK_PORT;
-use td_link::xfer::{get_layout, put_layout};
+use td_link::xfer::{check_layout_orientation, get_layout, put_layout};
 use td_link::{Incoming, MockDeck, Serial, Session, SessionConfig, Transport};
 
 const USAGE: &str = "usage: td-link [--port <port> | --mock] [--timeout <ms>] <command>
@@ -260,6 +260,7 @@ fn run(args: &Args) -> Result<bool, String> {
                 format!("{path} is not a valid layout: {}", all.join("; "))
             })?;
             let orientation = orientation(&args.rest)?.unwrap_or(layout.orientation);
+            check_layout_orientation(&layout, orientation).map_err(|error| error.to_string())?;
             let (session, _) = open(args, quiet())?;
             let report =
                 put_layout(&session, orientation, &layout).map_err(|error| error.to_string())?;
@@ -352,5 +353,33 @@ fn main() -> ExitCode {
             print(&json!({"ok": false, "error": error}));
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_mismatched_orientation_override_is_refused_before_opening_a_port() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../schema/examples/dev.json");
+        let args = parse(
+            [
+                "--port".to_owned(),
+                "no-port-should-be-opened".to_owned(),
+                "put-layout".to_owned(),
+                path.display().to_string(),
+                "--orientation".to_owned(),
+                "portrait".to_owned(),
+            ]
+            .into_iter(),
+        )
+        .unwrap();
+        let error = run(&args).unwrap_err();
+        assert!(
+            error.contains("declares landscape") && error.contains("target slot is portrait"),
+            "{error}"
+        );
     }
 }
