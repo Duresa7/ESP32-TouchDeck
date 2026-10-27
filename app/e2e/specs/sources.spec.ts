@@ -23,12 +23,12 @@ describe('sources page and layout bindings', () => {
     const layout = $('[data-testid="layout-state"]');
     expect(await layout.getAttribute('data-widgets')).toBe('4');
     expect(await layout.getAttribute('data-dashboards')).toBe('1');
-    expect(await layout.getText()).toContain('4 widget tiles and 1 dashboard page');
+    expect(await layout.getText()).toContain('4 AI usage buttons and 1 AI usage page');
     await until(async () => (await mockSets()).some((set) => set.tile === 'five_hour' && set.value === '42%'), 5_000, 'the layout feed');
     const feed = $('[data-testid="deck-feed"]');
     await browser.waitUntil(async () => Number(await feed.getAttribute('data-sent')) > 0, { timeout: 5_000 });
     expect(await feed.getAttribute('data-deck')).toBe('true');
-    expect(await feed.getText()).toContain('Feeding the deck');
+    expect(await feed.getText()).toContain('Sending usage to your deck');
     saveJson('layout-feeds.json', { status: await invoke('sources_status'), sets: await mockSets() });
     await shot('sources');
   });
@@ -43,7 +43,7 @@ describe('sources page and layout bindings', () => {
     await invoke('disconnect');
     const feed = $('[data-testid="deck-feed"]');
     await browser.waitUntil(async () => (await feed.getAttribute('data-deck')) === 'false', { timeout: 5_000 });
-    expect(await feed.getText()).toBe('No deck connected');
+    expect(await feed.getText()).toBe('Your deck isn’t connected, so nothing is being sent.');
     await shot('sources-disconnected');
   });
 });

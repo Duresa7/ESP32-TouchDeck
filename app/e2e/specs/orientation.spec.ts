@@ -1,6 +1,6 @@
 import type { Layout, Orientation } from '../../src/lib/editor/validate.ts';
 import type { SourcesView, Status } from '../../src/lib/sources/api.ts';
-import { connectFirstDeck } from '../deck.ts';
+import { connectFirstDeck, openSettings } from '../deck.ts';
 import { DEFAULT_KEY, start, type FixtureServer } from '../fixtures/cliproxy-server.mjs';
 import { note, shot } from '../report.ts';
 import { invoke, mockSets, saveJson, until } from '../sources.ts';
@@ -69,7 +69,7 @@ describe('bindings follow the displayed orientation', () => {
   after(async () => { await server.stop(); });
 
   it('replaces previous actions and feeds when reconnecting to built-in pages', async () => {
-    await $('[data-testid="nav-actions"]').click();
+    await openSettings('help');
     const previous = fixture('landscape');
     for (const page of previous.pages) {
       if (page.kind !== 'grid') continue;
@@ -135,7 +135,7 @@ describe('bindings follow the displayed orientation', () => {
     expect(program).toBe('touchdeck-fixture-landscape');
     expect(status.layout.name).toBe('landscape');
     await until(async () => (await mockSets()).find((set) => set.tile === 'feed_land' && set.value === '58%'), 5_000, 'the reconnected landscape feed');
-    await $('[data-testid="nav-actions"]').click();
+    await openSettings('help');
     await shot('displayed-actions');
   });
 

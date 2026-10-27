@@ -1,9 +1,10 @@
-import { connectFirstDeck } from '../deck.ts';
+import { connectFirstDeck, openSettings } from '../deck.ts';
 import { note, shot } from '../report.ts';
 
 describe('connect', () => {
   it('connects to the first deck and shows its elf_sha256', async () => {
     const port = await connectFirstDeck();
+    await openSettings('help');
     const elf = await $('[data-testid="hello-elf_sha256"] dd').getText();
     note('port', port);
     note('elf_sha256', elf);

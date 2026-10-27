@@ -1,9 +1,10 @@
-import { connectFirstDeck } from '../deck.ts';
+import { connectFirstDeck, openSettings } from '../deck.ts';
 import { note, shot } from '../report.ts';
 
 describe('console pane', () => {
   it('shows one @td reply with ok true for version', async () => {
     note('port', await connectFirstDeck());
+    await openSettings('help');
     const replies = () => $$('[data-testid="console-line"][data-kind="reply"]');
     const before = await replies().length;
     await $('[data-testid="console-input"]').setValue('version');
@@ -16,6 +17,7 @@ describe('console pane', () => {
     expect(fresh).toHaveLength(1);
     expect(fresh[0].ok).toBe('true');
     expect(JSON.parse(fresh[0].text).cmd).toBe('version');
+    await $('[data-testid="console"]').scrollIntoView();
     await shot('console');
   });
 });

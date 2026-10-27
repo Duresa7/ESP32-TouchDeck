@@ -1,4 +1,4 @@
-import { HELLO_FIELDS, MOCK_ELF_SHA256, row, waitForDot } from '../deck.ts';
+import { HELLO_FIELDS, MOCK_ELF_SHA256, openConnection, openSettings, row, waitForDot } from '../deck.ts';
 import { note, shot } from '../report.ts';
 
 describe('smoke on the mock deck', () => {
@@ -11,6 +11,7 @@ describe('smoke on the mock deck', () => {
   });
 
   it('lists the mock deck', async () => {
+    await openConnection();
     await row('mock').waitForExist({ timeout: 10_000 });
     expect(await row('mock').getAttribute('data-status')).toBe('deck');
   });
@@ -19,9 +20,12 @@ describe('smoke on the mock deck', () => {
     expect(await $('[data-testid="status-dot"]').getAttribute('data-state')).toBe('offline');
     await row('mock').$('[data-testid="connect"]').click();
     await waitForDot('online', 5_000);
+    expect(await $('[data-testid="link-status"]').getText()).toBe('Deck connected');
   });
 
   it('renders the hello fields', async () => {
+    await openSettings('help');
+    await $('[data-testid="deck-info"]').waitForExist({ timeout: 5_000 });
     for (const field of HELLO_FIELDS) {
       expect(await $(`[data-testid="hello-${field}"] dd`).getText()).not.toBe('');
     }

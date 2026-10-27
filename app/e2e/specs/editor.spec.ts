@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { connectFirstDeck } from '../deck.ts';
+import { exportText, importText, menu, status, statusDetail, statusText, waitEvent } from '../editor.ts';
 import { note, out, shot } from '../report.ts';
 import { counts, validateSource, type GridPage, type Layout, type Tile } from '../../src/lib/editor/validate.ts';
 
@@ -20,7 +21,6 @@ const invoke = <T>(command: string) =>
     return tauri.core.invoke(name);
   }, command) as Promise<T>;
 
-const status = () => $('[data-testid="editor-status"]').getText();
 const tileIds = () => $$('[data-testid="grid"] [data-testid="tile"]').map(async (box) => String(await box.getAttribute('data-id')));
 const tile = (id: string) => $(`[data-testid="tile"][data-id="${id}"]`);
 
@@ -34,23 +34,9 @@ async function spans(id: string) {
   return [Number(await box.getAttribute('data-row-span')), Number(await box.getAttribute('data-col-span'))];
 }
 
-async function waitStatus(match: RegExp, timeout = 5_000) {
-  await browser.waitUntil(async () => match.test(await status()), { timeout, interval: 50, timeoutMsg: `status never matched ${match}: "${await status()}"` });
-  return status();
-}
-
-async function importText(text: string, name: string) {
-  await browser.execute(
-    (content, file) => {
-      const input = document.querySelector<HTMLInputElement>('[data-testid="import-file"]')!;
-      const data = new DataTransfer();
-      data.items.add(new File([content], file, { type: 'application/json' }));
-      input.files = data.files;
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    },
-    text,
-    name,
-  );
+/** Waits for a refusal and returns its rule-level reason, such as `overlaps quiet`. */
+async function waitRefusal(match: RegExp) {
+  return waitEvent('refused', match);
 }
 
 /** Drags a tile by pointer events: from its top-left cell to a cell, or by its corner to a cell. */
@@ -100,27 +86,6 @@ async function setField(testid: string, value: string | boolean) {
   await browser.pause(60);
 }
 
-async function exportText(): Promise<string> {
-  await browser.execute(() => {
-    const host = window as unknown as { tdExported?: string; showSaveFilePicker?: unknown };
-    host.tdExported = undefined;
-    host.showSaveFilePicker = async () => ({
-      createWritable: async () => ({
-        write: async (data: string) => {
-          host.tdExported = data;
-        },
-        close: async () => {},
-      }),
-    });
-  });
-  await $('[data-testid="export"]').click();
-  await browser.waitUntil(async () => (await browser.execute(() => (window as unknown as { tdExported?: string }).tdExported)) !== undefined, {
-    timeout: 5_000,
-    timeoutMsg: 'Export wrote nothing',
-  });
-  return browser.execute(() => (window as unknown as { tdExported: string }).tdExported);
-}
-
 const sorted = (value: unknown): unknown =>
   Array.isArray(value)
     ? value.map(sorted)
@@ -136,18 +101,19 @@ function save(name: string, value: unknown) {
 describe('layout editor on the mock deck', () => {
   before(async () => {
     note('port', await connectFirstDeck());
-    await $('[data-testid="nav-editor"]').click();
+    await $('[data-testid="nav-buttons"]').click();
     await $('[data-testid="editor"]').waitForExist({ timeout: 5_000 });
   });
 
   it('imports dev.json with a tab per page and the first page drawn', async () => {
     await importText(devText, 'dev.json');
-    await waitStatus(/^Imported /);
+    await waitEvent('opened');
+    expect(await statusText()).toBe(`Opened “${dev.name}”: 4 pages, 13 buttons.`);
     const tabs = await $$('[data-testid="page-tab"]').map((tab) => tab.getAttribute('data-id'));
     expect(tabs).toEqual(dev.pages.map((page) => page.id));
     const drawn = await tileIds();
     expect([...drawn].sort()).toEqual(first.tiles.map((t) => t.id).sort());
-    note('import', { tabs, page1_tiles: drawn.length, dev_page1_tiles: first.tiles.length, status: await status() });
+    note('import', { tabs, page1_tiles: drawn.length, dev_page1_tiles: first.tiles.length, status: await statusText() });
     await shot('import');
   });
 
@@ -158,18 +124,21 @@ describe('layout editor on the mock deck', () => {
     await shot('drag-ok');
     const quiet = first.tiles.find((t) => t.id === 'quiet')!;
     await drag('f5', quiet.row, quiet.col, 'move');
-    expect(await waitStatus(/overlaps/)).toBe('overlaps quiet');
+    expect(await waitRefusal(/overlaps/)).toBe('overlaps quiet');
+    expect(await statusText()).toBe('That spot is taken by “Mute”. Pick an empty spot.');
+    expect(await status().getAttribute('data-kind')).toBe('error');
     expect(await cell('f5')).toEqual(free);
-    note('drag', { landed: free, refused: await status() });
+    note('drag', { landed: free, refused: await statusDetail(), said: await statusText() });
     await shot('drag-refused');
   });
 
   it("pushes and shows the deck's page and tile counts", async () => {
     const { pages, tiles } = counts(dev);
     await $('[data-testid="push"]').click();
-    const text = await waitStatus(/^Deck shows /);
+    const text = await waitEvent('pushed');
     expect(text).toContain(`${pages} pages, ${tiles} tiles`);
-    note('push', text);
+    expect(await statusText()).toBe(`Sent to your deck. It now shows “${dev.name}”: ${pages} pages, ${tiles} buttons.`);
+    note('push', { detail: text, said: await statusText() });
     await shot('push');
   });
 
@@ -179,9 +148,10 @@ describe('layout editor on the mock deck', () => {
     await drag('spacer', spacer.row + 1, spacer.col + 1, 'resize');
     expect(await spans('spacer')).toEqual([2, 2]);
     await drag('spacer', spacer.row + 1, first.cols, 'resize');
-    expect(await waitStatus(/outside/)).toBe(`outside the ${first.rows}x${first.cols} grid`);
+    expect(await waitRefusal(/outside/)).toBe(`outside the ${first.rows}x${first.cols} grid`);
+    expect(await statusText()).toBe(`That doesn't fit. This page has ${first.rows} rows and ${first.cols} columns.`);
     expect(await spans('spacer')).toEqual([2, 2]);
-    note('resize', { grown: [2, 2], refused: await status() });
+    note('resize', { grown: [2, 2], refused: await statusDetail() });
     await shot('resize');
   });
 
@@ -212,7 +182,7 @@ describe('layout editor on the mock deck', () => {
     await shot('actions');
 
     await $('[data-testid="push"]').click();
-    await waitStatus(/^Deck shows /);
+    await waitEvent('pushed');
     const record = await invoke<Record>('e2e_mock_record');
     const pushed = record.layouts.landscape!;
     save('pushed.json', pushed);
@@ -228,14 +198,14 @@ describe('layout editor on the mock deck', () => {
     const record = await invoke<Record>('e2e_mock_record');
     await tile((await tileIds())[0]).click();
     await $('[data-testid="remove-tile"]').click();
-    await $('[data-testid="pull"]').click();
+    await menu('pull');
     await $('[data-testid="pull-confirm"]').waitForExist({ timeout: 5_000 });
     await shot('pull-confirm');
     await $('[data-testid="pull-replace"]').click();
-    await waitStatus(/^Pulled /);
+    await waitEvent('pulled');
     const pulled = JSON.parse(await exportText()) as Layout;
     expect(sorted(pulled)).toEqual(sorted(record.layouts.landscape));
-    note('pull', { status: await status(), pages: pulled.pages.length, tiles: counts(pulled).tiles });
+    note('pull', { status: await statusText(), pages: pulled.pages.length, tiles: counts(pulled).tiles });
     await shot('pull');
   });
 
@@ -265,11 +235,11 @@ describe('layout editor on the mock deck', () => {
     await browser.pause(200);
     const render = await browser.execute(() => performance.getEntriesByName('page-render').map((entry) => entry.duration));
     await importText(devText, 'dev.json');
-    await waitStatus(/^Imported /);
+    await waitEvent('opened');
     await browser.execute(() => performance.clearMeasures('push'));
     for (let n = 0; n < 5; n++) {
       await $('[data-testid="push"]').click();
-      await waitStatus(/^Deck shows /);
+      await waitEvent('pushed');
       await browser.pause(100);
     }
     const pushes = await browser.execute(() => performance.getEntriesByName('push').map((entry) => entry.duration));

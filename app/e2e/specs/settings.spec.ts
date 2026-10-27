@@ -34,7 +34,7 @@ describe('deck settings on the mock deck', () => {
   it('saves 120 seconds and portrait and offers a reboot', async () => {
     note('port', await connectFirstDeck());
     await $('[data-testid="nav-settings"]').click();
-    await browser.waitUntil(async () => /Read the settings/.test(await statusText()), { timeout: 5_000, timeoutMsg: 'the page never read the settings' });
+    await browser.waitUntil(async () => /current settings/.test(await statusText()), { timeout: 5_000, timeoutMsg: 'the page never read the settings' });
     expect(await $('[data-testid="settings-idle"]').getValue()).toBe('600');
     expect(await $('[data-testid="wireless"]').isExisting()).toBe(false);
     const initial = await record();
@@ -63,7 +63,7 @@ describe('deck settings on the mock deck', () => {
 
   it('reboots the deck through its console', async () => {
     await $('[data-testid="settings-reboot"]').click();
-    await browser.waitUntil(async () => /rebooting/.test(await statusText()), { timeout: 5_000, timeoutMsg: 'Reboot never answered' });
+    await browser.waitUntil(async () => /restarting/.test(await statusText()), { timeout: 5_000, timeoutMsg: 'Reboot never answered' });
     const after = await record();
     expect(after.reboots).toBe(1);
     expect(after.lines.at(-1)).toBe('reboot');

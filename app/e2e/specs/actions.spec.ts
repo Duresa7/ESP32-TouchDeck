@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { connectFirstDeck } from '../deck.ts';
+import { connectFirstDeck, openSettings } from '../deck.ts';
 import { note, shot } from '../report.ts';
 
 // The launch and command tiles run this Node, so the spec needs no per-OS program and opens no window.
@@ -78,7 +78,7 @@ describe('tile actions and command approval on the mock deck', () => {
 
   it('connects and loads a layout for the actions', async () => {
     await connectFirstDeck();
-    await $('[data-testid="nav-actions"]').click();
+    await openSettings('help');
     await load('first');
     await browser.waitUntil(async () => (await $('[data-testid="action-layout"]').getText()).includes('actions.spec'), { timeout: 3_000 });
   });
@@ -100,7 +100,8 @@ describe('tile actions and command approval on the mock deck', () => {
     expect(await $('[data-testid="approval-program"]').getText()).toBe(action.program);
     expect(await $$('[data-testid="approval-arg"]').map((arg) => arg.getText())).toEqual(action.args);
     expect(await $('[data-testid="approval-cwd"]').getText()).toBe(action.cwd);
-    expect(await $('[data-testid="approval-shell"]').getText()).toBe('no');
+    expect(await $('[data-testid="approval-shell"]').getText()).toBe('No');
+    expect(await $('[data-testid="approval-shell"]').getAttribute('data-shell')).toBe('false');
     note('approval', { program: action.program, args: action.args, cwd: action.cwd, hash: await modal().getAttribute('data-hash') });
     await shot('approve');
     expect(runs()).toHaveLength(0);
