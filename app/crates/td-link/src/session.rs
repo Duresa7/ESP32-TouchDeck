@@ -14,6 +14,7 @@ use crate::Transport;
 use crate::xfer::LayoutState;
 
 const WRITE_DEADLINE: Duration = Duration::from_secs(2);
+const LAYOUT_REPLY_GRACE: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, Copy)]
 pub struct SessionConfig {
@@ -85,6 +86,11 @@ struct Pending {
     waiting: HashMap<u8, SyncSender<Reply>>,
 }
 
+struct LayoutReply {
+    waiting: SyncSender<Value>,
+    expires: Instant,
+}
+
 struct Shared {
     writer: Mutex<Box<dyn Write + Send>>,
     pending: Mutex<Pending>,
@@ -92,7 +98,7 @@ struct Shared {
     reason: Mutex<String>,
     incoming: Sender<Incoming>,
     xfer: Mutex<Option<Sender<XferFrame>>>,
-    layout_reply: Mutex<Option<SyncSender<Value>>>,
+    layout_reply: Mutex<Option<LayoutReply>>,
 }
 
 impl Shared {
@@ -183,11 +189,14 @@ impl Shared {
                         line.clear();
                         if let Some(at) = text.find("@td ")
                             && let Ok(reply) = serde_json::from_str::<Value>(&text[at + 4..])
-                            && reply["cmd"] == "layout"
-                            && (reply["op"] == "state" || reply["ok"] == false)
+                            && ((reply["cmd"] == "layout"
+                                && (reply["op"] == "state" || reply["ok"] == false))
+                                || (reply["cmd"] == "console"
+                                    && reply["ok"] == false
+                                    && reply["error"] == "input overflow"))
                             && let Some(waiting) = self.layout_reply.lock().unwrap().take()
                         {
-                            let _ = waiting.send(reply);
+                            let _ = waiting.waiting.send(reply);
                         }
                         let _ = self.incoming.send(Incoming::Line(text));
                     } else {
@@ -386,10 +395,16 @@ impl Session {
         let (waiting, reply) = mpsc::sync_channel(1);
         {
             let mut slot = self.shared.layout_reply.lock().unwrap();
-            if slot.is_some() {
+            if slot
+                .as_ref()
+                .is_some_and(|reply| reply.expires > Instant::now())
+            {
                 return Err(LinkError::ConsoleBusy);
             }
-            *slot = Some(waiting);
+            *slot = Some(LayoutReply {
+                waiting,
+                expires: Instant::now() + timeout + LAYOUT_REPLY_GRACE,
+            });
         }
         if let Err(error) = self.write_line("layout state") {
             self.shared.layout_reply.lock().unwrap().take();
@@ -397,9 +412,14 @@ impl Session {
         }
         let value = match reply.recv_timeout(timeout) {
             Ok(value) => value,
-            // Console replies have no request ID. Drain this reply before allowing another
-            // query, so a late reply cannot satisfy a query for a newly displayed layout.
-            Err(RecvTimeoutError::Timeout) => return Err(LinkError::Timeout(timeout)),
+            // Console replies have no request ID. Allow late replies to drain for a bounded
+            // grace period, then permit a retry even when the original reply was lost.
+            Err(RecvTimeoutError::Timeout) => {
+                if let Some(reply) = self.shared.layout_reply.lock().unwrap().as_mut() {
+                    reply.expires = Instant::now() + LAYOUT_REPLY_GRACE;
+                }
+                return Err(LinkError::Timeout(timeout));
+            }
             Err(RecvTimeoutError::Disconnected) => return Err(self.shared.closed()),
         };
         if value["ok"] != true {
@@ -754,6 +774,47 @@ mod tests {
         }
         session.close();
         assert!(matches!(query.join().unwrap(), Err(LinkError::Closed(_))));
+    }
+
+    #[test]
+    fn a_lost_layout_state_reply_can_be_replaced_after_the_stale_deadline() {
+        let deck = MockDeck::new();
+        deck.lose_console_replies(1);
+        let (session, _events) = Session::open(Box::new(deck.connect()), quiet()).unwrap();
+        assert!(matches!(
+            session.layout_state(Duration::from_millis(10)),
+            Err(LinkError::Timeout(_))
+        ));
+        assert_eq!(
+            session.layout_state(Duration::from_secs(1)),
+            Err(LinkError::ConsoleBusy)
+        );
+        thread::sleep(Duration::from_millis(3100));
+        assert_eq!(
+            session.layout_state(Duration::from_secs(1)).unwrap(),
+            deck.layout_state()
+        );
+    }
+
+    #[test]
+    fn a_console_input_overflow_clears_the_layout_state_waiter() {
+        let deck = MockDeck::new();
+        deck.lose_console_replies(1);
+        let (session, _events) = Session::open(Box::new(deck.connect()), quiet()).unwrap();
+        assert!(matches!(
+            session.layout_state(Duration::from_millis(10)),
+            Err(LinkError::Timeout(_))
+        ));
+        session.shared.route(
+            Item::Text(
+                b"@td {\"cmd\":\"console\",\"ok\":false,\"error\":\"input overflow\"}\r\n".to_vec(),
+            ),
+            &mut Vec::new(),
+        );
+        assert_eq!(
+            session.layout_state(Duration::from_secs(1)).unwrap(),
+            deck.layout_state()
+        );
     }
 
     #[test]

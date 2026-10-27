@@ -509,7 +509,8 @@ pub fn e2e_mock(state: State<'_, AppState>, action: String) -> Result<(), String
     Ok(())
 }
 
-const LAYOUT_PULL_TIMEOUT: Duration = Duration::from_secs(2);
+// Firmware may spend 3 s waiting for the LVGL lock before replying.
+const LAYOUT_PULL_TIMEOUT: Duration = Duration::from_secs(5);
 const ACTION_LOG_KEPT: usize = 100;
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -641,33 +642,54 @@ fn summary(layout: &Layout, source: &str) -> LayoutSummary {
     }
 }
 
-/// Reads the layout the deck shows, so a press resolves to the tile's action. A deck that
-/// stores no layout shows the built-in one, which has no PC actions, and this keeps what it had.
+/// Reads the displayed layout, including builtin fallback, so previous-session actions and
+/// source bindings cannot survive a reconnect to the built-in pages.
 fn pull_action_layout(app: &AppHandle, session: &Session) -> bool {
     let Ok(_transfer) = app.state::<AppUpdateGate>().begin_transfer() else {
         return false;
     };
-    let Ok(shown) = session.layout_state(LAYOUT_PULL_TIMEOUT) else {
+    let Some(summary) = refresh_deck_bindings(
+        &app.state::<AppState>(),
+        &app.state::<SourcesState>(),
+        session,
+    ) else {
         return false;
     };
-    if shown.source != "storage" {
-        return false;
-    }
-    let Ok(report) = td_link::xfer::get_layout(session, shown.orientation) else {
-        return false;
-    };
-    let Ok(layout) = Layout::parse(&report.data) else {
-        return false;
-    };
-    use_deck_layout(app, layout);
+    let _ = app.emit("action-layout", summary);
     true
 }
 
+fn refresh_deck_bindings(
+    state: &AppState,
+    sources: &SourcesState,
+    session: &Session,
+) -> Option<LayoutSummary> {
+    let shown = session.layout_state(LAYOUT_PULL_TIMEOUT).ok()?;
+    let layout = match shown.source.as_str() {
+        "builtin" => Layout::parse(include_bytes!("../../../schema/examples/builtin.json")).ok()?,
+        "storage" => {
+            let report = td_link::xfer::get_layout(session, shown.orientation).ok()?;
+            Layout::parse(&report.data).ok()?
+        }
+        _ => return None,
+    };
+    Some(bind_deck_layout(state, sources, layout))
+}
+
 fn use_deck_layout(app: &AppHandle, layout: Layout) {
-    app.state::<SourcesState>().use_layout(layout.clone());
-    let summary = summary(&layout, "deck");
-    *app.state::<AppState>().action_layout.lock().unwrap() = Some((layout, "deck".into()));
+    let summary = bind_deck_layout(
+        &app.state::<AppState>(),
+        &app.state::<SourcesState>(),
+        layout,
+    );
     let _ = app.emit("action-layout", summary);
+}
+
+fn bind_deck_layout(state: &AppState, sources: &SourcesState, layout: Layout) -> LayoutSummary {
+    sources.use_layout(layout.clone());
+    let summary = summary(&layout, "deck");
+    *state.action_layout.lock().unwrap() = Some((layout, "deck".into()));
+    summary
 }
 
 fn resolve(app: &AppHandle, page: &str, tile: &str) -> Option<Plan> {
@@ -1058,4 +1080,60 @@ pub async fn update_firmware(
         )
     })
     .await?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_reconnect_replaces_previous_actions_and_source_bindings() {
+        let state = AppState::new(true);
+        let sources = SourcesState::new(true);
+        let previous = parse_layout(r#"{
+            "schema":1,"name":"Previous session","orientation":"landscape",
+            "pages":[{"id":"fkeys","title":"Fixture","kind":"grid","rows":1,"cols":2,
+                "tiles":[{"id":"f1","label":"Never run","row":0,"col":0,"rowSpan":1,"colSpan":1,
+                    "icon":null,"action":{"type":"command","program":"never-run-fixture","args":[],"cwd":"","shell":false}},
+                    {"id":"feed","label":"Context","row":0,"col":1,"rowSpan":1,"colSpan":1,
+                    "icon":null,"action":{"type":"widget","source":"claude-status","field":"context_pct","account":""}}]}]}
+        "#).unwrap();
+        bind_deck_layout(&state, &sources, previous);
+        assert!(matches!(
+            actions::find_tile(
+                &state.action_layout.lock().unwrap().as_ref().unwrap().0,
+                "fkeys",
+                "f1"
+            )
+            .map(|tile| Plan::of(&tile.action)),
+            Some(Plan::Command(_))
+        ));
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while sources.status().layout.widgets != 1 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let deck = MockDeck::new();
+        let (session, _incoming) =
+            Session::open(Box::new(deck.connect()), SessionConfig::default()).unwrap();
+        let summary =
+            refresh_deck_bindings(&state, &sources, &session).expect("bind the displayed builtin");
+        assert_eq!(summary.name, "Built-in");
+        assert_eq!(
+            actions::find_tile(
+                &state.action_layout.lock().unwrap().as_ref().unwrap().0,
+                "fkeys",
+                "f1"
+            )
+            .map(|tile| Plan::of(&tile.action)),
+            Some(Plan::Deck)
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while sources.status().layout.name.as_deref() != Some("Built-in") {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(sources.status().layout.widgets, 0);
+        assert_eq!(sources.status().layout.dashboards, 0);
+    }
 }

@@ -129,6 +129,10 @@ impl SourcesState {
         self.hub.use_layout(layout);
     }
 
+    pub fn status(&self) -> Status {
+        self.hub.status()
+    }
+
     pub fn pressed(&self, tile: &str) {
         self.hub.pressed(tile);
     }
@@ -252,7 +256,7 @@ pub fn sources_view(app: AppHandle) -> SourcesView {
 
 #[tauri::command]
 pub fn sources_status(app: AppHandle) -> Status {
-    app.state::<SourcesState>().hub.status()
+    app.state::<SourcesState>().status()
 }
 
 #[tauri::command]

@@ -142,6 +142,9 @@ stored file to pull. Import the built-in example in that case.
 Push writes the file's orientation slot. Pushing the currently displayed
 orientation reloads it. Pushing the other slot saves it for a later orientation
 change and leaves the displayed layout, its actions, and its widgets running.
+Layout writers refuse a file whose declared orientation differs from the target
+slot. The CLI's optional `put-layout --orientation` must match the JSON; edit the
+file's `orientation` member to move it to the other slot.
 Export each orientation separately. The Editor has no undo or autosave
 and does not save drafts across app restarts.
 
@@ -178,7 +181,8 @@ orientation reloads the display and rebinds both.
 A portrait file in storage does not rotate the current display. Portrait uses a
 600 by 1024 canvas with the panel turned 90 degrees clockwise. If the displayed
 slot has no valid layout, the firmware shows its built-in layout. That layout has
-no PC actions, so the app keeps the action definitions it already had.
+no PC actions or widget bindings. On reconnect the app replaces the previous
+layout's action definitions and widget feeds with that built-in layout.
 
 ## Configure PC actions and command approvals
 
