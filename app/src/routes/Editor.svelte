@@ -220,7 +220,7 @@
 
   <footer class="statusbar" data-testid="editor-status" data-kind={$editor.status?.kind ?? 'none'} data-event={$editor.status?.event ?? ''} data-detail={$editor.status?.detail ?? ''} data-pages={$editor.status?.pages ?? ''} data-tiles={$editor.status?.tiles ?? ''} role="status">
     {#if $editor.status}
-      <span class="message">{$editor.status.text}</span>
+      <span class="message" data-testid="status-message">{$editor.status.text}</span>
       {#if $editor.status.detail && $editor.status.kind === 'error'}
         <details class="more inline"><summary>Details</summary><div class="body">{$editor.status.detail}</div></details>
       {/if}
@@ -392,12 +392,12 @@
   .ghost span {
     height: 24px;
     border-radius: 6px;
-    background: #182030;
+    background: #182031;
   }
 
   .ghost span:nth-child(7) {
-    background: #284068;
-    box-shadow: inset 0 0 0 1.5px #48a0f8;
+    background: #29416b;
+    box-shadow: inset 0 0 0 1.5px #4aa2ff;
   }
 
   .lead {

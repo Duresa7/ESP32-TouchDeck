@@ -212,7 +212,7 @@ describe('key mirror on the mock deck', () => {
     const seen = await eventsSince(start, 6);
     note('lost_release', seen);
     expect(seen).toEqual(['down F16', 'up F16', 'down Mute', 'up Mute', 'down Mute', 'up Mute']);
-    expect((await reports()).some((line) => line.includes('lost') && line.includes('released all'))).toBe(true);
+    expect((await reports()).some((line) => line.includes('missed') && line.includes('every key was let go'))).toBe(true);
   });
 
   it('sets the held state exactly on key.resync', async () => {

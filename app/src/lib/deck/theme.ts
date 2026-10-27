@@ -1,13 +1,17 @@
-// The deck's look, ported from firmware/components/ui/ui_theme.c. Colors pass through RGB565 and back the way
-// ui_color() widens them, so each one is the color the panel shows and a deck screenshot reads back.
+// The deck's look, ported from firmware/components/ui/ui_theme.c. Each color goes through RGB565, as the panel stores
+// it, and back to 8 bits with the top bits repeated into the low ones. That is how a deck screenshot reads the panel,
+// so the tile color UI_RGB565(24, 32, 48) shows as 24, 32, 49, and 255 stays 255.
 
 const rgb565 = (r: number, g: number, b: number) => ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 
-/** A UI_RGB565 token as the panel shows it, widened as ui_color() does: the low bits stay zero. */
+/** A UI_RGB565 token as the panel shows it. */
 export function panelColor(r: number, g: number, b: number): string {
   const value = rgb565(r, g, b);
+  const r5 = (value >> 11) & 0x1f;
+  const g6 = (value >> 5) & 0x3f;
+  const b5 = value & 0x1f;
   const hex = (n: number) => n.toString(16).padStart(2, '0');
-  return `#${hex(((value >> 11) & 0x1f) << 3)}${hex(((value >> 5) & 0x3f) << 2)}${hex((value & 0x1f) << 3)}`;
+  return `#${hex((r5 << 3) | (r5 >> 2))}${hex((g6 << 2) | (g6 >> 4))}${hex((b5 << 3) | (b5 >> 2))}`;
 }
 
 /** A #rrggbb color at an LVGL opacity from 0 to 255, as CSS. */

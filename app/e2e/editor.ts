@@ -1,7 +1,8 @@
 // Helpers for the Buttons screen: its status line, its Layout menu, and file import and export.
 
 export const status = () => $('[data-testid="editor-status"]');
-export const statusText = () => status().getText();
+/** The status line's message alone, without its Details toggle. */
+export const statusText = async () => ((await $('[data-testid="status-message"]').isExisting()) ? (await $('[data-testid="status-message"]').getText()).trim() : '');
 /** The status line's technical detail, such as the rule a change broke or the deck's reply. */
 export const statusDetail = async () => String((await status().getAttribute('data-detail')) ?? '');
 

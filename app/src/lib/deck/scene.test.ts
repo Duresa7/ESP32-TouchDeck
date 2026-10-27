@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import type { Layout } from '../editor/validate.ts';
 import { geometry, screenSize, tileRect } from './geometry.ts';
 import { buildDots, buildPage, buildTitle, fitLabel, missingGlyphs, sampleRows, sampleWidget } from './scene.ts';
-import { THEME } from './theme.ts';
+import { panelColor, THEME } from './theme.ts';
 
 const examples = join(import.meta.dirname, '..', '..', '..', '..', 'schema', 'examples');
 const load = (name: string) => JSON.parse(readFileSync(join(examples, name), 'utf8')) as Layout;
@@ -86,4 +86,11 @@ test('the title and dots follow the page, and a full-screen layout draws neither
 test('characters outside the deck font are listed once', () => {
   assert.deepEqual(missingGlyphs('Café ☕ é'), ['é', '☕']);
   assert.deepEqual(missingGlyphs('Play/Pause 100°'), []);
+});
+
+test('colors widen from RGB565 the way a deck screenshot reads them', () => {
+  // Board screenshots read the tile as 24, 32, 49 and the background as 8, 8, 16.
+  assert.equal(THEME.color.tile, '#182031');
+  assert.equal(THEME.color.bg, '#080810');
+  assert.equal(panelColor(72, 160, 255), '#4aa2ff');
 });
