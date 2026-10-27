@@ -2,6 +2,9 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { closeConnection, openConnection, openSettings, row, waitForDot } from '../deck.ts';
 import { worstCase } from '../fixtures/worst-case.ts';
+
+// The two full-screen layouts the board was shot with: the landscape one is schema/examples/full-screen.json.
+const fullScreenPortrait = readFileSync(join(import.meta.dirname, '..', 'fixtures', 'full-screen-portrait.json'), 'utf8');
 import { note, out, shot } from '../report.ts';
 
 const examples = join(import.meta.dirname, '..', '..', '..', 'schema', 'examples');
@@ -61,6 +64,26 @@ async function tap(id: string) {
 }
 
 /** A window screenshot and where the deck screen sits in it, in device pixels, so the screen can be cut out at 1:1. */
+/** Waits until no CSS transition or animation is running, so a screenshot shows the settled state. */
+async function settled() {
+  await browser.waitUntil(() => browser.execute(() => document.getAnimations().every((animation) => animation.playState !== 'running')), {
+    timeout: 3_000,
+    interval: 50,
+    timeoutMsg: 'an animation kept running',
+  });
+  await browser.execute(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(null)))));
+}
+
+/** The full-screen switch: whether its box is ticked, and how its track and thumb are drawn once settled. */
+async function fullScreenSwitch() {
+  const box = $('[data-testid="full-screen"]');
+  const look = await browser.execute(() => {
+    const track = document.querySelector<HTMLElement>('[data-testid="full-screen"] + .track')!;
+    return { track: getComputedStyle(track).backgroundColor, thumb: getComputedStyle(track, '::after').transform };
+  });
+  return { selected: await box.isSelected(), ...look };
+}
+
 async function deckShot(name: string) {
   mkdirSync(out, { recursive: true });
   const rect = await browser.execute(() => {
@@ -140,15 +163,28 @@ describe('the app, screen by screen, on the mock deck', () => {
     await $('[data-testid="page-tab"][data-id="shortcuts"]').click();
     await $('[data-testid="full-screen"]').click();
     await browser.waitUntil(async () => (await preview().getAttribute('data-full-screen')) === 'true', { timeout: 3_000 });
+    expect(await $('[data-testid="full-screen"]').isSelected()).toBe(true);
     expect(await $('[data-testid="deck-title"]').isExisting()).toBe(false);
     expect(await $$('[data-testid="deck-dot"]').length).toBe(0);
+    await settled();
+    const on = await fullScreenSwitch();
+    expect(on.selected).toBe(true);
+    expect(on.thumb).toBe('matrix(1, 0, 0, 1, 16, 0)');
     await shot('fullscreen-on');
     await $('[data-testid="mode-preview"]').click();
     await shot('fullscreen-on-preview');
     await $('[data-testid="mode-edit"]').click();
+    expect(await $('[data-testid="full-screen"]').isSelected()).toBe(true);
     await $('[data-testid="full-screen"]').click();
     await browser.waitUntil(async () => (await preview().getAttribute('data-full-screen')) === 'false', { timeout: 3_000 });
+    expect(await $('[data-testid="full-screen"]').isSelected()).toBe(false);
     expect(await $$('[data-testid="deck-dot"]').length).toBe(4);
+    await settled();
+    const off = await fullScreenSwitch();
+    expect(off.selected).toBe(false);
+    expect(['none', 'matrix(1, 0, 0, 1, 0, 0)']).toContain(off.thumb);
+    expect(off.track).not.toBe(on.track);
+    note('full_screen_switch', { on, off });
     await shot('fullscreen-off');
   });
 
@@ -217,6 +253,40 @@ describe('the app, screen by screen, on the mock deck', () => {
     expect(Math.round(size.h)).toBe(600);
     await $('[data-testid="actual-size"]').click();
     await $('[data-testid="mode-edit"]').click();
+    await browser.setWindowSize(1180, 760);
+  });
+
+  it('draws the full-screen layouts the board was shot with, landscape and portrait, at 1:1', async () => {
+    const shots: Record<string, { w: number; h: number }> = {};
+    for (const [orientation, content] of [
+      ['landscape', text('full-screen.json')],
+      ['portrait', fullScreenPortrait],
+    ] as const) {
+      await browser.setWindowSize(orientation === 'portrait' ? 1300 : 1500, orientation === 'portrait' ? 1350 : 1000);
+      await $('[data-testid="mode-edit"]').click();
+      await importText(content, `full-screen-${orientation}.json`);
+      await waitEvent('opened');
+      expect(await preview().getAttribute('data-full-screen')).toBe('true');
+      expect(await preview().getAttribute('data-orientation')).toBe(orientation);
+      await $('[data-testid="mode-preview"]').click();
+      if (!(await $('[data-testid="actual-size"]').isSelected())) await $('[data-testid="actual-size"]').click();
+      await settled();
+      await deckShot(`preview-1to1-full-${orientation}-keys`);
+      await swipe(-200);
+      expect(await preview().getAttribute('data-page')).toBe('media');
+      await settled();
+      await deckShot(`preview-1to1-full-${orientation}-media`);
+      shots[orientation] = await browser.execute(() => {
+        const box = document.querySelector('[data-testid="deck-screen"]')!.getBoundingClientRect();
+        return { w: Math.round(box.width * devicePixelRatio), h: Math.round(box.height * devicePixelRatio) };
+      });
+    }
+    note('full_screen_one_to_one', shots);
+    expect(shots.landscape).toEqual({ w: 1024, h: 600 });
+    expect(shots.portrait).toEqual({ w: 600, h: 1024 });
+    await $('[data-testid="actual-size"]').click();
+    await $('[data-testid="mode-edit"]').click();
+    await $('[data-testid="orientation-landscape"]').click();
     await browser.setWindowSize(1180, 760);
   });
 });
