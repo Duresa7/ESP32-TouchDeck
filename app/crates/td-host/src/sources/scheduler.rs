@@ -120,10 +120,41 @@ impl Scheduler {
     }
 
     fn widget(&self, binding: &WidgetBinding) -> Option<Request> {
-        let reading = self.readings.get(&binding.source)?.iter().find(|reading| {
+        let readings = self.readings.get(&binding.source)?;
+        let reading = readings.iter().find(|reading| {
             reading.field == binding.field
                 && (binding.source == CLAUDE_STATUS || reading.account == binding.account)
-        })?;
+        });
+        // A failed provider or a missing window must clear the previous quota on deck.
+        let Some(reading) = reading else {
+            if binding.source == CLIPROXYAPI
+                && matches!(
+                    binding.field.as_str(),
+                    "five_hour_pct"
+                        | "seven_day_pct"
+                        | "five_hour_reset"
+                        | "seven_day_reset"
+                        | "plan"
+                )
+            {
+                let status = readings
+                    .iter()
+                    .find(|r| r.field == "status" && r.account == binding.account)
+                    .or_else(|| {
+                        readings
+                            .iter()
+                            .find(|r| r.field == "status" && r.account.is_empty())
+                    })?;
+                return Some(Request::WidgetSet {
+                    tile: binding.tile.clone(),
+                    value: "unavailable".to_owned(),
+                    caption: binding.caption.clone(),
+                    bar: -1.0,
+                    stale: status.stale,
+                });
+            }
+            return None;
+        };
         Some(Request::WidgetSet {
             tile: binding.tile.clone(),
             value: cut(&reading.value, VALUE_MAX),
@@ -150,14 +181,37 @@ impl Scheduler {
             .filter(|reading| reading.field == "status" && !reading.account.is_empty())
             .take(ROW_MAX)
             .map(|status| {
-                let bar = readings
-                    .iter()
-                    .find(|r| r.field == "recent_10m" && r.account == status.account)
-                    .map_or(-1.0, |reading| reading.bar);
+                let field = |name| {
+                    readings
+                        .iter()
+                        .find(|r| r.field == name && r.account == status.account)
+                };
+                let five = field("five_hour_pct");
+                let seven = field("seven_day_pct");
+                let usage = five.is_some() || seven.is_some();
+                let bar = if usage {
+                    five.into_iter()
+                        .chain(seven)
+                        .map(|r| r.bar)
+                        .fold(0.0, f64::max)
+                } else {
+                    field("recent_10m").map_or(-1.0, |r| r.bar)
+                };
+                let (provider, email) = status
+                    .account
+                    .split_once(':')
+                    .unwrap_or(("", &status.account));
+                let local = email.split('@').next().unwrap_or(email);
                 DashboardRow {
-                    label: cut(&status.account, CAPTION_MAX),
+                    label: cut(format!("{provider} {local}").trim(), CAPTION_MAX),
                     value: if status.stale {
                         "stale".to_owned()
+                    } else if usage {
+                        format!(
+                            "5h {} 7d {}",
+                            five.map_or("—", |r| r.value.as_str()),
+                            seven.map_or("—", |r| r.value.as_str())
+                        )
                     } else {
                         cut(&status.value, CAPTION_MAX)
                     },

@@ -311,7 +311,7 @@ pub async fn sources_save(app: AppHandle, config: Config) -> Result<SourcesView,
         let state = app.state::<SourcesState>();
         let mut config = config;
         config.cliproxy_url = config.cliproxy_url.trim().to_owned();
-        config.cliproxy_interval_s = config.cliproxy_interval_s.max(1);
+        config.cliproxy_interval_s = config.cliproxy_interval_s.max(60);
         config
             .save(&state.config_file)
             .map_err(|error| format!("{}: {error}", state.config_file.display()))?;

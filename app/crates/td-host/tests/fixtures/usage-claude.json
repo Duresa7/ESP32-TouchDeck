@@ -1,0 +1,5 @@
+{
+  "five_hour": { "utilization": 24, "resets_at": "2023-11-15T00:23:20Z" },
+  "seven_day": { "utilization": 61, "resets_at": "2023-11-18T02:13:20Z" },
+  "limits": [{ "kind": "model", "percent": 20, "resets_at": null, "scope": { "model": { "display_name": "Sonnet" } } }]
+}
