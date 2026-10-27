@@ -12,8 +12,8 @@ can customize to fit the way I work.
 The desktop app edits layouts, runs PC actions, feeds widgets, and mirrors the
 deck's key and media reports into your desktop session. Keep the app running and
 connected over USB for typing. The deck does not provide a standalone USB HID
-keyboard. Wi-Fi, Bluetooth, battery support, and standalone USB HID are deferred
-to the post-product update.
+keyboard. Bluetooth is not supported. Wi-Fi, battery support, and standalone USB
+HID are deferred to the post-product update.
 
 Start with the [USB user guide](docs/usage.md) to obtain or build the app, install
 firmware, connect, edit and push layouts, configure CLIProxyAPI usage limits, and back up your work.

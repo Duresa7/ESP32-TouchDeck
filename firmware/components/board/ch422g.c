@@ -85,11 +85,6 @@ esp_err_t ch422g_set_backlight(bool on)
     return update_output(TD_CH422G_IO_DISP, on);
 }
 
-esp_err_t ch422g_lcd_reset(bool asserted)
-{
-    return update_output(TD_CH422G_IO_LCD_RST, !asserted);
-}
-
 esp_err_t ch422g_touch_reset(bool asserted)
 {
     return update_output(TD_CH422G_IO_TP_RST, !asserted);

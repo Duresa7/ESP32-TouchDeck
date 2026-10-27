@@ -24,7 +24,6 @@ esp_err_t ch422g_start(const ch422g_platform_t *platform);
 
 /* The setters return ESP_ERR_INVALID_STATE, without writing, until a start has succeeded. */
 esp_err_t ch422g_set_backlight(bool on);
-esp_err_t ch422g_lcd_reset(bool asserted);
 esp_err_t ch422g_touch_reset(bool asserted);
 
 /* The byte the chip last acknowledged at the IO output register since the last start began. */
