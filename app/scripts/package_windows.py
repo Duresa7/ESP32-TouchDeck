@@ -84,7 +84,10 @@ def firmware(out, revision, lock_path):
         tool = bundle_tool()
         bundle, manifest = tool.make_bundle(build, out / "payload/firmware")
         tool.check_bundle(bundle)
-        return {"source_revision": revision, "bundle": bundle.name, "manifest": manifest, "audit": audit}
+        installed_bundle = bundle.with_name("touchdeck.tdfw")
+        bundle.rename(installed_bundle)
+        return {"source_revision": revision, "bundle": installed_bundle.name,
+                "sha256": sha(installed_bundle.read_bytes()), "manifest": manifest, "audit": audit}
     finally:
         if lock_path.read_text() == owner:
             lock_path.unlink()
@@ -124,6 +127,8 @@ def verify(archive_path):
         fw = manifest["firmware"]
         if fw["source_revision"] != manifest["source_revision"]:
             raise ValueError("Firmware source revision differs")
+        if fw["bundle"] != "touchdeck.tdfw" or sha(archive.read("firmware/" + fw["bundle"])) != fw["sha256"]:
+            raise ValueError("Installed firmware name or hash differs")
         # Use the existing firmware format reader, not a second implementation.
         import tempfile
         with tempfile.TemporaryDirectory(prefix="touchdeck-bundle-check-") as temp:

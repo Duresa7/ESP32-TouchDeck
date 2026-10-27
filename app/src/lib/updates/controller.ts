@@ -5,6 +5,20 @@ export interface UpdateInfo {
 }
 
 export type Progress = { downloaded: number; total: number | null };
+export type UpdateErrorKind = 'unconfigured' | 'unsupported' | 'network' | 'signature' | 'metadata' | 'busy' | 'installer' | 'internal';
+export interface UpdateError { kind: UpdateErrorKind; message: string }
+
+export function parseUpdateError(error: unknown): UpdateError {
+  if (typeof error === 'object' && error !== null && 'kind' in error && 'message' in error && typeof error.message === 'string') {
+    switch (error.kind) {
+      case 'unconfigured': case 'unsupported': case 'network': case 'signature':
+      case 'metadata': case 'busy': case 'installer': case 'internal':
+        return { kind: error.kind, message: error.message };
+    }
+  }
+  return { kind: 'internal', message: String(error) };
+}
+
 export type UpdateState =
   | { kind: 'idle' }
   | { kind: 'checking' }
@@ -13,7 +27,7 @@ export type UpdateState =
   | { kind: 'downloading'; update: UpdateInfo; progress: Progress }
   | { kind: 'ready'; update: UpdateInfo }
   | { kind: 'installing'; update: UpdateInfo }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; error: UpdateError };
 
 export interface UpdateApi {
   check(): Promise<UpdateInfo | null>;
@@ -28,7 +42,7 @@ export function createAppUpdater({ api, changed }: { api: UpdateApi; changed: (s
     changed(next);
   }
   function fail(error: unknown) {
-    set({ kind: 'error', message: String(error) });
+    set({ kind: 'error', error: parseUpdateError(error) });
   }
   return {
     async check() {
