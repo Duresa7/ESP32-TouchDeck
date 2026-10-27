@@ -86,11 +86,22 @@ copy; source-helper settings may contain its absolute path and need user review 
 The app must remain running and connected for USB-mirrored keyboard actions. This build does not add standalone
 USB HID or wireless support. The firmware bundle is selected in Update/Recover; packaging never flashes it.
 
-For a safe packaging smoke check, launch an extracted copy in a child process with `TOUCHDECK_MOCK=1`,
-`TOUCHDECK_INPUT=fake`, and isolated `APPDATA`, `LOCALAPPDATA`, `TOUCHDECK_CONFIG_DIR` and `TOUCHDECK_STATE_DIR`.
-Set `WEBVIEW2_USER_DATA_FOLDER` inside that scratch directory too. Use an empty working directory outside the
-checkout. Check the Editor/built-in icon picker and Sources helper discovery through the production window;
-do not start an e2e driver. Do not install a status line or change provider credentials. Stop only that child.
+For a safe packaging smoke check, use the script from the matching source checkout:
+
+```powershell
+pwsh -NoProfile -File app/scripts/smoke_windows.ps1 -PackageDir '<extracted-folder>' -Scratch E:/touchdeck-artifacts/smoke-001
+# Inspect Editor/built-in icons and Sources helper discovery through the production window.
+pwsh -NoProfile -File app/scripts/smoke_windows.ps1 -Scratch E:/touchdeck-artifacts/smoke-001 -Stop
+```
+
+The launcher sets mock transport and fake input, uses an empty external working directory, and redirects temporary
+files and source config/state. `TOUCHDECK_APP_DATA_DIR` explicitly redirects Tauri config/log/cache and WebView
+storage before initialization; it must be an absolute directory (created if absent) and fails closed on an invalid
+path. With that variable unset the app preserves its normal paths. `APPDATA` alone cannot override Tauri's Windows
+Known Folder paths. The smoke script snapshots those default app/source paths before launch and after stopping
+only its recorded child, failing if their contents change. It does not measure all OS/WebView incidental writes.
+The override by itself does not redirect source state: retain the launcher's separate source/temp overrides.
+Do not start an e2e driver, install a status line, change provider credentials or trigger a real action during smoke.
 
 Prove the helper independently without touching a real configuration:
 
