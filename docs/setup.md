@@ -18,7 +18,7 @@ pwsh -NoProfile -File app/scripts/setup-windows.ps1
 
 This command **installs missing development tools**. Review it before running it; installers may need administrator consent or a restart. The script does not elevate itself, change execution policy, or persist PATH directly. It sets the default rustup toolchain to `stable-msvc`, adds clippy/rustfmt, installs missing MSVC C++ Build Tools and WebView2, and checks every native command's exit code. Microsoft's [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/#windows) describe the C++ workload and WebView2 requirements.
 
-If Node is absent, setup asks winget for available LTS versions and installs the newest **24.x** entry with an explicit version. If the source no longer offers 24.x, it stops with a manual Node 24 installation link. An existing Node from another major is rejected: select/install Node 24, rather than letting setup replace a version-manager selection. pnpm is installed or updated through npm to the manifest pin. Its final version must match exactly. A shim that exits successfully but prints no version fails with a repair message.
+If Node is absent, setup asks winget for available LTS versions and installs the newest **24.x** entry with an explicit version. If the source no longer offers 24.x, it stops with a manual Node 24 installation link. An existing Node from another major is rejected: select/install Node 24, rather than letting setup replace a version-manager selection. pnpm is installed or updated through npm to the manifest pin. On npm 12 or later, setup passes `--allow-scripts=pnpm` so pnpm's installer can replace its placeholder with the native binary; earlier npm versions omit that flag. Setup reads the selected npm shim before invoking pnpm and repairs a shim targeting the extensionless placeholder without executing it. Its final version must match exactly. Other shims that exit successfully but print no version fail with a repair message.
 
 Setup appends installed Machine/User PATH entries and standard Cargo/npm/Node locations to **its own process PATH**, preserving existing entries and their priority. This makes fresh installs usable in that run. A child script cannot update the terminal that launched it: **open a new PowerShell after setup**, then verify:
 
@@ -34,7 +34,13 @@ If a tool is missing or the version is wrong, inspect resolution before retrying
 Get-Command node,pnpm,npm,rustup -All
 ```
 
-Select Node 24 in your version manager or remove the obsolete PATH/shim entry using that tool's normal management procedure. For pnpm, repair npm first if necessary, then run `npm install --global pnpm@12.12.1` (use the manifest's version if it changes). If pnpm still prints nothing, repair/remove the stale shim shown by `Get-Command pnpm -All`; a zero exit code alone is insufficient. Do not lower execution policy to make a broken PowerShell shim work; setup uses native/`.cmd` launchers.
+Select Node 24 in your version manager or remove the obsolete PATH/shim entry using that tool's normal management procedure. For pnpm, repair npm first if necessary, then run this command on npm 12 or later (use the manifest's version if it changes):
+
+```powershell
+npm install --global pnpm@12.12.1 --allow-scripts=pnpm --foreground-scripts
+```
+
+Check `npm --version`; on npm 11, omit `--allow-scripts=pnpm` because older releases do not support it. npm 12 [blocks unapproved install scripts](https://github.com/npm/cli/blob/v12.0.0/CHANGELOG.md), and [`--allow-scripts=pnpm`](https://docs.npmjs.com/cli/v12/using-npm/config#allow-scripts) approves pnpm's scripts for this install. When those scripts are blocked, Windows may show a **Pick an app** dialog and print no pnpm version because the npm shim targets an extensionless shell placeholder. If pnpm still prints nothing after repair, repair/remove the stale shim shown by `Get-Command pnpm -All`; a zero exit code alone is insufficient. Do not lower execution policy to make a broken PowerShell shim work; setup uses native/`.cmd` launchers.
 
 Rerunning setup retains working Node/pnpm versions and skips their installers. Rustup's default/component operations are repeatable. MSVC and WebView2 installations are skipped when detected and checked again after an installer succeeds. A nonzero installer exit, incomplete registration, restart requirement, or native command failure stops setup; resolve the reported problem and rerun. A successful version summary does not replace a full app build.
 
