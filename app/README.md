@@ -15,11 +15,10 @@ Built with Tauri 2, Svelte 5, and Rust, the app discovers USB decks and provides
 
 ## Install a published build
 
-Once a release is published, the Windows installer will be at
+The Windows installer is available as
 [TouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe)
 on [the latest GitHub release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest).
-No release has been published yet, so use the source-build path below until one
-is. The installer installs per user and needs no Node, pnpm, Rust, or ESP-IDF. It
+The installer installs per user and needs no Node, pnpm, Rust, or ESP-IDF. It
 downloads the WebView2 runtime if Windows lacks it. Linux has no installer.
 
 A portable archive must be fully extracted before you start the app. Per-user settings,
@@ -33,8 +32,8 @@ candidate artifacts, and release production. A successful source build or
 candidate package is not a published release.
 
 Update the installed app from **Settings > App updates**. That is separate from
-updating deck firmware in the **Update** tab. App updates become available once
-the first signed release is published. Source builds carry no updater key, so
+updating deck firmware in the **Update** tab. App updates use releases signed
+with the project's updater key. Source builds carry no updater key, so
 their **Check for updates** reports that release signing is not configured.
 
 ## Build the desktop app
