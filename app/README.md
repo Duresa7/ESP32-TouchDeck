@@ -13,11 +13,10 @@ separate operations.
 
 ## Install a published build
 
-Once a release is published, the Windows installer will be at
+The Windows installer is
 [TouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe)
 on [the latest GitHub release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest).
-No release has been published yet, so use the source-build path below until one
-is. The installer installs per user and needs no Node, pnpm, Rust, or ESP-IDF. It
+The installer installs per user and needs no Node, pnpm, Rust, or ESP-IDF. It
 downloads the WebView2 runtime if Windows lacks it. Linux has no installer.
 
 A portable archive must be fully extracted before you start the app. Per-user settings,

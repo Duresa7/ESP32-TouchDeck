@@ -17,10 +17,10 @@ HID are deferred to the post-product update.
 
 Start with the [USB user guide](docs/usage.md) to obtain or build the app, install
 firmware, connect, edit and push layouts, configure CLIProxyAPI usage limits, and back up your work.
-Once a release is published, the Windows installer will be at
+The Windows installer is
 [TouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe)
-on [GitHub Releases](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest).
-No release has been published yet. Until one is, follow the
+on [the latest GitHub release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest).
+To build the app yourself, follow the
 [desktop source-build instructions](app/README.md#build-the-desktop-app).
 
 ## Project goals
