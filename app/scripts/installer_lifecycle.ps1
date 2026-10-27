@@ -158,8 +158,10 @@ function Write-Diagnostics([string]$Label) {
     } | ForEach-Object { "$($_.Name)#$($_.ProcessId)<-$($_.ParentProcessId)" })
     $uninstallers = @(Get-Process | Where-Object ProcessName -Match '^(Un_[A-Z]|Au_)$' | ForEach-Object { "$($_.ProcessName)#$($_.Id)" })
     $webviews = @(Get-Process -Name msedgewebview2 -ErrorAction SilentlyContinue).Count
+    $shells = @(Get-Process -Name explorer -ErrorAction SilentlyContinue | ForEach-Object Id)
     Write-Log ("DIAG ${Label}: touchdeck.exe $(Get-FileUsers (Join-Path $installDir 'touchdeck.exe')); " +
-        "install-dir processes [$($running -join ', ')]; uninstallers [$($uninstallers -join ', ')]; msedgewebview2 x$webviews")
+        "install-dir processes [$($running -join ', ')]; uninstallers [$($uninstallers -join ', ')]; " +
+        "explorer [$($shells -join ', ')]; msedgewebview2 x$webviews")
 }
 
 try {
@@ -171,7 +173,8 @@ try {
     $elevated = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
         [Security.Principal.WindowsBuiltInRole]::Administrator)
     $realtime = try { (Get-MpComputerStatus -ErrorAction Stop).RealTimeProtectionEnabled } catch { 'unknown' }
-    Write-Log "DIAG runner: elevated=$elevated defender-realtime=$realtime explorer x$(@(Get-Process -Name explorer -ErrorAction SilentlyContinue).Count)"
+    Write-Log "DIAG runner: elevated=$elevated defender-realtime=$realtime"
+    Write-Diagnostics 'before install'
 
     # An identical installer produces identical hashes/timestamps: NTFS file identity proves replacement.
     Add-Type -TypeDefinition @'
