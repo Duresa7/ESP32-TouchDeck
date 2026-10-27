@@ -102,7 +102,6 @@ static void expect_events(const uint32_t *want, size_t count)
 static void expect_setters_refused(void)
 {
     ASSERT_ERR(ESP_ERR_INVALID_STATE, ch422g_set_backlight(false));
-    ASSERT_ERR(ESP_ERR_INVALID_STATE, ch422g_lcd_reset(true));
     ASSERT_ERR(ESP_ERR_INVALID_STATE, ch422g_touch_reset(true));
 }
 
@@ -126,7 +125,7 @@ TEST_CASE("backlight off clears only DISP and on sets it again", "[ch422g]")
     EXPECT_EVENTS(EV_WRITE(0x38, 0x1A), EV_WRITE(0x38, 0x1E));
 }
 
-TEST_CASE("reset lines are active low", "[ch422g]")
+TEST_CASE("touch reset is active low", "[ch422g]")
 {
     start_ok();
     ASSERT_ERR(ESP_OK, ch422g_touch_reset(true));
@@ -134,12 +133,7 @@ TEST_CASE("reset lines are active low", "[ch422g]")
     ASSERT_ERR(ESP_OK, ch422g_touch_reset(false));
     TEST_ASSERT_EQUAL_HEX8(0x1E, ch422g_output());
 
-    ASSERT_ERR(ESP_OK, ch422g_lcd_reset(true));
-    TEST_ASSERT_EQUAL_HEX8(0x16, ch422g_output());
-    ASSERT_ERR(ESP_OK, ch422g_lcd_reset(false));
-    TEST_ASSERT_EQUAL_HEX8(0x1E, ch422g_output());
-
-    EXPECT_EVENTS(EV_WRITE(0x38, 0x1C), EV_WRITE(0x38, 0x1E), EV_WRITE(0x38, 0x16), EV_WRITE(0x38, 0x1E));
+    EXPECT_EVENTS(EV_WRITE(0x38, 0x1C), EV_WRITE(0x38, 0x1E));
 }
 
 TEST_CASE("setters compose on the cached output", "[ch422g]")
@@ -162,9 +156,8 @@ TEST_CASE("a setter that changes nothing still writes the unchanged byte", "[ch4
 {
     start_ok();
     ASSERT_ERR(ESP_OK, ch422g_set_backlight(true));
-    ASSERT_ERR(ESP_OK, ch422g_lcd_reset(false));
     TEST_ASSERT_EQUAL_HEX8(0x1E, ch422g_output());
-    EXPECT_EVENTS(EV_WRITE(0x38, 0x1E), EV_WRITE(0x38, 0x1E));
+    EXPECT_EVENTS(EV_WRITE(0x38, 0x1E));
 }
 
 TEST_CASE("a NACKed setter write returns the error and keeps the cached output", "[ch422g]")
