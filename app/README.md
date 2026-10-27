@@ -4,7 +4,7 @@ TouchDeck runs on Windows and Linux. It connects to the deck over USB-Serial/JTA
 edits and transfers layouts, runs PC actions, feeds widgets, and updates deck
 firmware. The running, connected app mirrors keys and media controls into the host
 session. The deck does not type as a standalone USB HID keyboard. Wi-Fi, Bluetooth,
-battery support, and direct TinyUSB HID are deferred.
+battery support, and standalone USB HID are deferred to the post-product update.
 
 For everyday use, follow the [USB user guide](../docs/usage.md). The window title
 identifies the app's source revision. **Deck** reports the connected firmware's
@@ -13,11 +13,12 @@ separate operations.
 
 ## Install a published build
 
-Use [the latest GitHub release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest)
-for published downloads. An installer is available only after a release that
-contains it is published. If no installer is listed, use the source-build path
-below. A distributed Windows app needs WebView2 and its required runtime libraries,
-but does not need Node, pnpm, Rust, or ESP-IDF.
+Once a release is published, the Windows installer will be at
+[TouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe)
+on [the latest GitHub release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest).
+No release has been published yet, so use the source-build path below until one
+is. The installer installs per user and needs no Node, pnpm, Rust, or ESP-IDF. It
+downloads the WebView2 runtime if Windows lacks it. Linux has no installer.
 
 Keep `td-statusline.exe` beside `touchdeck.exe` on Windows, or `td-statusline`
 beside `touchdeck` on Linux, for the optional status-line Source. A portable
@@ -26,12 +27,15 @@ approvals, Sources state, and icon caches live outside the executable directory.
 Copying that directory alone does not migrate your setup.
 
 The [desktop setup guide](../docs/setup.md) covers prerequisites and Linux serial,
-`/dev/uinput`, and credential-store access. That link depends on
-[setup PR #34](https://github.com/Duresa7/ESP32-TouchDeck/pull/34).
-The [packaging guide](../docs/packaging.md) depends on the separate packaging
-change and describes candidate artifacts, runtime requirements, and release
-production. A successful source build or candidate package is not a published
-release.
+`/dev/uinput`, and credential-store access. The
+[packaging guide](../docs/packaging.md) describes the installer's contents,
+candidate artifacts, and release production. A successful source build or
+candidate package is not a published release.
+
+Update the installed app from **Settings > App updates**. That is separate from
+updating deck firmware in the **Update** tab. The updater signing key is not
+configured yet, so app updates become available only after the first signed
+release is published.
 
 ## Build the desktop app
 

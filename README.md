@@ -12,14 +12,16 @@ can customize to fit the way I work.
 The desktop app edits layouts, runs PC actions, feeds widgets, and mirrors the
 deck's key and media reports into your desktop session. Keep the app running and
 connected over USB for typing. The deck does not provide a standalone USB HID
-keyboard. Wi-Fi, Bluetooth, battery support, and direct TinyUSB HID are deferred.
+keyboard. Wi-Fi, Bluetooth, battery support, and standalone USB HID are deferred
+to the post-product update.
 
 Start with the [USB user guide](docs/usage.md) to obtain or build the app, install
 firmware, connect, edit and push layouts, configure Sources, and back up your work.
-The stable address for published downloads is
-[the latest GitHub release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest).
-A release is available only after it is published. If no installer is listed,
-follow the [desktop source-build instructions](app/README.md#build-the-desktop-app).
+Once a release is published, the Windows installer will be at
+[TouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe)
+on [GitHub Releases](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest).
+No release has been published yet. Until one is, follow the
+[desktop source-build instructions](app/README.md#build-the-desktop-app).
 
 ## Project goals
 

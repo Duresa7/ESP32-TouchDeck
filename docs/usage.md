@@ -7,36 +7,51 @@ or Linux desktop session.
 Keep the app running and connected for keyboard and media input, PC actions, and
 live Sources. The app mirrors USB key reports into the host session. The deck
 does not act as a standalone USB HID keyboard. Page navigation works on the deck
-without the app. Wi-Fi, Bluetooth, battery support, and direct TinyUSB HID are
-deferred.
+without the app. Wi-Fi, Bluetooth, battery support, and standalone USB HID
+(direct TinyUSB) are deferred to the post-product update.
 
 ## Obtain and install the desktop app
 
-Use [the latest GitHub release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest)
-as the stable download page. Read its platform requirements and release notes,
-then choose its Windows installer if one is listed. A release and its installer
-exist only after publication. If no suitable download exists, follow
-[Build the desktop app](../app/README.md#build-the-desktop-app).
+This section is for people who run the app. If you build it from source, use
+[Build from source (developers)](#build-from-source-developers) instead.
 
-An installed app does not need Node, pnpm, Rust, or ESP-IDF. Those tools are for
-source builds. Windows needs the app's runtime dependencies, including WebView2.
-For a portable distribution, extract the whole archive and keep the source helper
-beside the app. Start `touchdeck.exe` on Windows or `touchdeck` on Linux.
+**Windows installer.** Once a release is published, its installer will be at
+[TouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe)
+on [the latest GitHub release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest).
+No release has been published yet, so that link does not work today. When it does,
+run the installer. It installs for your user, by default under
+`%LOCALAPPDATA%/TouchDeck`, with `touchdeck.exe`, the `td-statusline.exe` helper
+beside it, and a `firmware/` folder with the matching `.tdfw` bundle. You need no Node, pnpm, Rust,
+Python, or ESP-IDF. If Windows lacks the WebView2 runtime, the installer downloads
+it, so that step needs network access. The [packaging guide](packaging.md) lists
+the installer's contents.
 
-Use the [desktop setup guide](setup.md) for Windows prerequisites and Linux serial,
-`/dev/uinput`, and desktop credential-store requirements. That document is supplied
-by [setup PR #34](https://github.com/Duresa7/ESP32-TouchDeck/pull/34).
-The [packaging guide](packaging.md) comes from the separate packaging change.
-These documentation dependencies must land for both relative links to resolve.
-The packaging guide describes candidate builds; a candidate is not a published
-release.
+Until a release exists, use the source build below. Linux has no installer. Run
+`touchdeck` from a source build and keep `td-statusline` beside it. The
+[desktop setup guide](setup.md) lists the Linux runtime libraries, the serial and
+`/dev/uinput` permissions, and the desktop credential store that the optional
+CLIProxyAPI Source needs.
+
+Start `touchdeck.exe` on Windows or `touchdeck` on Linux. The window title
+identifies the source revision the app was built from.
+
+### Build from source (developers)
+
+Source builds are for development and for use before a release exists. On Windows,
+run `pwsh -NoProfile -File app/scripts/setup-windows.ps1` from the checkout root.
+It installs missing developer tools, so read [the setup guide](setup.md) first.
+Then follow [Build the desktop app](../app/README.md#build-the-desktop-app). The
+packaging recipe in the [packaging guide](packaging.md) produces installer
+candidates. A candidate is not a published release.
 
 ## Install or update deck firmware
 
 Desktop app installation and deck firmware installation are separate. The app's
 **Update** view takes a `.tdfw` bundle, not the desktop installer or the app update
 metadata. Use the bundle that accompanies the intended firmware build for this
-board.
+board. A published release is planned to list a `touchdeck-<version>.tdfw` asset,
+and the Windows installer places one in its `firmware/` folder. Neither exists
+until a release is published, so build a bundle yourself until then.
 
 If you build firmware yourself, use ESP-IDF 6.1 and the
 [firmware build instructions](../README.md#building). From the checkout root,
@@ -126,7 +141,8 @@ stored file to pull. Import the built-in example in that case.
 
 Push writes the file's orientation slot. Pushing the currently displayed
 orientation reloads it. Pushing the other slot saves it for a later orientation
-change. Export each orientation separately. The Editor has no undo or autosave
+change and leaves the displayed layout, its actions, and its widgets running.
+Export each orientation separately. The Editor has no undo or autosave
 and does not save drafts across app restarts.
 
 New pages use a fixed 3-row, 4-column grid. To change layout or page names, grid
@@ -148,13 +164,21 @@ The validator checks the repository examples too. A valid layout fits within
 2. Open **Settings** and choose **Orientation**.
 3. Set **Screen off after, in seconds** to a whole number from 1 to 86400.
 4. Select **Save**. The timeout takes effect immediately.
-5. When offered, select **Reboot deck** to apply the saved orientation.
+5. When offered, select **Reboot deck** to apply the saved orientation. The status
+   line says the orientation applies after the deck reboots.
 6. Reconnect from **Deck** after the reboot.
 
-Saved orientation and displayed orientation can differ until reboot. A portrait
-file in storage does not rotate the current display. Portrait uses a 600 by 1024
-canvas with the panel turned 90 degrees clockwise. If that slot has no valid
-layout, the firmware uses its built-in layout.
+A saved orientation takes effect only after the deck reboots. Until then the deck
+keeps displaying the previous orientation, and the app's actions and widget
+Sources follow the layout the deck actually displays, not the saved setting.
+Pushing a layout to the other orientation's slot stores it without changing the
+displayed layout, the actions, or live widgets. Pushing to the displayed
+orientation reloads the display and rebinds both.
+
+A portrait file in storage does not rotate the current display. Portrait uses a
+600 by 1024 canvas with the panel turned 90 degrees clockwise. If the displayed
+slot has no valid layout, the firmware shows its built-in layout. That layout has
+no PC actions, so the app keeps the action definitions it already had.
 
 ## Configure PC actions and command approvals
 
@@ -210,10 +234,13 @@ check. Keep custom icon backups before pruning.
 ## Set up optional Sources
 
 Sources feed widget tiles and imported dashboard pages while the app runs.
-Open **Sources** to check readings and errors. To load bindings from a file,
-set **Tiles to feed > Layout file** to the full path of the layout that the deck
-actually displays, then select **Save**. This loads local bindings; it does not
-push a layout to the deck. Keep that file aligned with your pushed layout.
+Open **Sources** to check readings and errors. While the
+deck is connected, the app takes widget bindings from the layout the deck displays,
+so a push to the other orientation's slot does not interrupt the feeds. To load
+bindings from a file instead, set **Tiles to feed > Layout file** to the full path
+of the layout that the deck actually displays, then select **Save**. This loads
+local bindings; it does not push a layout to the deck. Keep that file aligned with
+your pushed layout.
 
 ### Connect the local status-line Source
 
@@ -293,14 +320,33 @@ key through Sources on another PC; it is not in the JSON configuration.
 
 ## Update the desktop app
 
-Export open drafts before replacing or closing the app. For a published Windows
-build, obtain the desktop installer from
-[the latest release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest)
-and follow that release's installation instructions. Close the running app before
-manually replacing a portable copy. Source users rebuild the desktop app and
-helper from the intended revision.
+Desktop app updates and deck firmware updates are separate. This section covers
+the app. The deck's firmware, including ROM recovery, is in
+[Install or update deck firmware](#install-or-update-deck-firmware).
 
-Desktop updates replace software on the PC. They do not flash the board. Use
-**Update > Update deck** with a `.tdfw` bundle for deck firmware, or **Recover deck**
-for ROM recovery. After restarting the desktop app, reconnect in **Deck** and
-review Sources helper paths if the installation folder changed.
+The app can check for its own updates in **Settings > App updates**:
+
+1. Export open drafts from **Editor**. They are not saved when the app closes.
+2. Open **Settings** and find **App updates**. It shows the installed app version
+   and notes that deck firmware is updated in the **Update** tab.
+3. Select **Check for updates**. The app reports **You're on the latest app
+   version**, or the new version with its release notes. If it cannot reach a
+   release, it shows the reason and you can keep using the current version.
+4. Select **Download update**. TouchDeck stays open while it downloads the signed
+   installer and verifies its signature.
+5. Select **Disconnect** in **Deck**. The install button is disabled while a deck
+   is connected, and installation is refused during deck transfers.
+6. Select **Install and close TouchDeck**. Windows starts the installer and the
+   app closes. Open TouchDeck again when the installer finishes.
+
+An update keeps your per-user settings, command approvals, Sources configuration,
+and icon cache. It does not change layouts stored on the deck or flash the board.
+After restarting, reconnect in **Deck**, and review the Sources helper path if the
+installation folder changed.
+
+The app update path needs a published release signed with the project's updater
+key. That key is not configured yet and no release exists, so **Check for updates**
+shows an error or no update until the first signed release is published. The first
+installation always comes from the installer on GitHub Releases, once a release is
+published. Source and portable copies replace by hand: close the app, then rebuild
+or extract the new copy.
