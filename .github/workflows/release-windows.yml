@@ -1,13 +1,14 @@
 name: windows release
 
 # Three modes, one build recipe:
-#   pull_request       disposable test-signing candidate; no secrets, no release
-#   workflow_dispatch  dry run of any ref with the durable key; never tags or releases
-#   push of vX.Y.Z     durable-key build, then the publish job releases it
+#   pull_request       disposable test-signing candidate; no environment, no signing key, no release
+#   workflow_dispatch  dry run of a commit on main with the durable key in the release environment; never tags or releases
+#   push of vX.Y.Z     durable-key build in the release environment, then the publish job releases it
 on:
   pull_request:
     paths:
       - .github/workflows/release-windows.yml
+      - .github/actions/windows-release-build/action.yml
       - app/scripts/package_windows.py
       - app/scripts/verify_updater.py
       - app/scripts/release_version.py
@@ -15,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Branch, tag or commit to build and verify with the durable key (never published)
+        description: Commit or tag on main to build and verify with the durable key (never published)
         required: true
         default: main
   push:
@@ -29,129 +30,59 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build:
-    # Runs pnpm packages and ESP-IDF, so it only ever holds a read token.
+  test-signing:
+    # Pull requests build a disposable test-signed candidate outside the release environment, with no signing key.
+    if: github.event_name == 'pull_request'
     runs-on: windows-latest
     timeout-minutes: 90
     permissions:
       contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build and verify test-signed candidate
+        uses: ./.github/actions/windows-release-build
+        with:
+          release-mode: test-signing
+          build-ref: ${{ github.ref }}
+
+  build:
+    # Runs pnpm packages and ESP-IDF, so it only ever holds a read token.
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    environment: release
+    permissions:
+      contents: read
     env:
-      RELEASE_MODE: ${{ github.event_name == 'push' && 'publish' || github.event_name == 'workflow_dispatch' && 'dry-run' || 'test-signing' }}
-      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
       BUILD_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
-      UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ env.BUILD_REF }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 24
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: "3.13"
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          toolchain: stable
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-        with:
-          package_json_file: app/package.json
-
-      - name: Validate release identity
-        shell: pwsh
-        env:
-          # Booleans only: the secrets themselves stay in the signing step.
-          SIGNING_KEY_PRESENT: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          git diff --exit-code
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          if ($env:RELEASE_MODE -eq 'publish') {
-            python app/scripts/release_version.py check --tag $env:RELEASE_TAG
-            if ($LASTEXITCODE) { throw 'The tag must be v plus the app version, and every app version must agree.' }
-            git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-            git merge-base --is-ancestor HEAD origin/main
-            if ($LASTEXITCODE) { throw "Tagged commit $(git rev-parse HEAD) is not on origin/main." }
-          } else {
-            python app/scripts/release_version.py check
-            if ($LASTEXITCODE) { throw 'Every app version must agree.' }
-          }
-          if ($env:RELEASE_MODE -ne 'test-signing') {
-            if ($env:SIGNING_KEY_PRESENT -ne 'true') { throw 'Secret TAURI_SIGNING_PRIVATE_KEY is not configured.' }
-            if (-not $env:UPDATER_PUBLIC_KEY) { throw 'Variable TAURI_UPDATER_PUBLIC_KEY is not configured.' }
-          }
-
-      - name: Write release notes and updater public key
+      - name: Verify built commit is on origin/main
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          [Console]::OutputEncoding = [Text.UTF8Encoding]::new()
-          $notes = ''
-          if ($env:RELEASE_MODE -eq 'publish') {
-            # Re-fetch the tag itself: the checkout can leave a lightweight copy without its message.
-            git fetch --force --no-tags origin "+refs/tags/${env:RELEASE_TAG}:refs/tags/${env:RELEASE_TAG}"
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-            $ref = "refs/tags/$env:RELEASE_TAG"
-            if ((git for-each-ref $ref --format='%(objecttype)') -eq 'tag') {
-              # Subject and body only, so a signed tag's signature block never reaches the notes.
-              $notes = ((git for-each-ref $ref --format='%(contents:subject)%0a%0a%(contents:body)') -join "`n").Trim()
-            }
-            if (-not $notes) { $notes = "TouchDeck $env:RELEASE_TAG" }
-          } elseif ($env:RELEASE_MODE -eq 'dry-run') {
-            $notes = "TouchDeck dry run of $env:BUILD_REF ($(git rev-parse HEAD)). Not for publication."
-          } else {
-            $notes = "TouchDeck test-signing candidate $(git rev-parse HEAD). Not for publication."
-          }
-          [IO.File]::WriteAllText("$env:RUNNER_TEMP/release-notes.md", "$notes`n")
-          if ($env:RELEASE_MODE -ne 'test-signing') {
-            [IO.File]::WriteAllText("$env:RUNNER_TEMP/updater.pub", "$($env:UPDATER_PUBLIC_KEY.Trim())`n")
-          }
-          Get-Content "$env:RUNNER_TEMP/release-notes.md"
-
-      - name: Install locked build dependencies on disposable runner
-        shell: pwsh
-        run: |
-          pnpm --dir app install --frozen-lockfile
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          git clone --branch v6.1 --recursive --depth 1 https://github.com/espressif/esp-idf.git "$env:RUNNER_TEMP/esp-idf"
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          & "$env:RUNNER_TEMP/esp-idf/install.ps1" esp32s3
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-
-      - name: Build test-signed installer, helper and matching radio-free firmware
-        if: env.RELEASE_MODE == 'test-signing'
-        shell: pwsh
-        run: |
-          . "$env:RUNNER_TEMP/esp-idf/export.ps1"
-          python app/scripts/package_windows.py build --out "$env:RUNNER_TEMP/touchdeck-release" --test-signing --notes-file "$env:RUNNER_TEMP/release-notes.md"
-          exit $LASTEXITCODE
-
-      - name: Build durable-key installer, helper and matching radio-free firmware
-        if: env.RELEASE_MODE != 'test-signing'
-        shell: pwsh
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          . "$env:RUNNER_TEMP/esp-idf/export.ps1"
-          python app/scripts/package_windows.py build --out "$env:RUNNER_TEMP/touchdeck-release" --public-key-file "$env:RUNNER_TEMP/updater.pub" --notes-file "$env:RUNNER_TEMP/release-notes.md"
-          exit $LASTEXITCODE
-
-      - name: Verify signed installer with local HTTPS fixture without installing
-        shell: pwsh
-        run: |
-          python app/scripts/verify_updater.py --assets "$env:RUNNER_TEMP/touchdeck-release/release-assets" --out "$env:RUNNER_TEMP/updater-fixture" --cargo-target "$env:RUNNER_TEMP/touchdeck-release/build/app" --openssl 'C:/Program Files/Git/usr/bin/openssl.exe'
-          exit $LASTEXITCODE
-
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+          git merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE) { throw "Built commit $(git rev-parse HEAD) is not on origin/main." }
+      - name: Build and verify durable-key release
+        uses: ./.github/actions/windows-release-build
         with:
-          name: windows-release-assets
-          path: ${{ runner.temp }}/touchdeck-release/release-assets
-          if-no-files-found: error
-          retention-days: ${{ env.RELEASE_MODE == 'publish' && 90 || 14 }}
+          release-mode: ${{ github.event_name == 'push' && 'publish' || 'dry-run' }}
+          release-tag: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          build-ref: ${{ env.BUILD_REF }}
+          updater-public-key: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+          signing-key-present: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          signing-private-key: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          signing-private-key-password: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
   publish:
     # Holds the write token, so it runs no repository or third-party build code: only gh, jq and sha256sum.
