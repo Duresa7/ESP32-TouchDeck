@@ -2,7 +2,6 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { out } from './report.ts';
 
-export const FIXTURES = join(import.meta.dirname, '..', 'crates', 'td-host', 'tests', 'fixtures');
 export const DEV_JSON = join(import.meta.dirname, '..', '..', 'schema', 'examples', 'dev.json');
 
 export interface Set {
