@@ -33,9 +33,9 @@ candidate artifacts, and release production. A successful source build or
 candidate package is not a published release.
 
 Update the installed app from **Settings > App updates**. That is separate from
-updating deck firmware in the **Update** tab. The updater signing key is not
-configured yet, so app updates become available only after the first signed
-release is published.
+updating deck firmware in the **Update** tab. App updates become available once
+the first signed release is published. Source builds carry no updater key, so
+their **Check for updates** reports that release signing is not configured.
 
 ## Build the desktop app
 

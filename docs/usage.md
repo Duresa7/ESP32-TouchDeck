@@ -345,8 +345,9 @@ After restarting, reconnect in **Deck**, and review the Sources helper path if t
 installation folder changed.
 
 The app update path needs a published release signed with the project's updater
-key. That key is not configured yet and no release exists, so **Check for updates**
-shows an error or no update until the first signed release is published. The first
+key. No release exists yet, so **Check for updates** finds no update until the
+first signed release is published. Source builds carry no updater key and report
+that release signing is not configured. The first
 installation always comes from the installer on GitHub Releases, once a release is
 published. Source and portable copies replace by hand: close the app, then rebuild
 or extract the new copy.
