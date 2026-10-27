@@ -9,6 +9,10 @@ $manifest = Get-Content (Join-Path $PSScriptRoot '../../package.json') -Raw | Co
 $expectedPnpm = $manifest.packageManager -replace '^pnpm@', ''
 $cases = @(
     @{ name = 'ready tools and repeat'; config = @{ repeat = $true }; ok = $true; noInstall = $true },
+    @{ name = 'npm 12 placeholder shim repaired without probing'; config = @{ placeholderPnpm = $true }; ok = $true; installPnpm = $true; pnpmProbes = 1 },
+    @{ name = 'npm 11 placeholder shim repaired without unsupported flag'; config = @{ placeholderPnpm = $true; npmVersion = '11.6.2' }; ok = $true; installPnpm = $true; pnpmProbes = 1 },
+    @{ name = 'native pnpm exe shim left alone'; config = @{}; ok = $true; noInstall = $true; pnpmProbes = 1 },
+    @{ name = 'placeholder persists after repair without probing'; config = @{ placeholderPnpm = $true; keepPlaceholder = $true }; error = 'extensionless.*placeholder.*Repair npm'; pnpmProbes = 0 },
     @{ name = 'fresh Node npm pnpm rust via refreshed PATH'; config = @{ absent = @('node', 'npm', 'pnpm', 'rustup', 'rustc') }; ok = $true; installNode = $true },
     @{ name = 'stale Node'; config = @{ nodeVersion = 'v22.18.0' }; error = 'Expected Node.js 24.*Get-Command node -All'; noInstall = $true },
     @{ name = 'future Node'; config = @{ nodeVersion = 'v26.0.0' }; error = 'Expected Node.js 24'; noInstall = $true },
@@ -26,7 +30,9 @@ $cases = @(
     @{ name = 'WebView installer failure'; config = @{ missingWebView = $true; failTool = 'winget'; failArgument = 'Microsoft.EdgeWebView2Runtime' }; error = 'winget install.*WebView2Runtime.*exit code 17' },
     @{ name = 'LTS no longer offers Node24'; config = @{ absent = @('node'); noNode24 = $true }; error = 'no Node.js 24 LTS version'; noInstall = $true },
     @{ name = 'Node absent after successful installer'; config = @{ absent = @('node'); noInstalledNode = $true }; error = 'node was not found.*new PowerShell' },
-    @{ name = 'npm native failure'; config = @{ absent = @('pnpm'); failTool = 'npm' }; error = 'npm install.*exit code 17.*Repair npm' },
+    @{ name = 'npm native failure'; config = @{ absent = @('pnpm'); failTool = 'npm'; failArgument = 'install' }; error = 'npm install.*exit code 17.*Repair npm' },
+    @{ name = 'npm version native failure'; config = @{ absent = @('pnpm'); failTool = 'npm'; failArgument = '--version' }; error = 'npm --version.*exit code 17.*Repair npm' },
+    @{ name = 'npm invalid version'; config = @{ absent = @('pnpm'); npmVersion = 'not-a-version' }; error = 'npm --version returned no valid version.*Repair npm'; noInstall = $true },
     @{ name = 'npm missing'; config = @{ absent = @('pnpm', 'npm') }; error = 'npm was not found.*Repair npm' },
     @{ name = 'node native failure'; config = @{ failTool = 'node' }; error = 'node --version.*exit code 17' },
     @{ name = 'pnpm native failure'; config = @{ failTool = 'pnpm' }; error = 'pnpm --version.*exit code 17' },
@@ -71,6 +77,14 @@ foreach ($case in $cases) {
         }
         if ($case.installPnpm -and !($installs | Where-Object { $_.tool -eq 'npm' -and "pnpm@$expectedPnpm" -in $_.arguments })) {
             throw 'Did not install the manifest pnpm pin'
+        }
+        foreach ($install in @($installs | Where-Object { $_.tool -eq 'npm' })) {
+            $allowScripts = !$case.config.npmVersion -or [int]($case.config.npmVersion -split '\.')[0] -ge 12
+            if (('--allow-scripts=pnpm' -in $install.arguments) -ne $allowScripts) { throw 'Incorrect npm script approval flag' }
+            if ('--foreground-scripts' -notin $install.arguments) { throw 'Missing foreground install script output' }
+        }
+        if ($case.ContainsKey('pnpmProbes') -and @($calls | Where-Object { $_.tool -eq 'pnpm' }).Count -ne $case.pnpmProbes) {
+            throw 'Unexpected pnpm probe count; placeholder shims must never be invoked'
         }
         Write-Output "PASS $($case.name)"
     } catch {
