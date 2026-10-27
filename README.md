@@ -42,7 +42,7 @@ can customize to fit the way I work.
 1. Download the [installer from the latest release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe) and run it. It installs for your user and needs no admin rights.
    Windows SmartScreen may warn the first time, because the installer has no Authenticode signature; choose **More info**, then **Run anyway**.
 2. Connect your deck with a USB data cable.
-3. Open **Update** in the app. Under **Firmware bundle**, select `touchdeck.tdfw` from the installer's `firmware` folder, and set **Deck port** to your deck's port.
+3. Open **Update** in the app. Under **Firmware bundle**, select `%LOCALAPPDATA%\TouchDeck\firmware\touchdeck.tdfw`, which the installer put there, and set **Deck port** to your deck's port, such as `COM3`.
    For a new board or one not running TouchDeck, select **Recover deck**. For later updates, select **Update deck**. Keep USB connected until it finishes.
 4. In **Deck**, select **Refresh**, then **Connect** beside your deck's port.
 5. Design your pages in **Editor** and select **Push**.
