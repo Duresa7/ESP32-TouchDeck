@@ -1,42 +1,70 @@
-# ESP32 TouchDeck
+# TouchDeck
 
-A customizable touch deck built with an ESP32.
+A customizable touchscreen deck for your desk, built on a 5-inch ESP32-S3 display, with a desktop app to design it.
+
+[![Latest release](https://img.shields.io/github/v/release/Duresa7/ESP32-TouchDeck)](https://github.com/Duresa7/ESP32-TouchDeck/releases)
+[![License](https://img.shields.io/github/license/Duresa7/ESP32-TouchDeck)](LICENSE)
+
+<p align="center">
+  <img src="docs/images/deck-media.png" width="49%" alt="TouchDeck Media page with playback and volume controls">
+  <img src="docs/images/deck-fkeys.png" width="49%" alt="TouchDeck F-Keys page with F1 to F12 and modifier keys">
+</p>
+
+[**Download for Windows**](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe) · [**User guide**](docs/usage.md) · [**Releases**](https://github.com/Duresa7/ESP32-TouchDeck/releases)
 
 I made this project to get around the limitations of numpads and other
 keyboards that lock useful features behind proprietary software or prevent
 full customization. I want a flexible, hardware-controlled interface that I
 can customize to fit the way I work.
 
-## Use TouchDeck over USB
+## Features
 
-The desktop app edits layouts, runs PC actions, feeds widgets, and mirrors the
-deck's key and media reports into your desktop session. Keep the app running and
-connected over USB for typing. The deck does not provide a standalone USB HID
-keyboard. Bluetooth is not supported. Wi-Fi, battery support, and standalone USB
-HID are deferred to the post-product update.
+- Design pages in the app and push them to your deck over USB, in landscape
+  or portrait.
+- Use tiles for keys and shortcuts, media keys, launching apps, opening files
+  and URLs, and running commands you approve.
+- Choose built-in icons or use icons from your own apps.
+- Connect your own [CLIProxyAPI hub](https://github.com/router-for-me/CLIProxyAPI)
+  to show Codex and Claude 5-hour and 7-day usage limits as widgets and a dashboard page.
+- Update your deck's firmware from the app, with automatic rollback if an
+  update fails.
+- Keep the desktop app up to date with its built-in updater and signed
+  installers.
 
-Start with the [USB user guide](docs/usage.md) to obtain or build the app, install
-firmware, connect, edit and push layouts, configure CLIProxyAPI usage limits, and back up your work.
-Once a release is published, the Windows installer will be at
-[TouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe)
-on [GitHub Releases](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest).
-No release has been published yet. Until one is, follow the
-[desktop source-build instructions](app/README.md#build-the-desktop-app).
+## What you need
 
-## Project goals
+- A Waveshare ESP32-S3-Touch-LCD-5B: 16 MB flash, 8 MB PSRAM, 1024×600 touch display.
+- A USB data cable.
+- A Windows x64 PC. Linux works from a source build.
 
-- Provide customizable controls without vendor lock-in.
-- Support a flexible touch-based interface.
-- Keep the project open to hardware and firmware improvements.
+## Get started
 
-## Hardware
+1. Download the [installer from the latest release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe) and run it. It installs for your user and needs no admin rights.
+   Windows SmartScreen may warn the first time, because the installer has no Authenticode signature; choose **More info**, then **Run anyway**.
+2. Connect your deck with a USB data cable.
+3. Open **Update** in the app. Under **Firmware bundle**, select `touchdeck.tdfw` from the installer's `firmware` folder, and set **Deck port** to your deck's port.
+   For a new board or one not running TouchDeck, select **Recover deck**. For later updates, select **Update deck**. Keep USB connected until it finishes.
+4. In **Deck**, select **Refresh**, then **Connect** beside your deck's port.
+5. Design your pages in **Editor** and select **Push**.
 
-- Waveshare ESP32-S3-Touch-LCD-5B (ESP32-S3, 16 MB flash, 8 MB PSRAM,
-  1024x600 touch display)
+Read the [user guide](docs/usage.md) for actions, icons, usage limits, backups, and updates.
+
+## Good to know
+
+- Keep the app running and connected over USB for your deck to type on your PC.
+  It is not a standalone USB keyboard yet.
+- Hold one finger on the screen for 10 seconds to restart into the built-in layout.
+  Your saved files are kept. See [recovery details](docs/firmware.md#recovery).
+- Wi-Fi and battery support are planned. Bluetooth is not supported.
+- The packaged app is Windows only; Linux runs from source.
 
 ## Build from source
 
-See the [firmware reference](docs/firmware.md) and [desktop app guide](app/README.md).
+- [Desktop app](app/README.md)
+- [Firmware](docs/firmware.md)
+- [Layout format](schema/README.md)
+- [Setup prerequisites](docs/setup.md)
+- [Packaging](docs/packaging.md)
 
 ## License
 
