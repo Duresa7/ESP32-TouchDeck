@@ -1,18 +1,11 @@
 name: windows release
 
-# Three modes, one build recipe:
-#   pull_request       disposable test-signing candidate; no environment, no signing key, no release
+# Release-time only. Two modes, one build recipe:
 #   workflow_dispatch  dry run of a commit on main with the durable key in the release environment; never tags or releases
 #   push of vX.Y.Z     durable-key build in the release environment, then the publish job releases it
+# Both modes also run the app, firmware and installer lifecycle checks on the same commit,
+# and the publish job waits for every one of them.
 on:
-  pull_request:
-    paths:
-      - .github/workflows/release-windows.yml
-      - .github/actions/windows-release-build/action.yml
-      - app/scripts/package_windows.py
-      - app/scripts/verify_updater.py
-      - app/scripts/release_version.py
-      - app/src-tauri/tauri.conf.json
   workflow_dispatch:
     inputs:
       ref:
@@ -27,31 +20,27 @@ permissions:
 
 concurrency:
   group: windows-release-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 jobs:
-  test-signing:
-    # Pull requests build a disposable test-signed candidate outside the release environment, with no signing key.
-    if: github.event_name == 'pull_request'
-    runs-on: windows-latest
-    timeout-minutes: 90
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ github.ref }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Build and verify test-signed candidate
-        uses: ./.github/actions/windows-release-build
-        with:
-          release-mode: test-signing
-          build-ref: ${{ github.ref }}
+  # The checks get no secrets: none of them is passed the release environment or the signing key.
+  app:
+    uses: ./.github/workflows/app.yml
+    with:
+      ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+  firmware:
+    uses: ./.github/workflows/firmware.yml
+    with:
+      ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+  installer-lifecycle:
+    uses: ./.github/workflows/installer-lifecycle.yml
+    with:
+      ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
 
   build:
     # Runs pnpm packages and ESP-IDF, so it only ever holds a read token.
-    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     timeout-minutes: 90
     environment: release
@@ -86,7 +75,8 @@ jobs:
 
   publish:
     # Holds the write token, so it runs no repository or third-party build code: only gh, jq and sha256sum.
-    needs: build
+    # Nothing is published unless every check passed on the tagged commit too.
+    needs: [build, app, firmware, installer-lifecycle]
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 30

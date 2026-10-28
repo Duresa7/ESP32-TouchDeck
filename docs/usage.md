@@ -20,17 +20,18 @@ whether your deck is connected and opens the list of decks.
 This section is for people who run the app. If you build it from source, use
 [Build from source (developers)](#build-from-source-developers) instead.
 
-**Windows installer.** Once a release is published, its installer will be at
+**Windows installer.** Download
 [TouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe)
-on [the latest GitHub release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest).
-No release has been published yet, so that link does not work today. When it does,
-run the installer. It installs for your user, by default under
+from [the latest GitHub release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest)
+and run it. It installs for your user, by default under
 `%LOCALAPPDATA%/TouchDeck`, with `touchdeck.exe` and a `firmware/` folder with the matching `.tdfw` bundle. You need no Node, pnpm, Rust,
 Python, or ESP-IDF. If Windows lacks the WebView2 runtime, the installer downloads
 it, so that step needs network access. The [packaging guide](packaging.md) lists
-the installer's contents.
+the installer's contents. The installer needs no admin rights.
+Windows SmartScreen may warn the first time, because the installer has no Authenticode signature; choose **More info**, then **Run anyway**.
 
-Until a release exists, use the source build below. Linux has no installer. Run
+To build the app yourself, follow [Build from source (developers)](#build-from-source-developers).
+Linux has no installer. Run
 `touchdeck` from a source build. The
 [desktop setup guide](setup.md) lists the Linux runtime libraries, the serial and
 `/dev/uinput` permissions, and the desktop credential store that the optional
@@ -41,7 +42,7 @@ Start `touchdeck.exe` on Windows or `touchdeck` on Linux. The window title, and
 
 ### Build from source (developers)
 
-Source builds are for development and for use before a release exists. On Windows,
+Source builds are for development and for Linux. On Windows,
 run `pwsh -NoProfile -File app/scripts/setup-windows.ps1` from the checkout root.
 It installs missing developer tools, so read [the setup guide](setup.md) first.
 Then follow [Build the desktop app](../app/README.md#build-the-desktop-app). The
@@ -351,13 +352,13 @@ not in the JSON file.
 The desktop app and the deck's own software update separately. **Settings >
 Deck software** takes a `.tdfw` bundle, not the desktop installer or the app update
 metadata. Use the bundle that comes with the deck software you want for this
-board. A published release is planned to list a `touchdeck.tdfw` asset, and the
-Windows installer places it at `firmware/touchdeck.tdfw`. Its version and SHA-256
-are recorded in `install-manifest.json`. Neither exists until a release is
-published, so build a bundle yourself until then.
+board. Each release lists a `touchdeck.tdfw` asset, and the Windows installer
+places it at `firmware/touchdeck.tdfw`. Its version and SHA-256 are recorded in
+`install-manifest.json`. For your own firmware build, make a bundle as described
+below.
 
 If you build firmware yourself, use ESP-IDF 6.1 and the
-[firmware build instructions](../README.md#building). From the checkout root,
+[firmware build instructions](firmware.md#build-and-flash). From the checkout root,
 after building `firmware/`, create and check a bundle:
 
 ```sh
@@ -398,7 +399,7 @@ ordinary update path or a layout reset. It needs no separate Python or esptool.
 
 The deck's ten-second touch hold is a different recovery feature. It starts the
 built-in layout and default settings from RAM while keeping stored files. See
-[Recovery](../README.md#recovery) for its behavior.
+[Recovery](firmware.md#recovery) for its behavior.
 
 ## Update the desktop app
 
@@ -424,8 +425,7 @@ picture cache. It does not change layouts stored on the deck or touch the deck's
 software. After restarting, connect again.
 
 The app update path needs a published release signed with the project's updater
-key. No release exists yet, so **Check for updates** finds no update until the
-first signed release is published. Source builds carry no updater key and say that
-release signing is not configured. The first installation always comes from the
-installer on GitHub Releases, once a release is published. Source and portable
-copies are replaced by hand: close the app, then rebuild or extract the new copy.
+key. Source builds carry no updater key and say that release signing is not
+configured. The first installation always comes from the installer on GitHub
+Releases. Source and portable copies are replaced by hand: close the app, then
+rebuild or extract the new copy.

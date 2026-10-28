@@ -28,6 +28,10 @@ inputs:
     description: Password for the Tauri updater private key
     required: false
     default: ""
+  artifact-name:
+    description: Workflow artifact for the release assets; the publish job downloads windows-release-assets
+    required: false
+    default: windows-release-assets
 
 runs:
   using: composite
@@ -148,7 +152,7 @@ runs:
 
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
-        name: windows-release-assets
+        name: ${{ inputs.artifact-name }}
         path: ${{ runner.temp }}/touchdeck-release/release-assets
         if-no-files-found: error
         retention-days: ${{ inputs.release-mode == 'publish' && 90 || 14 }}
