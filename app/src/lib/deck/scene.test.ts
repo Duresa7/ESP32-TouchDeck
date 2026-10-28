@@ -62,6 +62,28 @@ test('a widget tile shows its value, its caption below, and a bar as wide as the
   assert.equal(bare.bar, null);
 });
 
+test('a widget tile keeps its caption and value on one line, cut with dots to the tile', () => {
+  const usage = load('dev.json').pages[2] as Layout['pages'][number] & { kind: 'grid' };
+  const page = { ...usage, cols: 4, tiles: [{ ...usage.tiles[0], label: 'Claude 5h usage' }] };
+  const long = buildPage(page, landscape, { widget: () => ({ value: '100% of the five hour', caption: 'Claude 5h usage', bar: -1 }) });
+  const [value, caption] = long.tiles[0].texts;
+  const maxW = long.tiles[0].rect.w - 32;
+  assert.equal(caption.label.lines.length, 1);
+  assert.equal(caption.label.width, maxW);
+  assert.equal(caption.label.height, 30);
+  assert.match(shown(caption)[0], /^Claude .*\.\.\.$/);
+  assert.equal(caption.y, Math.trunc(long.tiles[0].rect.h / 2) - 15 + 30);
+  assert.equal(value.label.lines.length, 1);
+  assert.equal(value.label.width, maxW);
+  assert.match(shown(value)[0], /\.\.\.$/);
+  const short = buildPage(page, landscape, { widget: () => ({ value: '42%', caption: '5h', bar: -1 }) });
+  const [fit, fitCaption] = short.tiles[0].texts;
+  assert.deepEqual(shown(fit), ['42%']);
+  assert.ok(fit.label.width < maxW);
+  assert.equal(fit.x, Math.trunc(short.tiles[0].rect.w / 2) - Math.trunc(fit.label.width / 2));
+  assert.deepEqual(shown(fitCaption), ['5h']);
+});
+
 test('a dashboard page lays its rows down the grid, 8 rows tall', () => {
   const page = buildPage(load('dev.json').pages[3], landscape, { rows: sampleRows });
   assert.equal(page.rows.length, 3);

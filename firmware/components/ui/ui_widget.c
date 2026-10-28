@@ -76,9 +76,19 @@ static void apply_dim(bool dimmed)
     atomic_store(&s.dim_count, dimmed ? s.dim_total : 0);
 }
 
+/* A value that fits keeps its content width, so it sits where it always did. A wider one is cut to the tile with dots. */
+static void draw_value(lv_obj_t *value, const char *text, int32_t tile_w)
+{
+    lv_point_t size;
+    lv_text_get_size(&size, text, ui_theme.font_tile, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    const int32_t max_w = tile_w - 2 * ui_theme.media.label_inset;
+    lv_obj_set_width(value, size.x > max_w ? max_w : LV_SIZE_CONTENT);
+    lv_label_set_text(value, text);
+}
+
 static void draw_widget(const widget_objs_t *o, const ui_widget_state_t *st)
 {
-    lv_label_set_text(o->value, st->value[0] != '\0' ? st->value : "--");
+    draw_value(o->value, st->value[0] != '\0' ? st->value : "--", o->w);
     lv_label_set_text(o->caption, st->caption[0] != '\0' ? st->caption : o->label);
     lv_obj_set_style_text_opa(o->value, st->stale ? ui_theme.stale_opa : LV_OPA_COVER, 0);
     lv_obj_set_style_text_opa(o->caption, st->stale ? ui_theme.stale_opa : LV_OPA_COVER, 0);
@@ -158,14 +168,18 @@ void ui_widget_build(lv_obj_t *obj, const ui_tile_t *tile, ui_rect_t rect)
     const ui_styles_t *st = ui_styles();
     lv_obj_t *value = lv_label_create(obj);
     lv_obj_add_style(value, &st->tile_label, 0);
-    lv_label_set_text(value, "--");
+    lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_height(value, lv_font_get_line_height(ui_theme.font_tile));
+    lv_label_set_long_mode(value, LV_LABEL_LONG_MODE_DOTS);
+    draw_value(value, "--", rect.w);
     lv_obj_align(value, LV_ALIGN_CENTER, 0, -ui_theme.widget.value_dy);
 
+    /* One line, cut with dots, whatever text the app sends. LVGL's dots mode needs its own writable copy of the text. */
     lv_obj_t *caption = lv_label_create(obj);
     lv_obj_add_style(caption, &st->tile_caption, 0);
-    lv_obj_set_width(caption, rect.w - 2 * ui_theme.media.label_inset);
-    lv_label_set_long_mode(caption, LV_LABEL_LONG_MODE_CLIP);
-    lv_label_set_text_static(caption, tile->label);
+    lv_obj_set_size(caption, rect.w - 2 * ui_theme.media.label_inset, lv_font_get_line_height(ui_theme.font_caption));
+    lv_label_set_long_mode(caption, LV_LABEL_LONG_MODE_DOTS);
+    lv_label_set_text(caption, tile->label);
     lv_obj_align(caption, LV_ALIGN_CENTER, 0, ui_theme.widget.caption_dy);
 
     lv_obj_t *bar = lv_obj_create(obj);
