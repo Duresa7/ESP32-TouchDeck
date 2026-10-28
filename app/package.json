@@ -10,9 +10,10 @@
     "package:windows": "python scripts/package_windows.py build",
     "package:verify": "python scripts/package_windows.py verify",
     "tauri": "tauri",
-    "lint": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
-    "test": "node --test \"src/lib/*.test.ts\" \"src/lib/*/*.test.ts\" \"e2e/*.test.ts\"",
-    "e2e": "wdio run e2e/wdio.conf.ts"
+    "lint": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings && pnpm --filter @touchdeck/electron lint",
+    "test": "node --test \"src/lib/*.test.ts\" \"src/lib/*/*.test.ts\" \"e2e/*.test.ts\" && pnpm --filter @touchdeck/electron test",
+    "e2e": "wdio run e2e/wdio.conf.ts",
+    "dev:electron": "pnpm --filter @touchdeck/electron dev"
   },
   "dependencies": {
     "@tauri-apps/api": "~2.11.1"

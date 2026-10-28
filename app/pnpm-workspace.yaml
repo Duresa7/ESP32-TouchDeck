@@ -1,4 +1,7 @@
+packages:
+  - electron
 allowBuilds:
   edgedriver: false
   esbuild: true
+  electron: true
   geckodriver: false

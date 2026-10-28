@@ -1,0 +1,19 @@
+{
+  "name": "@touchdeck/electron",
+  "version": "0.2.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "test": "pnpm build && node --test tests/*.test.mjs",
+    "e2e": "pnpm build && playwright test",
+    "dev": "pnpm build && node dev.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/node": "^26.6.5",
+    "electron": "45.1.0",
+    "typescript": "^6.0.3"
+  }
+}
