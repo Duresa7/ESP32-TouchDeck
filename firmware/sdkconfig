@@ -2526,6 +2526,13 @@ CONFIG_TD_PAY_COPY_DEBT=y
 # end of TouchDeck display
 
 #
+# TouchDeck UI
+#
+# default:
+CONFIG_TD_UI_SKIP_NOOP_SETS=y
+# end of TouchDeck UI
+
+#
 # IoT Button
 #
 # default:
