@@ -329,9 +329,9 @@ the screen shows. Each is on by default, and menuconfig can turn it off:
 
 `CONFIG_TD_PERF_TOOLS`, in the menu `TouchDeck perf tools (test builds only)`,
 adds measurement commands for performance work. It stays off in `sdkconfig` and
-`sdkconfig.defaults`, and off the firmware compiles to the same code as without
-it. A perf build goes to a directory of its own with a config of its own, on top
-of the shipped defaults. From `firmware/`:
+`sdkconfig.defaults`, and while it is off the firmware compiles to the same code
+as without it. A perf build goes to a directory of its own with a config of its
+own, on top of the shipped defaults. From `firmware/`:
 
 ```sh
 idf.py -B <abs>/build-perf -D SDKCONFIG=<abs>/build-perf/sdkconfig \
@@ -380,12 +380,12 @@ settings on the deck stay as they are. `perf` then also takes:
   minimum free, and largest free internal RAM and free PSRAM after each boot
   stage. `perf mem heaps` prints ESP-IDF's per-heap summary of internal RAM to
   the log and replies with the totals. `perf mem last` reports what the previous
-  boot saved when it restarted: the latest runtime sample of each heap's free and
-  minimum free size and each task's stack high-water mark, with `boot`, the boot
-  that saved them. Sampling runs every two seconds; `uptime_ms` is the sample's
-  time. The shutdown handler only copies that completed record. Otherwise
-  it replies `"saved":false`, with `stale_boot` when an older boot's record is
-  left. A panic, a watchdog, or a power cut saves nothing.
+  boot saved when it restarted: its latest sample, taken every two seconds, of
+  each heap's free and minimum free size and each task's stack high-water mark,
+  with `boot`, the boot that saved it, and `uptime_ms`, the sample's time. When
+  the previous boot saved nothing it replies `"saved":false`, with `stale_boot`
+  when an older boot's record is left. A panic, a watchdog, or a power cut saves
+  nothing.
 - `perf cpu <seconds>` replies when the time is up with each core's busy share and
   each task's share of one core.
 - `perf fb prep` redraws the whole screen three times, so all three panel frame
