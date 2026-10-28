@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import type { Layout } from '../editor/validate.ts';
 import { geometry, screenSize, tileRect } from './geometry.ts';
-import { buildDots, buildPage, buildTitle, fitLabel, missingGlyphs, sampleRows, sampleWidget } from './scene.ts';
+import { buildDots, buildPage, buildTitle, fitLabel, FONTS, missingGlyphs, sampleRows, sampleWidget } from './scene.ts';
+import { layoutLabel } from './text.ts';
 import { panelColor, THEME } from './theme.ts';
 
 const examples = join(import.meta.dirname, '..', '..', '..', '..', 'schema', 'examples');
@@ -94,6 +95,40 @@ test('a dashboard page lays its rows down the grid, 8 rows tall', () => {
   assert.equal(buildPage(load('dev.json').pages[3], landscape).rows.length, 0);
 });
 
+test('a dashboard row wraps its text only as far as the row holds, the last line cut with dots', () => {
+  const dashboard = load('dev.json').pages[3];
+  const rows = () => [
+    { label: 'claude jordan.k', value: '5h 100% 7d 100%', bar: 1 },
+    { label: 'WWWWWWWWWWWWWWWW', value: '0000000000000000', bar: -1 },
+  ];
+  const uncut = (value: string, g: typeof landscape) => layoutLabel(value, FONTS[28], { width: g.dashValueX - 2 * THEME.dash.pad });
+
+  // A landscape row is 51 px, one 30 px line, so a value wider than its 220 px column stays on one line.
+  const wide = buildPage(dashboard, landscape, { rows });
+  const [label, value] = wide.rows[0].texts;
+  assert.deepEqual(label.label, uncut('claude jordan.k', landscape));
+  assert.equal(label.y, 25 - 15);
+  assert.deepEqual(shown(value), ['5h 100% 7d 1...']);
+  assert.deepEqual([value.label.width, value.label.height, value.y], [220, 30, 25 - 15]);
+  assert.deepEqual(shown(wide.rows[1].texts[0]), ['WWWWWWWWW...']);
+
+  // A portrait row is 104 px, three lines. Text on two lines wraps as it always did, and a fourth line is cut.
+  const portrait = geometry(screenSize('portrait'));
+  const tall = buildPage(dashboard, portrait, { rows });
+  const [twoLines, twoValues] = tall.rows[0].texts;
+  assert.deepEqual(twoLines.label, uncut('claude jordan.k', portrait));
+  assert.deepEqual(shown(twoValues), ['5h 100% ', '7d 100%']);
+  assert.equal(twoValues.y, 52 - 30);
+  const cut = tall.rows[1].texts[0];
+  assert.equal(uncut('WWWWWWWWWWWWWWWW', portrait).lines.length, 4);
+  assert.deepEqual([cut.label.height, cut.y, cut.label.lines.length], [90, 52 - 45, 3]);
+  assert.match(shown(cut)[2], /^W+\.\.\.$/);
+
+  // A full-screen landscape row is 68 px, so two lines fit there.
+  const full = buildPage(dashboard, geometry(screenSize('landscape'), true), { rows });
+  assert.deepEqual(shown(full.rows[1].texts[1]), ['000000000000', '0000']);
+});
+
 test('the title and dots follow the page, and a full-screen layout draws neither', () => {
   const title = buildTitle('Media', landscape)!;
   assert.deepEqual([title.x, title.y, title.size, title.color], [36, 14, 28, THEME.color.title]);
@@ -103,6 +138,18 @@ test('the title and dots follow the page, and a full-screen layout draws neither
   const full = geometry(screenSize('landscape'), true);
   assert.equal(buildTitle('Media', full), null);
   assert.deepEqual(buildDots(full, 2, 0), []);
+});
+
+test('a title too wide for the screen stays on one line, cut with dots short of the right margin', () => {
+  const portrait = geometry(screenSize('portrait'));
+  const fits = buildTitle('Usage on every account', portrait)!;
+  assert.deepEqual(fits.label.lines, layoutLabel('Usage on every account', FONTS[28]).lines);
+  assert.deepEqual([fits.x, fits.y, fits.label.height], [36, 14, 30]);
+  // 24 W are 768 px, wider than the 528 px between the margins of a portrait screen.
+  const wide = buildTitle('W'.repeat(24), portrait)!;
+  assert.equal(wide.label.width, 600 - 2 * 36);
+  assert.deepEqual(shown(wide), [`${'W'.repeat(15)}...`]);
+  assert.deepEqual(shown(buildTitle('W'.repeat(24), landscape)!), ['W'.repeat(24)]);
 });
 
 test('characters outside the deck font are listed once', () => {

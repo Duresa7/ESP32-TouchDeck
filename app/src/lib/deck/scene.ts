@@ -172,8 +172,11 @@ function buildRows(g: Geometry, rows: RowSample[]): RowView[] {
   const { dash, color } = THEME;
   const rowH = div(g.grid.h - (dash.rowsMax - 1) * dash.rowGap, dash.rowsMax);
   const barMax = g.grid.w - g.dashBarX - dash.pad;
+  // row_label: wrapped in its column for as many whole lines as the row holds, the last ending in dots when cut.
+  const maxH = div(rowH, FONTS[28].lineHeight) * FONTS[28].lineHeight;
   const cell = (value: string, x: number, width: number, tint: string, align: Align = 'left') => {
-    const label = layoutLabel(value, FONTS[28], { width, align });
+    const height = Math.min(textSize(codepoints(value), FONTS[28], width).h, maxH);
+    const label = layoutLabel(value, FONTS[28], { width, height, align, dots: true });
     return text(label, 28, tint, { x, y: div(rowH, 2) - div(label.height, 2) });
   };
   return rows.slice(0, dash.rowsMax).map((row, i) => {
@@ -197,10 +200,11 @@ export function buildPage(page: Page, g: Geometry, options: SceneOptions = {}): 
   return { id: page.id, title: page.title, kind: page.kind, tiles: page.tiles.map((tile) => buildTile(page, tile, g, options)), rows: [] };
 }
 
-/** The page title at the top left, or null on a full-screen layout. */
+/** The page title at the top left, one line cut with dots to the screen less its margin each side, or null on a full-screen layout. */
 export function buildTitle(title: string, g: Geometry): TextView | null {
   if (g.fullScreen) return null;
-  return text(layoutLabel(title, FONTS[28]), 28, THEME.color.title, { x: g.titleX, y: g.titleY });
+  const label = layoutLabel(title, FONTS[28], { width: g.screen.w - 2 * g.titleX, height: FONTS[28].lineHeight, dots: true });
+  return text(label, 28, THEME.color.title, { x: g.titleX, y: g.titleY });
 }
 
 /** The page dots, the current one widened into a pill, or none on a full-screen layout. */

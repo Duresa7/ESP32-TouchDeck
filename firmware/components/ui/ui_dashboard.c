@@ -21,13 +21,19 @@ void ui_dashboard_begin(void)
     s_pages = 0;
 }
 
-static lv_obj_t *row_label(lv_obj_t *row, int32_t x, int32_t w)
+/* Text wraps in its column for as many whole lines as a row_h tall row holds, and the last of them ends in dots when
+ * there is more, so a long label or value never runs out of its row. Text that fits wraps and sits where it always
+ * did, though a first letter that reaches left of its box, such as j, now shows the 1 to 3 px the old clip mode cut.
+ * LVGL's dots mode needs its own writable copy of the text, which ui_dashboard_draw gives it. */
+static lv_obj_t *row_label(lv_obj_t *row, int32_t x, int32_t w, int32_t row_h)
 {
+    const int32_t line_h = lv_font_get_line_height(ui_theme.font_caption);
     lv_obj_t *label = lv_label_create(row);
     lv_obj_add_style(label, &ui_styles()->tile_caption, 0);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_width(label, w);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_CLIP);
+    lv_obj_set_style_max_height(label, row_h / line_h * line_h, 0);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
     lv_label_set_text_static(label, "");
     lv_obj_align(label, LV_ALIGN_LEFT_MID, x, 0);
     return label;
@@ -58,8 +64,8 @@ void ui_dashboard_build(lv_obj_t *page_obj, const ui_page_t *page)
         lv_obj_set_hidden(row, true);
 
         rows[i].row = row;
-        rows[i].label = row_label(row, t->dash.pad, g->dash_value_x - 2 * t->dash.pad);
-        rows[i].value = row_label(row, g->dash_value_x, g->dash_bar_x - g->dash_value_x - t->dash.pad);
+        rows[i].label = row_label(row, t->dash.pad, g->dash_value_x - 2 * t->dash.pad, row_h);
+        rows[i].value = row_label(row, g->dash_value_x, g->dash_bar_x - g->dash_value_x - t->dash.pad, row_h);
         lv_obj_set_style_text_color(rows[i].value, ui_color(t->color.text), 0);
 
         lv_obj_t *bar = lv_obj_create(row);

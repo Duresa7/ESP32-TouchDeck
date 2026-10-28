@@ -326,7 +326,7 @@ the screen shows. Each is on by default, and menuconfig can turn it off:
   sets a label's text or a widget's text opacity only when the label would
   change, so an update that repeats the shown values draws no frame. A label
   cut with dots is always set again, so a repeated value too long for its tile
-  still redraws.
+  or row still redraws.
 
 ### Perf tools (test builds only)
 

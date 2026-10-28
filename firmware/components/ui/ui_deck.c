@@ -116,7 +116,7 @@ static void sync_title(int32_t track_x)
     nearest = nearest < 0 ? 0 : nearest;
     if (nearest != s.title_page) {
         s.title_page = (uint8_t)nearest;
-        lv_label_set_text_static(s.title, s.pages[nearest].title);
+        lv_label_set_text(s.title, s.pages[nearest].title);
     }
 }
 
@@ -547,12 +547,16 @@ static void build_objects(bool full_screen)
         build_page(i);
     }
 
-    /* A full-screen layout gives the title and dot strips to the tiles, so it draws neither. */
+    /* A full-screen layout gives the title and dot strips to the tiles, so it draws neither. The title is one line, cut
+     * with dots short of a right margin as wide as the left one. LVGL's dots mode needs its own writable copy of the
+     * text, so the title is set with lv_label_set_text. */
     if (!full_screen) {
         s.title = lv_label_create(screen);
         s.title_page = 0;
-        lv_label_set_text_static(s.title, s.pages[0].title);
         lv_obj_add_style(s.title, &ui_styles()->title, 0);
+        lv_obj_set_size(s.title, g->screen.w - 2 * g->title_x, lv_font_get_line_height(ui_theme.font_title));
+        lv_label_set_long_mode(s.title, LV_LABEL_LONG_MODE_DOTS);
+        lv_label_set_text(s.title, s.pages[0].title);
         lv_obj_set_pos(s.title, g->title_x, g->title_y);
     }
     if (td_recovery_mode()) {
