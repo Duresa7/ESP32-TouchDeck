@@ -69,6 +69,9 @@ impl Outbound {
 #[derive(Debug)]
 struct State {
     hello: Hello,
+    v2: bool,
+    selected_v2: bool,
+    device_name: String,
     settings: Settings,
     icons: BTreeSet<String>,
     icon_files: HashMap<String, Vec<u8>>,
@@ -143,6 +146,9 @@ impl MockDeck {
         MockDeck {
             state: Arc::new(Mutex::new(State {
                 hello,
+                v2: false,
+                selected_v2: false,
+                device_name: "Open TouchDeck".into(),
                 settings: Settings::default(),
                 icons: BTreeSet::new(),
                 icon_files: HashMap::new(),
@@ -182,6 +188,16 @@ impl MockDeck {
         }
     }
 
+    pub fn v2() -> Self {
+        let device = Self::new();
+        device.state().v2 = true;
+        device
+    }
+
+    pub fn usb_serial(&self) -> &'static str {
+        "02:00:00:00:00:01"
+    }
+
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap()
     }
@@ -208,6 +224,7 @@ impl MockDeck {
         let (to_host, from_deck) = mpsc::channel::<Vec<u8>>();
         let generation = {
             let mut state = self.state();
+            state.selected_v2 = false;
             state.generation += 1;
             state.link = Some(to_host.clone());
             state.generation
@@ -816,6 +833,10 @@ impl MockDeck {
         {
             let mut state = self.state();
             state.frames_rx += 1;
+            if state.last_rx.is_some_and(|at| at.elapsed() >= ONLINE_FOR) {
+                state.selected_v2 = false;
+                state.online_since_hello = false;
+            }
             state.last_rx = Some(Instant::now());
         }
         let (Role::Request(seq), Body::Message(payload)) = (frame.role, frame.body) else {
@@ -860,9 +881,64 @@ impl MockDeck {
             "hello" => {
                 let mut state = self.state();
                 state.online_since_hello = true;
-                Ok(object(
-                    serde_json::to_value(&state.hello).expect("hello serializes"),
-                ))
+                let mut reply =
+                    object(serde_json::to_value(&state.hello).expect("hello serializes"));
+                if state.v2 {
+                    if request.keys().any(|k| k != "m" && k != "proto")
+                        || request.get("proto").is_some_and(|p| p.as_u64().is_none())
+                    {
+                        return Ok(object(
+                            json!({"ok":false,"reason":"args","error":"Invalid protocol selector"}),
+                        ));
+                    }
+                    let proto = request.get("proto").and_then(Value::as_u64).unwrap_or(1);
+                    if proto != 1 && proto != 2 {
+                        return Ok(object(
+                            json!({"ok":false,"reason":"unsupported","error":"Unsupported protocol"}),
+                        ));
+                    }
+                    state.selected_v2 = proto == 2;
+                    reply.insert("protocols".into(), json!([1, 2]));
+                    if proto == 2 {
+                        reply.insert("proto".into(), json!(2));
+                        reply.insert("id".into(), json!("020000000001"));
+                        reply.insert("name".into(), json!(state.device_name));
+                        reply.insert("caps".into(), json!({"screen":[1024,600],"grid":[8,8],"pages":8,"tiles":64,
+                            "layout_bytes":32768,"layout_schemas":[1],"free_bytes":4096,"tile_kinds":["static"],
+                            "asset_bytes":12300,"formats":["tdi1"],"image":[64,64],"gif_frames":0,"gif_pixels":0,
+                            "photo_bytes":0,"live_hz":0,"live_total_hz":0,"series":0,"text_bytes":0,"streams":0}));
+                    }
+                }
+                Ok(reply)
+            }
+            m if m.starts_with("v2.") && self.state().v2 => {
+                let mut state = self.state();
+                let reason = if !state.selected_v2 || !state.online_since_hello {
+                    Some("not-negotiated")
+                } else if m != "v2.name.get" && m != "v2.name.set" {
+                    Some("unsupported")
+                } else if request
+                    .keys()
+                    .any(|k| k != "m" && !(m == "v2.name.set" && k == "name"))
+                    || (m == "v2.name.set"
+                        && !request
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .is_some_and(crate::identity::valid_name))
+                {
+                    Some("args")
+                } else {
+                    None
+                };
+                if let Some(reason) = reason {
+                    return Ok(object(
+                        json!({"ok":false,"reason":reason,"error":"Request refused"}),
+                    ));
+                }
+                if m == "v2.name.set" {
+                    state.device_name = request["name"].as_str().unwrap().into();
+                }
+                Ok(object(json!({"name":state.device_name})))
             }
             "ping" => {
                 let t = self.state().booted.elapsed().as_millis() as u64;
