@@ -391,6 +391,10 @@ settings on the deck stay as they are. `perf` then also takes:
   nothing.
 - `perf cpu <seconds>` replies when the time is up with each core's busy share and
   each task's share of one core.
+- The task lists of `perf mem`, `perf mem last` and `perf cpu` read each name
+  from the running system without stopping the other core. A task that ends at
+  that moment is left out or shows a garbled name. The read stops at the name's
+  length limit, and the figures beside it are unaffected.
 - `perf fb prep` redraws the whole screen three times, so all three panel frame
   buffers hold the same frame. `perf fb check` redraws nothing. It takes a
   snapshot, copies each panel buffer to PSRAM with the LVGL lock held, and
