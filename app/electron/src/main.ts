@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
-import { connect, restartMessage, revoke, runtimePath, type WindowSession } from './companion';
+import { connect, devUiOrigin, restartMessage, revoke, runtimePath, type WindowSession } from './companion';
 
 app.setName('Open TouchDeck');
 if (process.platform === 'win32') app.setAppUserModelId('io.github.duresa7.touchdeck');
@@ -11,6 +11,14 @@ let current: WindowSession | undefined;
 let closing = false;
 let delivered = false;
 let refreshing: Promise<string | null> | undefined;
+// Development only: show the UI dev server, which proxies /api to the Companion and mints its own session,
+// in place of the Companion's page. It never gets the window session: `session` answers only the Companion origin.
+const devUi = app.isPackaged ? undefined : devUiOrigin(process.env.TOUCHDECK_UI_DEV_URL);
+
+/** The origin the window shows and may navigate within. */
+function pageOrigin(session: WindowSession): string {
+  return devUi ?? session.origin;
+}
 
 function startCompanion() {
   const binary = app.isPackaged
@@ -29,7 +37,7 @@ function trusted(event: Electron.IpcMainInvokeEvent): boolean {
 }
 
 function sameOrigin(url: string): boolean {
-  try { return new URL(url).origin === current?.origin; } catch { return false; }
+  try { return !!current && new URL(url).origin === pageOrigin(current); } catch { return false; }
 }
 
 function external(url: string) {
@@ -47,9 +55,9 @@ async function refresh(): Promise<string | null> {
   const previous = current;
   current = next;
   if (previous) await revoke(previous).catch(() => {});
-  if (window.webContents.mainFrame.origin !== next.origin) {
+  if (window.webContents.mainFrame.origin !== pageOrigin(next)) {
     delivered = false;
-    await window.loadURL(next.origin);
+    await window.loadURL(pageOrigin(next));
     return null;
   }
   window.webContents.send('session-changed', next.token);
@@ -95,7 +103,7 @@ async function openWindow() {
       app.quit();
     })();
   });
-  await window.loadURL(current.origin);
+  await window.loadURL(pageOrigin(current));
 }
 
 if (!app.requestSingleInstanceLock()) app.quit();

@@ -1,7 +1,12 @@
 packages:
   - electron
+  - ui
+
 allowBuilds:
   edgedriver: false
   esbuild: true
   electron: true
   geckodriver: false
+
+minimumReleaseAgeExclude:
+  - lucide-react@1.63.0

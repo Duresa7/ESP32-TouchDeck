@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFile, unlink } from 'node:fs/promises';
-import { connect, revoke, runtimePath, restartMessage } from '../dist/companion.js';
+import { connect, devUiOrigin, revoke, runtimePath, restartMessage } from '../dist/companion.js';
 import { fakeCompanion } from './fake-companion.mjs';
 
 test('proof precedes mint, only window sessions are issued, and close revokes', async () => {
@@ -50,4 +50,13 @@ test('runtime paths honor overrides and platform contract', () => {
   assert.match(runtimePath({ TOUCHDECK_APP_DATA_DIR: 'scratch' }), /scratch[\\/]runtime[\\/]companion.json$/);
   assert.match(runtimePath({ XDG_RUNTIME_DIR: 'runtime' }, 'linux'), /runtime[\\/]touchdeck[\\/]companion.json$/);
   assert.match(runtimePath({ LOCALAPPDATA: 'local' }, 'win32'), /local[\\/]io.github.duresa7.touchdeck[\\/]runtime/);
+});
+
+test('the UI dev server override accepts only a loopback http origin', () => {
+  assert.equal(devUiOrigin(undefined), undefined);
+  assert.equal(devUiOrigin('http://127.0.0.1:5174/'), 'http://127.0.0.1:5174');
+  for (const url of ['http://localhost:5174/', 'https://127.0.0.1:5174/', 'http://127.0.0.1/', 'http://127.0.0.1:5174/app',
+    'http://127.0.0.1:5174/?x=1', 'http://user@127.0.0.1:5174/', 'http://evil.example:5174/', 'not a url']) {
+    assert.throws(() => devUiOrigin(url), undefined, url);
+  }
 });

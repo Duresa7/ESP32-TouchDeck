@@ -1,0 +1,545 @@
+/* The app shell, built from tokens.css. docs/design.md explains each part. Never write a raw color here. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-stretch: var(--stretch-text);
+  font-size: var(--text-14);
+  line-height: var(--leading-14);
+  font-weight: var(--weight-regular);
+  color: var(--ink);
+  background: var(--mat);
+  -webkit-font-smoothing: antialiased;
+  font-optical-sizing: auto;
+  transition:
+    background-color var(--duration-theme) ease,
+    color var(--duration-theme) ease;
+}
+
+/* The desk mat: a faint felt grain under everything. Desktop only; the Device never draws it. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--mat-grain);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 1.4 -0.2'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: multiply;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) body::before {
+    mix-blend-mode: screen;
+  }
+}
+
+:root[data-theme='dark'] body::before {
+  mix-blend-mode: screen;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+
+/* The one focus ring */
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Screens ---------- */
+
+.screen {
+  max-width: 1040px;
+  padding: var(--space-10) var(--space-12) 120px;
+}
+
+.page-head {
+  margin-bottom: var(--space-6);
+}
+
+.page-title {
+  margin: 0;
+  font-size: var(--text-24);
+  line-height: var(--leading-24);
+  letter-spacing: var(--track-24);
+  font-weight: var(--weight-semibold);
+  font-stretch: var(--stretch-plate);
+}
+
+.page-lede {
+  margin: var(--space-2) 0 0;
+  color: var(--ink-2);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  max-width: 440px;
+}
+
+.empty-start {
+  align-items: flex-start;
+  text-align: start;
+  margin-top: var(--space-12);
+}
+
+.empty-title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-24);
+  line-height: var(--leading-24);
+  letter-spacing: var(--track-24);
+  font-weight: var(--weight-semibold);
+  font-stretch: var(--stretch-plate);
+}
+
+.empty-text {
+  margin: 0 0 var(--space-6);
+  font-size: var(--text-16);
+  line-height: var(--leading-16);
+  letter-spacing: var(--track-16);
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+/* ---------- Home ---------- */
+
+.home {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-12) var(--space-12) 120px;
+}
+
+.device-cards {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.device-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 240px;
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-group);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-float);
+}
+
+.device-name {
+  font-size: var(--text-18);
+  line-height: var(--leading-18);
+  letter-spacing: var(--track-18);
+  font-weight: var(--weight-semibold);
+  font-stretch: var(--stretch-plate);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- Status lights ---------- */
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.led {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--led-off);
+}
+
+.status.is-live .led {
+  background: var(--live-led);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--live-led) 18%, transparent);
+}
+
+/* ---------- Buttons ---------- */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-size: var(--text-14);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-hover) ease,
+    color var(--duration-hover) ease,
+    transform var(--duration-press) var(--ease-out);
+}
+
+.button:active {
+  transform: scale(var(--press-scale));
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .button:hover {
+    background: color-mix(in srgb, var(--surface-raised), var(--ink) 5%);
+  }
+}
+
+.button-primary {
+  border-color: transparent;
+  background: var(--button-primary-bg);
+  color: var(--button-primary-ink);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .button-primary:hover {
+    background: color-mix(in srgb, var(--button-primary-bg), var(--button-primary-ink) 14%);
+  }
+}
+
+.button-small {
+  height: 28px;
+  padding: 0 10px;
+  font-size: var(--text-12);
+}
+
+.button[aria-expanded='true'] {
+  background: var(--fill-active);
+}
+
+/* Disabled looks different from quiet: no edge, a flat fill, faint text, no press */
+.button:disabled,
+.button[aria-disabled='true'] {
+  border-color: transparent;
+  background: var(--fill-disabled);
+  color: var(--ink-disabled);
+  cursor: not-allowed;
+  transform: none;
+}
+
+.button-quiet-danger {
+  border-color: transparent;
+  background: transparent;
+  color: var(--danger-ink);
+}
+
+.button-icon {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .button-icon:hover {
+    background: var(--fill-hover);
+    color: var(--ink);
+  }
+}
+
+/* ---------- Nav cluster (bottom left) ---------- */
+
+.nav-dock {
+  position: fixed;
+  left: var(--space-4);
+  bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  z-index: 10;
+}
+
+.nav-puck {
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  border-radius: var(--radius-group);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-float);
+}
+
+.nav-button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-hover) ease,
+    color var(--duration-hover) ease,
+    transform var(--duration-press) var(--ease-out);
+}
+
+.nav-button:active {
+  transform: scale(var(--press-scale));
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .nav-button:hover {
+    color: var(--ink);
+    background: var(--fill-hover);
+  }
+}
+
+.nav-button.is-current {
+  color: var(--ink);
+  background: var(--fill-active);
+}
+
+/* The Update icon's puck. #87 draws inside it. */
+.update-slot {
+  flex: none;
+  display: flex;
+  filter: var(--shadow-float-filter);
+}
+
+/* ---------- Tooltip ---------- */
+
+.tooltip {
+  padding: 5px 9px;
+  border-radius: 7px;
+  background: var(--button-primary-bg);
+  color: var(--button-primary-ink);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  font-weight: var(--weight-medium);
+  transform-origin: var(--transform-origin);
+  transition:
+    opacity var(--duration-tooltip) var(--ease-out),
+    transform var(--duration-tooltip) var(--ease-out);
+}
+
+.tooltip[data-starting-style],
+.tooltip[data-ending-style] {
+  opacity: 0;
+  transform: scale(0.96);
+}
+
+/* Later tooltips in the cluster open at once */
+.tooltip[data-instant] {
+  transition-duration: 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tooltip[data-starting-style],
+  .tooltip[data-ending-style] {
+    transform: none;
+  }
+}
+
+/* ---------- Dialogs ---------- */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  transition: opacity var(--duration-dialog) var(--ease-out);
+}
+
+.scrim[data-starting-style],
+.scrim[data-ending-style] {
+  opacity: 0;
+}
+
+.scrim[data-ending-style] {
+  transition-duration: var(--duration-exit);
+}
+
+.dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  translate: -50% -50%;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: var(--space-6);
+  border-radius: var(--radius-sheet);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-dialog);
+  color: var(--ink);
+  transition:
+    opacity var(--duration-dialog) var(--ease-out),
+    scale var(--duration-dialog) var(--ease-out);
+}
+
+/* Opened with the pointer, the dialog itself holds focus and shows no ring */
+.dialog:focus-visible {
+  outline: none;
+}
+
+.dialog[data-starting-style],
+.dialog[data-ending-style] {
+  opacity: 0;
+  scale: 0.97;
+}
+
+.dialog[data-ending-style] {
+  transition-duration: var(--duration-exit);
+}
+
+/* Reduced motion: the dialog fades without growing */
+@media (prefers-reduced-motion: reduce) {
+  .dialog {
+    transition-property: opacity;
+  }
+
+  .dialog[data-starting-style],
+  .dialog[data-ending-style] {
+    scale: 1;
+  }
+}
+
+.dialog-settings {
+  width: 600px;
+  padding: var(--space-5) var(--space-6) var(--space-6);
+}
+
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 -6px var(--space-2) 0;
+}
+
+.dialog-title {
+  margin: 0;
+  font-size: var(--text-18);
+  line-height: var(--leading-18);
+  letter-spacing: var(--track-18);
+  font-weight: var(--weight-semibold);
+  font-stretch: var(--stretch-plate);
+}
+
+/* ---------- Settings rows ---------- */
+
+.settings-section {
+  margin-top: var(--space-5);
+}
+
+.settings-section h3 {
+  margin: 0 0 var(--space-2) 2px;
+  font-size: var(--text-14);
+  line-height: var(--leading-14);
+  font-weight: var(--weight-semibold);
+}
+
+.group {
+  border-radius: var(--radius-group);
+  background: var(--surface-inset);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 56px;
+  padding: var(--space-3) var(--space-4);
+}
+
+.row + .row {
+  border-top: 1px solid var(--line);
+}
+
+.row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.row-title {
+  font-weight: var(--weight-medium);
+}
+
+.row-sub {
+  margin-top: 2px;
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+}
+
+/* A meaningful empty value, such as no paired browsers */
+.row-note {
+  color: var(--ink-2);
+}
+
+/* ---------- Segmented control ---------- */
+
+.segmented {
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--fill-hover);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.segment {
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-hover) ease,
+    color var(--duration-hover) ease;
+}
+
+.segment[data-pressed] {
+  background: var(--surface-raised);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.segment[data-disabled] {
+  color: var(--ink-disabled);
+  cursor: not-allowed;
+}

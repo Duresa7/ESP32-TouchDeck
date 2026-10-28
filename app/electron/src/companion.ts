@@ -14,6 +14,17 @@ export function runtimePath(env = process.env, platform = process.platform): str
   throw new Error('Companion runtime directory is unavailable');
 }
 
+/** The UI dev server's origin, which only unpackaged builds load instead of the Companion's own page. */
+export function devUiOrigin(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const url = new URL(value);
+  if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.pathname !== '/' ||
+      url.search || url.hash || url.username || url.password) {
+    throw new Error('TOUCHDECK_UI_DEV_URL must be http://127.0.0.1:PORT/');
+  }
+  return url.origin;
+}
+
 async function readRuntime(path: string): Promise<Runtime> {
   const value = JSON.parse(await readFile(path, 'utf8'));
   if (value.version !== 1 || !Array.isArray(value.api)) throw new Error(restartMessage);
