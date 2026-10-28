@@ -137,6 +137,9 @@ pub(super) async fn upgrade(
     Extension(client): Extension<ClientInfo>,
     ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
 ) -> Result<Response, CommonError> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    ctx.handler_hits
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let ws = ws.map_err(|e| CommonError::invalid("upgrade", e.body_text()))?;
     ctx.auth.lock().socket_open(&client.id)?;
     let lease = Lease {
@@ -147,6 +150,7 @@ pub(super) async fn upgrade(
     Ok(ws
         .protocols(["touchdeck.v1"])
         .max_message_size(4096)
+        .max_frame_size(4096)
         .on_upgrade(move |socket| async move {
             let _lease = lease;
             serve(socket, ctx, client).await;
@@ -156,6 +160,15 @@ fn numbered(mut value: serde_json::Value, seq: &mut u64) -> Message {
     value["seq"] = (*seq).into();
     *seq += 1;
     Message::Text(value.to_string().into())
+}
+/// Every send waits at most this long. A reader that stalls longer loses its socket.
+const SEND_TIMEOUT: Duration = Duration::from_secs(2);
+type Sink = futures_util::stream::SplitSink<WebSocket, Message>;
+async fn send(sink: &mut Sink, message: Message) -> bool {
+    matches!(
+        tokio::time::timeout(SEND_TIMEOUT, sink.send(message)).await,
+        Ok(Ok(()))
+    )
 }
 async fn serve(socket: WebSocket, ctx: Ctx, client: ClientInfo) {
     let subscriber = ctx.events.subscribe();
@@ -176,7 +189,7 @@ async fn serve(socket: WebSocket, ctx: Ctx, client: ClientInfo) {
     hello["type"] = Hello::NAME.into();
     let sync = frame(&Sync(snapshot));
     for value in [hello, sync] {
-        if sink.send(numbered(value, &mut seq)).await.is_err() {
+        if !send(&mut sink, numbered(value, &mut seq)).await {
             return;
         }
     }
@@ -184,16 +197,17 @@ async fn serve(socket: WebSocket, ctx: Ctx, client: ClientInfo) {
     let mut ping = tokio::time::interval(Duration::from_secs(20));
     ping.tick().await;
     let mut missed = 0;
-    let code = loop {
+    // `Some(code)` closes with that code. `None` drops the connection: a send already failed,
+    // so a close frame would stall too.
+    let close: Option<u16> = loop {
         if !ctx.auth.lock().active(&client.id) {
-            let revoked = frame(&AuthRevoked {});
-            let _ = sink.send(numbered(revoked, &mut seq)).await;
-            break 4401;
+            let revoked = numbered(frame(&AuthRevoked {}), &mut seq);
+            break send(&mut sink, revoked).await.then_some(4401);
         }
         let next = {
             let mut queue = subscriber.queue.lock();
             if queue.overflow {
-                break 4008;
+                break Some(4008);
             }
             let next = queue.frames.pop_front();
             if let Some((_, size)) = &next {
@@ -202,10 +216,8 @@ async fn serve(socket: WebSocket, ctx: Ctx, client: ClientInfo) {
             next
         };
         if let Some((value, _)) = next {
-            let sent =
-                tokio::time::timeout(Duration::from_secs(2), sink.send(numbered(value, &mut seq)));
-            if !matches!(sent.await, Ok(Ok(()))) {
-                break 4008;
+            if !send(&mut sink, numbered(value, &mut seq)).await {
+                break None;
             }
             continue;
         }
@@ -213,28 +225,31 @@ async fn serve(socket: WebSocket, ctx: Ctx, client: ClientInfo) {
             _ = subscriber.notify.notified() => {}
             _ = shutdown.changed() => {
                 let stopping = frame(&CompanionStopping { reason: "shutdown".into() });
-                let _ = sink.send(numbered(stopping, &mut seq)).await;
-                break 1001;
+                break send(&mut sink, numbered(stopping, &mut seq)).await.then_some(1001);
             }
             _ = ping.tick() => {
                 if missed >= 2 {
-                    break 1001;
+                    break Some(1001);
                 }
                 missed += 1;
-                if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
-                    break 1001;
+                if !send(&mut sink, Message::Ping(Vec::new().into())).await {
+                    break None;
                 }
             }
             message = stream.next() => match message {
                 Some(Ok(Message::Pong(_))) => missed = 0,
-                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break 1000,
+                Some(Ok(Message::Close(_))) => break Some(1000),
+                // A protocol error, such as a frame over the size limit, or a closed stream.
+                None | Some(Err(_)) => break None,
                 _ => {}
             },
         }
     };
-    let close = Message::Close(Some(CloseFrame {
-        code,
-        reason: "".into(),
-    }));
-    let _ = tokio::time::timeout(Duration::from_secs(2), sink.send(close)).await;
+    if let Some(code) = close {
+        let frame = CloseFrame {
+            code,
+            reason: "".into(),
+        };
+        send(&mut sink, Message::Close(Some(frame))).await;
+    }
 }

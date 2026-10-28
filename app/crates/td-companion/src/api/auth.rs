@@ -407,3 +407,29 @@ fn ping_feature() -> Feature {
     Feature::new("system").route::<Ping>(Access::Public)
 }
 inventory::submit! { Registration(ping_feature) }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_full_table_prunes_revoked_sessions_without_sockets() {
+        let mut auth = Auth::new();
+        let now = Instant::now();
+        let mut ids = Vec::new();
+        for _ in 0..MAX_SESSIONS {
+            ids.push(auth.mint(None, now).unwrap().id);
+        }
+        assert!(auth.mint(None, now).is_err());
+        auth.socket_open(&ids[0]).unwrap();
+        for s in auth.sessions.values_mut() {
+            s.revoked = true;
+        }
+        let fresh = auth.mint(None, now).unwrap();
+        // The revoked row with an open socket stays, so the global socket cap still counts it.
+        assert_eq!(auth.sessions.len(), 2);
+        let open: usize = auth.sessions.values().map(|s| s.sockets).sum();
+        assert_eq!(open, 1);
+        assert!(auth.active(&fresh.id));
+    }
+}
