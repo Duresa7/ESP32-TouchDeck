@@ -211,9 +211,10 @@ No token ever goes in a query string. Close codes:
 | Code | Meaning |
 |---|---|
 | 4401 | The session is invalid, expired or revoked |
-| 4403 | The `Origin` isn't allowed |
 | 4008 | The client is too slow (see Backpressure) |
 | 1001 | The Companion is shutting down |
+
+A refused `Host` or `Origin` never reaches a socket: the upgrade gets HTTP 421 or 403 with the error body.
 
 ### Command approvals happen on the PC
 
@@ -327,7 +328,7 @@ pub enum BoardProbe { Silent, Busy { detail: String }, OtherFirmware { product: 
 
 ### Topics
 
-The client sends `{"op": "subscribe", "topic": "console", "device": "a0b1c2d3e4f5"}` or the same with `"op": "unsubscribe"`.
+The client sends `{"op": "subscribe", "topic": "console", "device": "a0b1c2d3e4f5"}` or the same with `"op": "unsubscribe"`. Until the first opt-in topic ships, the Companion accepts these and ignores them, and the socket stays open.
 
 | Topic | Default | Carries |
 |---|---|---|

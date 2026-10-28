@@ -301,3 +301,25 @@ async fn maintenance_forgets_ended_sessions() {
     assert_eq!(code(td.token.clone()).await, "ok");
     socket.close(None).await.unwrap();
 }
+
+#[tokio::test]
+async fn subscribe_is_accepted_and_ignored() {
+    let td = TestCompanion::start().await;
+    let mut socket = td.events().await;
+    for op in ["subscribe", "unsubscribe"] {
+        socket
+            .send(Message::text(
+                json!({"op": op, "topic": "console", "device": "mock0001"}).to_string(),
+            ))
+            .await
+            .unwrap();
+    }
+    td.plug_device("mock0001").await;
+    let frame = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let frame: Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+    assert_eq!(frame["type"], "device.added");
+}
