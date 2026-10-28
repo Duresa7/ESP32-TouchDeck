@@ -2523,6 +2523,8 @@ CONFIG_VFS_INITIALIZE_DEV_NULL=y
 #
 # default:
 CONFIG_TD_PAY_COPY_DEBT=y
+# default:
+CONFIG_TD_LV_TICK_CB=y
 # end of TouchDeck display
 
 #

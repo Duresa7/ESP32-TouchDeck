@@ -37,4 +37,12 @@ menu "TouchDeck display"
             The pixels on the panel stay the same. Off, the next refreshes pay the copies, so the first tap after a
             page slide waits for them.
 
+    config TD_LV_TICK_CB
+        bool "Read LVGL's clock from esp_timer instead of a 1 ms tick timer"
+        default y
+        help
+            LVGL reads its millisecond clock from esp_timer_get_time() through lv_tick_set_cb(), and the adapter's
+            tick timer, which otherwise wakes the esp_timer task every millisecond to call lv_tick_inc(), gets the
+            longest period the adapter accepts, about 71.6 minutes. Off, the adapter's 1 ms timer drives the clock.
+
 endmenu

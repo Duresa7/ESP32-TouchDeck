@@ -22,6 +22,11 @@
 #define FIRST_FRAME_TIMEOUT_MS 1500
 #define SNAPSHOT_ALIGN 64
 #define PERF_TICK_MS 1
+#if CONFIG_TD_LV_TICK_CB
+/* The adapter starts its tick timer with a period of tick_period_ms * 1000 microseconds in 32 bits, so this is the
+ * longest it takes, about 71.6 minutes. */
+#define ADAPTER_TICK_PERIOD_MAX_MS (UINT32_MAX / 1000)
+#endif
 
 static const char *TAG = "display";
 
@@ -62,6 +67,14 @@ static esp_err_t alloc_snapshot_buffer(void)
     ESP_RETURN_ON_FALSE(res == LV_RESULT_OK, ESP_FAIL, TAG, "snapshot buffer init");
     return ESP_OK;
 }
+
+#if CONFIG_TD_LV_TICK_CB
+/* LVGL's millisecond clock. It wraps after 49.7 days like LVGL's own counter, which lv_tick_diff allows for. */
+static uint32_t lv_tick_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
+#endif
 
 bool display_ready(void)
 {
@@ -122,7 +135,16 @@ esp_err_t display_start(bool portrait, display_build_fn build)
     adapter.task_stack_size = LVGL_TASK_STACK;
     adapter.stack_in_psram = true;
     adapter.task_core_id = LVGL_TASK_CORE;
+#if CONFIG_TD_LV_TICK_CB
+    /* LVGL reads its clock from lv_tick_ms, so the timer that would call lv_tick_inc every millisecond waits its
+     * longest period instead, and the lv_tick_inc it then makes changes nothing LVGL reads. */
+    adapter.tick_period_ms = ADAPTER_TICK_PERIOD_MAX_MS;
+#endif
     ESP_RETURN_ON_ERROR(esp_lv_adapter_init(&adapter), TAG, "adapter init");
+#if CONFIG_TD_LV_TICK_CB
+    /* esp_lv_adapter_init ran lv_init, which clears the tick callback. */
+    lv_tick_set_cb(lv_tick_ms);
+#endif
 #if CONFIG_TD_PERF_TOOLS
     display_perf_boot_mark("adapter");
 #endif
