@@ -429,3 +429,4 @@ key. Source builds carry no updater key and say that release signing is not
 configured. The first installation always comes from the installer on GitHub
 Releases. Source and portable copies are replaced by hand: close the app, then
 rebuild or extract the new copy.
+
