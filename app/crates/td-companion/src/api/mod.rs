@@ -443,7 +443,7 @@ fn with_security_headers(mut response: Response, port: u16) -> Response {
     }
     let csp = format!(
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
-         img-src 'self' blob: data:; connect-src 'self' ws://127.0.0.1:{port} ws://localhost:{port}; \
+         img-src 'self' blob: data:; connect-src 'self' ws://127.0.0.1:{port}; \
          font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; \
          frame-ancestors 'none'"
     );

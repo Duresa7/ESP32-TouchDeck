@@ -9,12 +9,14 @@ pub struct RequestMeta<'a> {
     pub get: bool,
 }
 pub fn admit(meta: &RequestMeta<'_>, port: u16) -> Result<(), CommonError> {
-    let hosts = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
-    if !hosts.iter().any(|s| Some(s.as_str()) == meta.host) {
+    // Only 127.0.0.1 is bound. `localhost` could resolve to `[::1]`, where another process
+    // may listen on the same port.
+    let host = format!("127.0.0.1:{port}");
+    if meta.host != Some(host.as_str()) {
         return Err(CommonError::Host);
     }
     if let Some(origin) = meta.origin
-        && !hosts.iter().any(|h| origin == format!("http://{h}"))
+        && origin != format!("http://{host}")
     {
         return Err(CommonError::Origin);
     }
@@ -32,19 +34,23 @@ mod tests {
     use crate::api::ApiError;
     #[test]
     fn admission_matrix() {
-        for host in ["127.0.0.1:50000", "localhost:50000"] {
-            assert!(
-                admit(
-                    &RequestMeta {
-                        host: Some(host),
-                        ..Default::default()
-                    },
-                    50000
-                )
-                .is_ok()
-            );
-        }
-        for host in [None, Some("evil.example:50000"), Some("127.0.0.1:1")] {
+        assert!(
+            admit(
+                &RequestMeta {
+                    host: Some("127.0.0.1:50000"),
+                    ..Default::default()
+                },
+                50000
+            )
+            .is_ok()
+        );
+        for host in [
+            None,
+            Some("evil.example:50000"),
+            Some("127.0.0.1:1"),
+            Some("localhost:50000"),
+            Some("[::1]:50000"),
+        ] {
             assert_eq!(
                 admit(
                     &RequestMeta {
@@ -58,7 +64,12 @@ mod tests {
                 "security.host"
             );
         }
-        for origin in ["null", "https://127.0.0.1:50000", "http://evil.example"] {
+        for origin in [
+            "null",
+            "https://127.0.0.1:50000",
+            "http://evil.example",
+            "http://localhost:50000",
+        ] {
             assert!(
                 admit(
                     &RequestMeta {

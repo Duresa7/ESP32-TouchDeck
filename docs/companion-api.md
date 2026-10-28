@@ -98,8 +98,8 @@ Tower layers apply these to every request, including static UI files and the Web
 
 | # | Check | Passes | Fails with |
 |---|---|---|---|
-| 1 | `Host` | Exactly `127.0.0.1:PORT` or `localhost:PORT`. A missing `Host` fails | 421 `security.host` |
-| 2 | `Origin`, if present | Exactly `http://127.0.0.1:PORT` or `http://localhost:PORT`. `null` fails | 403 `security.origin` |
+| 1 | `Host` | Exactly `127.0.0.1:PORT`. A missing `Host` fails, and so does `localhost:PORT`: only `127.0.0.1` is bound, and `localhost` can resolve to `[::1]`, where another process may listen on the same port | 421 `security.host` |
+| 2 | `Origin`, if present | Exactly `http://127.0.0.1:PORT`. `null` fails | 403 `security.origin` |
 | 3 | `Sec-Fetch-Site`, if present, on `/api/*` | `same-origin` or `none` | 403 `security.origin` |
 | 4 | `Sec-Fetch-Site`, if present, on static `GET`s | Anything with `Sec-Fetch-Mode: navigate`, otherwise `same-origin` or `none` | 403 `security.origin` |
 | 5 | Auth on `/api/v1/*`, except the public routes below | A valid `Authorization: Bearer tds_…`, or the WebSocket subprotocol | 401 `auth.missing`, `auth.invalid`, `auth.revoked` or `auth.expired` |
@@ -138,7 +138,7 @@ Every response, API and static, carries:
 
 ```
 Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
-  img-src 'self' blob: data:; connect-src 'self' ws://127.0.0.1:PORT ws://localhost:PORT;
+  img-src 'self' blob: data:; connect-src 'self' ws://127.0.0.1:PORT;
   font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 X-Frame-Options: DENY
 X-Content-Type-Options: nosniff
@@ -832,7 +832,7 @@ Required integration tests in `crates/td-companion/tests/`:
 5. **Approvals.** A command Tile press creates one `approval.requested` and runs nothing. A second press of the same Tile adds no request. The scripted `once` runs it and sends `approval.resolved`. After 5 minutes of test clock, an unanswered request resolves as `expired`. `actions.allowed_remove` makes the next press ask again. `release_router_answers_no_approvals` passes.
 6. **Auth attacks.** Each request is rejected with the stated code and never reaches a handler:
    - no token, a wrong token, a revoked token, an expired browser session (7 days of test clock),
-   - a foreign `Host`, a missing `Host`, and `localhost` against `127.0.0.1`,
+   - a foreign `Host`, a missing `Host`, `localhost:PORT` and `[::1]:PORT`,
    - a foreign `Origin` and `Origin: null`,
    - `Sec-Fetch-Site: cross-site`,
    - a WebSocket with a foreign `Origin`, and one without the bearer subprotocol,

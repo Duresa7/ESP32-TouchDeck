@@ -48,6 +48,7 @@ async fn pairing_listing_and_removal() {
 #[tokio::test]
 async fn requests_are_rejected_before_shutdown() {
     let td = TestCompanion::start().await;
+    let port = td.url.rsplit(':').next().unwrap().to_owned();
     let cases = [
         ("authorization", "", 401, "auth.missing"),
         ("authorization", "Bearer wrong", 401, "auth.invalid"),
@@ -55,8 +56,15 @@ async fn requests_are_rejected_before_shutdown() {
         ("host", "", 421, "security.host"),
         ("host", "127.0.0.1", 421, "security.host"),
         ("host", "localhost", 421, "security.host"),
-        ("host", "localhost:1", 421, "security.host"),
+        ("host", &format!("localhost:{port}"), 421, "security.host"),
+        ("host", &format!("[::1]:{port}"), 421, "security.host"),
         ("origin", "http://evil.example", 403, "security.origin"),
+        (
+            "origin",
+            &format!("http://localhost:{port}"),
+            403,
+            "security.origin",
+        ),
         ("origin", "null", 403, "security.origin"),
         ("sec-fetch-site", "cross-site", 403, "security.origin"),
         ("content-type", "text/plain", 415, "request.media_type"),
@@ -69,9 +77,16 @@ async fn requests_are_rejected_before_shutdown() {
         if !value.is_empty() || header == "host" {
             req = req.header(header, value);
         }
+        let hits = td.handler_hits();
         let response = req.send().await.unwrap();
+        assert_eq!(td.handler_hits(), hits, "{header} reached a handler");
         assert_eq!(response.status().as_u16(), status, "{header}");
         assert_eq!(response.headers()["x-frame-options"], "DENY");
+        let csp = response.headers()["content-security-policy"]
+            .to_str()
+            .unwrap();
+        assert!(csp.contains(&format!("connect-src 'self' ws://127.0.0.1:{port};")));
+        assert!(!csp.contains("localhost"));
         let body: Value = response.json().await.unwrap();
         assert_eq!(body["error"]["code"], code);
         assert!(
@@ -85,6 +100,7 @@ async fn requests_are_rejected_before_shutdown() {
             "rejection must not shut down the Companion"
         );
     }
+    let hits = td.handler_hits();
     // A cross-site form post carries a foreign Origin and no token.
     let response = td
         .raw()
@@ -106,15 +122,6 @@ async fn requests_are_rejected_before_shutdown() {
         .await
         .unwrap();
     assert_eq!(response.status(), 415);
-    assert!(
-        td.raw()
-            .get("/api/v1/system/ping")
-            .send()
-            .await
-            .unwrap()
-            .status()
-            .is_success()
-    );
     let response = td
         .raw()
         .request(reqwest::Method::OPTIONS, "/api/v1/system/shutdown")
@@ -129,12 +136,13 @@ async fn requests_are_rejected_before_shutdown() {
             .keys()
             .any(|h| h.as_str().starts_with("access-control-"))
     );
-    let port = td.url.rsplit(':').next().unwrap();
+    // None of the last three reached a handler, and nothing asked the Companion to stop.
+    assert_eq!(td.handler_hits(), hits);
+    assert!(!td.shutdown_requested());
     assert!(
         td.raw()
             .get("/api/v1/devices")
             .bearer_auth(&td.token)
-            .header("host", format!("localhost:{port}"))
             .send()
             .await
             .unwrap()
