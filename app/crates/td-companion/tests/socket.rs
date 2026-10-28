@@ -248,3 +248,56 @@ async fn shutdown_says_stopping_then_closes_with_1001() {
         Some(1001)
     );
 }
+
+#[tokio::test]
+async fn maintenance_forgets_ended_sessions() {
+    let td = TestCompanion::start().await;
+    let code = |token: String| {
+        let td = &td;
+        async move {
+            let response = td
+                .raw()
+                .get("/api/v1/devices")
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap();
+            let body: Value = response.json().await.unwrap_or(Value::Null);
+            body["error"]["code"].as_str().unwrap_or("ok").to_owned()
+        }
+    };
+    let revoked = window_session(&td).await;
+    let idle = window_session(&td).await;
+    let mut socket = td.events().await;
+    let list: Vec<Value> = td
+        .raw()
+        .get("/api/v1/auth/sessions")
+        .bearer_auth(&revoked)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = list.iter().find(|s| s["current"] == true).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    td.raw()
+        .request(
+            reqwest::Method::DELETE,
+            &format!("/api/v1/auth/sessions/{id}"),
+        )
+        .bearer_auth(&td.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(code(revoked.clone()).await, "auth.revoked");
+    td.clock().advance(Duration::from_secs(61));
+    td.maintain().await;
+    assert_eq!(code(revoked).await, "auth.invalid");
+    assert_eq!(code(idle).await, "auth.invalid");
+    // A session with an open socket is kept, however long it lasts.
+    assert_eq!(code(td.token.clone()).await, "ok");
+    socket.close(None).await.unwrap();
+}

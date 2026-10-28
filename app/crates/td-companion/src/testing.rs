@@ -77,6 +77,10 @@ impl TestCompanion {
         let _ = self.ctx.shutdown.send(true);
         tokio::time::timeout(within, &mut self.task).await.is_ok()
     }
+    /// Runs one 60 s maintenance step now.
+    pub async fn maintain(&self) {
+        assert!(crate::process::maintain(&self.ctx).await);
+    }
     /// Whether anything asked the Companion to stop.
     pub fn shutdown_requested(&self) -> bool {
         *self.ctx.shutdown.borrow()

@@ -658,7 +658,7 @@ Features add codes as they land. This list is the starting set.
 | `security.origin` | 403 | The `Origin` or `Sec-Fetch-Site` isn't allowed |
 | `auth.missing` | 401 | No token |
 | `auth.invalid` | 401 | The token is unknown |
-| `auth.revoked` | 401 | The session was revoked or pairing was reset |
+| `auth.revoked` | 401 | The session was revoked, its window closed, or pairing was reset. The 60 s check then forgets a session with no open WebSocket, and its token gets `auth.invalid` |
 | `auth.expired` | 401 | A browser session passed 7 days idle |
 | `auth.forbidden` | 403 | The session kind or lock ownership forbids this route, such as a browser minting a pairing code or taking the install lock |
 | `auth.code_invalid` | 401 | The pairing code is wrong, used or expired |

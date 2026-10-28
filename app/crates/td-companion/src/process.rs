@@ -19,6 +19,12 @@ pub(crate) async fn rewrite_runtime(ctx: &Ctx) -> bool {
         .await
         .unwrap_or(false)
 }
+/// The 60 s maintenance step: sweeps ended sessions, then checks the runtime file. Returns
+/// false when the Companion must stop.
+pub(crate) async fn maintain(ctx: &Ctx) -> bool {
+    ctx.sweep_sessions();
+    rewrite_runtime(ctx).await
+}
 fn root() -> std::io::Result<PathBuf> {
     std::env::var_os("TOUCHDECK_APP_DATA_DIR")
         .map(PathBuf::from)
@@ -120,7 +126,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let maintenance = tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(60)).await;
-            if !rewrite_runtime(&repair).await {
+            if !maintain(&repair).await {
                 let _ = repair.shutdown.send(true);
                 break;
             }

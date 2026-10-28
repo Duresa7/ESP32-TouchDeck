@@ -201,6 +201,13 @@ impl Auth {
         s.sockets += 1;
         Ok(())
     }
+    /// Drops sessions that were revoked or have ended once their last socket is gone, so a
+    /// later use of the token reads as unknown. Returns how many rows remain.
+    pub(crate) fn sweep(&mut self, now: Instant) -> usize {
+        self.sessions
+            .retain(|_, s| s.sockets > 0 || !(s.revoked || s.expired(now)));
+        self.sessions.len()
+    }
     pub(crate) fn socket_close(&mut self, id: &str, now: Instant) {
         if let Some(s) = self.sessions.values_mut().find(|s| s.info.id == id) {
             s.sockets = s.sockets.saturating_sub(1);
@@ -431,5 +438,28 @@ mod tests {
         let open: usize = auth.sessions.values().map(|s| s.sockets).sum();
         assert_eq!(open, 1);
         assert!(auth.active(&fresh.id));
+    }
+
+    #[test]
+    fn the_sweep_keeps_live_sessions_and_sessions_with_sockets() {
+        let mut auth = Auth::new();
+        let start = Instant::now();
+        let revoked = auth.mint(None, start).unwrap().id;
+        let idle = auth.mint(None, start).unwrap().id;
+        let connected = auth.mint(None, start).unwrap().id;
+        let revoked_connected = auth.mint(None, start).unwrap().id;
+        auth.socket_open(&connected).unwrap();
+        auth.socket_open(&revoked_connected).unwrap();
+        for s in auth.sessions.values_mut() {
+            if s.info.id == revoked || s.info.id == revoked_connected {
+                s.revoked = true;
+            }
+        }
+        assert_eq!(auth.sweep(start), 3);
+        let later = start + WINDOW_IDLE;
+        assert_eq!(auth.sweep(later), 2);
+        let left: Vec<_> = auth.sessions.values().map(|s| s.info.id.clone()).collect();
+        assert!(left.contains(&connected) && left.contains(&revoked_connected));
+        assert!(!left.contains(&idle));
     }
 }
