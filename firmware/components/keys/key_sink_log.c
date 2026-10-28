@@ -30,6 +30,12 @@ void key_sink_log_init(key_sink_log_t *l, key_log_entry_t *entries, size_t cap, 
 
 esp_err_t key_sink_log_start(key_sink_log_t *l)
 {
+#if CONFIG_TD_LAZY_KEY_RECORD
+    key_sink_log_init(l, NULL, 0, NULL, NULL);
+    l->record_on_start = true;
+    ESP_LOGI(TAG, "started, record holds %u reports once started", (unsigned)KEY_LOG_RECORD_CAP);
+    return ESP_OK;
+#else
     key_log_entry_t *entries = heap_caps_malloc(KEY_LOG_RECORD_CAP * sizeof *entries, MALLOC_CAP_SPIRAM);
     key_sink_log_init(l, entries, KEY_LOG_RECORD_CAP, NULL, NULL);
     if (entries == NULL) {
@@ -38,6 +44,7 @@ esp_err_t key_sink_log_start(key_sink_log_t *l)
     }
     ESP_LOGI(TAG, "started, record holds %u reports", (unsigned)KEY_LOG_RECORD_CAP);
     return ESP_OK;
+#endif
 }
 
 static void take(void *ctx, const key_report_t *report)
@@ -125,6 +132,20 @@ uint32_t key_sink_log_seq(const key_sink_log_t *l)
 
 void key_sink_log_record_start(key_sink_log_t *l)
 {
+#if CONFIG_TD_LAZY_KEY_RECORD
+    /* Only the control calls change entries, and they run on one task, so this check needs no lock. A failed
+     * allocation leaves a record of 0, which counts every report in dropped, and the next start tries again. */
+    if (l->record_on_start && l->entries == NULL) {
+        key_log_entry_t *entries = heap_caps_malloc(KEY_LOG_RECORD_CAP * sizeof *entries, MALLOC_CAP_SPIRAM);
+        if (entries == NULL) {
+            ESP_LOGE(TAG, "no PSRAM for the record of %u reports", (unsigned)KEY_LOG_RECORD_CAP);
+        }
+        taskENTER_CRITICAL(&l->lock);
+        l->entries = entries;
+        l->cap = entries ? KEY_LOG_RECORD_CAP : 0;
+        taskEXIT_CRITICAL(&l->lock);
+    }
+#endif
     taskENTER_CRITICAL(&l->lock);
     l->count = 0;
     l->dropped = 0;

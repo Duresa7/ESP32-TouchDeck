@@ -2530,6 +2530,13 @@ CONFIG_TD_LAZY_SNAPSHOT_BUF=y
 # end of TouchDeck display
 
 #
+# TouchDeck keys
+#
+# default:
+CONFIG_TD_LAZY_KEY_RECORD=y
+# end of TouchDeck keys
+
+#
 # TouchDeck UI
 #
 # default:
