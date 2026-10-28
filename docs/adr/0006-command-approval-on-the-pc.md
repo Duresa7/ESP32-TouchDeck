@@ -6,6 +6,8 @@ The API can push a Layout, and a Layout can hold a command Tile. If a session co
 
 Approval covers every action that starts a process: commands, program launches, and opening anything other than an `http`, `https` or `mailto` URL. An approval is tied to the exact program, arguments, working folder and shell, so changing any of them asks again. Sessions may remove an approval, because that only takes access away.
 
+The same native dialog confirms Firmware writes that cannot be undone: installing on a New board, repair, and downgrades. It names the target, its port, the current Firmware if known and the bundle version; consent binds to that target and bundle. The Job waits for confirmation, and declining writes nothing. Same-or-newer bundled updates stay one click. While a native approval or Firmware confirmation dialog shows, the Companion suppresses key input from every Device so it cannot answer the dialog.
+
 ## Considered options
 
 - **Answer approvals in the UI, as today.** One click in the app the user is already looking at. It makes every API auth defect a remote code execution, and a browser tab is harder to trust than the window.

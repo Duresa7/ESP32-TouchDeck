@@ -55,8 +55,8 @@ All secrets come from the OS random source (`getrandom`). Tokens are base64url w
 |---|---|---|---|---|
 | Pairing token | `tdp_` + 43 chars | 256 bits | Until the next Companion start or Reset pairing | `runtime/companion.json`, readable only by the user |
 | Window session token | `tds_` + 43 chars | 256 bits | Until its window closes or the Companion exits | Companion memory and Electron main memory only |
-| Browser session token | `tds_` + 43 chars | 256 bits | 7 days after its last use | Browser `localStorage`. The Companion keeps only `SHA-256(token)` in `runtime/sessions.json` |
-| Pairing code | 12 Crockford base32 chars shown as `XXXX-XXXX-XXXX` | 60 bits | 120 s, single use, at most 5 outstanding (the oldest is evicted) | Companion memory only |
+| Browser session token | `tds_` + 43 chars | 256 bits | Until the Companion exits, 7 days idle, revoke or Reset pairing | Browser `localStorage`; `SHA-256(token)` only in Companion memory |
+| Pairing code | 12 Crockford base32 chars shown as `XXXX-XXXX-XXXX` | 60 bits | 120 s, single use, at most one outstanding (a new code replaces the old) | Companion memory only |
 
 - The Companion compares the pairing token with `subtle::ConstantTimeEq`.
 - It looks up session tokens by `SHA-256(token)`. The hash input is secret, so lookup timing leaks nothing useful.
@@ -65,7 +65,7 @@ All secrets come from the OS random source (`getrandom`). Tokens are base64url w
 
 ### Port and runtime file
 
-**Port.** On first run the Companion picks a random free port in 49152 to 65535 and saves it in `companion-settings.json`, which isn't secret. Later starts reuse it, so browser bookmarks and `localStorage`, which is scoped to `127.0.0.1:PORT`, survive restarts. If the port is taken, the Companion picks and saves a new one, and browsers must pair again. The tray says so.
+**Port.** On first run the Companion picks a random free port in 49152 to 65535 and saves it in `companion-settings.json`, which isn't secret. Later starts reuse it so browser bookmarks keep working. `localStorage` is scoped to `127.0.0.1:PORT`, but its token no longer represents a valid session after a restart; the browser clears it on 401 and pairs again. If the port is taken, the Companion picks and saves a new one, and browsers must pair again. The tray says so.
 
 **Location.** `%LOCALAPPDATA%\io.github.duresa7.touchdeck\runtime\companion.json`, built from `dirs::data_local_dir()` and `td_core::app_dirs::APP_ID`.
 
@@ -87,7 +87,7 @@ All secrets come from the OS random source (`getrandom`). Tokens are base64url w
 3. Create `runtime\.companion.json.<pid>.tmp` with `CreateFileW(CREATE_NEW)` and `SECURITY_ATTRIBUTES` from `O:<SID>D:P(A;;FA;;;<SID>)`. The file is private from its first byte.
 4. Write it, call `FlushFileBuffers`, then `MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)`. A rename on one volume keeps the file's own security descriptor.
 5. Read the final file's security with `GetNamedSecurityInfoW`. The DACL must be protected, hold exactly one allow entry for the user's SID, and the owner must be the user. Otherwise the Companion deletes the file, refuses to serve the API, and shows a tray error.
-6. Write the file only after the listener is bound. Delete it on clean shutdown. `runtime\sessions.json` is written the same way.
+6. Write the file only after the listener is bound. Delete it on clean shutdown. Sessions are never written to disk.
 7. Every 60 s, check that the file still exists with the same DACL. If it's gone or changed, rewrite it with the same token.
 
 **Single instance.** A named mutex `Local\touchdeck-companion`. `Local\` is per sign-in session, so two signed-in users get two Companions, each with its own port and file.
@@ -110,6 +110,22 @@ Tower layers apply these to every request, including static UI files and the Web
 - **CORS.** The Companion never sends `Access-Control-*` headers. A preflight `OPTIONS` carries a foreign `Origin` and fails rule 2.
 - **CSRF.** No credential is ambient, so a forged request carries no token. Requiring `application/json` also blocks plain cross-site form posts before auth runs.
 - Requests without `Origin`, such as Electron main, tests and scripts, pass rules 2 to 4 and still need auth.
+
+### Limits
+
+These initial limits are reversible; changing them requires updating this contract and its saturation tests.
+
+| Resource | Limit |
+|---|---|
+| Pending uploads | 8 per session, 64 MiB pending across the Companion; reserve count and bytes while receiving, free on consumption, expiry or session end |
+| Decoded images | At most 4096×4096 pixels; GIFs also at most 300 frames and 64 MiB total decoded data |
+| Asset render Jobs | 2 at a time across the Companion |
+| WebSockets | 4 per session, 16 across the Companion |
+| Socket queues | 1024 frames or 4 MiB per socket, whichever comes first; overflow follows Backpressure |
+| Pending approvals | 16 across the Companion, including the displayed request; deny and log new requests above the cap |
+| `approvals.show` | At most once every 5 s per request, shared across sessions |
+
+Size and decode limits return 413 `request.too_large` (or that code in a render Job's error if decoding has begun). Count, aggregate capacity and rate limits return 429 `limits.exceeded`; Device-originated approvals above the cap are denied and logged with that code. Checks reserve capacity atomically before allocating work and release it on failure or completion. Device event floods must not starve Layout Jobs.
 
 ### Response headers
 
@@ -144,10 +160,10 @@ Hashed static files override `Cache-Control` with `public, max-age=31536000, imm
 The user starts pairing from **Open in browser** in the tray or in the window. The Companion mints a pairing code and does three things with it:
 
 1. It opens `http://127.0.0.1:PORT/pair#code=XXXX-XXXX-XXXX` in the default browser. The code is in the fragment, which browsers never send to a server or in a `Referer`.
-2. It shows the code in the tray's pairing notification. If the window started pairing, the window shows it too, with a **Copy link** button for a browser that isn't the default.
+2. It shows the code for typing by hand only in a native tray notification. The window never displays or copies the code or link. Pairing codes never appear in API responses; `POST /auth/pair-codes` returns only `{expires_ms}` after the Companion opens the default browser itself.
 3. If a browser drops the fragment when the link is opened, the Companion opens `/pair?code=…` instead. The query form is allowed because the code is single-use, lasts 120 s and never leaves loopback. The page removes it with `history.replaceState(null, '', '/pair')` before doing anything else.
 
-The `/pair` page reads the code from the fragment, the query, or a text field where the user types it. Input ignores case, spaces and dashes, and reads `O` as `0` and `I` or `L` as `1`. The page sends `POST /api/v1/auth/pair` with `{code, label}`, where `label` comes from the user agent (for example "Edge on Windows"), and receives `{id, token}`. It stores the token in `localStorage` as `touchdeck.session`, then goes to `/`.
+The `/pair` page says "Pair this browser again after the Companion restarts." It reads the code from the fragment, the query, or a text field where the user types it. Input ignores case, spaces and dashes, and reads `O` as `0` and `I` or `L` as `1`. The page sends `POST /api/v1/auth/pair` with `{code, label}`, where `label` comes from the user agent (for example "Edge on Windows"), and receives `{id, token}`. It stores the token in `localStorage` as `touchdeck.session`, then goes to `/`.
 
 - A used, expired or wrong code returns 401 `auth.code_invalid`. The page says "This pairing code has expired or is wrong. Choose Open in browser from the tray icon again."
 - After the lockout it returns 429 `auth.code_locked`.
@@ -159,11 +175,11 @@ The `/pair` page reads the code from the fragment, the query, or a text field wh
 | | Window session | Browser session |
 |---|---|---|
 | Minted by | Electron main, with the pairing token | `POST /auth/pair`, with a pairing code |
-| Stored | Memory only, in the Companion and Electron main | Browser `localStorage`. The Companion stores only its SHA-256 hash |
-| Ends when | Its window closes (`DELETE /auth/sessions/self`), the Companion exits, or no WebSocket from it has been open for 60 s | 7 days pass without a request, or it's revoked |
+| Stored | Memory only, in the Companion and Electron main | Browser `localStorage`. The Companion stores its SHA-256 hash only in memory |
+| Ends when | Its window closes (`DELETE /auth/sessions/self`), the Companion exits, or no WebSocket from it has been open for 60 s | The Companion exits, 7 days pass without a request, or it is revoked or pairing is reset |
 | Can mint pairing codes | Yes | No |
 
-- `last_used_ms` is written to disk at most once an hour.
+- `last_used_ms` stays in Companion memory; no session state is persisted. At most one pairing code is pending, and Reset pairing invalidates it.
 - **Settings → Sessions** lists every session (`GET /auth/sessions`) with its kind, label, created time and last use. The caller's own row is marked. Each row has **Revoke** (`DELETE /auth/sessions/{id}`). **Sign out all browsers** is `DELETE /auth/sessions?kind=browser`. **Reset pairing** is `POST /auth/reset`.
 - Any session may revoke any session or reset pairing, because both only take access away.
 
@@ -171,8 +187,8 @@ The `/pair` page reads the code from the fragment, the query, or a text field wh
 
 | Trigger | Pairing token | Window sessions | Browser sessions | What clients see |
 |---|---|---|---|---|
-| Companion start | New | All gone | Kept | The window mints a new session silently. Browsers keep working |
-| **Reset pairing** in Settings or the tray | New. The file is rewritten atomically and the old token is rejected at once | Revoked | Revoked | Every WebSocket gets `auth.revoked`, then close 4401. In-flight calls get 401 `auth.revoked`. The window mints a new session silently. Browsers show "This browser was signed out. Pair it again from the tray icon." |
+| Companion start | New | All gone | All gone | The window mints a new session silently. Browsers must pair again |
+| **Reset pairing** in Settings or the tray | New; pending pairing codes are invalidated. The file is rewritten atomically and the old token is rejected at once | Revoked | Revoked | Every WebSocket gets `auth.revoked`, then close 4401. In-flight calls get 401 `auth.revoked`. The window mints a new session silently. Browsers show "This browser was signed out. Pair it again from the tray icon." |
 | Revoke one session | Unchanged | That one, if it's a window session | That one, if it's a browser session | That client gets 4401 and the sign-out message. A revoked window mints again through Electron main |
 | 7 days idle | Unchanged | Not affected | That one expires | 401 `auth.expired`, then the `/pair` page |
 | `companion.json` deleted or changed while running | Unchanged | Not affected | Not affected | Nothing. The 60 s check rewrites it |
@@ -200,6 +216,7 @@ No token ever goes in a query string. Close codes:
 
 - **What needs approval.** Every action that starts a process: a command, a program launch, and opening anything other than an `http`, `https` or `mailto` URL. The custom command Integration (#101) follows the same rule. An approval is keyed by a hash of the action kind, program, arguments, working folder and shell.
 - **The dialog.** The Companion's `ApprovalPrompter` shows a native task dialog it owns. It names the Device, the Page and the Tile, and shows the full program, arguments, working folder and shell. The buttons are **Run once**, **Always allow** and **Deny**. Deny is the default. One dialog shows at a time. Others wait in order.
+- **Device input.** While any approval or Firmware confirmation dialog is showing, the Companion injects no key input from any Device. It drops that input rather than replaying it later, and the key mirror reports `outcome: "suppressed"` so Device input cannot answer the dialog.
 - **Repeats.** Pressing the same Tile again while its request is pending adds no second request.
 - **Expiry.** A request nobody answers expires after 5 minutes and is logged as `expired`.
 - **Foreground.** Windows may keep a tray program's dialog from taking focus, so the tray also shows a notification. `POST /approvals/{id}/show` shows the dialog again.
@@ -210,9 +227,11 @@ No token ever goes in a query string. Close codes:
 
 A session can install only two kinds of Firmware bundle: the one bundled with the Companion, or a `.tdfw` file the user picks in a native file dialog that the Companion opens. No route accepts bundle bytes.
 
-- `POST /firmware/bundles/pick` opens the dialog on the PC, filtered to `*.tdfw`. It returns `{bundle: BundleInfo | null}`, where `null` means the user cancelled. The Companion parses and checks the file with `Bundle::parse` and keeps it for 1 hour under a `BundleId`.
+- `POST /firmware/bundles/pick` takes `{device}` (the Device or New board id) and opens the dialog on the PC, filtered to `*.tdfw`. It returns `{bundle: BundleInfo | null}`, where `null` means the user cancelled. The Companion parses and checks the file with `Bundle::parse` and keeps it for 10 minutes under a single-use `BundleId` bound to that Device. A different target cannot use it; accepting a Job consumes it, even if the user later declines.
 - A second pick while a dialog is open gets 409 `system.dialog_open`.
 - Firmware routes take `{bundle: "bundled" | BundleId}`.
+- `firmware.install` on a New board, every `firmware.repair`, and a `firmware.update` to an older version wait for a native PC confirmation dialog owned by the Companion. It names the exact target, its port, what it runs now if known, and the bundle version. Consent is bound to that target and bundle; no API request can grant it. Until consent, no write starts and the Job state is `waiting_for_confirmation`. Declining fails the Job with `firmware.declined`.
+- Updating to the bundled build when it is the same or newer needs no confirmation and stays one click.
 
 Image uploads for Assets stay on the API (`POST /uploads`). The Companion decodes and re-renders every image to the Device's Tile size, and nothing it uploads is ever run.
 
@@ -336,7 +355,7 @@ The client sends `{"op": "subscribe", "topic": "console", "device": "a0b1c2d3e4f
 
 ### Backpressure
 
-Each client has a queue of 1024 frames.
+Each socket has a queue of at most 1024 frames or 4 MiB, whichever comes first (see Limits).
 
 - Opt-in topics drop frames on overflow and send `lagged`.
 - If a `state` frame would overflow, the server closes with 4008. The client reconnects and gets a fresh `sync`, so state stays correct and a slow tab never stalls a Device.
@@ -352,7 +371,7 @@ pub struct Job {
     pub id: JobId,                 // "job_" + 16 random chars
     pub kind: &'static str,        // see the table below
     pub scope: JobScope,           // Device(DeviceId) | NewBoard(DeviceId) | Companion
-    pub state: JobState,           // queued | running | succeeded | failed | cancelled
+    pub state: JobState,           // queued | waiting_for_confirmation | running | succeeded | failed | cancelled
     pub progress: Value,           // typed per kind in TypeScript
     pub result: Option<Value>,     // typed per kind
     pub error: Option<ErrorBody>,  // the same shape as an HTTP error
@@ -363,16 +382,16 @@ pub struct Job {
 
 | Kind | Progress | Result | Cancellable |
 |---|---|---|---|
-| `firmware.update`, `firmware.repair`, `firmware.install` | `{phase: "checking" \| "sending" \| "rebooting" \| "confirming" \| "recovering", pct?}` | `{message, version}` | While `checking` or `sending`, because the image goes to the inactive OTA slot |
+| `firmware.update`, `firmware.repair`, `firmware.install` | `{phase: "checking" \| "sending" \| "rebooting" \| "confirming" \| "recovering", pct?}` | `{message, version}` | While waiting for confirmation; during `checking` or `sending` only when the image goes to the inactive OTA slot |
 | `layouts.push` | `{assets_sent, assets_total, bytes_sent, bytes_total}` | `PushReport {state, bytes, chunks, retransmits, elapsed_ms, assets: {sent, unavailable}}` | Before the Layout put starts |
 | `assets.render` | `{frames_done, frames_total}` | `AssetRef {id, kind, width, height, bytes}` | Yes |
 | `assets.prune` | `{removed, total}` | `{removed: AssetId[]}` | Yes |
 
-- **One running Job per scope.** A second one gets 409 `device.busy` with `details.job` set to the running Job, so a double click can attach to it. There's no queue.
-- `GET /jobs` lists running Jobs and the last 50 finished ones, kept for 10 minutes. `GET /jobs/{id}` reads one. `DELETE /jobs/{id}` cancels one, or returns 409 `job.not_cancellable`.
+- **One active Job per Device or New board scope**, including `waiting_for_confirmation`. A second one gets 409 `device.busy` with `details.job` set to the active Job, so a double click can attach to it. There's no queue. Companion-scoped Asset render Jobs instead share the two-Job limit in Limits.
+- `GET /jobs` lists active Jobs and the last 50 finished ones, kept for 10 minutes. `GET /jobs/{id}` reads one. `DELETE /jobs/{id}` cancels one, or returns 409 `job.not_cancellable`.
 - In TypeScript, `companion.jobs.wait(job)` resolves with the typed `result` on `succeeded` and rejects with the `ApiError` on `failed`. It follows `job.updated` events and re-reads `GET /jobs/{id}` after a reconnect.
 - **Crash halfway.** Jobs aren't saved. OTA rollback covers a Firmware Job lost mid-flash: the Device reconnects on its old or new build, and the UI shows its version. A lost Layout push leaves the Device's previous Layout, because the put is atomic on the Device (`xfer.end`).
-- **Uploads aren't Jobs.** `POST /uploads` and `POST /firmware/bundles/pick` return an id in milliseconds, and Jobs then refer to that id.
+- **Uploads aren't Jobs.** `POST /uploads` returns an id after upload validation; `POST /firmware/bundles/pick` returns after the native file dialog closes, and Jobs then refer to that id.
 
 ## Routes
 
@@ -395,7 +414,22 @@ Feature modules `devices`, `ports` and `console`.
 | `new_boards.list` | `GET /new-boards` | → `NewBoard[]` |
 | `ports.list` | `GET /ports` | → `PortProbe[]`, today's `Candidate` plus `usb_serial`. Never opens a port that a link holds |
 | `ports.rescan` | `POST /ports/rescan` | → `()` |
-| `console.send` | `POST /devices/{device}/console` | `{line}` → `()` |
+| `console.send` | `POST /devices/{device}/console` | `{line}` → `()`. One line, at most 256 printable ASCII bytes, allowlist below |
+
+The Companion owns this exact allowlist, derived from registrations and handlers under `firmware/components`. A line must contain 1 to 256 bytes in `0x20..0x7e`; CR, LF, tabs, DEL and all other control or non-ASCII bytes are forbidden. Split on ASCII spaces, require the exact command, subcommand and argument count below, and reject quotes, escapes and command separators. Anything else returns 403 `console.forbidden` before reaching the Device.
+
+| Allowed form | Firmware handler source under `firmware/components` |
+|---|---|
+| `help`, `version`, `heap`, `uptime` (no arguments) | `td_console/td_console.c` |
+| `link state` | `td_link/td_link_cmds.c` |
+| `ui state`, `ui tile <id>`, `ui widget <tile>`, `ui dashboard <page>`, `layout state` | `ui/ui_cmds.c`, `ui/ui_layout_cmds.c` |
+| `power state` | `power/power_cmds.c` |
+| `recovery state` | `td_store/td_recovery_cmds.c` |
+| `update state` | `td_update/td_update_cmds.c` |
+| `settings get`, `store stat`, `store stat <path>`, `store ls <path>`, `store get <path>` | `td_store/td_store_cmds.c` |
+| `backlight` (no arguments), `screenshot`, `screenshot 1`, `screenshot 2`, `screenshot 4` | `display/display_cmds.c` |
+
+Each placeholder is one unquoted token. `<path>` is validated as a storage path by the Firmware; `<id>`, `<tile>` and `<page>` name existing Tiles or Pages. Only these read-only forms pass; the allowlist never grants an entire command family. All `keys`, `touch` and `perf` commands, mutating `ui` subcommands, storage and NVS writes, Layout changes and reboot commands are excluded. New Firmware commands are denied until explicitly reviewed and added here. The e2e harness uses `test.console` for the full console, only under `test-hooks` on mock ports.
 
 ### Layouts
 
@@ -415,10 +449,10 @@ Feature module `firmware`.
 | Name | Method and path | Request → Response |
 |---|---|---|
 | `firmware.bundled` | `GET /firmware/bundled` | → `{version, build}` of the build shipped with the Companion |
-| `firmware.pick` | `POST /firmware/bundles/pick` | → `{bundle: BundleInfo {id, version, build, bytes} \| null}`. Opens a native file dialog on the PC |
+| `firmware.pick` | `POST /firmware/bundles/pick` | `{device}` → `{bundle: BundleInfo {id, version, build, bytes} \| null}`. Opens a native file dialog on the PC; single-use, target-bound, expires after 10 minutes |
 | `firmware.update` | `POST /devices/{device}/firmware/update` | `{bundle: "bundled" \| BundleId}` → 202 Job `firmware.update` |
 | `firmware.repair` | `POST /devices/{device}/firmware/repair` | `{bundle}` → 202 Job `firmware.repair`, through the ROM bootloader |
-| `firmware.install` | `POST /new-boards/{device}/install` | `{bundle, overwrite_other_firmware: true}` → 202 Job `firmware.install`. The literal `true` is required, so another ESP32 project is never overwritten without the user's click. Anything else gives 422 `request.invalid` |
+| `firmware.install` | `POST /new-boards/{device}/install` | `{bundle}` → 202 Job `firmware.install`. Waits for native PC confirmation |
 
 While a Firmware Job holds a Device, its `link.state` is `updating`.
 
@@ -453,6 +487,10 @@ Feature module `actions`.
 
 Feature module `integrations`. CLIProxyAPI is the Integration with id `cliproxyapi`.
 
+Each stored secret records the origin (scheme, host and effective port) it was entered for. `integrations.secret_put` binds it to the current configured origin. When `integrations.config_put` changes that origin, the Companion deletes secrets bound to the old origin before making any request to the new one. `integrations.get` then reports `set: false`; the user must enter the secrets again. Changes to a path on the same origin keep them.
+
+Requests carrying a credential never follow a redirect to another origin. They send no credential over plain `http` unless the host is a loopback or private-network address the user typed explicitly; a public hostname resolving to a private address is not this exception. This transport exception is a reversible policy choice. Configuration changes and in-flight requests must not forward an old origin's credential to a new origin.
+
 | Name | Method and path | Request → Response |
 |---|---|---|
 | `integrations.list` | `GET /integrations` | → `IntegrationSummary[] {id, name, icon, enabled, status, config_schema, presets}`. `status` reports delivery per Device as `{device, sent, error}` |
@@ -472,11 +510,12 @@ Feature module `system`.
 |---|---|---|
 | `system.ping` | `GET /system/ping` | → `{api: ["v1"]}`. Public |
 | `system.get` | `GET /system` | → `{version, build, api: "v1", mock, data_dir_override}` |
-| `system.lock` | `POST /system/lock` | → `{lock}`. 409 `system.busy` while any Job runs. Once held, new Jobs fail with 503 `companion.installing` |
-| `system.unlock` | `DELETE /system/lock/{lock}` | → `()` |
+| `system.lock` | `POST /system/lock` | → `{lock}`. Window sessions only; owner-bound 10-minute lease. 409 `system.busy` while any Job is active or another session holds the lock. Once held, new Jobs fail with 503 `companion.installing` |
+| `system.lock_renew` | `PUT /system/lock/{lock}` | → `()`. Owner window session only; renews the lease for 10 minutes |
+| `system.unlock` | `DELETE /system/lock/{lock}` | → `()`. Owner window session only |
 | `system.shutdown` | `POST /system/shutdown` | → `()`, then `companion.stopping`. Window sessions only |
 
-App updates aren't API routes. They stay in Electron's preload as `openTouchDeck.updates.check()`, `download(onProgress)` and `install()` (ADR 0005). Before installing, Electron takes `system.lock`, then stops the Companion with `system.shutdown` and runs the installer.
+App updates aren't API routes. They stay in Electron's preload as `openTouchDeck.updates.check()`, `download(onProgress)` and `install()` (ADR 0005). The lock is released when its owner session ends or is revoked (including Reset pairing), or its lease lapses. Browser sessions and non-owner sessions get 403 `auth.forbidden` on lock operations. Before installing, Electron takes `system.lock`, renews it with `system.lock_renew` while needed, then stops the Companion with `system.shutdown` and runs the installer.
 
 ### Auth
 
@@ -487,7 +526,7 @@ The auth module mounts these itself. Features can't import it.
 | `auth.proof` | `POST /auth/proof` | `{nonce}` → `{proof}`. Public |
 | `auth.session_create` | `POST /auth/sessions` | Bearer pairing token, `{kind: "window", label?}` → `{id, token}`. Public, but needs the pairing token |
 | `auth.pair` | `POST /auth/pair` | `{code, label}` → `{id, token}`. Public, but needs a pairing code |
-| `auth.pair_code` | `POST /auth/pair-codes` | → `{code, url, expires_ms}`. Window sessions only. Opens the browser and shows the code in the tray |
+| `auth.pair_code` | `POST /auth/pair-codes` | → `{expires_ms}` only. Window sessions only. The Companion opens `/pair#code=…` in the default browser and shows the manual code only in a native tray notification; replaces any pending code |
 | `auth.sessions` | `GET /auth/sessions` | → `SessionInfo[] {id, kind, label, created_ms, last_used_ms, current}` |
 | `auth.session_delete` | `DELETE /auth/sessions/{id}` | → `()`. `self` means the caller's own session |
 | `auth.sessions_delete` | `DELETE /auth/sessions?kind=browser` | → `()` |
@@ -499,6 +538,7 @@ Feature module `test_hooks`, compiled only with the `test-hooks` Cargo feature a
 
 | Name | Method and path | Request → Response |
 |---|---|---|
+| `test.console` | `POST /test/devices/{device}/console` | `{line}` → `()`. Full console for the e2e harness |
 | `test.mock` | `POST /test/devices/{device}/mock` | `{action: "no-confirm" \| "rollback" \| "normal-update" \| "stop" \| "hang-up"}` → `()` |
 | `test.press` | `POST /test/devices/{device}/press` | `{page, tile, kind}` → `()` |
 | `test.sets` | `GET /test/devices/{device}/sets` | → `Value[]` |
@@ -511,21 +551,22 @@ Feature module `test_hooks`, compiled only with the `test-hooks` Cargo feature a
 
 ## Mapping from today's Tauri commands and events
 
-Release builds of `app/src-tauri` register 32 commands. `--features e2e` adds 7, marked e2e. Each one maps to a route above, moves to Electron, or goes away.
+Release builds of `app/src-tauri` register 33 commands. `--features e2e` adds 7, marked e2e. Each one maps to a route above, moves to Electron, or goes away.
 
 | # | Today | Replacement | Notes |
 |---|---|---|---|
 | 1 | `app_update_check` | Electron preload `openTouchDeck.updates.check()` | ADR 0005 |
 | 2 | `app_update_download` | Electron preload `openTouchDeck.updates.download(onProgress)` | The progress Channel becomes an IPC callback |
-| 3 | `app_update_install` | Electron preload `openTouchDeck.updates.install()` | Takes `system.lock` first, which replaces `AppUpdateGate` |
+| 3 | `app_update_install` | Electron preload `openTouchDeck.updates.install()` | Takes the owner-bound `system.lock` lease first and renews with `system.lock_renew`, replacing `AppUpdateGate` |
 | 4 | `e2e_app_update` (e2e) | Electron main's scripted updater, behind a test flag | App updates live in Electron |
-| 5 | `update_firmware` | `firmware.update`, `firmware.repair` or `firmware.install`, with `firmware.pick` | Bytes no longer travel as `number[]`. `recover=true` on a known Device is `firmware.repair`, on an unknown board `firmware.install`. The global `updating` flag becomes the per-Device Job slot |
+| 5 | `update_firmware` | `firmware.update`, `firmware.repair` or `firmware.install`, with `firmware.pick` | Bytes no longer travel as `number[]`. `recover=true` on a known Device is `firmware.repair`, on an unknown board `firmware.install`. `firmware.pick` takes `{device}`; install, repair and downgrade wait for native confirmation. The global `updating` flag becomes the per-Device Job slot |
 | 6 | `list_decks` | `devices.list`, `new_boards.list`, `ports.list` | Detection is automatic |
 | 7 | `connect` | Automatic. `devices.connect` turns auto-connect back on | By `DeviceId`, not port |
 | 8 | `disconnect` | `devices.disconnect` | Per Device |
 | 9 | `deck_info` | `devices.get` | `online` becomes `link.state` |
-| 10 | `console_send` | `console.send` | Per Device |
-| 11 | `e2e_mock` (e2e) | `test.mock` | Per mock Device |
+| 10 | `console_send` | `console.send`; `test.console` for the e2e harness | Per Device; release route permits only the read-only allowlist |
+| 11 | `e2e_mock` (e2e) | `test.console` | `POST /test/devices/{device}/console` | `{line}` → `()`. Full console for the e2e harness |
+| `test.mock` | Per mock Device |
 | 12 | `e2e_mock_press` (e2e) | `test.press` | Per mock Device |
 | 13 | `e2e_mock_sets` (e2e) | `test.sets` | Per mock Device |
 | 14 | `push_layout` | `layouts.push` | Typed `Layout` body instead of a string. Returns a Job whose result is `PushReport` |
@@ -554,6 +595,7 @@ Release builds of `app/src-tauri` register 32 commands. `--features e2e` adds 7,
 | 37 | `sources_set_key` | `integrations.secret_put` | Write-only |
 | 38 | `sources_clear_key` | `integrations.secret_delete` | |
 | 39 | `sources_refresh` | `integrations.refresh` | |
+| 40 | `build_sha` | `system.get` | The response includes `build` |
 
 | Today's event | Replacement | Topic |
 |---|---|---|
@@ -614,11 +656,13 @@ Features add codes as they land. This list is the starting set.
 | `auth.invalid` | 401 | The token is unknown |
 | `auth.revoked` | 401 | The session was revoked or pairing was reset |
 | `auth.expired` | 401 | A browser session passed 7 days idle |
-| `auth.forbidden` | 403 | The session kind can't call this route, such as a browser minting a pairing code |
+| `auth.forbidden` | 403 | The session kind or lock ownership forbids this route, such as a browser minting a pairing code or taking the install lock |
 | `auth.code_invalid` | 401 | The pairing code is wrong, used or expired |
 | `auth.code_locked` | 429 | Too many wrong pairing codes. Start pairing again |
 | `request.invalid` | 400 | Malformed JSON, path or query. `details: {part, reason}`. Wraps axum rejections |
-| `request.too_large` | 413 | The body passed its limit |
+| `request.too_large` | 413 | The body or decoded image passed its size or frame limit |
+| `limits.exceeded` | 429 | A pending upload, render Job, WebSocket or approval limit was reached |
+| `console.forbidden` | 403 | The line is not printable ASCII within 256 bytes or is not on the read-only allowlist |
 | `request.media_type` | 415 | The `Content-Type` is wrong for this route |
 | `route.not_found` | 404 | No route with that path |
 | `route.method_not_allowed` | 405 | The path exists with another method |
@@ -634,7 +678,8 @@ Features add codes as they land. This list is the starting set.
 | `layout.changed` | 412 | The Device's Layout changed since it was loaded |
 | `layout.stored_invalid` | 502 | The Layout stored on the Device fails validation |
 | `firmware.bundle_invalid` | 422 | The picked file isn't a valid bundle |
-| `firmware.bundle_not_found` | 404 | The `BundleId` expired or never existed |
+| `firmware.bundle_not_found` | 404 | The `BundleId` expired, was consumed, belongs to another target or never existed |
+| `firmware.declined` | Job error | The user declined native confirmation; no Firmware write occurred |
 | `firmware.failed` | Job error | The update failed. `details.reason` |
 | `firmware.rolled_back` | Job error | The Device rolled back to its previous Firmware |
 | `firmware.confirm_timeout` | Job error | The new Firmware didn't confirm in time |
@@ -648,7 +693,7 @@ Features add codes as they land. This list is the starting set.
 | `integration.not_found` | 404 | No Integration with that id |
 | `integration.config_invalid` | 422 | The config fails the Integration's schema. `details.issues` |
 | `integration.credentials` | 500 | The keyring failed |
-| `system.busy` | 409 | A Job runs, so the install lock is refused |
+| `system.busy` | 409 | A Job is active or another session holds the install lock |
 | `system.dialog_open` | 409 | A native file dialog is already open |
 | `companion.installing` | 503 | The install lock is held |
 | `internal` | 500 | A bug. The message is generic, and the detail goes only to the log |
@@ -762,7 +807,7 @@ Required integration tests in `crates/td-companion/tests/`:
 
 1. **Two Devices.** Both connect within 2 s of `plug`. Different Layouts pushed to each stay separate. A press on one runs only its own action. A Firmware Job on one doesn't block a Layout push on the other. Unplugging one leaves the other connected.
 2. **Hot-plug.** Unplug gives `link.state: lost` with `unplugged`. Replug gives `connected` within 2 s. After `devices.disconnect`, the Device stays disconnected until replug or `devices.connect`.
-3. **New board.** Other Firmware gives `new-board.added`. `firmware.install` without `overwrite_other_firmware: true` gives 422. A successful install gives `new-board.removed`, then `device.added` with `setup: "needs-setup"` and the same id.
+3. **New board.** Other Firmware gives `new-board.added`. `firmware.install` waits for native confirmation; declining fails with `firmware.declined` and writes nothing. A successful install gives `new-board.removed`, then `device.added` with `setup: "needs-setup"` and the same id.
 4. **Jobs.** A second POST gives 409 `device.busy` with the first Job's id. `jobs.wait` sees `succeeded` with a typed result. The mock's `rollback` mode gives `failed` with `firmware.rolled_back`.
 5. **Approvals.** A command Tile press creates one `approval.requested` and runs nothing. A second press of the same Tile adds no request. The scripted `once` runs it and sends `approval.resolved`. After 5 minutes of test clock, an unanswered request resolves as `expired`. `actions.allowed_remove` makes the next press ask again. `release_router_answers_no_approvals` passes.
 6. **Auth attacks.** Each request is rejected with the stated code and never reaches a handler:
@@ -772,15 +817,22 @@ Required integration tests in `crates/td-companion/tests/`:
    - `Sec-Fetch-Site: cross-site`,
    - a WebSocket with a foreign `Origin`, and one without the bearer subprotocol,
    - a pairing code used twice, after 120 s, and the sixth try after 5 wrong codes,
-   - a browser session calling `auth.pair_code` or `system.shutdown`,
+   - a browser session calling `auth.pair_code`, `system.lock`, `system.lock_renew`, `system.unlock` or `system.shutdown`,
    - a cross-site form post with `Content-Type: text/plain`,
    - an `OPTIONS` preflight, which gets no CORS headers,
    - Reset pairing, which closes open sockets with 4401 and rejects the old pairing token.
-7. **Sessions.** A window session ends when its WebSocket has been closed for 60 s. Browser sessions survive a Companion restart. Window sessions don't.
+7. **Sessions.** A window session ends when its WebSocket has been closed for 60 s. All sessions end on Companion exit; after restart neither a browser token retained in `localStorage` nor a window token authenticates, and the browser must pair again. No session state is saved to disk.
 8. **Runtime file**, Windows only (`#[cfg(windows)]`). After start the DACL is protected, has one entry, and the owner is the user. A junction planted at `runtime\` makes start fail. The file is gone after a clean shutdown.
 9. **Contract.** `api_bindings_are_current`, `api_contract_is_documented` and `test_registry_is_consistent`.
 
-Playwright then drives the Electron window and a browser page against `--mock-devices 2`. One spec pairs a browser through a code from `auth.pair_code`, once by link and once by typing it.
+10. **Console and input.** Each allowlisted form passes; `keys`, `touch tap`, `ui hold`, state changes, unknown commands, extra arguments, control bytes and lines over 256 bytes get `console.forbidden` and never reach the Device. None inject PC input or answer an approval. While a native dialog shows, input from every mock Device is dropped with key-mirror `outcome: "suppressed"`, never replayed. Full console works only through `test.console`; the release router lacks it.
+11. **Integration origins.** Changing scheme, host or effective port clears the old secret and reports `set: false`; same-origin path changes keep it. No credential reaches the new destination before re-entry, including concurrent refresh. Cross-origin redirects and public plain-HTTP destinations receive no credential. Explicit loopback/private-address HTTP destinations work; a hostname resolving privately does not gain the exception.
+12. **Pairing delivery.** `auth.pair_code` returns only `{expires_ms}`, with no code or URL in any API response. Fake native browser and tray adapters capture delivery for tests. A new code invalidates the previous one, Reset pairing invalidates the pending code, and the Electron renderer gets no code to display or copy.
+13. **Firmware consent.** Install, repair and downgrade stay `waiting_for_confirmation` with no writes until the fake native dialog accepts the exact target and bundle. Decline gives `firmware.declined`. Same-or-newer bundled updates need no confirmation. A picked bundle fails on another target, on reuse and after 10 minutes.
+14. **Saturation.** Flood uploads, WebSockets and Device events separately; assert the per-session and global limits, 413/429 errors, bounded queues and approval denial/logging. Assert decoded dimensions, GIF frames/bytes, two concurrent renders and the 5 s `approvals.show` rate. After each flood, a Layout push still succeeds and capacity is reclaimed.
+15. **Install lock.** A browser gets 403 `auth.forbidden`; another window cannot renew or release the owner's lock. Owner renewal extends the 10-minute lease. Session end, revoke, Reset pairing or lease expiry releases it and allows new Jobs.
+
+Playwright then drives the Electron window and a browser page against `--mock-devices 2`. One spec pairs a browser through the link captured by the fake native browser opener; another types the code captured from the fake native tray notification. Neither obtains a pairing code from an API response.
 
 ## Versioning
 
@@ -811,10 +863,15 @@ Never add a public route, a CORS header, a route that answers approvals, or a ro
 | Risk | Status |
 |---|---|
 | Any auth bug lets an attacker run programs as the user, because a session could push a command Tile and approve it | **Resolved** by ADR 0006. Approvals happen only in the native dialog on the PC. An auth bug still exposes Devices, Layouts, Integration settings and key Tiles |
-| A pushed Layout can hold key Tiles that type text, such as a command line followed by Enter, into whatever window is focused. They don't need approval | **Accepted**, recorded here. Someone has to tap the Tile on the Device. #76 should consider approval for key Tiles that type long text |
-| A bearer token in `localStorage` can be stolen through an XSS bug | **Reduced.** Browser sessions expire after 7 days idle, not 30. A strict CSP, no `dangerouslySetInnerHTML`, the session list with Revoke, and Reset pairing. A stolen browser session can't mint pairing codes, so revoking it ends the access |
-| A raw Firmware upload could flash an attacker's build | **Resolved.** Only the bundled build or a file picked in the Companion's native dialog |
-| Another Windows user on a shared PC squats on the port | **Reduced.** Rotation per start and the HMAC proof protect the window. A browser tab left on a dead port could send its session token to the squatter. Accepted: that token only works on the real Companion, which the squatter can reach anyway, so it gains that browser's session until the user signs it out |
+| A pushed Layout can hold key Tiles that type text, such as a command line followed by Enter, into whatever window is focused. They don't need approval | **Reduced.** Someone must physically tap the Tile on the Device: the console cannot fake a tap, and Device key input is suppressed during native approval dialogs. #76 should consider approval for key Tiles that type long text |
+| A bearer token in `localStorage` can be stolen through an XSS bug | **Reduced.** Browser sessions end on Companion exit or after 7 days idle. A strict CSP, no `dangerouslySetInnerHTML`, the session list with Revoke, and Reset pairing. A stolen browser session can't mint pairing codes, so revoking it ends the access |
+| A raw Firmware upload could flash an attacker's build | **Reduced.** Only the bundled build or a single-use, target-bound file picked on the PC; install, repair and downgrade also require native confirmation |
+| Another Windows user on a shared PC squats on the port | **Reduced.** Rotation and the HMAC proof protect the window. Browser sessions exist only in Companion memory and end on exit, so a squatter that receives a stale token after restart cannot use it on the real Companion. Browsers pair again after each restart |
+| Raw console commands bypass native approvals | **Resolved.** Exact read-only allowlist, printable ASCII and length limits; Device input is suppressed while a native dialog shows |
+| An Integration destination change or redirect leaks credentials | **Resolved.** Secrets are origin-bound, deleted on origin change, and never forwarded across origins; public plain HTTP receives none |
+| A stolen window session reads a code to mint browser access | **Resolved.** No pairing code in API responses; only native browser opening and tray delivery, one pending code, cleared on reset |
+| Upload, decode, socket or approval floods exhaust the Companion | **Reduced.** Aggregate and per-session limits, bounded queues, render concurrency and saturation tests |
+| A session holds the install lock indefinitely | **Reduced.** Window-only owner-bound 10-minute lease, released on session end or expiry |
 | A local process guesses a typed pairing code | **Reduced.** 60-bit codes, 120 s, single use, and a lockout after 5 wrong tries |
 | Browsers may drop the URL fragment when the Companion opens the link | **Resolved.** The query form is allowed, and the user can type the code |
 | A tray program's dialog may not get the foreground on Windows | **Reduced.** The tray notification and `approvals.show`. The approval waits up to 5 minutes |
