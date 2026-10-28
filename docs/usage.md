@@ -1,6 +1,6 @@
-# Use TouchDeck over USB
+# Use Open TouchDeck over USB
 
-Use this guide to install TouchDeck, connect your deck, and set up its buttons.
+Use this guide to install Open TouchDeck, connect your deck, and set up its buttons.
 You need the Waveshare ESP32-S3-Touch-LCD-5B, a USB data cable, and a Windows
 or Linux desktop session.
 
@@ -253,7 +253,7 @@ custom pictures before clearing.
 ## Show AI usage on the deck
 
 AI usage buttons and AI usage pages show how much of your AI plans you've used.
-TouchDeck reads the numbers from your CLIProxyAPI hub while the app runs. Open
+Open TouchDeck reads the numbers from your CLIProxyAPI hub while the app runs. Open
 **AI usage** to check readings and problems. While the deck is connected, the app
 fills the AI usage buttons of the layout the deck shows, so sending to the other
 orientation's slot does not interrupt them. To fill the buttons of a saved file
@@ -268,13 +268,13 @@ Claude settings. Current builds do not edit Claude settings.
 
 ### Connect CLIProxyAPI
 
-TouchDeck shows your Codex and Claude usage limits through your own
+Open TouchDeck shows your Codex and Claude usage limits through your own
 [CLIProxyAPI hub](https://github.com/router-for-me/CLIProxyAPI).
 
 1. Run CLIProxyAPI and enable its management API with a management secret key.
    Allow remote management only if the hub is not on this computer.
 2. Sign your Codex and Claude accounts into CLIProxyAPI using its login commands
-   or management center. TouchDeck does not handle provider sign-ins.
+   or management center. Open TouchDeck does not handle provider sign-ins.
 3. In **AI usage**, turn on **Connect to your CLIProxyAPI hub**, set
    **Hub address**, and select **Save**. A hub on this computer can use
    `http://127.0.0.1:8317`. Use HTTPS for a hub elsewhere; plain HTTP sends the
@@ -370,7 +370,7 @@ Replace `<version>` with the filename printed by the first command. The bundle
 contains the application image, bootloader, partition table, and a manifest with
 image hashes. Keep the bundle intact.
 
-To update a deck that runs TouchDeck software:
+To update a deck that runs Open TouchDeck software:
 
 1. Close serial monitors, `td-link`, and flash tools that use the deck's port.
 2. Open **Settings > Deck software**.
@@ -389,7 +389,7 @@ finish, the message says what happened and **Details** has the reason; read it
 before trying again. **Update log** lists every step in the update's own words.
 Reaching 100% alone does not prove a confirmed start.
 
-If the deck does not run working TouchDeck software, use **Repair deck** under
+If the deck does not run working Open TouchDeck software, use **Repair deck** under
 **Repair the deck**, with the same bundle and the right **USB port**, such as
 `COM3` or `/dev/ttyACM0`. It uses the ESP32-S3 ROM downloader over USB-Serial/JTAG
 and writes the bundled bootloader, partition table, and application. It resets the
@@ -413,12 +413,12 @@ The app can check for its own updates in **Settings > This app**:
 3. Select **Check for updates**. The app says **You're on the latest app version**,
    or shows the new version with its release notes. If it cannot reach a release,
    it says why, and you can keep using the current version.
-4. Select **Download update**. TouchDeck stays open while it downloads the signed
+4. Select **Download update**. Open TouchDeck stays open while it downloads the signed
    installer and checks its signature.
 5. Disconnect the deck from the deck indicator. The install button is off while a
    deck is connected, and installing is refused during deck transfers.
-6. Select **Install and close TouchDeck**. Windows starts the installer and the app
-   closes. Open TouchDeck again when the installer finishes.
+6. Select **Install and close Open TouchDeck**. Windows starts the installer and the app
+   closes. Start Open TouchDeck again when the installer finishes.
 
 An update keeps your per-user settings, command approvals, AI usage settings, and
 picture cache. It does not change layouts stored on the deck or touch the deck's

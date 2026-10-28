@@ -1,13 +1,13 @@
-# TouchDeck desktop app
+# Open TouchDeck desktop app
 
-TouchDeck runs on Windows and Linux. It connects to the deck over USB-Serial/JTAG,
+Open TouchDeck runs on Windows and Linux. It connects to the deck over USB-Serial/JTAG,
 edits and transfers layouts, runs PC actions, feeds CLIProxyAPI usage widgets, and updates deck
 firmware. The running, connected app mirrors keys and media controls into the host
 session. The deck does not type as a standalone USB HID keyboard. Bluetooth is not
 supported. Wi-Fi, battery support, and standalone USB HID are deferred to the post-product update.
 
-For everyday use, follow the [USB user guide](../docs/usage.md). The window title
-identifies the app's source revision. **Deck** reports the connected firmware's
+For everyday use, follow the [USB user guide](../docs/usage.md). **Settings > Troubleshooting > App build**
+identifies the app's source revision. The window title reads **Open TouchDeck**. **Deck** reports the connected firmware's
 version and image identity. Desktop app updates and deck firmware updates are
 separate operations.
 

@@ -44,7 +44,7 @@
     const save = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
     try {
       if (save) {
-        const handle = await save({ suggestedName: name, types: [{ description: 'TouchDeck layout', accept: { 'application/json': ['.json'] } }] });
+        const handle = await save({ suggestedName: name, types: [{ description: 'Open TouchDeck layout', accept: { 'application/json': ['.json'] } }] });
         const writable = await handle.createWritable();
         await writable.write(text);
         await writable.close();
@@ -89,7 +89,7 @@
       {:else}
         <p>
           <strong>No deck connected.</strong>
-          {$listed && !$scanning ? 'Plug your TouchDeck into this computer with a USB cable.' : 'Looking for your deck…'} You can still set up buttons now.
+          {$listed && !$scanning ? 'Plug your Device into this computer with a USB cable.' : 'Looking for your deck…'} You can still set up buttons now.
         </p>
         <button class="small" onclick={refresh} disabled={$scanning}>{$scanning ? 'Looking…' : 'Look again'}</button>
         <button class="small quiet" onclick={onconnecthelp}>Help</button>
@@ -199,7 +199,7 @@
         {#each Array.from({ length: 12 }) as _, i (i)}<span></span>{/each}
       </div>
       <h1>Set up your buttons</h1>
-      <p class="lead">Choose what each button on your TouchDeck does. You'll see every page exactly as the deck will show it.</p>
+      <p class="lead">Choose what each button on your Device does. You'll see every page exactly as the deck will show it.</p>
       <div class="starts">
         <button class="start" onclick={() => editor.pull()} disabled={!online || $editor.busy !== null} data-testid="empty-pull">
           <strong>Start from your deck</strong>

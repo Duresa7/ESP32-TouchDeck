@@ -49,7 +49,7 @@ async function startDownload() {
 async function finishDownload() {
   await script({ finishDownload: true });
   await shows('Download verified.');
-  expect(await install().getText()).toBe('Install and close TouchDeck');
+  expect(await install().getText()).toBe('Install and close Open TouchDeck');
 }
 
 describe('Settings > App updates with scripted updater I/O', () => {
@@ -162,14 +162,14 @@ describe('Settings > App updates with scripted updater I/O', () => {
       button.click();
       button.click();
     });
-    await shows('Starting the installer. TouchDeck will close');
+    await shows('Starting the installer. Open TouchDeck will close');
     await browser.waitUntil(async () => (await script()).installs === 1, { timeout: 5_000 });
     expect(await script()).toMatchObject({ checks: 1, downloads: 1, installs: 1 });
     expect(await check().isEnabled()).toBe(false);
     // Another rendered interaction and IPC query prove the fake never exited the app.
     await $('[data-testid="nav-buttons"]').click();
     await openSettings('app');
-    await shows('Starting the installer. TouchDeck will close');
+    await shows('Starting the installer. Open TouchDeck will close');
     expect((await script()).installs).toBe(1);
     note('installed', await script());
     await capture('f-install-called-once');

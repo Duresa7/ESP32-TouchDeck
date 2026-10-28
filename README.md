@@ -1,4 +1,4 @@
-# TouchDeck
+# Open TouchDeck
 
 A customizable touchscreen deck for your desk, built on a 5-inch ESP32-S3 display, with a desktop app to design it.
 
@@ -6,8 +6,8 @@ A customizable touchscreen deck for your desk, built on a 5-inch ESP32-S3 displa
 [![License](https://img.shields.io/github/license/Duresa7/ESP32-TouchDeck)](LICENSE)
 
 <p align="center">
-  <img src="docs/images/deck-media.png" width="49%" alt="TouchDeck Media page with playback and volume controls">
-  <img src="docs/images/deck-fkeys.png" width="49%" alt="TouchDeck F-Keys page with F1 to F12 and modifier keys">
+  <img src="docs/images/deck-media.png" width="49%" alt="Open TouchDeck Media page with playback and volume controls">
+  <img src="docs/images/deck-fkeys.png" width="49%" alt="Open TouchDeck F-Keys page with F1 to F12 and modifier keys">
 </p>
 
 [**Download for Windows**](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe) · [**User guide**](docs/usage.md) · [**Releases**](https://github.com/Duresa7/ESP32-TouchDeck/releases)
@@ -43,7 +43,7 @@ can customize to fit the way I work.
    Windows SmartScreen may warn the first time, because the installer has no Authenticode signature; choose **More info**, then **Run anyway**.
 2. Connect your deck with a USB data cable.
 3. Open **Update** in the app. Under **Firmware bundle**, select `%LOCALAPPDATA%\TouchDeck\firmware\touchdeck.tdfw`, which the installer put there, and set **Deck port** to your deck's port, such as `COM3`.
-   For a new board or one not running TouchDeck, select **Recover deck**. For later updates, select **Update deck**. Keep USB connected until it finishes.
+   For a new board or one not running Open TouchDeck, select **Recover deck**. For later updates, select **Update deck**. Keep USB connected until it finishes.
 4. In **Deck**, select **Refresh**, then **Connect** beside your deck's port.
 5. Design your pages in **Editor** and select **Push**.
 
@@ -68,4 +68,4 @@ Read the [user guide](docs/usage.md) for actions, icons, usage limits, backups, 
 
 ## License
 
-TouchDeck is licensed under the [Apache License 2.0](LICENSE).
+Open TouchDeck is licensed under the [Apache License 2.0](LICENSE).

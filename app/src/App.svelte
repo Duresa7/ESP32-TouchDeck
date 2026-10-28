@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount } from 'svelte';
   import Approval from './lib/actions/Approval.svelte';
@@ -10,7 +11,8 @@
 
   type View = 'buttons' | 'usage' | 'settings';
 
-  let title = $state('TouchDeck');
+  let title = $state('Open TouchDeck');
+  let buildSha = $state('');
   let view = $state<View>('buttons');
   let section = $state<Section>('deck');
 
@@ -27,6 +29,7 @@
 
   onMount(() => {
     const stop = start();
+    invoke<string>('build_sha').then((sha) => (buildSha = sha));
     getCurrentWindow()
       .title()
       .then((name) => {
@@ -48,7 +51,7 @@
       <rect class="key" x="11.5" y="11" width="5" height="4" rx="1.2" />
       <rect class="key" x="18" y="11" width="5" height="4" rx="1.2" />
     </svg>
-    <span>TouchDeck</span>
+    <span>Open TouchDeck</span>
   </div>
   <nav class="views" aria-label="Main">
     {#each VIEWS as [id, name] (id)}
@@ -64,7 +67,7 @@
   {#if view === 'usage'}
     <Usage />
   {:else if view === 'settings'}
-    <Settings bind:section {title} />
+    <Settings bind:section {buildSha} />
   {:else}
     <Editor online={$online} onconnecthelp={() => go('settings', 'help')} />
   {/if}

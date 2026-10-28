@@ -93,13 +93,13 @@ export function start(): () => void {
 export function describeCandidate(candidate: Candidate): string {
   switch (candidate.status) {
     case 'deck':
-      return `TouchDeck, software ${candidate.hello.version}`;
+      return `Open TouchDeck, software ${candidate.hello.version}`;
     case 'silent':
       return "Didn't answer yet. It may still be starting up.";
     case 'busy':
       return 'Another program is using it. Close that program, then look again.';
     case 'not-deck':
-      return 'Not a TouchDeck';
+      return 'Not an Open TouchDeck';
     default:
       return "Can't be opened right now";
   }
