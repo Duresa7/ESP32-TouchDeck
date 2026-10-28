@@ -235,6 +235,29 @@ describe('the app, screen by screen, on the mock deck', () => {
     await $('[data-testid="orientation-landscape"]').click();
   });
 
+  it('draws widget captions and values on one line at 1:1, cut with dots like the deck', async () => {
+    await browser.setWindowSize(1500, 1000);
+    // The meters page alone, as the board was shot with it.
+    await importText(JSON.stringify({ ...worstCase, name: 'Widget captions', pages: worstCase.pages.filter((page) => page.id === 'meters') }), 'meters.json');
+    await waitEvent('opened');
+    await $('[data-testid="mode-preview"]').click();
+    if (!(await $('[data-testid="actual-size"]').isSelected())) await $('[data-testid="actual-size"]').click();
+    await settled();
+    await deckShot('preview-1to1-meters');
+    const captions = await browser.execute(() =>
+      ['m0', 'm1'].map((id) =>
+        Array.from(document.querySelectorAll(`[data-testid="tile"][data-id="${id}"] [role="img"]`), (text) => text.getAttribute('aria-label')),
+      ),
+    );
+    note('meters_captions', captions);
+    expect(captions[0][0]).toBe('42%');
+    expect(captions[0][1]).toMatch(/^Claude .*\.\.\.$/);
+    expect(captions[1][1]).toMatch(/\.\.\.$/);
+    await $('[data-testid="actual-size"]').click();
+    await $('[data-testid="mode-edit"]').click();
+    await browser.setWindowSize(1180, 760);
+  });
+
   it('draws the built-in pages at one deck pixel per screen pixel', async () => {
     await browser.setWindowSize(1500, 1000);
     await importText(text('builtin.json'), 'builtin.json');

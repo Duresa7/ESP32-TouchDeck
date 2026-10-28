@@ -132,9 +132,14 @@ function buildTile(page: Page & { kind: 'grid' }, tile: Tile, g: Geometry, optio
   if (tile.action.type === 'widget') {
     const sample = options.widget?.(tile) ?? null;
     const opacity = sample?.stale ? THEME.staleOpa : 255;
-    const value = layoutLabel(sample?.value || '--', FONTS[48]);
+    // draw_value and ui_widget_build: one line each, cut with dots. A value that fits keeps its content width.
+    const maxW = rect.w - 2 * media.labelInset;
+    const shown = sample?.value || '--';
+    const fits = textSize(codepoints(shown), FONTS[48], COORD_MAX).w <= maxW;
+    const valueBox = fits ? {} : { width: maxW, align: 'center' as const };
+    const value = layoutLabel(shown, FONTS[48], { ...valueBox, height: FONTS[48].lineHeight, dots: true });
     view.texts.push(text(value, 48, color.text, centre(rect.w, rect.h, value.width, value.height, 0, -widget.valueDy), opacity));
-    const caption = layoutLabel(sample?.caption || tile.label, FONTS[28], { width: rect.w - 2 * media.labelInset, align: 'center' });
+    const caption = layoutLabel(sample?.caption || tile.label, FONTS[28], { width: maxW, height: FONTS[28].lineHeight, align: 'center', dots: true });
     view.texts.push(text(caption, 28, color.caption, centre(rect.w, rect.h, caption.width, caption.height, 0, widget.captionDy), opacity));
     const barW = !sample || sample.bar < 0 ? 0 : Math.trunc(Math.min(sample.bar, 1) * rect.w + 0.5);
     if (barW > 0) view.bar = { x: 0, y: rect.h - widget.barBottom - widget.barH, w: barW, h: widget.barH, radius: widget.barRadius };
