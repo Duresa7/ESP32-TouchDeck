@@ -97,11 +97,11 @@ UI tickets copy strings from here. When a screen needs a string this guide doesn
 | Card for a New board | New board |
 | Card tooltip | Edit Layout |
 | Empty state title | Plug in your Device |
-| Empty state body | Connect an Open TouchDeck to this PC with a USB cable. It shows up here in a few seconds. |
-| Empty state link | Not showing up? |
-| "Not showing up?" target | Opens Settings, Troubleshooting |
+| Empty state body | Connect an Open TouchDeck to this PC with a USB data cable. |
+| Empty state button | Connection help |
+| "Connection help" target | Opens Settings, Troubleshooting |
 | Add card | Add Device |
-| Add card, after a click | Plug the new Device into this PC with a USB cable. Setup starts on its own. |
+| Add card, after a click | Plug the new Device into this PC with a USB data cable. Setup starts on its own. |
 
 ### Onboarding
 
@@ -165,6 +165,7 @@ Shown the first time a Device with Open TouchDeck Firmware connects to this PC w
 | Element | String |
 | --- | --- |
 | Icon tooltip and hover label | Update available |
+| Icon tooltip and hover label, update downloaded | Ready to restart |
 | Dialog title | Open TouchDeck {version} |
 | Dialog subtitle | You have {current}. |
 | Changes heading | What's new |
@@ -173,7 +174,7 @@ Shown the first time a Device with Open TouchDeck Firmware connects to this PC w
 | Downloading | Downloading… {pct}% |
 | Downloading, size unknown | Downloading… {kb} KB |
 | Downloading hint | You can keep working. |
-| Ready | Ready to install |
+| Ready | Ready to restart |
 | Ready hint | Open TouchDeck restarts to install. Your Layouts and settings stay. |
 | Ready button | Restart |
 | Ready, a Device is mid-transfer | Wait for {device} to finish sending. |
@@ -744,14 +745,14 @@ Detection is automatic, so the connection pill and its panel go away. Status wor
 | `src/lib/shell/ConnectionMenu.svelte:54` | It's using this computer's {practice deck / USB port {port}}. | Dropped | The port shows in Troubleshooting |
 | `src/lib/shell/ConnectionMenu.svelte:60` | Details | Dropped | |
 | `src/lib/shell/ConnectionMenu.svelte:65` | Connect your deck | Plug in your Device | Becomes the Home empty state title |
-| `src/lib/shell/ConnectionMenu.svelte:66` | Plug your TouchDeck into this computer with a USB cable, then choose it below. | Connect an Open TouchDeck to this PC with a USB cable. It shows up here in a few seconds. | Home empty state body |
+| `src/lib/shell/ConnectionMenu.svelte:66` | Plug your TouchDeck into this computer with a USB cable, then choose it below. | Connect an Open TouchDeck to this PC with a USB data cable. | Home empty state body |
 | `src/lib/shell/ConnectionMenu.svelte:75` | Practice deck / TouchDeck | Demo Device / Dropped | The card shows the Device's name |
 | `src/lib/shell/ConnectionMenu.svelte:79` | Disconnect | Dropped | The Companion holds every Device |
 | `src/lib/shell/ConnectionMenu.svelte:85` | Connecting… / Connect | Dropped | Connect buttons go away |
 | `src/lib/shell/ConnectionMenu.svelte:96` | Connect | Dropped | |
 | `src/lib/shell/ConnectionMenu.svelte:100` | No deck found. Check the USB cable, then look again. | Dropped | Covered by the Home empty state |
 | `src/lib/shell/ConnectionMenu.svelte:109` | Looking… / Look again | Dropped | The Companion watches ports all the time |
-| `src/lib/shell/ConnectionMenu.svelte:116` | Connection details | Not showing up? | Home empty state link to Troubleshooting |
+| `src/lib/shell/ConnectionMenu.svelte:116` | Connection details | Connection help | Home empty state button to Troubleshooting |
 
 ### CLIProxyAPI Integration (was AI usage)
 
@@ -806,7 +807,7 @@ Detection is automatic, so the connection pill and its panel go away. Status wor
 | `src/lib/updates/AppUpdates.svelte:40` | Downloads and verifies the signed installer. TouchDeck stays open. | You can keep working. | Shown while downloading |
 | `src/lib/updates/AppUpdates.svelte:42` | Downloading update: {kb} KB of {total} KB | Downloading… {pct}% | Lines 42 and 43 |
 | `src/lib/updates/AppUpdates.svelte:45` | The signature is verified before installation is offered. | Dropped | The signature check is in the failure message when it fails |
-| `src/lib/updates/AppUpdates.svelte:47` | Download verified. Save or export any unsaved layout edits before installing. | Ready to install | |
+| `src/lib/updates/AppUpdates.svelte:47` | Download verified. Save or export any unsaved layout edits before installing. | Ready to restart | |
 | `src/lib/updates/AppUpdates.svelte:48` | Installation closes TouchDeck. Open it again when the installer finishes; your saved settings stay in place. | Open TouchDeck restarts to install. Your Layouts and settings stay. | |
 | `src/lib/updates/AppUpdates.svelte:49` | Disconnect the deck and wait for transfers to finish before installing. | Wait for {device} to finish sending. | Only while a transfer runs |
 | `src/lib/updates/AppUpdates.svelte:50` | Install and close TouchDeck | Restart | |
