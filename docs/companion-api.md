@@ -120,6 +120,11 @@ These initial limits are reversible; changing them requires updating this contra
 | Pending uploads | 8 per session, 64 MiB pending across the Companion; reserve count and bytes while receiving, free on consumption, expiry or session end |
 | Decoded images | At most 4096×4096 pixels; GIFs also at most 300 frames and 64 MiB total decoded data |
 | Asset render Jobs | 2 at a time across the Companion |
+| Connections | 128 open at once; the accept loop waits for a free slot |
+| Request headers | 5 s to arrive, then the connection is dropped |
+| Request body | 10 s to arrive, then 408 `request.timeout`. Public routes read at most 4 KiB |
+| Whole request | 30 s, then 408 `request.timeout`. The WebSocket upgrade is exempt, since the socket runs after it |
+| Shutdown drain | 5 s for open requests, then their connections are dropped |
 | WebSockets | 4 per session, 16 across the Companion |
 | Socket queues | 1024 frames or 4 MiB per socket, whichever comes first; overflow follows Backpressure |
 | Pending approvals | 16 across the Companion, including the displayed request; deny and log new requests above the cap |

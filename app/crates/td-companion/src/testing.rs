@@ -15,19 +15,16 @@ pub struct TestCompanion {
 }
 impl TestCompanion {
     pub async fn start() -> Self {
+        Self::start_with(crate::Limits::default()).await
+    }
+    /// Starts with other connection and time limits, so limit tests run in milliseconds.
+    pub async fn start_with(limits: crate::Limits) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let ctx = Ctx::new(port, true, None);
+        let ctx = Ctx::new(port, true, None, limits);
         let router = crate::api::router(ctx.clone());
-        let mut shutdown = ctx.shutdown.subscribe();
-        let task = tokio::spawn(async move {
-            axum::serve(listener, router)
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown.changed().await;
-                })
-                .await
-                .unwrap()
-        });
+        let stop = ctx.shutdown.subscribe();
+        let task = tokio::spawn(crate::serve::serve(listener, router, limits, stop));
         let url = format!("http://127.0.0.1:{port}");
         let client = reqwest::Client::new();
         let pairing_token = ctx.pairing_token();
@@ -74,6 +71,11 @@ impl TestCompanion {
         self.ctx
             .handler_hits
             .load(std::sync::atomic::Ordering::SeqCst)
+    }
+    /// Asks the Companion to stop and reports whether its server finished within `within`.
+    pub async fn stop(&mut self, within: std::time::Duration) -> bool {
+        let _ = self.ctx.shutdown.send(true);
+        tokio::time::timeout(within, &mut self.task).await.is_ok()
     }
     /// Whether anything asked the Companion to stop.
     pub fn shutdown_requested(&self) -> bool {

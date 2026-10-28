@@ -34,13 +34,19 @@ pub struct Ctx {
     pub(crate) runtime: Option<std::path::PathBuf>,
     pub(crate) runtime_lock: Arc<Mutex<()>>,
     pub(crate) mock: bool,
+    pub(crate) limits: crate::Limits,
     pub(crate) started_ms: u64,
     /// Counts requests that reached a handler, so tests can show a rejection never did.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) handler_hits: Arc<std::sync::atomic::AtomicUsize>,
 }
 impl Ctx {
-    pub(crate) fn new(port: u16, mock: bool, runtime: Option<std::path::PathBuf>) -> Self {
+    pub(crate) fn new(
+        port: u16,
+        mock: bool,
+        runtime: Option<std::path::PathBuf>,
+        limits: crate::Limits,
+    ) -> Self {
         let events = Events::default();
         Self {
             devices: crate::devices::DeviceManager::new(events.clone()),
@@ -52,6 +58,7 @@ impl Ctx {
             runtime,
             runtime_lock: Arc::new(Mutex::new(())),
             mock,
+            limits,
             started_ms: crate::now_ms(),
             #[cfg(any(test, feature = "test-hooks"))]
             handler_hits: Default::default(),
@@ -302,8 +309,9 @@ async fn dispatch<E: Endpoint>(State(ctx): State<Ctx>, request: Request) -> Resp
         };
         let query = serde_urlencoded::from_str(parts.uri.query().unwrap_or(""))
             .map_err(|e| CommonError::invalid("query", e))?;
-        let bytes = to_bytes(body, E::BODY_LIMIT)
+        let bytes = tokio::time::timeout(ctx.limits.body_read, to_bytes(body, E::BODY_LIMIT))
             .await
+            .map_err(|_| CommonError::Timeout)?
             .map_err(|_| CommonError::TooLarge)?;
         if !bytes.is_empty() && !is_json(&parts.headers) {
             return Err(CommonError::MediaType);
@@ -357,7 +365,14 @@ type Guard = (Ctx, Arc<HashMap<(Method, String), Access>>);
 async fn guard(State((ctx, access)): State<Guard>, request: Request, next: Next) -> Response {
     let port = ctx.port;
     let response = match admit(&ctx, &access, request) {
-        Ok(request) => error::normalize(next.run(request).await),
+        // The upgrade answers at once; the socket then runs outside this request.
+        Ok(request) if request.uri().path() == "/api/v1/events" => {
+            error::normalize(next.run(request).await)
+        }
+        Ok(request) => match tokio::time::timeout(ctx.limits.request, next.run(request)).await {
+            Ok(response) => error::normalize(response),
+            Err(_) => CommonError::Timeout.into_response(),
+        },
         Err(e) => e.into_response(),
     };
     with_security_headers(response, port)

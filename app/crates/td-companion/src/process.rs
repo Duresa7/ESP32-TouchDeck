@@ -153,7 +153,12 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         runtime
     };
-    let ctx = Ctx::new(listener.local_addr()?.port(), mock, Some(runtime.clone()));
+    let ctx = Ctx::new(
+        listener.local_addr()?.port(),
+        mock,
+        Some(runtime.clone()),
+        crate::Limits::default(),
+    );
     write_runtime(&runtime, &ctx.runtime_value())
         .map_err(|e| format!("The runtime file could not be secured: {e}"))?;
     let _runtime = RuntimeFile(runtime.clone());
@@ -178,18 +183,15 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    let mut shutdown = ctx.shutdown.subscribe();
     let signal = ctx.shutdown.clone();
-    axum::serve(listener, crate::api::router(ctx))
-        .with_graceful_shutdown(async move {
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => {
-                    let _ = signal.send(true);
-                }
-                _ = shutdown.changed() => {}
-            }
-        })
-        .await?;
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            let _ = signal.send(true);
+        }
+    });
+    let stop = ctx.shutdown.subscribe();
+    let limits = ctx.limits;
+    crate::serve::serve(listener, crate::api::router(ctx), limits, stop).await;
     worker.abort();
     maintenance.abort();
     Ok(())
