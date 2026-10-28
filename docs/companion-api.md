@@ -822,6 +822,8 @@ axum 0.8 on tokio. tokio, hyper, tower and tower-http are already in `Cargo.lock
 
 Under the workspace's default release profile the growth is over the 1.5 MB budget. With the size settings it's under. The workspace profile also builds the Tauri app, so #71 leaves it alone, and the packaging ticket picks the Companion's shipping profile.
 
+**Measured again in #74.** The Device manager brings in `td-host` for the key mirror. The Companion is 4,566,016 B under the default release profile and 2,059,264 B with the size settings. That's 1,809,408 B (1.73 MiB) over the empty tokio program, so it's now over the budget even with the size settings. Most of the growth is `td-host`. The packaging ticket decides whether to trim it or raise the budget.
+
 Rejected: actix-web (a second runtime layered on tokio), warp (filter types make per-feature routes and error mapping awkward), poem (a much smaller community, and its OpenAPI story uses the attribute-declared responses rejected above), tiny_http with tungstenite (a thread per connection, and hand-built upgrade, limits and middleware), and raw hyper (every layer above it would be ours).
 
 **Embedded UI.** `build.rs` embeds `<ui>/dist` as an `include_bytes!` table. In development, the Vite dev server proxies `/api`, including the WebSocket, to the Companion and rewrites `Host` and `Origin` to the Companion's origin. The Companion has no dev-only origin exception that could ship.
