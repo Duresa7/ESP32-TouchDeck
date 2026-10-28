@@ -1,0 +1,24 @@
+menu "TouchDeck perf tools (test builds only)"
+
+    config TD_PERF_TOOLS
+        bool "Build the perf measurement commands"
+        default n
+        select FREERTOS_GENERATE_RUN_TIME_STATS
+        select FREERTOS_VTASKLIST_INCLUDE_COREID
+        help
+            Adds `perf info`, `perf window`, `perf tap`, `perf mem`, `perf cpu`, `perf fb`, `perf invalidate`,
+            `perf stall`, `perf memtest`, `perf membw` and `perf temp` to the console and gives `perf fps` panel,
+            render, copy and CPU figures. It wraps two esp_lcd calls at link time, turns on FreeRTOS run-time stats
+            and never formats a storage volume that will not mount, so it is for test builds only. Build it from
+            firmware/perf/tools.defaults into a build directory of its own, never into the committed sdkconfig. Off,
+            the firmware compiles to the same code as without it.
+
+    config TD_PERF_VARIANT
+        string "Build name that perf info reports"
+        depends on TD_PERF_TOOLS
+        default "baseline"
+        help
+            Names the build under test, so a bench can prove which build is flashed. A defaults file listed after
+            firmware/perf/tools.defaults sets it.
+
+endmenu

@@ -1,0 +1,21 @@
+# Perf tools for test builds. Never merge these into sdkconfig or sdkconfig.defaults. Build into a directory of its
+# own, on top of the shipped defaults (paths relative to firmware/):
+#
+#   idf.py -B <abs>/build-perf -D SDKCONFIG=<abs>/build-perf/sdkconfig \
+#          -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;perf/tools.defaults" build
+#
+# A build that also changes other options lists its own file after this one and names itself in
+# CONFIG_TD_PERF_VARIANT, which perf info reports.
+
+CONFIG_TD_PERF_TOOLS=y
+CONFIG_TD_PERF_VARIANT="baseline"
+
+# perf cpu and the cpu figures of perf fps and perf window read FreeRTOS run-time stats. The counter ticks on
+# esp_timer, in microseconds, and 64 bits wide so it never wraps.
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
+CONFIG_FREERTOS_RUN_TIME_COUNTER_TYPE_U64=y
+# perf mem and perf cpu name each task's core from the same snapshot as the rest of its figures.
+CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=y
+CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID=y

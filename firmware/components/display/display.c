@@ -100,10 +100,17 @@ esp_err_t display_start(bool portrait, display_build_fn build)
     const esp_lv_adapter_rotation_t rotation = portrait ? ESP_LV_ADAPTER_ROTATE_90 : ESP_LV_ADAPTER_ROTATE_0;
     const esp_lv_adapter_tear_avoid_mode_t tear_mode = ESP_LV_ADAPTER_TEAR_AVOID_MODE_DEFAULT_RGB;
     const size_t fbs = esp_lv_adapter_get_required_frame_buffer_count(tear_mode, rotation);
+#if CONFIG_TD_PERF_TOOLS
+    display_perf_note_mode(tear_mode, rotation);
+#endif
 
     esp_lcd_panel_handle_t panel = NULL;
     ESP_RETURN_ON_ERROR(panel_rgb_create(fbs, &panel), TAG, "rgb panel");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_init(panel), TAG, "panel init");
+#if CONFIG_TD_PERF_TOOLS
+    display_perf_note_handle(panel);
+    display_perf_boot_mark("panel");
+#endif
 
     /* Without the expander the backlight stays off, but the panel and screenshots still work. */
     const esp_err_t board_err = board_init();
@@ -116,6 +123,9 @@ esp_err_t display_start(bool portrait, display_build_fn build)
     adapter.stack_in_psram = true;
     adapter.task_core_id = LVGL_TASK_CORE;
     ESP_RETURN_ON_ERROR(esp_lv_adapter_init(&adapter), TAG, "adapter init");
+#if CONFIG_TD_PERF_TOOLS
+    display_perf_boot_mark("adapter");
+#endif
     ESP_RETURN_ON_ERROR(alloc_snapshot_buffer(), TAG, "snapshot buffer");
 
     esp_lv_adapter_display_config_t config =
@@ -124,13 +134,22 @@ esp_err_t display_start(bool portrait, display_build_fn build)
     s.lv = esp_lv_adapter_register_display(&config);
     ESP_RETURN_ON_FALSE(s.lv != NULL, ESP_FAIL, TAG, "register display");
     ESP_LOGI(TAG, "%s %ux%u", portrait ? "portrait" : "landscape", display_width(), display_height());
+#if CONFIG_TD_PERF_TOOLS
+    display_perf_boot_mark("register_display");
+#endif
 
     ESP_RETURN_ON_ERROR(esp_lv_adapter_lock(-1), TAG, "adapter lock");
     lv_display_add_event_cb(s.lv, on_flush_finish, LV_EVENT_FLUSH_FINISH, NULL);
+#if CONFIG_TD_PERF_TOOLS
+    display_perf_attach(s.lv);
+#endif
     if (build != NULL) {
         build();
     }
     esp_lv_adapter_unlock();
+#if CONFIG_TD_PERF_TOOLS
+    display_perf_boot_mark("ui_build");
+#endif
 
     ESP_RETURN_ON_ERROR(esp_lv_adapter_start(), TAG, "adapter start");
     atomic_store(&s.ready, true);
@@ -140,6 +159,9 @@ esp_err_t display_start(bool portrait, display_build_fn build)
         ESP_LOGE(TAG, "no frame reached the panel within %d ms", FIRST_FRAME_TIMEOUT_MS);
         result = ESP_ERR_TIMEOUT;
     }
+#if CONFIG_TD_PERF_TOOLS
+    display_perf_boot_mark("first_frame");
+#endif
     return result;
 }
 
@@ -192,11 +214,19 @@ esp_err_t display_perf_run(uint32_t seconds, display_perf_t *out)
     esp_lv_adapter_unlock();
     ESP_RETURN_ON_FALSE(timer != NULL, ESP_ERR_NO_MEM, TAG, "perf timer");
 
+#if CONFIG_TD_PERF_TOOLS
+    display_perf_mark_t mark;
+    display_perf_window_begin(DISPLAY_PERF_SLOT_FPS, &mark);
+#endif
     const unsigned frames0 = atomic_load(&s.frames);
     const int64_t t0 = esp_timer_get_time();
     vTaskDelay(pdMS_TO_TICKS(seconds * 1000));
     const unsigned frames1 = atomic_load(&s.frames);
     const int64_t t1 = esp_timer_get_time();
+#if CONFIG_TD_PERF_TOOLS
+    display_perf_window_t tools;
+    display_perf_window_end(DISPLAY_PERF_SLOT_FPS, &mark, &tools);
+#endif
 
     /* The timer must not outlive the run, so wait for the lock however long the LVGL task holds it. */
     esp_err_t err = esp_lv_adapter_lock(-1);
@@ -206,5 +236,8 @@ esp_err_t display_perf_run(uint32_t seconds, display_perf_t *out)
     }
     *out = (display_perf_t){ .seconds = seconds, .frames = frames1 - frames0,
                              .elapsed_ms = (uint32_t)((t1 - t0) / 1000) };
+#if CONFIG_TD_PERF_TOOLS
+    out->tools = tools;
+#endif
     return err;
 }

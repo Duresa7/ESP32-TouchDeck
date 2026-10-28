@@ -1183,6 +1183,13 @@ CONFIG_SPI_SLAVE_ISR_IN_IRAM=y
 # end of ESP-Driver:SPI Configurations
 
 #
+# ESP-Driver:Temperature Sensor Configurations
+#
+# default:
+# CONFIG_TEMP_SENSOR_ENABLE_DEBUG_LOG is not set
+# end of ESP-Driver:Temperature Sensor Configurations
+
+#
 # ESP-Driver:UART Configurations
 #
 # default:
@@ -2503,6 +2510,13 @@ CONFIG_VFS_SEMIHOSTFS_MAX_MOUNT_POINTS=1
 # default:
 CONFIG_VFS_INITIALIZE_DEV_NULL=y
 # end of Virtual file system
+
+#
+# TouchDeck perf tools (test builds only)
+#
+# default:
+# CONFIG_TD_PERF_TOOLS is not set
+# end of TouchDeck perf tools (test builds only)
 
 #
 # IoT Button

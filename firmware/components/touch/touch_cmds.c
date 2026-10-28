@@ -116,6 +116,15 @@ static void cmd_tap(int argc, char **argv)
     send(&r);
 }
 
+#if CONFIG_TD_PERF_TOOLS
+esp_err_t touch_perf_tap(uint16_t x, uint16_t y, uint32_t *deliver_us)
+{
+    td_touch_sample_t samples[2];
+    const size_t n = td_touch_tap(x, y, samples);
+    return touch_inject(samples, n, TAP_TIMEOUT_MS, deliver_us);
+}
+#endif
+
 static void cmd_swipe(int argc, char **argv)
 {
     static const uint32_t min[] = { 0, 0, 0, 0, 1 };

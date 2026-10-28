@@ -119,6 +119,13 @@ esp_err_t td_store_mount(bool *formatted)
      * format is a separate step here to tell a first boot from a later one. */
     bool did_format = false;
     esp_err_t err = esp_vfs_littlefs_register(&conf);
+#if CONFIG_TD_PERF_TOOLS
+    /* Perf builds run on the user's own layout and settings, and the variant under test may be what keeps the volume
+     * from mounting, so they never format it. The deck boots without storage instead. */
+    if (err == ESP_FAIL) {
+        ESP_LOGE(TAG, "volume does not mount, and a perf build leaves it unformatted");
+    }
+#else
     if (err == ESP_FAIL) {
         ESP_LOGW(TAG, "volume does not mount, formatting it");
         err = esp_littlefs_format(STORE_LABEL);
@@ -127,6 +134,7 @@ esp_err_t td_store_mount(bool *formatted)
             err = esp_vfs_littlefs_register(&conf);
         }
     }
+#endif
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "mount failed: %s", esp_err_to_name(err));
         return err == ESP_ERR_NOT_FOUND ? err : ESP_FAIL;

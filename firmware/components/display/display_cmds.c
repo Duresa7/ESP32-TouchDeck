@@ -11,6 +11,13 @@
 #include "td_console.h"
 
 #define PERF_MAX_SECONDS 60
+#if CONFIG_TD_PERF_TOOLS
+#define PERF_USAGE DISPLAY_PERF_USAGE
+#define PERF_HINT DISPLAY_PERF_HINT
+#else
+#define PERF_USAGE "usage: perf fps <seconds 1-60>"
+#define PERF_HINT "fps <seconds>"
+#endif
 #define PERF_TASK_STACK 4096
 #define PERF_TASK_PRIORITY 2
 
@@ -107,6 +114,9 @@ static void perf_task(void *arg)
         td_reply_int(&r, "frames", perf.frames);
         td_reply_int(&r, "elapsed_ms", perf.elapsed_ms);
         td_reply_int(&r, "fps", perf.elapsed_ms ? (uint64_t)perf.frames * 1000 / perf.elapsed_ms : 0);
+#if CONFIG_TD_PERF_TOOLS
+        display_perf_reply_window(&r, &perf.tools);
+#endif
     } else {
         td_reply_str(&r, "error", esp_err_to_name(err));
     }
@@ -119,11 +129,16 @@ static void perf_task(void *arg)
 /* The reply comes when the run ends, so the console stays free to take screenshots during it. */
 static int cmd_perf(int argc, char **argv)
 {
+#if CONFIG_TD_PERF_TOOLS
+    if (argc >= 2 && strcmp(argv[1], "fps") != 0) {
+        return require_display("perf") ? display_perf_command(argc, argv) : 0;
+    }
+#endif
     char *end = NULL;
     const unsigned long seconds = argc == 3 ? strtoul(argv[2], &end, 10) : 0;
     if (argc != 3 || strcmp(argv[1], "fps") != 0 || *argv[2] == '\0' || *end != '\0' || seconds < 1 ||
         seconds > PERF_MAX_SECONDS) {
-        send_error("perf", "usage: perf fps <seconds 1-60>");
+        send_error("perf", PERF_USAGE);
         return 0;
     }
     if (!require_display("perf")) {
@@ -172,7 +187,7 @@ const esp_console_cmd_t *display_console_commands(size_t *count)
         { .command = "screenshot", .help = "stream the screen as RGB565 base64 lines, scale 1, 2 or 4",
           .hint = "[1|2|4]", .func = cmd_screenshot },
         { .command = "perf", .help = "measure frames per second, reply arrives when done",
-          .hint = "fps <seconds>", .func = cmd_perf },
+          .hint = PERF_HINT, .func = cmd_perf },
         { .command = "backlight", .help = "turn the backlight on or off, no argument reports it",
           .hint = "[on|off]", .func = cmd_backlight },
     };
