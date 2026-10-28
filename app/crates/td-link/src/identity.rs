@@ -1,0 +1,169 @@
+//! Negotiated USB identity. Legacy hello remains available for v1 callers.
+use crate::{LinkError, Session};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::time::Duration;
+use td_core::{Hello, ReplyError, Request};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Capabilities {
+    pub screen: [u32; 2],
+    pub grid: [u32; 2],
+    pub pages: u32,
+    pub tiles: u32,
+    pub layout_bytes: u32,
+    pub layout_schemas: Vec<u32>,
+    pub free_bytes: u32,
+    pub tile_kinds: Vec<String>,
+    pub asset_bytes: u32,
+    pub formats: Vec<String>,
+    pub image: [u32; 2],
+    pub gif_frames: u32,
+    pub gif_pixels: u32,
+    pub photo_bytes: u32,
+    pub live_hz: u32,
+    pub live_total_hz: u32,
+    pub series: u32,
+    pub text_bytes: u32,
+    pub streams: u32,
+}
+impl Capabilities {
+    fn valid(&self) -> bool {
+        self.screen.iter().all(|n| (1..=4096).contains(n))
+            && self.grid.iter().all(|n| (1..=8).contains(n))
+            && self.pages <= 8
+            && self.tiles <= 64
+            && self.layout_bytes <= 32768
+            && self.layout_schemas.contains(&1)
+            && self.tile_kinds.iter().any(|s| s == "static")
+            && self.formats.iter().any(|s| s == "tdi1")
+            && (1..=1048576).contains(&self.asset_bytes)
+            && self.image[0] <= self.screen[0]
+            && self.image[1] <= self.screen[1]
+            && self.photo_bytes <= 131072
+            && self.live_hz <= 2
+            && self.live_total_hz <= 20
+            && self.series <= 32
+            && self.text_bytes <= 128
+            && self.streams <= 8
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Identity {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub version: String,
+    pub capabilities: Option<Capabilities>,
+    pub protocol: u32,
+}
+pub fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 48
+        && name.chars().any(|c| !c.is_whitespace())
+        && !name.chars().any(|c| c <= '\u{1f}' || c == '\u{7f}')
+}
+fn invalid(message: &str) -> LinkError {
+    LinkError::Reply(ReplyError::Fields(message.into()))
+}
+impl Identity {
+    pub fn matches_usb_serial(&self, serial: &str) -> bool {
+        self.id
+            .as_ref()
+            .is_some_and(|id| *id == serial.replace([':', '-'], "").to_ascii_lowercase())
+    }
+}
+impl Session {
+    /// Discover v1 first; select v2 only when explicitly advertised.
+    pub fn identity(&self, timeout: Duration) -> Result<Identity, LinkError> {
+        let reply = self.request(&Request::Hello, timeout)?;
+        let hello: Hello = reply.fields().map_err(LinkError::Reply)?;
+        if !hello.is_deck() {
+            return Err(invalid("not a v1 discovery reply"));
+        }
+        if !reply
+            .fields
+            .get("protocols")
+            .and_then(|v| v.as_array())
+            .is_some_and(|v| v.contains(&json!(2)))
+        {
+            return Ok(Identity {
+                id: None,
+                name: None,
+                version: hello.version,
+                capabilities: None,
+                protocol: 1,
+            });
+        }
+        let selected = self.call(&json!({"m":"hello", "proto":2}), timeout)?;
+        let result = (|| {
+            let hello: Hello = selected.fields().map_err(LinkError::Reply)?;
+            if hello.product != "touchdeck" || hello.proto != 2 || hello.version.len() > 32 {
+                return Err(invalid("invalid v2 hello"));
+            }
+            #[derive(Deserialize)]
+            struct Fields {
+                id: String,
+                name: String,
+                caps: Capabilities,
+                protocols: Vec<u32>,
+            }
+            let fields: Fields = selected.fields().map_err(LinkError::Reply)?;
+            if fields.id.len() != 12
+                || !fields
+                    .id
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                || !valid_name(&fields.name)
+                || !fields.caps.valid()
+                || !fields.protocols.contains(&2)
+                || !fields.protocols.contains(&1)
+            {
+                return Err(invalid("invalid v2 identity or capabilities"));
+            }
+            Ok(Identity {
+                id: Some(fields.id),
+                name: Some(fields.name),
+                version: hello.version,
+                capabilities: Some(fields.caps),
+                protocol: 2,
+            })
+        })();
+        if result.is_err() {
+            let _ = self.hello(timeout);
+        }
+        result
+    }
+    pub fn name(&self, timeout: Duration) -> Result<String, LinkError> {
+        if self.identity(timeout)?.protocol != 2 {
+            return Err(invalid("Device does not support names"));
+        }
+        self.name_request(json!({"m":"v2.name.get"}), timeout)
+    }
+    pub fn set_name(&self, name: &str, timeout: Duration) -> Result<String, LinkError> {
+        if !valid_name(name) {
+            return Err(invalid("Invalid name"));
+        }
+        if self.identity(timeout)?.protocol != 2 {
+            return Err(invalid("Device does not support names"));
+        }
+        self.name_request(json!({"m":"v2.name.set", "name":name}), timeout)
+    }
+    fn name_request(
+        &self,
+        value: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<String, LinkError> {
+        #[derive(Deserialize)]
+        struct Named {
+            name: String,
+        }
+        let named: Named = self
+            .call(&value, timeout)?
+            .fields()
+            .map_err(LinkError::Reply)?;
+        if !valid_name(&named.name) {
+            return Err(invalid("Invalid stored name"));
+        }
+        Ok(named.name)
+    }
+}

@@ -1,2 +1,5 @@
 dependencies:
   espressif/cjson: "^1.7.19"
+  idf: ">=6.1.0"
+  espressif/esp_lvgl_adapter: "0.7.3"
+  espressif/esp_lcd_touch_gt911: "1.2.1"

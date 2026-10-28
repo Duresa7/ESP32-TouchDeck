@@ -1,10 +1,13 @@
 #include "td_frame.h"
+#include "td_v2_json.h"
 #include "td_crc16.h"
 #include "unity.h"
 #include "cJSON.h"
 #include <string.h>
 
 extern const char golden_start[] asm("_binary_golden_frames_json_start");
+
+extern const char golden_v2_start[] asm("_binary_golden_frames_v2_json_start");
 
 static uint8_t s_wire[TD_FRAME_WIRE_MAX + 8];
 static uint8_t s_encoded[TD_FRAME_WIRE_MAX];
@@ -44,9 +47,9 @@ TEST_CASE("CRC-16 CCITT FALSE matches the published check value", "[td_frame]")
     TEST_ASSERT_EQUAL_HEX16(0xffff, td_crc16(NULL, 0));
 }
 
-TEST_CASE("every golden frame decodes and every valid fixture encodes exactly", "[td_frame]")
+static void golden(const char *text, bool v1)
 {
-    cJSON *root = cJSON_Parse(golden_start);
+    cJSON *root = cJSON_Parse(text);
     TEST_ASSERT_NOT_NULL(root);
     const cJSON *frames = cJSON_GetObjectItemCaseSensitive(root, "frames");
     TEST_ASSERT_GREATER_OR_EQUAL_INT(12, cJSON_GetArraySize(frames));
@@ -85,9 +88,12 @@ TEST_CASE("every golden frame decodes and every valid fixture encodes exactly", 
         TEST_ASSERT_EQUAL_MEMORY_MESSAGE(s_wire, s_encoded, len, name);
         longest = len > longest ? len : longest;
     }
-    TEST_ASSERT_EQUAL_UINT_MESSAGE(2061, longest, "the largest escaped frame in link-v1.md");
+    if (v1) TEST_ASSERT_EQUAL_UINT(2061, longest);
     cJSON_Delete(root);
 }
+
+TEST_CASE("v1 golden frames round trip exactly", "[td_frame]") { golden(golden_start, true); }
+TEST_CASE("v2 golden frames round trip exactly", "[td_frame]") { golden(golden_v2_start, false); }
 
 TEST_CASE("encoding rejects 1025 bytes and cannot write past its output capacity", "[td_frame]")
 {
@@ -152,4 +158,29 @@ TEST_CASE("a maximum chunk carries 1021 data bytes even when every payload byte 
     TEST_ASSERT_EQUAL_UINT(3, decoded.len);
     frame.len--;
     TEST_ASSERT_EQUAL_UINT(0, td_frame_encode(&frame, s_wire, sizeof s_wire));
+}
+
+TEST_CASE("v2 lexical rules reject lossy strings and noninteger selectors", "[td_frame]")
+{
+    const char *valid = "{\"m\":\"hello\",\"proto\":2}";
+    TEST_ASSERT_TRUE(td_v2_json_valid(valid, strlen(valid)));
+    const char *invalid[] = {
+        "{\"m\":\"hello\",\"proto\":2.0}",
+        "{\"m\":\"hello\",\"proto\":2e0}",
+        "{\"m\":\"v2.name.set\",\"name\":\"Desk\\u0000other\"}",
+        "{\"m\":\"v2.name.set\",\"name\":\"Desk\\nother\"}",
+        "{\"m\":\"v2.name.set\",\"name\":\"\\ud800\"}",
+    };
+    for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; i++) {
+        TEST_ASSERT_FALSE(td_v2_json_valid(invalid[i], strlen(invalid[i])));
+    }
+}
+
+TEST_CASE("raw DEL is identifiable JSON but forbidden v2 text", "[td_frame]")
+{
+    const char *json = "{\"m\":\"v2.name.set\",\"name\":\"bad\x7f\"}";
+    const char *message = NULL;
+    size_t len = 0;
+    TEST_ASSERT_TRUE(td_v2_json_message(json, strlen(json), &message, &len));
+    TEST_ASSERT_FALSE(td_v2_json_valid(json, strlen(json)));
 }

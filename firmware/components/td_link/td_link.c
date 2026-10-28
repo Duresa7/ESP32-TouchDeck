@@ -2,6 +2,7 @@
 #include "td_link_priv.h"
 #include "key_sink_link.h"
 #include "td_frame.h"
+#include "td_v2_json.h"
 #include "td_rx_sync.h"
 #include <stdio.h>
 #include <string.h>
@@ -130,12 +131,32 @@ static void handle_message(const td_frame_t *frame)
     payload[frame->len] = '\0';
     const char *end = NULL;
     cJSON *request = cJSON_ParseWithLengthOpts(payload, frame->len + 1, &end, true);
-    if (!cJSON_IsObject(request) || end != payload + frame->len) {
+    const char *raw_message = NULL;
+    size_t message_len = 0;
+    cJSON *recovered = NULL;
+    if (td_v2_json_message(payload, frame->len, &raw_message, &message_len)) {
+        recovered = cJSON_ParseWithLength(raw_message, message_len);
+    }
+    const char *message = cJSON_GetStringValue(recovered);
+    bool strict = message && (!strncmp(message, "v2.", 3) || !strcmp(message, "hello"));
+    cJSON *reply;
+    if (strict && !td_v2_json_valid(payload, frame->len)) {
+        reply = cJSON_CreateObject();
+        char echo[65];
+        snprintf(echo, sizeof echo, "%.64s", message);
+        cJSON_AddStringToObject(reply, "m", echo);
+        cJSON_AddBoolToObject(reply, "ok", false);
+        cJSON_AddStringToObject(reply, "reason", "args");
+        cJSON_AddStringToObject(reply, "error", "Invalid request fields");
+    } else if (!cJSON_IsObject(request) || end != payload + frame->len) {
+        cJSON_Delete(recovered);
         cJSON_Delete(request);
         td_link_count_drop();
         return;
+    } else {
+        reply = td_link_dispatch(request);
     }
-    cJSON *reply = td_link_dispatch(request);
+    cJSON_Delete(recovered);
     cJSON_Delete(request);
     bool printed = reply && cJSON_PrintPreallocated(reply, payload, sizeof payload, false);
     cJSON_Delete(reply);
