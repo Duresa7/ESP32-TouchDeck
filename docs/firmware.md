@@ -488,3 +488,22 @@ idf.py -p COM3 flash monitor
 
 The monitor ends with Unity's summary, `N Tests 0 Failures 0 Ignored`, and `OK`.
 Flash `firmware/` again afterwards to get the deck firmware back.
+
+## Protocol v2 identity
+
+USB discovery retains the v1 hello and advertises protocols 1 and 2. Selecting
+protocol 2 adds the factory MAC identity, persistent Device name, Firmware
+version, and capabilities. Identity discovery compares the id with the USB
+serial after removing colons and hyphens and folding ASCII case; a mismatch
+refuses association. The legacy discovery API remains available.
+
+The `td-link` CLI provides `discover-identities`, `identity`, `name`, and
+`set-name "Studio"`. Names default to `Open TouchDeck`, contain 1–48 UTF-8
+bytes, and persist in NVS separately from Layouts. See the
+[protocol contract](../schema/protocol/link-v2.md) for validation rules.
+Only static Tiles and the existing tdi1 format are advertised. Asset, live,
+photo, idle, and clock requests remain unsupported in this slice.
+
+The Firmware test app links the link dispatcher to exercise maximum-size hello
+replies and NVS persistence. Its pinned UI dependencies and LVGL snapshot and
+font settings match the components linked by the production Firmware.

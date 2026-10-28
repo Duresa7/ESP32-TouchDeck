@@ -12,6 +12,10 @@ use td_link::{Incoming, MockDeck, Serial, Session, SessionConfig, Transport};
 const USAGE: &str = "usage: td-link [--port <port> | --mock] [--timeout <ms>] <command>
 commands:
   discover               probe every Espressif USB-Serial/JTAG port with hello
+  discover-identities    probe identities and verify USB serial association
+  identity               negotiate and print Device identity
+  name                   read the Device name
+  set-name <name>        store the Device name
   hello                  print the deck's hello reply
   ping [--count <n>]     send n pings and print how many replies matched
   console \"<line>\"       send one console line and print its @td reply
@@ -140,6 +144,10 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
 
 fn run(args: &Args) -> Result<bool, String> {
     match args.command.as_str() {
+        "discover-identities" => {
+            print(&json!(td_link::discover::discover_identities()));
+            Ok(true)
+        }
         "update" | "recover" => {
             let path = args
                 .rest
@@ -188,6 +196,18 @@ fn run(args: &Args) -> Result<bool, String> {
                 discover()
             };
             print(&serde_json::to_value(candidates).expect("candidates serialize"));
+            Ok(true)
+        }
+        "identity" | "name" | "set-name" => {
+            let (session, _) = open(args, quiet())?;
+            let value = match args.command.as_str() {
+                "identity" => json!(session.identity(args.timeout).map_err(|e| e.to_string())?),
+                "name" => json!({"name": session.name(args.timeout).map_err(|e| e.to_string())?}),
+                _ => {
+                    json!({"name": session.set_name(args.rest.first().ok_or("set-name needs a name")?, args.timeout).map_err(|e| e.to_string())?})
+                }
+            };
+            print(&value);
             Ok(true)
         }
         "hello" => {
