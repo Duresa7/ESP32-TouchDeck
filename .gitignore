@@ -1,5 +1,6 @@
 # Agent instructions
 AGENTS.md
+/docs/agents/
 
 # Local agent skills and installation metadata
 /.agents/
