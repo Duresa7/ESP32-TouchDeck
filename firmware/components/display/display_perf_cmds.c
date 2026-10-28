@@ -517,10 +517,20 @@ static void cmd_mem(void)
     }
     (void)xTaskResumeAll();
 
-    td_reply_int(&r, "tasks_n", n);
-    display_perf_reply_printf(&r, ",\"tasks\":[");
+    /* A task waiting for its idle cleanup reports eDeleted, and that cleanup frees the TCB its name points into. */
+    UBaseType_t live = 0;
     for (UBaseType_t i = 0; i < n; i++) {
-        display_perf_reply_printf(&r, "%s", i == 0 ? "" : ",");
+        live += tasks[i].eCurrentState != eDeleted;
+    }
+    td_reply_int(&r, "tasks_n", live);
+    display_perf_reply_printf(&r, ",\"tasks\":[");
+    bool first = true;
+    for (UBaseType_t i = 0; i < n; i++) {
+        if (tasks[i].eCurrentState == eDeleted) {
+            continue;
+        }
+        display_perf_reply_printf(&r, "%s", first ? "" : ",");
+        first = false;
         display_perf_reply_task_name(&r, tasks[i].pcTaskName);
         display_perf_reply_printf(&r, ",\"core\":%d,\"prio\":%u", task_core(&tasks[i]),
                                   (unsigned)tasks[i].uxCurrentPriority);
@@ -591,9 +601,14 @@ static void cpu_task(void *arg)
         display_perf_reply_tenths(&r, "cpu1_pct",
                                   last > 0 ? display_perf_busy_x10(&cores0[last], &cores1[last]) : -1);
         display_perf_reply_printf(&r, ",\"tasks\":[");
+        bool first = true;
         for (UBaseType_t i = 0; i < n1; i++) {
+            if (after[i].eCurrentState == eDeleted) {
+                continue;
+            }
             const uint64_t run = after[i].ulRunTimeCounter;
-            display_perf_reply_printf(&r, "%s", i == 0 ? "" : ",");
+            display_perf_reply_printf(&r, "%s", first ? "" : ",");
+            first = false;
             display_perf_reply_task_name(&r, after[i].pcTaskName);
             display_perf_reply_printf(&r, ",\"core\":%d,\"prio\":%u", task_core(&after[i]),
                                       (unsigned)after[i].uxCurrentPriority);

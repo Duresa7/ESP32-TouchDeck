@@ -126,12 +126,23 @@ void display_perf_mem_sample(void)
     l->free_dma = heap_caps_get_free_size(MALLOC_CAP_DMA);
     l->min_free_dma = heap_caps_get_minimum_free_size(MALLOC_CAP_DMA);
 
+    /* pcTaskName points into each task's TCB, which the idle cleanup of a deleted task frees. A task waiting for that
+     * cleanup reports eDeleted and is skipped, and a name is read at most to the field's size, so a task that ends
+     * just after the snapshot can leave a garbled name but no read past it. */
     const UBaseType_t n = s_last_status != NULL ? uxTaskGetSystemState(s_last_status, LAST_TASKS_MAX, NULL) : 0;
+    UBaseType_t kept = 0;
     for (UBaseType_t i = 0; i < n; i++) {
-        strlcpy(l->tasks[i].name, s_last_status[i].pcTaskName, sizeof l->tasks[i].name);
-        l->tasks[i].hwm = s_last_status[i].usStackHighWaterMark;
+        if (s_last_status[i].eCurrentState == eDeleted) {
+            continue;
+        }
+        char *name = l->tasks[kept].name;
+        const size_t len = strnlen(s_last_status[i].pcTaskName, sizeof l->tasks[kept].name - 1);
+        memcpy(name, s_last_status[i].pcTaskName, len);
+        name[len] = '\0';
+        l->tasks[kept].hwm = s_last_status[i].usStackHighWaterMark;
+        kept++;
     }
-    l->tasks_n = n;
+    l->tasks_n = kept;
     l->crc = last_crc(l);
     l->magic = LAST_MAGIC;
     atomic_store(&s_sample_index, next);
