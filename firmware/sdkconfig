@@ -2328,6 +2328,23 @@ CONFIG_MBEDTLS_PKCS1_V21=y
 # end of mbedTLS
 
 #
+# NVS
+#
+# default:
+# CONFIG_NVS_ENCRYPTION is not set
+# default:
+# CONFIG_NVS_ASSERT_ERROR_CHECK is not set
+# default:
+# CONFIG_NVS_LEGACY_DUP_KEYS_COMPATIBILITY is not set
+# default:
+# CONFIG_NVS_ALLOCATE_CACHE_IN_SPIRAM is not set
+# default:
+# CONFIG_NVS_BDL_STACK is not set
+# default:
+# CONFIG_NVS_FLASH_VERIFY_ERASE is not set
+# end of NVS
+
+#
 # PThreads
 #
 # default:
@@ -3159,7 +3176,8 @@ CONFIG_LV_FONT_MONTSERRAT_14=y
 # CONFIG_LV_FONT_MONTSERRAT_24 is not set
 # default:
 # CONFIG_LV_FONT_MONTSERRAT_26 is not set
-CONFIG_LV_FONT_MONTSERRAT_28=y
+# default:
+# CONFIG_LV_FONT_MONTSERRAT_28 is not set
 # default:
 # CONFIG_LV_FONT_MONTSERRAT_30 is not set
 # default:

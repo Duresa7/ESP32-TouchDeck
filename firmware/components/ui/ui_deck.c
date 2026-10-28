@@ -22,8 +22,7 @@ static const char *TAG = "ui";
 static const char *LAYOUT_TAG = "layout";
 
 #define LOCK_TIMEOUT_MS 3000
-#define RECOVERY_BAND_COLOR UI_RGB565(176, 32, 32)
-#define RECOVERY_CAPTION_COLOR UI_RGB565(255, 176, 64)
+#define DOT_STEPS 1024
 
 /*
  * The pager, the objects and the press bookkeeping belong to the LVGL task, and ui_goto() and a reload borrow them
@@ -52,6 +51,9 @@ static struct {
     lv_obj_t *recovery_caption;
     uint8_t title_page;
     lv_obj_t *dots[UI_PAGES_MAX];
+    ui_rect_t dot_shown[UI_PAGES_MAX];
+    ui_rect_t dot_from[UI_PAGES_MAX];
+    uint8_t dot_page;
     lv_obj_t *pressed_obj;
     bool slide_changes_page;
     uint32_t slide_start_ms;
@@ -127,6 +129,49 @@ static void set_track_x(void *track, int32_t x)
     sync_title(x);
 }
 
+/* Places every pager dot `progress` steps of DOT_STEPS along the way from where it was when the move began to its
+ * place for dot_page. */
+static void place_dots(void *var, int32_t progress)
+{
+    (void)var;
+    const ui_geometry_t *g = ui_geo();
+    for (uint8_t i = 0; i < s.page_count && s.dots[i] != NULL; i++) {
+        const ui_rect_t to = ui_geometry_pager_dot(g, i, s.page_count, s.dot_page);
+        const ui_rect_t from = s.dot_from[i];
+        const ui_rect_t shown = {
+            .x = (int16_t)(from.x + (to.x - from.x) * progress / DOT_STEPS),
+            .y = to.y,
+            .w = (int16_t)(from.w + (to.w - from.w) * progress / DOT_STEPS),
+            .h = to.h,
+        };
+        lv_obj_set_pos(s.dots[i], shown.x, shown.y);
+        lv_obj_set_size(s.dots[i], shown.w, shown.h);
+        s.dot_shown[i] = shown;
+    }
+}
+
+/* The pill moves to the dot of Page `index` and the other dots close up behind it, starting from where they are, so a
+ * page change during a move turns it around. */
+static void move_dots(uint8_t index)
+{
+    if (s.dots[0] == NULL || index == s.dot_page) {
+        return;
+    }
+    lv_anim_delete(s.dots[0], place_dots);
+    memcpy(s.dot_from, s.dot_shown, sizeof s.dot_from);
+    s.dot_page = index;
+    lv_anim_t anim;
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, s.dots[0]);
+    lv_anim_set_exec_cb(&anim, place_dots);
+    lv_anim_set_values(&anim, 0, DOT_STEPS);
+    lv_anim_set_duration(&anim, ui_theme.anim_dot_ms);
+    lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
+    if (lv_anim_start(&anim) == NULL) {
+        place_dots(NULL, DOT_STEPS);
+    }
+}
+
 static void show_page(uint8_t index)
 {
     const bool changed = index != atomic_load(&s.page);
@@ -141,6 +186,7 @@ static void show_page(uint8_t index)
             lv_obj_remove_state(s.dots[i], LV_STATE_CHECKED);
         }
     }
+    move_dots(index);
 }
 
 static void clear_pressed(void)
@@ -311,8 +357,9 @@ static void on_release(lv_event_t *e)
     ui_tile_keys_click(ref >= 0 ? &s.pages[ref / 256] : NULL, tile);
 }
 
-/* The band covers the screen as the last child of the active screen, above whichever page shows. It sits on the screen
- * and not on the top layer because the screenshot snapshots the active screen alone. It takes no input. */
+/* The band covers the screen as the last child of the active screen, above whichever page shows: the screen's own
+ * background with the words in the signal color, because something waits for the finger to lift. It sits on the
+ * screen and not on the top layer because the screenshot snapshots the active screen alone. It takes no input. */
 static void draw_recovery_band(void)
 {
     const ui_geometry_t *g = ui_geo();
@@ -322,14 +369,14 @@ static void draw_recovery_band(void)
     lv_obj_set_scrollable(band, false);
     lv_obj_set_pos(band, 0, 0);
     lv_obj_set_size(band, g->screen.w, g->screen.h);
-    lv_obj_set_style_bg_color(band, ui_color(RECOVERY_BAND_COLOR), 0);
+    lv_obj_set_style_bg_color(band, ui_color(ui_theme.color.bg), 0);
     lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
     lv_obj_move_foreground(band);
 
     lv_obj_t *label = lv_label_create(band);
     lv_label_set_text_static(label, "Release to reset");
-    lv_obj_set_style_text_font(label, ui_theme.font_tile, 0);
-    lv_obj_set_style_text_color(label, ui_color(ui_theme.color.text), 0);
+    lv_obj_set_style_text_font(label, ui_theme.font_legend, 0);
+    lv_obj_set_style_text_color(label, ui_color(ui_theme.color.signal), 0);
     lv_obj_center(label);
 }
 
@@ -346,18 +393,18 @@ static void build_recovery_caption(lv_obj_t *screen, const ui_geometry_t *g)
     lv_obj_t *caption = lv_label_create(screen);
     lv_label_set_text_static(caption, "Recovery");
     lv_obj_add_style(caption, &ui_styles()->title, 0);
-    lv_obj_set_style_text_color(caption, ui_color(RECOVERY_CAPTION_COLOR), 0);
+    lv_obj_set_style_text_color(caption, ui_color(ui_theme.color.signal), 0);
     lv_obj_align(caption, LV_ALIGN_TOP_RIGHT, -g->title_x, g->title_y);
     s.recovery_caption = caption;
 }
 
-/* An icon above the label, with the label in the caption font. */
+/* An icon above the label, with the label in the label font. */
 static void stack_icon(lv_obj_t *label, lv_obj_t *icon, int32_t icon_h, int32_t tile_w)
 {
-    const int32_t caption_h = lv_font_get_line_height(ui_theme.font_caption);
+    const int32_t caption_h = lv_font_get_line_height(ui_theme.font_label);
     const int32_t gap = ui_theme.media.gap;
 
-    lv_obj_add_style(label, &ui_styles()->tile_caption, 0);
+    lv_obj_add_style(label, &ui_styles()->tile_label, 0);
     lv_obj_set_size(label, tile_w - 2 * ui_theme.media.label_inset, caption_h);
     lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_align(label, LV_ALIGN_CENTER, 0, (icon_h + gap) / 2);
@@ -366,16 +413,30 @@ static void stack_icon(lv_obj_t *label, lv_obj_t *icon, int32_t icon_h, int32_t 
     lv_obj_align(icon, LV_ALIGN_CENTER, 0, -(caption_h + gap) / 2);
 }
 
-/* Preserve labels that already fit. Oversized labels use a smaller font, then wrap with dots if needed. */
+/* True when every character is Basic Latin, the only letters the legend font carries. */
+static bool basic_latin(const char *text)
+{
+    for (const unsigned char *c = (const unsigned char *)text; *c != '\0'; c++) {
+        if (*c >= 0x80) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* Preserve labels that already fit the legend font. Oversized labels, and labels with letters the legend font lacks,
+ * use a smaller font, then wrap with dots if needed. */
 static void fit_label(lv_obj_t *label, const char *text, int32_t tile_w, int32_t tile_h)
 {
     lv_point_t size;
-    lv_text_get_size(&size, text, ui_theme.font_tile, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    if (size.x <= tile_w && size.y <= tile_h) {
-        return;
+    if (basic_latin(text)) {
+        lv_text_get_size(&size, text, ui_theme.font_legend, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        if (size.x <= tile_w && size.y <= tile_h) {
+            return;
+        }
     }
     const int32_t max_w = tile_w - 2 * ui_theme.media.label_inset;
-    const lv_font_t *const fonts[] = { ui_theme.font_caption, ui_theme.font_small };
+    const lv_font_t *const fonts[] = { ui_theme.font_label, ui_theme.font_sub };
     for (size_t i = 0; i < sizeof fonts / sizeof fonts[0]; i++) {
         lv_text_get_size(&size, text, fonts[i], 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
         if (size.x <= max_w && size.y <= tile_h) {
@@ -383,13 +444,13 @@ static void fit_label(lv_obj_t *label, const char *text, int32_t tile_w, int32_t
             return;
         }
     }
-    lv_obj_set_style_text_font(label, ui_theme.font_small, 0);
+    lv_obj_set_style_text_font(label, ui_theme.font_sub, 0);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(label, max_w);
     /* LVGL's dots mode needs its own writable copy of the text. */
     lv_label_set_text(label, text);
     lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
-    lv_text_get_size(&size, text, ui_theme.font_small, 0, 0, max_w, LV_TEXT_FLAG_NONE);
+    lv_text_get_size(&size, text, ui_theme.font_sub, 0, 0, max_w, LV_TEXT_FLAG_NONE);
     if (size.y > tile_h) {
         lv_obj_set_height(label, tile_h);
     }
@@ -423,14 +484,14 @@ static void build_tile(lv_obj_t *parent, const ui_page_t *page, const ui_tile_t 
     if (glyph != NULL) {
         lv_obj_t *icon = lv_label_create(obj);
         lv_label_set_text_static(icon, glyph);
-        lv_obj_add_style(icon, &st->tile_label, 0);
-        stack_icon(label, icon, lv_font_get_line_height(ui_theme.font_tile), r.w);
+        lv_obj_add_style(icon, &st->tile_icon, 0);
+        stack_icon(label, icon, lv_font_get_line_height(ui_theme.font_icon), r.w);
     } else if (image != NULL) {
         lv_obj_t *icon = lv_image_create(obj);
         lv_image_set_src(icon, image);
         stack_icon(label, icon, image->header.h, r.w);
     } else {
-        lv_obj_add_style(label, &st->tile_label, 0);
+        lv_obj_add_style(label, &st->tile_legend, 0);
         fit_label(label, tile->label, r.w, r.h);
         lv_obj_center(label);
     }
@@ -456,20 +517,24 @@ static void build_page(uint8_t index)
     }
 }
 
+/* The pager starts at rest on page 0. */
 static void build_dots(lv_obj_t *screen)
 {
     const ui_styles_t *st = ui_styles();
     const ui_geometry_t *g = ui_geo();
+    s.dot_page = 0;
     for (uint8_t i = 0; i < s.page_count; i++) {
+        const ui_rect_t r = ui_geometry_pager_dot(g, i, s.page_count, 0);
         lv_obj_t *dot = lv_obj_create(screen);
         lv_obj_remove_style_all(dot);
         lv_obj_add_style(dot, &st->dot, 0);
         lv_obj_add_style(dot, &st->dot_on, LV_STATE_CHECKED);
-        lv_obj_set_size(dot, g->dot_size, g->dot_size);
-        lv_obj_set_pos(dot, ui_dot_x(i, s.page_count) - g->dot_size / 2, g->dot_y - g->dot_size / 2);
+        lv_obj_set_pos(dot, r.x, r.y);
+        lv_obj_set_size(dot, r.w, r.h);
         lv_obj_set_scrollable(dot, false);
         lv_obj_set_clickable(dot, false);
         s.dots[i] = dot;
+        s.dot_shown[i] = r;
     }
 }
 
@@ -679,6 +744,16 @@ void ui_layout_boot(const char *orientation)
     s_boot_prepare_us = esp_timer_get_time() - started;
 }
 
+/* The first touch on the splash ends it and does nothing else, the way a touch on a dark screen only wakes it, so
+ * the finger never fires a tile it could not see. The splash goes on the next animation tick. LVGL then ignores the
+ * rest of that touch, because the object it pressed is gone, and deleting the object also cancels its 3 s delete. */
+static void on_splash_pressed(lv_event_t *e)
+{
+    lv_obj_delete_delayed(lv_event_get_target_obj(e), 0);
+    ESP_LOGI(TAG, "boot splash ended by a touch");
+}
+
+/* The Device's name in the nameplate on the screen background, for 3 s or until the first touch. */
 static void show_boot_brand(void)
 {
     const ui_geometry_t *g = ui_geo();
@@ -688,9 +763,11 @@ static void show_boot_brand(void)
     lv_obj_set_style_bg_color(boot, ui_color(ui_theme.color.bg), 0);
     lv_obj_set_style_bg_opa(boot, LV_OPA_COVER, 0);
     lv_obj_set_scrollable(boot, false);
+    lv_obj_add_event_cb(boot, on_splash_pressed, LV_EVENT_PRESSED, NULL);
 
     lv_obj_t *brand = lv_label_create(boot);
     lv_obj_add_style(brand, &ui_styles()->title, 0);
+    lv_obj_set_style_text_color(brand, ui_color(ui_theme.color.ink), 0);
     lv_label_set_text_static(brand, "Open TouchDeck");
     lv_obj_center(brand);
     lv_obj_delete_delayed(boot, 3000);

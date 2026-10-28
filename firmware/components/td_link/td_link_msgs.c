@@ -8,6 +8,30 @@
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
 #include "td_recovery.h"
+#include "td_device.h"
+#include "td_store.h"
+#include "esp_mac.h"
+
+static bool s_v2;
+
+static void v2_fail(cJSON *reply, const char *reason, const char *error)
+{
+    td_link_fail(reply, error);
+    cJSON_AddStringToObject(reply, "reason", reason);
+}
+
+static bool fields(const cJSON *request, const char *extra)
+{
+    const cJSON *a;
+    cJSON_ArrayForEach(a, request) {
+        if (strcmp(a->string, "m") && (!extra || strcmp(a->string, extra))) return false;
+        for (const cJSON *b = a->next; b; b = b->next) {
+            if (!strcmp(a->string, b->string)) return false;
+        }
+    }
+    return true;
+}
+
 
 static bool link_online(void)
 {
@@ -16,7 +40,22 @@ static bool link_online(void)
 
 static void hello(const cJSON *request, cJSON *reply)
 {
-    (void)request;
+    const cJSON *selector = cJSON_GetObjectItemCaseSensitive(request, "proto");
+    if (!fields(request, "proto") || (selector && (!cJSON_IsNumber(selector) || floor(selector->valuedouble) != selector->valuedouble))) {
+        v2_fail(reply, "args", "Invalid protocol selector");
+        return;
+    }
+    if (selector && selector->valuedouble != 1 && selector->valuedouble != 2) {
+        v2_fail(reply, "unsupported", "Unsupported protocol");
+        return;
+    }
+    bool v2 = selector && selector->valueint == 2;
+    char name[TD_DEVICE_NAME_MAX + 1];
+    if (v2 && td_device_name_get(name) != ESP_OK) {
+        v2_fail(reply, "storage", "Device name unavailable");
+        return;
+    }
+    s_v2 = v2;
     const esp_app_desc_t *app = esp_app_get_description();
     const esp_partition_t *running = esp_ota_get_running_partition();
     char sha[2 * sizeof app->app_elf_sha256 + 1];
@@ -26,7 +65,9 @@ static void hello(const cJSON *request, cJSON *reply)
     td_link_hello();
     ui_set_link_online(link_online);
     cJSON_AddStringToObject(reply, "product", "touchdeck");
-    cJSON_AddNumberToObject(reply, "proto", 1);
+    cJSON_AddNumberToObject(reply, "proto", v2 ? 2 : 1);
+    const int protocols[] = {1, 2};
+    cJSON_AddItemToObject(reply, "protocols", cJSON_CreateIntArray(protocols, 2));
     cJSON_AddStringToObject(reply, "elf_sha256", sha);
     cJSON_AddStringToObject(reply, "version", app->version);
     cJSON_AddStringToObject(reply, "running", running ? running->label : "unknown");
@@ -38,6 +79,25 @@ static void hello(const cJSON *request, cJSON *reply)
         ui_layout_info(&layout);
     }
     cJSON_AddStringToObject(reply, "layout", layout.from_storage ? "storage" : "builtin");
+    if (v2) {
+        uint8_t mac[6];
+        esp_efuse_mac_get_default(mac);
+        char id[13];
+        snprintf(id, sizeof id, "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        cJSON_AddStringToObject(reply, "id", id);
+        cJSON_AddStringToObject(reply, "name", name);
+        cJSON *caps = cJSON_Parse("{\"screen\":[1024,600],\"grid\":[8,8],\"pages\":8,\"tiles\":64,\"layout_bytes\":32768,\"layout_schemas\":[1],\"tile_kinds\":[\"static\"],\"asset_bytes\":12300,\"formats\":[\"tdi1\"],\"image\":[64,64],\"gif_frames\":0,\"gif_pixels\":0,\"photo_bytes\":0,\"live_hz\":0,\"live_total_hz\":0,\"series\":0,\"text_bytes\":0,\"streams\":0}");
+        if (strcmp(ui_layout_slot(), "portrait") == 0) {
+            const int screen[] = {600, 1024};
+            cJSON_ReplaceItemInObjectCaseSensitive(caps, "screen", cJSON_CreateIntArray(screen, 2));
+        }
+        td_store_info_t info = {0};
+        td_store_info(&info);
+        /* Keep one LittleFS block available for metadata. No v2 uploads exist yet. */
+        uint32_t free = info.total_bytes > info.used_bytes + 4096 ? info.total_bytes - info.used_bytes - 4096 : 0;
+        cJSON_AddNumberToObject(caps, "free_bytes", free);
+        cJSON_AddItemToObject(reply, "caps", caps);
+    }
 }
 
 static void ping(const cJSON *request, cJSON *reply)
@@ -219,6 +279,27 @@ cJSON *td_link_dispatch(const cJSON *request)
     char name[4 * ECHO_CHARS_MAX + 1];
     echo_name(message->valuestring, name);
     cJSON_AddStringToObject(reply, "m", name);
+    if (!strncmp(message->valuestring, "v2.", 3)) {
+        cJSON_AddBoolToObject(reply, "ok", true);
+        if (!s_v2 || !td_link_state().online) {
+            s_v2 = false;
+            v2_fail(reply, "not-negotiated", "Select protocol 2 first");
+        } else if (!strcmp(name, "v2.name.get") || !strcmp(name, "v2.name.set")) {
+            bool set = !strcmp(name, "v2.name.set");
+            const char *value = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(request, "name"));
+            char stored[TD_DEVICE_NAME_MAX + 1];
+            if (!fields(request, set ? "name" : NULL) || (set && !td_device_name_valid(value))) {
+                v2_fail(reply, "args", "Invalid name");
+            } else if ((set && td_device_name_set(value) != ESP_OK) || td_device_name_get(stored) != ESP_OK) {
+                v2_fail(reply, "storage", "Device name unavailable");
+            } else {
+                cJSON_AddStringToObject(reply, "name", stored);
+            }
+        } else {
+            v2_fail(reply, "unsupported", "Unsupported request");
+        }
+        return reply;
+    }
     for (size_t i = 0; i < sizeof s_messages / sizeof s_messages[0]; i++) {
         if (strcmp(message->valuestring, s_messages[i].name) == 0) {
             cJSON_AddBoolToObject(reply, "ok", true);

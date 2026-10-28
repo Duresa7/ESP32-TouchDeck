@@ -135,3 +135,62 @@ mod tests {
         );
     }
 }
+
+/// Identity-aware discovery without changing the legacy Companion's probe shape.
+#[derive(Debug, Clone, Serialize)]
+pub struct IdentifiedDevice {
+    pub port: String,
+    pub usb_serial: Option<String>,
+    pub identity: Option<crate::Identity>,
+    pub error: Option<String>,
+}
+pub fn discover_identities() -> Vec<IdentifiedDevice> {
+    let mut devices = Vec::new();
+    for port in serialport::available_ports().unwrap_or_default() {
+        let serialport::SerialPortType::UsbPort(usb) = port.port_type else {
+            continue;
+        };
+        if usb.vid != VID || usb.pid != PID {
+            continue;
+        }
+        let result = Serial::open(&port.port_name)
+            .map_err(|e| e.to_string())
+            .and_then(|serial| {
+                probe_identity_transport(Box::new(serial), usb.serial_number.as_deref())
+            });
+        let (identity, error) = match result {
+            Ok(identity) => (Some(identity), None),
+            Err(error) => (None, Some(error)),
+        };
+        devices.push(IdentifiedDevice {
+            port: port.port_name,
+            usb_serial: usb.serial_number,
+            identity,
+            error,
+        });
+    }
+    devices.sort_by(|a, b| a.port.cmp(&b.port));
+    devices
+}
+
+/// Probe a Device and refuse automatic association when its USB identity differs.
+pub fn probe_identity_transport(
+    transport: Box<dyn Transport>,
+    usb_serial: Option<&str>,
+) -> Result<crate::Identity, String> {
+    let (session, _) = Session::open(
+        transport,
+        SessionConfig {
+            ping_every: None,
+            ..SessionConfig::default()
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    let identity = session.identity(HELLO_TIMEOUT).map_err(|e| e.to_string())?;
+    if identity.protocol == 2
+        && !usb_serial.is_some_and(|serial| identity.matches_usb_serial(serial))
+    {
+        return Err("Device id does not match USB serial".into());
+    }
+    Ok(identity)
+}

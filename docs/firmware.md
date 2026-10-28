@@ -299,6 +299,46 @@ The display component hands its commands to `td_console_register`, so `help`
 lists them. Until the display has started, `screenshot` and `perf` answer
 `display not ready`.
 
+### Fonts
+
+The deck draws its text in six Archivo fonts, generated as LVGL C files into
+`firmware/components/ui/fonts/`, with the font's
+[SIL Open Font License](../firmware/components/ui/fonts/OFL.txt) next to them.
+[docs/design.md](design.md#fonts-on-the-device) says which instance, size and
+glyph set each one has. The `lv:` icons are LVGL symbols, which only LVGL's own
+Montserrat 48 carries, so they still draw in it.
+
+The source is `Archivo[wdth,wght].ttf`, version 2.001, from the upstream
+repository at commit `b5d63988ce19d044d3e10362de730af00526b672`:
+<https://github.com/Omnibus-Type/Archivo/blob/b5d63988ce19d044d3e10362de730af00526b672/fonts/variable/Archivo%5Bwdth,wght%5D.ttf>.
+`OFL.txt` comes from the same commit.
+
+To regenerate them, install fontTools 4.60.1 (`pip install fonttools==4.60.1`)
+and lv_font_conv 1.5.3 (`npm install lv_font_conv@1.5.3`). Then cut the three
+instances and convert each font in a folder of its own, and copy the six `.c`
+files into `firmware/components/ui/fonts/`:
+
+```sh
+fonttools varLib.instancer "Archivo[wdth,wght].ttf" wght=520 wdth=100 -o Archivo-Medium.ttf
+fonttools varLib.instancer "Archivo[wdth,wght].ttf" wght=620 wdth=100 -o Archivo-Semibold.ttf
+fonttools varLib.instancer "Archivo[wdth,wght].ttf" wght=620 wdth=118 -o Archivo-Nameplate.ttf
+
+R="-r 0x20-0x7E -r 0xA0-0xFF -r 0x2013-0x2014 -r 0x2018-0x2019 -r 0x201C-0x201D -r 0x2022 -r 0x2026 -r 0x2212"
+conv() { lv_font_conv --font "$1" --size "$2" --bpp 4 --format lvgl --no-compress --lv-include lvgl.h $3 -o "$4.c"; }
+conv Archivo-Medium.ttf 22 "$R" ui_font_medium_22
+conv Archivo-Medium.ttf 26 "$R" ui_font_medium_26
+conv Archivo-Medium.ttf 44 "-r 0x20-0x7E" ui_font_medium_44
+conv Archivo-Semibold.ttf 32 "$R" ui_font_semibold_32
+conv Archivo-Semibold.ttf 40 "$R" ui_font_semibold_40
+conv Archivo-Nameplate.ttf 26 "$R" ui_font_nameplate_26
+```
+
+`--no-compress` stores the glyphs as plain 4-bit bitmaps, as LVGL's built-in
+fonts do, so drawing a glyph reads it straight from flash with no
+decompression. `--lv-include lvgl.h` makes the files include `lvgl.h` the way the
+ESP-IDF LVGL component provides it. The same tool versions and commands give
+the same files byte for byte.
+
 ### Performance options
 
 Five Kconfig options make the firmware faster or lighter without changing what
@@ -488,3 +528,22 @@ idf.py -p COM3 flash monitor
 
 The monitor ends with Unity's summary, `N Tests 0 Failures 0 Ignored`, and `OK`.
 Flash `firmware/` again afterwards to get the deck firmware back.
+
+## Protocol v2 identity
+
+USB discovery retains the v1 hello and advertises protocols 1 and 2. Selecting
+protocol 2 adds the factory MAC identity, persistent Device name, Firmware
+version, and capabilities. Identity discovery compares the id with the USB
+serial after removing colons and hyphens and folding ASCII case; a mismatch
+refuses association. The legacy discovery API remains available.
+
+The `td-link` CLI provides `discover-identities`, `identity`, `name`, and
+`set-name "Studio"`. Names default to `Open TouchDeck`, contain 1–48 UTF-8
+bytes, and persist in NVS separately from Layouts. See the
+[protocol contract](../schema/protocol/link-v2.md) for validation rules.
+Only static Tiles and the existing tdi1 format are advertised. Asset, live,
+photo, idle, and clock requests remain unsupported in this slice.
+
+The Firmware test app links the link dispatcher to exercise maximum-size hello
+replies and NVS persistence. Its pinned UI dependencies and LVGL snapshot and
+font settings match the components linked by the production Firmware.

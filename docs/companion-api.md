@@ -83,14 +83,14 @@ All secrets come from the OS random source (`getrandom`). Tokens are base64url w
 **Writing it on Windows** (crate `windows-sys`):
 
 1. Read the user's SID from the process token (`OpenProcessToken`, `GetTokenInformation(TokenUser)`).
-2. Create `runtime\` if it's missing. If `runtime\` is a reparse point (a junction or symlink), refuse to start. Apply the protected DACL `D:P(A;OICI;FA;;;<SID>)` with owner `<SID>` through `SetNamedSecurityInfoW` and `PROTECTED_DACL_SECURITY_INFORMATION`. Nothing inherits from `%LOCALAPPDATA%`. There's no Administrators or SYSTEM entry, because admins can take ownership anyway and backup tools use the backup privilege.
+2. Create `runtime\` with `CreateDirectoryW` and `SECURITY_ATTRIBUTES` from `O:<SID>D:P(A;OICI;FA;;;<SID>)`, so it's the user's from the start. If `runtime\` already exists and is a reparse point (a junction or symlink), refuse to start. If another account owns it, refuse to start with a clear message; the Companion never takes ownership. Otherwise apply the protected DACL `D:P(A;OICI;FA;;;<SID>)` through `SetNamedSecurityInfoW` and `PROTECTED_DACL_SECURITY_INFORMATION`, leaving the owner alone, and verify the folder as step 5 verifies the file. Nothing inherits from `%LOCALAPPDATA%`. There's no Administrators or SYSTEM entry, because admins can take ownership anyway and backup tools use the backup privilege.
 3. Create `runtime\.companion.json.<pid>.tmp` with `CreateFileW(CREATE_NEW)` and `SECURITY_ATTRIBUTES` from `O:<SID>D:P(A;;FA;;;<SID>)`. The file is private from its first byte.
 4. Write it, call `FlushFileBuffers`, then `MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)`. A rename on one volume keeps the file's own security descriptor.
-5. Read the final file's security with `GetNamedSecurityInfoW`. The DACL must be protected, hold exactly one allow entry for the user's SID, and the owner must be the user. Otherwise the Companion deletes the file, refuses to serve the API, and shows a tray error.
+5. Read the final file's security with `GetNamedSecurityInfoW`. The DACL must be protected, hold exactly one allow entry for the user's SID, and the owner must be the user. Otherwise the Companion deletes the file, refuses to serve the API, and shows a tray error. A failed rename in step 4 only removes the temporary file; the previous file stays.
 6. Write the file only after the listener is bound. Delete it on clean shutdown. Sessions are never written to disk.
-7. Every 60 s, check that the file still exists with the same DACL. If it's gone or changed, rewrite it with the same token.
+7. Every 60 s, and on Reset pairing, check that the file exists with the expected contents and DACL, and rewrite it only if it drifted. The check runs off the async runtime under one lock. A failure is retried 3 times with backoff (0.2 s, 1 s, 3 s) before the Companion shuts down.
 
-**Single instance.** A named mutex `Local\touchdeck-companion`. `Local\` is per sign-in session, so two signed-in users get two Companions, each with its own port and file.
+**Single instance.** An exclusive lock on `runtime\companion.lock`, taken after the folder is secured in step 2. Only the user can create files there, so another account can't hold the lock first, as it could squat a named mutex. A second Companion for the same folder exits with "The Companion is already running." Each user has their own folder, so two signed-in users get two Companions, each with its own port and file. Two sign-ins of the same user share one.
 
 ### Request rules
 
@@ -98,8 +98,8 @@ Tower layers apply these to every request, including static UI files and the Web
 
 | # | Check | Passes | Fails with |
 |---|---|---|---|
-| 1 | `Host` | Exactly `127.0.0.1:PORT` or `localhost:PORT`. A missing `Host` fails | 421 `security.host` |
-| 2 | `Origin`, if present | Exactly `http://127.0.0.1:PORT` or `http://localhost:PORT`. `null` fails | 403 `security.origin` |
+| 1 | `Host` | Exactly `127.0.0.1:PORT`. A missing `Host` fails, and so does `localhost:PORT`: only `127.0.0.1` is bound, and `localhost` can resolve to `[::1]`, where another process may listen on the same port | 421 `security.host` |
+| 2 | `Origin`, if present | Exactly `http://127.0.0.1:PORT`. `null` fails | 403 `security.origin` |
 | 3 | `Sec-Fetch-Site`, if present, on `/api/*` | `same-origin` or `none` | 403 `security.origin` |
 | 4 | `Sec-Fetch-Site`, if present, on static `GET`s | Anything with `Sec-Fetch-Mode: navigate`, otherwise `same-origin` or `none` | 403 `security.origin` |
 | 5 | Auth on `/api/v1/*`, except the public routes below | A valid `Authorization: Bearer tds_…`, or the WebSocket subprotocol | 401 `auth.missing`, `auth.invalid`, `auth.revoked` or `auth.expired` |
@@ -120,6 +120,11 @@ These initial limits are reversible; changing them requires updating this contra
 | Pending uploads | 8 per session, 64 MiB pending across the Companion; reserve count and bytes while receiving, free on consumption, expiry or session end |
 | Decoded images | At most 4096×4096 pixels; GIFs also at most 300 frames and 64 MiB total decoded data |
 | Asset render Jobs | 2 at a time across the Companion |
+| Connections | 128 open at once; the accept loop waits for a free slot |
+| Request headers | 5 s to arrive, then the connection is dropped |
+| Request body | 10 s to arrive, then 408 `request.timeout`. Public routes read at most 4 KiB |
+| Whole request | 30 s, then 408 `request.timeout`. The WebSocket upgrade is exempt, since the socket runs after it |
+| Shutdown drain | 5 s for open requests, then their connections are dropped |
 | WebSockets | 4 per session, 16 across the Companion |
 | Socket queues | 1024 frames or 4 MiB per socket, whichever comes first; overflow follows Backpressure |
 | Pending approvals | 16 across the Companion, including the displayed request; deny and log new requests above the cap |
@@ -133,7 +138,7 @@ Every response, API and static, carries:
 
 ```
 Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
-  img-src 'self' blob: data:; connect-src 'self' ws://127.0.0.1:PORT ws://localhost:PORT;
+  img-src 'self' blob: data:; connect-src 'self' ws://127.0.0.1:PORT;
   font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 X-Frame-Options: DENY
 X-Content-Type-Options: nosniff
@@ -206,9 +211,10 @@ No token ever goes in a query string. Close codes:
 | Code | Meaning |
 |---|---|
 | 4401 | The session is invalid, expired or revoked |
-| 4403 | The `Origin` isn't allowed |
 | 4008 | The client is too slow (see Backpressure) |
 | 1001 | The Companion is shutting down |
+
+A refused `Host` or `Origin` never reaches a socket: the upgrade gets HTTP 421 or 403 with the error body.
 
 ### Command approvals happen on the PC
 
@@ -243,6 +249,7 @@ Image uploads for Assets stay on the API (`POST /uploads`). The Companion decode
   - It's an opaque string matching `^[0-9a-z]{1,32}$`. The `DevicePath` extractor checks it once, and handlers receive a typed `DeviceId`.
   - Protocol v2 `hello` also reports the id, and the Companion compares the two. If they disagree, the USB serial wins and the Companion logs a warning. v1 Firmware has no id in `hello`, and the USB serial still identifies it.
   - If a driver reports no serial number, the id falls back to `port-<sanitized port name>`, and the summary sets `stable_id: false`.
+  - If two Devices' ids come out the same, the one that already holds it keeps it. The other gets the first 27 characters, `x`, and 4 hex digits of its port name's SHA-256, such as `a0b1c2d3e4f5x9c1e`. That id holds while the Device stays on that port, so its summary sets `stable_id: false`.
   - Mock Devices use `mock0001`, `mock0002` and so on.
 - **The port** (`COM7`) is for diagnostics only. It appears in `DeviceSummary.link.port` and never in a route. Every command that took a `port` today takes a `DeviceId` instead.
 
@@ -321,7 +328,7 @@ pub enum BoardProbe { Silent, Busy { detail: String }, OtherFirmware { product: 
 
 ### Topics
 
-The client sends `{"op": "subscribe", "topic": "console", "device": "a0b1c2d3e4f5"}` or the same with `"op": "unsubscribe"`.
+The client sends `{"op": "subscribe", "topic": "console", "device": "a0b1c2d3e4f5"}` or the same with `"op": "unsubscribe"`. Until the first opt-in topic ships, the Companion accepts these and ignores them, and the socket stays open.
 
 | Topic | Default | Carries |
 |---|---|---|
@@ -653,13 +660,14 @@ Features add codes as they land. This list is the starting set.
 | `security.origin` | 403 | The `Origin` or `Sec-Fetch-Site` isn't allowed |
 | `auth.missing` | 401 | No token |
 | `auth.invalid` | 401 | The token is unknown |
-| `auth.revoked` | 401 | The session was revoked or pairing was reset |
+| `auth.revoked` | 401 | The session was revoked, its window closed, or pairing was reset. The 60 s check then forgets a session with no open WebSocket, and its token gets `auth.invalid` |
 | `auth.expired` | 401 | A browser session passed 7 days idle |
 | `auth.forbidden` | 403 | The session kind or lock ownership forbids this route, such as a browser minting a pairing code or taking the install lock |
 | `auth.code_invalid` | 401 | The pairing code is wrong, used or expired |
 | `auth.code_locked` | 429 | Too many wrong pairing codes. Start pairing again |
 | `request.invalid` | 400 | Malformed JSON, path or query. `details: {part, reason}`. Wraps axum rejections |
 | `request.too_large` | 413 | The body or decoded image passed its size or frame limit |
+| `request.timeout` | 408 | The request headers, body or handling took longer than the Request limits allow |
 | `limits.exceeded` | 429 | A pending upload, render Job, WebSocket or approval limit was reached |
 | `console.forbidden` | 403 | The line is not printable ASCII within 256 bytes or is not on the read-only allowlist |
 | `request.media_type` | 415 | The `Content-Type` is wrong for this route |
@@ -767,6 +775,8 @@ Two mechanisms can collect the features. #71 tries the first with a short spike 
 - **A build-script registry.** `build.rs` lists `src/features/*` and writes `$OUT_DIR/features.rs` with one `mod` per file and `pub fn all() -> Vec<Feature>`. `src/features.rs` holds only the `include!`. Keep it only if rust-analyzer resolves the generated modules: go to definition, completion and errors inside a feature file must all work.
 - **Distributed registration with `inventory` (or `linkme`).** Each feature submits its `feature` function with `inventory::submit!`, and the kernel collects them with `inventory::iter`. Rust still needs a `mod` line per feature. If #71 can't generate those lines, they sit in `src/features/mod.rs`, one per line in sorted order, and that line is the only shared edit a feature makes.
 
+**#71 chose `inventory`.** The build-script spike wasn't finished inside its time box, so the fallback applies. Each feature ends with `inventory::submit! { Registration(feature) }`, and `src/features/mod.rs` holds one `mod` line per feature in sorted order. `api::registry()` sorts features by name, so route order and the generated file don't depend on link order.
+
 Either way:
 
 - An `Endpoint` that's declared but never passed to `.endpoint::<X>()` is a never-built struct, so `dead_code` warns, and the zero-warning build fails.
@@ -777,6 +787,18 @@ Either way:
 ## HTTP framework
 
 axum 0.8 on tokio. tokio, hyper, tower and tower-http are already in `Cargo.lock` through reqwest, and axum itself is there through the WebDriver plugin. The Companion adds axum's own small crates, `tungstenite` for the WebSocket, and the tower-http `limit` and `set-header` features. Removing Tauri drops much more than that. The scaffold ticket measures the release binary's growth and records it. The budget is 1.5 MB.
+
+**Measured in #71** with Rust 1.99.1 on Windows x64. Every row is a release build without test hooks:
+
+| Binary | Default release profile | LTO, one codegen unit, `panic = "abort"` |
+|---|---|---|
+| Empty tokio program | 434,176 B | 249,856 B |
+| tokio and `td-link` discovery | 914,432 B | 508,416 B |
+| The same plus a minimal axum server with a WebSocket | 1,798,144 B | 957,952 B |
+| The Companion with the #71 slice | 2,596,864 B | 1,353,216 B |
+| Growth over the empty tokio program | 2,162,688 B (2.06 MiB) | 1,103,360 B (1.05 MiB) |
+
+Under the workspace's default release profile the growth is over the 1.5 MB budget. With the size settings it's under. The workspace profile also builds the Tauri app, so #71 leaves it alone, and the packaging ticket picks the Companion's shipping profile.
 
 Rejected: actix-web (a second runtime layered on tokio), warp (filter types make per-feature routes and error mapping awkward), poem (a much smaller community, and its OpenAPI story uses the attribute-declared responses rejected above), tiny_http with tungstenite (a thread per connection, and hand-built upgrade, limits and middleware), and raw hyper (every layer above it would be ours).
 
@@ -811,7 +833,7 @@ Required integration tests in `crates/td-companion/tests/`:
 5. **Approvals.** A command Tile press creates one `approval.requested` and runs nothing. A second press of the same Tile adds no request. The scripted `once` runs it and sends `approval.resolved`. After 5 minutes of test clock, an unanswered request resolves as `expired`. `actions.allowed_remove` makes the next press ask again. `release_router_answers_no_approvals` passes.
 6. **Auth attacks.** Each request is rejected with the stated code and never reaches a handler:
    - no token, a wrong token, a revoked token, an expired browser session (7 days of test clock),
-   - a foreign `Host`, a missing `Host`, and `localhost` against `127.0.0.1`,
+   - a foreign `Host`, a missing `Host`, `localhost:PORT` and `[::1]:PORT`,
    - a foreign `Origin` and `Origin: null`,
    - `Sec-Fetch-Site: cross-site`,
    - a WebSocket with a foreign `Origin`, and one without the bearer subprotocol,
@@ -875,7 +897,7 @@ Never add a public route, a CORS header, a route that answers approvals, or a ro
 | Browsers may drop the URL fragment when the Companion opens the link | **Resolved.** The query form is allowed, and the user can type the code |
 | A tray program's dialog may not get the foreground on Windows | **Reduced.** The tray notification and `approvals.show`. The approval waits up to 5 minutes |
 | `assets.create` with `kind: "app"` takes any path, so a session can learn whether a file exists | **Accepted.** The Companion returns only a rendered icon, never file contents |
-| The build-script registry may confuse rust-analyzer | **Open**, #71 decides between it and `inventory` |
+| The build-script registry may confuse rust-analyzer | **Resolved.** #71 uses `inventory` (see Feature modules) |
 | `td-link`'s blocking `Session` under async handlers needs one actor thread per Device | **Open**, the Device manager ticket (#74) builds it |
 | With Fast User Switching, two Companions try to open the same COM ports | **Open.** The second sees the port as `busy`. #74 decides whether to back off |
 | A browser tab can't show the app update icon, because updates live in Electron | **Open.** The browser shows nothing for now |

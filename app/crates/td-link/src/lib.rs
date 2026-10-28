@@ -48,3 +48,6 @@ impl Transport for Serial {
         Ok((Box::new(reader), Box::new(self.port)))
     }
 }
+
+pub mod identity;
+pub use identity::{Capabilities, Identity};
