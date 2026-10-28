@@ -189,6 +189,17 @@ esp_err_t panel_rgb_create(size_t num_fbs, esp_lcd_panel_handle_t *out);
  * request's job has not run yet, ESP_ERR_TIMEOUT when LVGL is too busy to lock or to finish in time. */
 esp_err_t display_snapshot(td_shot_image_t *out);
 
+#if CONFIG_TD_PAY_COPY_DEBT
+#include "lvgl.h"
+
+/* CONFIG_TD_PAY_COPY_DEBT, in display_copy_debt.c: after a refresh that redrew most of the screen, brings the two
+ * lagging triple-partial frame buffers up to date while LVGL is idle. Call it with the adapter lock held. */
+void display_copy_debt_attach(lv_display_t *disp);
+
+/* The idle refreshes it has asked for since boot. */
+uint32_t display_copy_debt_paid(void);
+#endif
+
 /* Invalidates the whole screen every LVGL cycle for `seconds` and counts the frames flushed to the panel.
  * Blocks the caller for that time. */
 esp_err_t display_perf_run(uint32_t seconds, display_perf_t *out);

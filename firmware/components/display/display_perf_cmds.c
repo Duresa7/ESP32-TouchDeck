@@ -50,6 +50,11 @@
 #else
 #define SPIRAM_XIP false
 #endif
+#ifdef CONFIG_TD_PAY_COPY_DEBT
+#define PAY_COPY_DEBT true
+#else
+#define PAY_COPY_DEBT false
+#endif
 /* The sensor range with the smallest error, under 1 degree, that covers a working board. */
 #define TEMP_RANGE_MIN_C (-10)
 #define TEMP_RANGE_MAX_C 80
@@ -262,6 +267,10 @@ static void cmd_info(void)
     td_reply_int(&r, "dcache_line", CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE);
     td_reply_int(&r, "icache_kb", CONFIG_ESP32S3_INSTRUCTION_CACHE_SIZE / 1024);
     td_reply_bool(&r, "lv_tick_cb", lv_tick_get_cb() != NULL);
+    td_reply_bool(&r, "pay_copy_debt", PAY_COPY_DEBT);
+#if CONFIG_TD_PAY_COPY_DEBT
+    td_reply_int(&r, "copy_debt_steps", display_copy_debt_paid());
+#endif
     td_reply_str(&r, "reset_reason", reset_reason_name(esp_reset_reason()));
     td_reply_int(&r, "boot_count", display_perf_boot_count());
     display_perf_send(&r);

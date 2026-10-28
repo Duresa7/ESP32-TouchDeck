@@ -2,6 +2,9 @@ set(srcs "display.c" "display_cmds.c" "panel_rgb.c" "display_rotate.c")
 if(CONFIG_TD_PERF_TOOLS)
     list(APPEND srcs "display_perf.c" "display_perf_cmds.c" "display_perf_fb.c" "display_perf_mem.c")
 endif()
+if(CONFIG_TD_PAY_COPY_DEBT)
+    list(APPEND srcs "display_copy_debt.c")
+endif()
 
 # esp_driver_tsens and esp_mm serve only the perf tools, but requirements are read before the configuration is, so
 # they cannot depend on it. Without the perf tools nothing links from them.

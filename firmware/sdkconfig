@@ -2519,6 +2519,13 @@ CONFIG_VFS_INITIALIZE_DEV_NULL=y
 # end of TouchDeck perf tools (test builds only)
 
 #
+# TouchDeck display
+#
+# default:
+CONFIG_TD_PAY_COPY_DEBT=y
+# end of TouchDeck display
+
+#
 # IoT Button
 #
 # default:

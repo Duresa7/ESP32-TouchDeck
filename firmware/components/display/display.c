@@ -140,6 +140,12 @@ esp_err_t display_start(bool portrait, display_build_fn build)
 
     ESP_RETURN_ON_ERROR(esp_lv_adapter_lock(-1), TAG, "adapter lock");
     lv_display_add_event_cb(s.lv, on_flush_finish, LV_EVENT_FLUSH_FINISH, NULL);
+#if CONFIG_TD_PAY_COPY_DEBT
+    /* Only triple-partial mode leaves frame buffers lagging after a refresh. */
+    if (tear_mode == ESP_LV_ADAPTER_TEAR_AVOID_MODE_TRIPLE_PARTIAL) {
+        display_copy_debt_attach(s.lv);
+    }
+#endif
 #if CONFIG_TD_PERF_TOOLS
     display_perf_attach(s.lv);
 #endif

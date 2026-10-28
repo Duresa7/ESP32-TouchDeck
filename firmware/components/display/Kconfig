@@ -22,3 +22,19 @@ menu "TouchDeck perf tools (test builds only)"
             firmware/perf/tools.defaults sets it.
 
 endmenu
+
+menu "TouchDeck display"
+
+    config TD_PAY_COPY_DEBT
+        bool "Bring lagging frame buffers up to date while LVGL is idle"
+        default y
+        help
+            In the adapter's triple-partial mode a refresh that redraws at least a quarter of the screen, such as a
+            page slide's frame, leaves the two other frame buffers behind, and each of the next two refreshes copies
+            that area into one of them, about 60 ms for the whole screen. With this on, 120 ms after the last such
+            refresh, and only while no area waits to be drawn, no animation runs and no pointer is pressed, LVGL
+            redraws one unchanged pixel twice, so those copies happen before the next touch and not in its refresh.
+            The pixels on the panel stay the same. Off, the next refreshes pay the copies, so the first tap after a
+            page slide waits for them.
+
+endmenu
