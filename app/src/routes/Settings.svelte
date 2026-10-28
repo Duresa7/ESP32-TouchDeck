@@ -9,7 +9,7 @@
   import AppUpdates from '../lib/updates/AppUpdates.svelte';
   import Update from './Update.svelte';
 
-  let { section = $bindable('deck'), title }: { section?: Section; title: string } = $props();
+  let { section = $bindable('deck'), buildSha }: { section?: Section; buildSha: string } = $props();
 
   const SECTIONS: [Section, string, string][] = [
     ['deck', 'Your deck', 'Screen and orientation'],
@@ -34,7 +34,7 @@
     {:else if section === 'app'}
       <AppUpdates online={$online} />
     {:else if section === 'help'}
-      <Troubleshooting {title} />
+      <Troubleshooting {buildSha} />
     {:else}
       <Settings online={$online} session={$online && $deck ? $deck.session : null} />
     {/if}

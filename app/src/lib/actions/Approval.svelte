@@ -61,7 +61,7 @@
           </ol>
         </dd>
         <dt>In folder</dt>
-        <dd><code data-testid="approval-cwd">{current.cwd || "TouchDeck's folder"}</code></dd>
+        <dd><code data-testid="approval-cwd">{current.cwd || "Open TouchDeck's folder"}</code></dd>
         <dt>System shell</dt>
         <dd data-testid="approval-shell" data-shell={current.shell}>{current.shell ? 'Yes, it runs through the system shell' : 'No'}</dd>
       </dl>
@@ -69,7 +69,7 @@
         <p class="more">{queue.length - 1} more {queue.length - 1 === 1 ? 'button is' : 'buttons are'} waiting after this one.</p>
       {/if}
       {#if problem}
-        <p class="problem">TouchDeck couldn't pass on your answer. Press the button on the deck again. ({problem})</p>
+        <p class="problem">Open TouchDeck couldn't pass on your answer. Press the button on the deck again. ({problem})</p>
       {/if}
       <div class="buttons">
         <button onclick={() => answer('deny')} data-testid="approval-deny">Don't run</button>

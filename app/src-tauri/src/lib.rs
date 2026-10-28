@@ -29,6 +29,11 @@ fn app_data_override(value: Option<OsString>) -> io::Result<Option<PathBuf>> {
     dunce::canonicalize(path).map(Some)
 }
 
+#[tauri::command]
+fn build_sha() -> &'static str {
+    BUILD_SHA
+}
+
 pub fn run() {
     // Resolve this before source workers, app state or WebViews can initialize.
     let app_data = app_data_override(std::env::var_os("TOUCHDECK_APP_DATA_DIR"))
@@ -54,6 +59,7 @@ pub fn run() {
     let builder = builder
         .plugin(tauri_plugin_wdio_webdriver::init())
         .invoke_handler(tauri::generate_handler![
+            build_sha,
             app_updates::app_update_check,
             app_updates::app_update_download,
             app_updates::app_update_install,
@@ -96,6 +102,7 @@ pub fn run() {
         ]);
     #[cfg(not(feature = "e2e"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        build_sha,
         app_updates::app_update_check,
         app_updates::app_update_download,
         app_updates::app_update_install,
@@ -156,7 +163,7 @@ pub fn run() {
                 }
             }
             if let Some(window) = app.get_webview_window("main") {
-                window.set_title(&format!("TouchDeck {BUILD_SHA}"))?;
+                window.set_title("Open TouchDeck")?;
             }
             Ok(())
         })

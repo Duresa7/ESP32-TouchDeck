@@ -55,7 +55,7 @@
     <header class="intro">
       <h1>AI usage</h1>
       <p class="lead">
-        Show how much of your AI plans you've used, right on the deck. Add a button that shows AI usage, or an AI usage page, and TouchDeck keeps
+        Show how much of your AI plans you've used, right on the deck. Add a button that shows AI usage, or an AI usage page, and Open TouchDeck keeps
         its numbers up to date while it runs.
       </p>
       <p class="feed" data-testid="deck-feed" data-deck={status?.deck ?? false} data-sent={status?.sent ?? 0}>
@@ -70,7 +70,7 @@
       <div class="section" data-testid="layout-card">
         <header>
           <h3>Which buttons to fill</h3>
-          <p class="hint">TouchDeck fills the AI usage buttons and pages of the layout on your deck. To fill the ones in a saved layout file instead, name the file here.</p>
+          <p class="hint">Open TouchDeck fills the AI usage buttons and pages of the layout on your deck. To fill the ones in a saved layout file instead, name the file here.</p>
         </header>
         <label class="field">
           <span class="name">Layout file, optional</span>
@@ -108,7 +108,7 @@
     {#if problem}
       <div class="notice" data-tone="bad">
         <div>
-          <p>Something went wrong with AI usage. Try again, or restart TouchDeck.</p>
+          <p>Something went wrong with AI usage. Try again, or restart Open TouchDeck.</p>
           <details class="more"><summary>Details</summary><div class="body" data-testid="sources-error">{problem}</div></details>
         </div>
       </div>

@@ -52,7 +52,7 @@
   <header class="head">
     <div>
       <h3>Connect to your CLIProxyAPI hub</h3>
-      <p class="hint">CLIProxyAPI is a hub that signs in to your AI accounts. TouchDeck asks it, read-only, how much of each limit is used.</p>
+      <p class="hint">CLIProxyAPI is a hub that signs in to your AI accounts. Open TouchDeck asks it, read-only, how much of each limit is used.</p>
     </div>
     <label class="switch">
       <input type="checkbox" bind:checked={draft.cliproxy} aria-label="Read usage from the hub" data-testid="proxy-enabled" />
@@ -71,7 +71,7 @@
     {:else if phase === 'stale'}
       The hub hasn't answered {info?.fails} times in a row, so the deck greys out its AI usage buttons until it does.
     {:else}
-      The hub didn't answer the last {info?.fails === 1 ? 'check' : `${info?.fails} checks`}. TouchDeck keeps trying.
+      The hub didn't answer the last {info?.fails === 1 ? 'check' : `${info?.fails} checks`}. Open TouchDeck keeps trying.
     {/if}
   </p>
   {#if info?.error && phase !== 'ok'}<p class="problem" data-testid="proxy-error">{info.error}</p>{/if}
@@ -105,7 +105,7 @@
 
   <div class="actions">
     <button class="small" onclick={() => refreshSource('cliproxyapi')} disabled={!draft.cliproxy} data-testid="proxy-refresh">Check now</button>
-    <span class="hint">Each check asks your AI services through the hub, so TouchDeck waits at least 15 seconds between them.</span>
+    <span class="hint">Each check asks your AI services through the hub, so Open TouchDeck waits at least 15 seconds between them.</span>
   </div>
 
   {#if info && info.accounts.length}

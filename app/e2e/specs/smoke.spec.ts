@@ -1,12 +1,20 @@
+import { execFileSync } from 'node:child_process';
 import { HELLO_FIELDS, MOCK_ELF_SHA256, openConnection, openSettings, row, waitForDot } from '../deck.ts';
 import { note, shot } from '../report.ts';
 
 describe('smoke on the mock deck', () => {
-  it('names the build in the window title', async () => {
-    await browser.waitUntil(async () => /^TouchDeck [0-9a-f]{40}$/.test(await browser.getTitle()), {
+  it('names the product in the window title and header', async () => {
+    await browser.waitUntil(async () => (await browser.getTitle()) === 'Open TouchDeck', {
       timeout: 5_000,
-      timeoutMsg: 'title is not "TouchDeck <sha>"',
+      timeoutMsg: 'title is not "Open TouchDeck"',
     });
+    expect(await $('[data-testid="title"] span').getText()).toBe('Open TouchDeck');
+    const nativeTitle = await browser.execute(async () => {
+      const tauri = (window as unknown as { __TAURI__: { window: { getCurrentWindow: () => { title: () => Promise<string> } } } }).__TAURI__;
+      return tauri.window.getCurrentWindow().title();
+    });
+    expect(nativeTitle).toBe('Open TouchDeck');
+    note('native_title', nativeTitle);
     note('title', await browser.getTitle());
   });
 
@@ -21,6 +29,17 @@ describe('smoke on the mock deck', () => {
     await row('mock').$('[data-testid="connect"]').click();
     await waitForDot('online', 5_000);
     expect(await $('[data-testid="link-status"]').getText()).toBe('Deck connected');
+  });
+
+  it('keeps the build commit in Settings', async () => {
+    await openSettings('help');
+    const build = $('[data-testid="app-build"]');
+    await build.waitForDisplayed({ timeout: 5_000 });
+    const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    expect(await build.getText()).toBe(sha);
+    expect(await browser.getTitle()).toBe('Open TouchDeck');
+    note('app_sha', await build.getText());
+    await shot('app-build');
   });
 
   it('renders the hello fields', async () => {

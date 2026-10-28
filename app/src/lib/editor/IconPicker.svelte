@@ -28,7 +28,7 @@
         icons = list;
         for (const icon of list) loadIcon(icon.id);
       })
-      .catch((error) => (problem = `The picture gallery didn't load. Restart TouchDeck to try again. (${String(error)})`));
+      .catch((error) => (problem = `The picture gallery didn't load. Restart Open TouchDeck to try again. (${String(error)})`));
   });
 
   $effect(() => {
