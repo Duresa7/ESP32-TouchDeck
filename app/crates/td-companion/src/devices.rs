@@ -1,8 +1,9 @@
-use crate::api::Events;
+use crate::api::{Event, Events};
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, Instant},
 };
 use ts_rs::TS;
@@ -48,6 +49,32 @@ pub struct DeviceSummary {
     pub key_mirror: KeyMirrorState,
     pub stable_id: bool,
 }
+#[derive(Serialize, Deserialize, TS)]
+pub struct DeviceAdded(pub DeviceSummary);
+impl Event for DeviceAdded {
+    const NAME: &'static str = "device.added";
+    fn device(&self) -> Option<&str> {
+        Some(&self.0.id)
+    }
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct DeviceUpdated(pub DeviceSummary);
+impl Event for DeviceUpdated {
+    const NAME: &'static str = "device.updated";
+    fn device(&self) -> Option<&str> {
+        Some(&self.0.id)
+    }
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct DeviceRemoved {
+    pub id: String,
+}
+impl Event for DeviceRemoved {
+    const NAME: &'static str = "device.removed";
+    fn device(&self) -> Option<&str> {
+        Some(&self.id)
+    }
+}
 pub struct PortDevice {
     pub serial: Option<String>,
     pub port: String,
@@ -82,7 +109,7 @@ impl PortSource for RealPorts {
                 _ => None,
             })
             .collect();
-        let mut seen = self.seen.lock().unwrap();
+        let mut seen = self.seen.lock();
         seen.retain(|key, _| ports.contains(key));
         let mut found = Vec::new();
         for key in ports {
@@ -126,10 +153,10 @@ impl DeviceManager {
         }
     }
     pub fn summaries(&self) -> Vec<DeviceSummary> {
-        self.state.lock().unwrap().values().cloned().collect()
+        self.state.lock().values().cloned().collect()
     }
     pub fn refresh(&self, ports: Vec<PortDevice>) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock();
         let mut seen = std::collections::BTreeSet::new();
         for port in ports {
             let stable_id = port.serial.is_some();
@@ -180,13 +207,11 @@ impl DeviceManager {
                 },
                 stable_id,
             };
-            let event = if state.contains_key(&id) {
-                "device.updated"
+            if state.contains_key(&id) {
+                self.events.publish(&DeviceUpdated(d.clone()));
             } else {
-                "device.added"
-            };
-            self.events
-                .publish(serde_json::json!({"type":event,"device":id,"data":d}));
+                self.events.publish(&DeviceAdded(d.clone()));
+            }
             state.insert(id, d);
         }
         let removed: Vec<_> = state
@@ -196,8 +221,7 @@ impl DeviceManager {
             .collect();
         for id in removed {
             state.remove(&id);
-            self.events
-                .publish(serde_json::json!({"type":"device.removed","data":{"id":id}}));
+            self.events.publish(&DeviceRemoved { id });
         }
     }
 }
@@ -211,11 +235,10 @@ impl MockPorts {
     pub fn plug(&self, id: &str) {
         self.devices
             .lock()
-            .unwrap()
             .insert(id.into(), td_link::MockDeck::new());
     }
     pub fn unplug(&self, id: &str) {
-        self.devices.lock().unwrap().remove(id);
+        self.devices.lock().remove(id);
     }
 }
 #[cfg(any(test, feature = "test-hooks"))]
@@ -223,7 +246,6 @@ impl PortSource for MockPorts {
     fn scan(&self) -> Vec<PortDevice> {
         self.devices
             .lock()
-            .unwrap()
             .iter()
             .filter_map(|(id, mock)| {
                 let td_link::discover::Probe::Deck { hello } =

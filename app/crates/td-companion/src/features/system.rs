@@ -1,4 +1,4 @@
-use crate::api::{CommonError, Ctx, Endpoint, Feature, Registration, Req};
+use crate::api::{CommonError, Ctx, Endpoint, Feature, NoQuery, Registration, Req, SessionKind};
 use axum::http::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -16,7 +16,7 @@ impl Endpoint for Get {
     const METHOD: Method = Method::GET;
     const PATH: &'static str = "/system";
     type Path = ();
-    type Query = ();
+    type Query = NoQuery;
     type Body = ();
     type Ok = SystemInfo;
     type Error = CommonError;
@@ -37,17 +37,13 @@ impl Endpoint for Shutdown {
     const PATH: &'static str = "/system/shutdown";
     const STATUS: StatusCode = StatusCode::NO_CONTENT;
     type Path = ();
-    type Query = ();
+    type Query = NoQuery;
     type Body = ();
     type Ok = ();
     type Error = CommonError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
-        if req.client.kind != "window" {
-            return Err(CommonError::new(
-                403,
-                "auth.forbidden",
-                "A window session is required.",
-            ));
+        if req.client().kind != SessionKind::Window {
+            return Err(CommonError::Forbidden("A window session is required."));
         }
         let _ = ctx.shutdown.send(true);
         Ok(())

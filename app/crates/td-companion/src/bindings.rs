@@ -1,134 +1,157 @@
-use ts_rs::TS;
-pub const AUTH_ENDPOINTS: &[(&str, &str, &str)] = &[
-    ("system.ping", "GET", "/system/ping"),
-    ("auth.proof", "POST", "/auth/proof"),
-    ("auth.session_create", "POST", "/auth/sessions"),
-    ("auth.sessions", "GET", "/auth/sessions"),
-    ("auth.session_delete", "DELETE", "/auth/sessions/{id}"),
-    ("auth.reset", "POST", "/auth/reset"),
-];
-pub const EVENTS: &[&str] = &[
-    "hello",
-    "sync",
-    "device.added",
-    "device.updated",
-    "device.removed",
-    "auth.revoked",
-    "companion.stopping",
-];
-pub const ERRORS: &[&str] = &[
-    "security.host",
-    "security.origin",
-    "auth.missing",
-    "auth.invalid",
-    "auth.revoked",
-    "auth.forbidden",
-    "request.invalid",
-    "request.too_large",
-    "request.media_type",
-    "limits.exceeded",
-    "route.not_found",
-    "route.method_not_allowed",
-    "device.not_found",
-    "companion.stopping",
-];
+//! Renders `api.gen.ts` from the registry. Nothing here is listed by hand: every route,
+//! event, snapshot and error code comes from a feature's declaration.
+use crate::api::{Access, ApiError, CommonError, EventInfo, Feature};
+use std::{
+    any::TypeId,
+    collections::{BTreeMap, BTreeSet, HashSet},
+};
+use ts_rs::{TS, TypeVisitor};
+
+/// TypeScript declarations keyed by type name, gathered from types and their dependencies.
+#[derive(Default)]
+pub struct Decls {
+    decls: BTreeMap<String, String>,
+    seen: HashSet<TypeId>,
+}
+impl Decls {
+    pub fn add<T: TS + 'static + ?Sized>(&mut self) {
+        struct Visit<'a>(&'a mut Decls);
+        impl TypeVisitor for Visit<'_> {
+            fn visit<T: TS + 'static + ?Sized>(&mut self) {
+                self.0.add::<T>();
+            }
+        }
+        if !self.seen.insert(TypeId::of::<T>()) {
+            return;
+        }
+        if T::output_path().is_some() {
+            self.decls.insert(T::ident(), T::decl());
+        }
+        T::visit_dependencies(&mut Visit(self));
+        T::visit_generics(&mut Visit(self));
+    }
+}
+
+/// Every error code the Companion can return: the kernel's and each route's.
+pub fn error_codes(features: &[Feature]) -> BTreeSet<&'static str> {
+    let mut codes: BTreeSet<_> = CommonError::CODES.iter().copied().collect();
+    for e in features.iter().flat_map(|f| &f.endpoints) {
+        codes.extend(e.errors.iter().copied());
+    }
+    codes
+}
+/// Every frame type: the kernel's and each feature's.
+pub fn events(features: &[Feature]) -> Vec<EventInfo> {
+    let mut events = crate::api::kernel_events();
+    for feature in features {
+        events.extend(feature.events.iter().map(|e| EventInfo {
+            name: e.name,
+            data_type: e.data_type.clone(),
+            types: e.types,
+        }));
+    }
+    events
+}
+
 pub fn generate() -> String {
-    let mut out = String::from("// Generated from td-companion. Do not edit.\n");
-    for decl in [
-        crate::devices::DeviceSummary::decl(),
-        crate::devices::FirmwareInfo::decl(),
-        crate::devices::LinkState::decl(),
-        crate::devices::KeyMirrorState::decl(),
-        crate::features::devices::DevicePath::decl(),
-        crate::features::system::SystemInfo::decl(),
-        crate::api::ErrorBody::decl(),
-        crate::api::SessionInfo::decl(),
-        crate::api::ClientInfo::decl(),
-    ] {
-        out.push_str("export ");
-        out.push_str(&decl);
-        out.push('\n');
-    }
-    out.push_str("export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };\n");
-    for decl in crate::api::auth_declarations() {
-        out.push_str("export ");
-        out.push_str(&decl);
-        out.push('\n');
-    }
-    out.push_str("export const endpoints = {\n");
-    for feature in crate::api::registry() {
-        for e in feature.endpoints {
-            out.push_str(&format!(
-                "  '{}': {{ method: '{}', path: '{}' }},\n",
-                e.name, e.method, e.path
-            ));
+    let features = crate::api::registry();
+    let events = events(&features);
+    let mut decls = Decls::default();
+    for feature in &features {
+        for e in &feature.endpoints {
+            (e.types)(&mut decls);
+        }
+        for s in &feature.snapshots {
+            (s.types)(&mut decls);
         }
     }
-    for (name, method, path) in AUTH_ENDPOINTS {
+    for e in &events {
+        if e.name != "sync" {
+            (e.types)(&mut decls);
+        }
+    }
+    let mut out = String::from("// Generated from td-companion. Do not edit.\n");
+    for decl in decls.decls.values() {
+        out.push_str(&format!("export {decl}\n"));
+    }
+
+    out.push_str("export const endpoints = {\n");
+    for e in features.iter().flat_map(|f| &f.endpoints) {
+        let access = match e.access {
+            Access::Session => "session",
+            Access::Pairing => "pairing",
+            Access::Public => "public",
+        };
         out.push_str(&format!(
-            "  '{name}': {{ method: '{method}', path: '{path}' }},\n"
+            "  '{}': {{ method: '{}', path: '{}', access: '{access}' }},\n",
+            e.name, e.method, e.path
         ));
     }
-    out.push_str("} as const;\nexport type ErrorCode = ");
-    out.push_str(
-        &ERRORS
-            .iter()
-            .map(|s| format!("'{s}'"))
-            .collect::<Vec<_>>()
-            .join(" | "),
-    );
-    out.push_str(";\nexport type SyncData = { devices: DeviceSummary[] };\nexport type JobMap = Record<string, never>;\nexport type EventMap = {\n");
-    for event in EVENTS {
-        let typ = match *event {
-            "sync" => "SyncData",
-            "device.added" | "device.updated" => "DeviceSummary",
-            "device.removed" => "{ id: string }",
-            _ => "Record<string, unknown>",
+    out.push_str("} as const;\n");
+
+    let codes: Vec<_> = error_codes(&features)
+        .into_iter()
+        .map(|c| format!("'{c}'"))
+        .collect();
+    out.push_str(&format!("export type ErrorCode = {};\n", codes.join(" | ")));
+
+    out.push_str("export type SyncData = {\n");
+    for s in features.iter().flat_map(|f| &f.snapshots) {
+        out.push_str(&format!("  {}: {},\n", s.key, s.data_type));
+    }
+    out.push_str("};\nexport type JobMap = Record<string, never>;\n");
+
+    out.push_str("export type EventMap = {\n");
+    for e in &events {
+        let data = if e.name == "sync" {
+            "SyncData"
+        } else {
+            &e.data_type
         };
-        out.push_str(&format!("  '{event}': {typ};\n"));
+        out.push_str(&format!("  '{}': {data};\n", e.name));
     }
     out.push_str("};\n");
-    out.push_str(r#"
+
+    out.push_str(
+        r#"
 export function createCompanion(base: string, token: () => string) {
-  async function call<T>(name: keyof typeof endpoints, path: Record<string, string>, query: unknown, body: unknown): Promise<T> {
+  async function call<T>(name: keyof typeof endpoints, path: Record<string, string>, query: unknown, body: unknown, bearer?: string): Promise<T> {
     const endpoint = endpoints[name];
     let route: string = endpoint.path;
     for (const [key, value] of Object.entries(path)) route = route.replace(`{${key}}`, encodeURIComponent(value));
     const url = new URL(`/api/v1${route}`, base);
     if (query) for (const [key, value] of Object.entries(query)) url.searchParams.set(key, String(value));
-    const response = await fetch(url, { method: endpoint.method, headers: { ...(name === 'auth.proof' || name === 'system.ping' ? {} : { Authorization: `Bearer ${token()}` }), ...(body == null ? {} : { 'Content-Type': 'application/json' }) }, ...(body == null ? {} : { body: JSON.stringify(body) }) });
+    const auth = bearer ?? (endpoint.access === 'session' ? token() : undefined);
+    const response = await fetch(url, { method: endpoint.method, headers: { ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...(body == null ? {} : { 'Content-Type': 'application/json' }) }, ...(body == null ? {} : { body: JSON.stringify(body) }) });
     if (!response.ok) throw (await response.json()).error;
     return response.status === 204 ? undefined as T : response.json();
   }
   return {
-"#);
-    for feature in crate::api::registry() {
+"#,
+    );
+    for feature in &features {
         out.push_str(&format!("    {}: {{\n", feature.name));
-        for e in feature.endpoints {
-            let action = e.name.split('.').nth(1).unwrap();
-            let path = if e.path_type == "null" {
-                "Record<string, never> = {}"
-            } else {
-                &e.path_type
+        for e in &feature.endpoints {
+            let action = e.name.split_once('.').unwrap().1;
+            // A part the route doesn't take defaults to empty; the others are required.
+            let param = |name: &str, typ: &str, empty: &str| {
+                if typ == "null" {
+                    format!("{name}: {empty}")
+                } else {
+                    format!("{name}: {typ}")
+                }
             };
-            out.push_str(&format!("      {action}: (path: {path}, query: {} = null as {}, body: {} = null as {}) => call<{}>('{}', path, query, body),\n",e.query_type,e.query_type,e.body_type,e.body_type,e.ok_type,e.name));
-        }
-        if feature.name == "system" {
-            out.push_str(
-                "      ping: () => call<{ api: string[] }>('system.ping', {}, null, null),\n",
-            );
+            out.push_str(&format!(
+                "      {action}: ({}, {}, {}, bearer?: string) => call<{}>('{}', path, query, body, bearer),\n",
+                param("path", &e.path_type, "Record<string, never> = {}"),
+                param("query", &e.query_type, "null = null"),
+                param("body", &e.body_type, "null = null"),
+                e.ok_type,
+                e.name
+            ));
         }
         out.push_str("    },\n");
     }
-    out.push_str(r#"    auth: {
-      proof: (body: ProofRequest) => call<Proof>('auth.proof', {}, null, body),
-      session_create: (body: SessionRequest) => call<SessionCreated>('auth.session_create', {}, null, body),
-      sessions: () => call<SessionInfo[]>('auth.sessions', {}, null, null),
-      session_delete: (id: string) => call<void>('auth.session_delete', { id }, null, null),
-      reset: () => call<void>('auth.reset', {}, null, null),
-    },
-  };
-}
-"#);
+    out.push_str("  };\n}\n");
     out.replace("bigint", "number")
 }

@@ -1,31 +1,26 @@
+//! The kernel: the `Endpoint` trait, feature registration, the request guard and dispatch.
+//! `auth` is private, so a feature can't reach tokens or declare a public route.
 mod auth;
 mod error;
 pub mod security;
 mod socket;
-use auth::Auth;
-#[path = "../process.rs"]
-mod process;
-pub use process::run;
-#[cfg(any(test, feature = "test-hooks"))]
-#[path = "../testing.rs"]
-pub mod testing;
-pub use auth::{ClientInfo, SessionInfo};
+
+pub(crate) use auth::{Auth, Clock};
+pub use auth::{ClientInfo, SessionInfo, SessionKind};
 use axum::{
     Router,
     body::to_bytes,
-    extract::{Path, Request, State},
-    http::{Method, StatusCode},
+    extract::{MatchedPath, Path, Request, State},
+    http::{HeaderMap, Method, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{MethodFilter, on},
 };
 pub use error::{ApiError, CommonError, ErrorBody};
-use serde::{Serialize, de::DeserializeOwned};
+use parking_lot::Mutex;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 pub use socket::{Event, Events};
-use std::{
-    future::Future,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, future::Future, sync::Arc};
 use ts_rs::TS;
 
 #[derive(Clone)]
@@ -33,47 +28,67 @@ pub struct Ctx {
     pub devices: crate::devices::DeviceManager,
     pub events: Events,
     auth: Arc<Mutex<Auth>>,
+    pub(crate) clock: Clock,
     pub(crate) shutdown: tokio::sync::watch::Sender<bool>,
     pub(crate) port: u16,
-    runtime: Option<std::path::PathBuf>,
-    runtime_lock: Arc<Mutex<()>>,
+    pub(crate) runtime: Option<std::path::PathBuf>,
+    pub(crate) runtime_lock: Arc<Mutex<()>>,
     pub(crate) mock: bool,
-    pub(crate) started: u64,
+    pub(crate) started_ms: u64,
+    /// Counts requests that reached a handler, so tests can show a rejection never did.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) handler_hits: Arc<std::sync::atomic::AtomicUsize>,
 }
 impl Ctx {
-    fn new(port: u16, mock: bool, runtime: Option<std::path::PathBuf>) -> Self {
+    pub(crate) fn new(port: u16, mock: bool, runtime: Option<std::path::PathBuf>) -> Self {
         let events = Events::default();
         Self {
             devices: crate::devices::DeviceManager::new(events.clone()),
             events,
             auth: Arc::new(Mutex::new(Auth::new())),
+            clock: Clock::default(),
             shutdown: tokio::sync::watch::channel(false).0,
             port,
             runtime,
             runtime_lock: Arc::new(Mutex::new(())),
             mock,
-            started: crate::now_ms(),
+            started_ms: crate::now_ms(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            handler_hits: Default::default(),
         }
     }
-    fn pairing_token(&self) -> String {
-        self.auth.lock().unwrap().pairing.clone()
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn pairing_token(&self) -> String {
+        self.auth.lock().pairing().to_owned()
     }
-    fn runtime_value(&self) -> serde_json::Value {
-        serde_json::json!({"version":1,"api":["v1"],"port":self.port,"token":self.pairing_token(),"pid":std::process::id(),"build":env!("TD_BUILD"),"started_at_ms":self.started})
+    pub(crate) fn runtime_value(&self) -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "api": ["v1"],
+            "port": self.port,
+            "token": self.auth.lock().pairing(),
+            "pid": std::process::id(),
+            "build": env!("TD_BUILD"),
+            "started_at_ms": self.started_ms,
+        })
     }
 }
-pub trait RequestBody: DeserializeOwned + Serialize + TS + Send {}
-impl<T: DeserializeOwned + Serialize + TS + Send> RequestBody for T {}
-pub trait ResponseBody: DeserializeOwned + Serialize + TS + Send {}
-impl<T: DeserializeOwned + Serialize + TS + Send> ResponseBody for T {}
+
+pub trait RequestBody: DeserializeOwned + Serialize + TS + Send + 'static {}
+impl<T: DeserializeOwned + Serialize + TS + Send + 'static> RequestBody for T {}
+pub trait ResponseBody: DeserializeOwned + Serialize + TS + Send + 'static {}
+impl<T: DeserializeOwned + Serialize + TS + Send + 'static> ResponseBody for T {}
+
+/// One route, declared once. The router, the typed test client and the generated TypeScript
+/// client all read this declaration.
 pub trait Endpoint: Sized + Send + Sync + 'static {
     const NAME: &'static str;
     const METHOD: Method;
     const PATH: &'static str;
     const STATUS: StatusCode = StatusCode::OK;
     const BODY_LIMIT: usize = 1 << 20;
-    type Path: DeserializeOwned + Serialize + TS + Send;
-    type Query: DeserializeOwned + Serialize + TS + Send + Default;
+    type Path: DeserializeOwned + Serialize + TS + Send + 'static;
+    type Query: DeserializeOwned + Serialize + TS + Send + Default + 'static;
     type Body: RequestBody;
     type Ok: ResponseBody;
     type Error: ApiError;
@@ -86,20 +101,47 @@ pub struct Req<E: Endpoint> {
     pub path: E::Path,
     pub query: E::Query,
     pub body: E::Body,
-    pub client: ClientInfo,
+    client: Option<ClientInfo>,
+}
+impl<E: Endpoint> Req<E> {
+    /// The caller's session. Every route a feature declares needs one, so this always holds a
+    /// session there. Only the public routes `api::auth` declares have none.
+    pub fn client(&self) -> &ClientInfo {
+        self.client
+            .as_ref()
+            .expect("feature routes always carry a session")
+    }
 }
 pub type NoBody = ();
-pub type Json<T> = T;
-/// TypeScript type strings exist only where the generator and contract tests run, so the
-/// release binary carries none of them.
+/// The query type of a route that takes none. Any query string is ignored.
+#[derive(Debug, Default, Serialize, TS)]
+pub struct NoQuery;
+impl<'de> Deserialize<'de> for NoQuery {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        serde::de::IgnoredAny::deserialize(d).map(|_| NoQuery)
+    }
+}
+
+/// Who may call a route. Only `api::auth` registers anything but `Session`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Access {
+    /// A valid session token.
+    Session,
+    /// The pairing token as the bearer.
+    Pairing,
+    /// No credential.
+    Public,
+}
+
+/// Collects TypeScript declarations for the generated client.
 #[cfg(any(test, feature = "test-hooks"))]
-pub type EventType = String;
-#[cfg(not(any(test, feature = "test-hooks")))]
-pub type EventType = ();
+pub type CollectTypes = fn(&mut crate::bindings::Decls);
 pub struct EndpointInfo {
     pub name: &'static str,
     pub method: Method,
     pub path: &'static str,
+    pub access: Access,
+    pub errors: &'static [&'static str],
     #[cfg(any(test, feature = "test-hooks"))]
     pub path_type: String,
     #[cfg(any(test, feature = "test-hooks"))]
@@ -108,46 +150,90 @@ pub struct EndpointInfo {
     pub body_type: String,
     #[cfg(any(test, feature = "test-hooks"))]
     pub ok_type: String,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub types: CollectTypes,
 }
+pub struct EventInfo {
+    pub name: &'static str,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub data_type: String,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub types: CollectTypes,
+}
+pub type ReadSnapshot = Box<dyn Fn(&Ctx) -> serde_json::Value + Send + Sync>;
 pub struct Snapshot {
     pub key: &'static str,
-    pub read: fn(&Ctx) -> serde_json::Value,
+    pub read: ReadSnapshot,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub data_type: String,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub types: CollectTypes,
 }
 pub struct Feature {
-    pub snapshots: Vec<Snapshot>,
-    /// Each event's name and, for the generated client, its TypeScript type.
-    pub events: Vec<(&'static str, EventType)>,
     pub name: &'static str,
     pub endpoints: Vec<EndpointInfo>,
-    pub(crate) router: Router<Ctx>,
+    pub events: Vec<EventInfo>,
+    pub snapshots: Vec<Snapshot>,
+    router: Router<Ctx>,
+}
+#[cfg(any(test, feature = "test-hooks"))]
+fn collect<T: TS + 'static + ?Sized>(decls: &mut crate::bindings::Decls) {
+    decls.add::<T>();
 }
 impl Feature {
     pub fn new(name: &'static str) -> Self {
         Self {
             name,
             endpoints: vec![],
-            snapshots: vec![],
             events: vec![],
+            snapshots: vec![],
             router: Router::new(),
         }
     }
-    pub fn event<E: Event + TS>(mut self) -> Self {
+    pub fn event<E: Event>(mut self) -> Self {
+        self.events.push(EventInfo {
+            name: E::NAME,
+            #[cfg(any(test, feature = "test-hooks"))]
+            data_type: E::name(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            types: collect::<E>,
+        });
+        self
+    }
+    /// A `sync` key, filled from `read` for every new socket.
+    pub fn snapshot<T: Serialize + TS + 'static>(
+        mut self,
+        key: &'static str,
+        read: fn(&Ctx) -> T,
+    ) -> Self {
+        self.snapshots.push(Snapshot {
+            key,
+            read: Box::new(move |ctx| serde_json::to_value(read(ctx)).unwrap()),
+            #[cfg(any(test, feature = "test-hooks"))]
+            data_type: T::name(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            types: collect::<T>,
+        });
+        self
+    }
+    pub fn endpoint<E: Endpoint>(self) -> Self {
+        self.route::<E>(Access::Session)
+    }
+    /// Registers a route with another access level. Visible only inside `api`.
+    fn route<E: Endpoint>(mut self, access: Access) -> Self {
         #[cfg(any(test, feature = "test-hooks"))]
-        let typ = E::inline();
-        #[cfg(not(any(test, feature = "test-hooks")))]
-        let typ = ();
-        self.events.push((E::NAME, typ));
-        self
-    }
-    pub fn snapshot(mut self, key: &'static str, read: fn(&Ctx) -> serde_json::Value) -> Self {
-        self.snapshots.push(Snapshot { key, read });
-        self
-    }
-    pub fn endpoint<E: Endpoint>(mut self) -> Self {
+        fn types<E: Endpoint>(decls: &mut crate::bindings::Decls) {
+            decls.add::<E::Path>();
+            decls.add::<E::Query>();
+            decls.add::<E::Body>();
+            decls.add::<E::Ok>();
+        }
         self.endpoints.push(EndpointInfo {
             name: E::NAME,
             method: E::METHOD,
             path: E::PATH,
+            access,
+            errors: E::Error::CODES,
             #[cfg(any(test, feature = "test-hooks"))]
             path_type: E::Path::inline(),
             #[cfg(any(test, feature = "test-hooks"))]
@@ -156,6 +242,8 @@ impl Feature {
             body_type: E::Body::inline(),
             #[cfg(any(test, feature = "test-hooks"))]
             ok_type: E::Ok::name(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            types: types::<E>,
         });
         self.router = self.router.route(
             &format!("/api/v1{}", E::PATH),
@@ -166,51 +254,66 @@ impl Feature {
 }
 pub struct Registration(pub fn() -> Feature);
 inventory::collect!(Registration);
+
+/// Every feature, sorted by name. Registrations that share a name, such as the `system`
+/// routes `api::auth` declares next to the `system` feature, merge into one.
 pub fn registry() -> Vec<Feature> {
-    let mut v: Vec<_> = inventory::iter::<Registration>
+    let mut all: Vec<Feature> = inventory::iter::<Registration>
         .into_iter()
         .map(|r| (r.0)())
         .collect();
-    v.sort_by_key(|f| f.name);
-    v
+    all.sort_by_key(|f| f.name);
+    let mut merged: Vec<Feature> = Vec::new();
+    for feature in all {
+        match merged.last_mut() {
+            Some(last) if last.name == feature.name => {
+                last.endpoints.extend(feature.endpoints);
+                last.events.extend(feature.events);
+                last.snapshots.extend(feature.snapshots);
+                let router = std::mem::take(&mut last.router);
+                last.router = router.merge(feature.router);
+            }
+            _ => merged.push(feature),
+        }
+    }
+    for feature in &mut merged {
+        feature.endpoints.sort_by_key(|e| e.name);
+    }
+    merged
 }
+/// The frames the kernel itself sends.
+pub fn kernel_events() -> Vec<EventInfo> {
+    socket::kernel_events()
+}
+
 async fn dispatch<E: Endpoint>(State(ctx): State<Ctx>, request: Request) -> Response {
     let result = async {
         let (mut parts, body) = request.into_parts();
-        let client = parts
-            .extensions
-            .remove::<ClientInfo>()
-            .ok_or_else(|| CommonError::new(401, "auth.missing", "A session is required."))?;
+        let client = parts.extensions.remove::<ClientInfo>();
         let path = if !E::PATH.contains('{') {
-            serde_json::from_str("null")
-                .map_err(|e| CommonError::invalid("path", &e.to_string()))?
+            serde_json::from_value(serde_json::Value::Null)
+                .map_err(|e| CommonError::invalid("path", e))?
         } else {
             use axum::extract::FromRequestParts;
             Path::<E::Path>::from_request_parts(&mut parts, &ctx)
                 .await
-                .map_err(|e| CommonError::invalid("path", &e.to_string()))?
+                .map_err(|e| CommonError::invalid("path", e.body_text()))?
                 .0
         };
-        // A query type without fields, such as `()`, ignores the query string.
-        let query = if size_of::<E::Query>() == 0 {
-            E::Query::default()
-        } else {
-            serde_urlencoded::from_str(parts.uri.query().unwrap_or(""))
-                .map_err(|e| CommonError::invalid("query", &e.to_string()))?
-        };
-        let bytes = to_bytes(body, E::BODY_LIMIT).await.map_err(|_| {
-            CommonError::new(413, "request.too_large", "The request body is too large.")
-        })?;
+        let query = serde_urlencoded::from_str(parts.uri.query().unwrap_or(""))
+            .map_err(|e| CommonError::invalid("query", e))?;
+        let bytes = to_bytes(body, E::BODY_LIMIT)
+            .await
+            .map_err(|_| CommonError::TooLarge)?;
         if !bytes.is_empty() && !is_json(&parts.headers) {
-            return Err(CommonError::new(
-                415,
-                "request.media_type",
-                "The request requires JSON.",
-            ));
+            return Err(CommonError::MediaType);
         }
         let body = serde_json::from_slice(if bytes.is_empty() { b"null" } else { &bytes })
-            .map_err(|e| CommonError::invalid("body", &e.to_string()))?;
-        let value = E::handle(
+            .map_err(|e| CommonError::invalid("body", e))?;
+        #[cfg(any(test, feature = "test-hooks"))]
+        ctx.handler_hits
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(E::handle(
             ctx,
             Req {
                 path,
@@ -218,85 +321,99 @@ async fn dispatch<E: Endpoint>(State(ctx): State<Ctx>, request: Request) -> Resp
                 body,
                 client,
             },
-        )
-        .await
-        .map_err(|e| CommonError {
-            status: e.status(),
-            body: e.body(),
-        })?;
-        Ok::<_, CommonError>(if E::STATUS == StatusCode::NO_CONTENT {
-            E::STATUS.into_response()
-        } else {
-            (E::STATUS, axum::Json(value)).into_response()
-        })
+        ))
     }
     .await;
-    result.unwrap_or_else(IntoResponse::into_response)
+    match result {
+        Err(e) => e.into_response(),
+        Ok(handled) => match handled.await {
+            Err(e) => error::respond(&e),
+            Ok(_) if E::STATUS == StatusCode::NO_CONTENT => E::STATUS.into_response(),
+            Ok(value) => (E::STATUS, axum::Json(value)).into_response(),
+        },
+    }
 }
+
+/// Builds the router from the registry. Every request, routed or not, passes `guard` first.
 pub fn router(ctx: Ctx) -> Router {
     let mut router = Router::new();
+    let mut access = HashMap::new();
     for feature in registry() {
+        for e in &feature.endpoints {
+            access.insert((e.method.clone(), format!("/api/v1{}", e.path)), e.access);
+        }
         router = router.merge(feature.router);
     }
     router = router.route("/api/v1/events", axum::routing::get(socket::upgrade));
-    router = auth::routes(router);
+    let access = Arc::new(access);
     router
-        .fallback(|| async {
-            CommonError::new(404, "route.not_found", "The route does not exist.")
-        })
-        .method_not_allowed_fallback(|| async {
-            CommonError::new(
-                405,
-                "route.method_not_allowed",
-                "The method is not allowed.",
-            )
-        })
-        .layer(middleware::from_fn_with_state(ctx.clone(), guard))
+        .fallback(|| async { CommonError::NotFound })
+        .method_not_allowed_fallback(|| async { CommonError::MethodNotAllowed })
+        .layer(middleware::from_fn_with_state((ctx.clone(), access), guard))
         .with_state(ctx)
 }
-async fn guard(State(ctx): State<Ctx>, mut request: Request, next: Next) -> Response {
-    let check = async {
-        let h = request.headers();
-        let header = |name: &str| h.get(name).map(|v| v.to_str().unwrap_or(""));
-        security::admit(
-            &security::RequestMeta {
-                host: header("host"),
-                origin: header("origin"),
-                fetch_site: header("sec-fetch-site"),
-                fetch_mode: header("sec-fetch-mode"),
-                api: request.uri().path().starts_with("/api/"),
-                get: request.method() == Method::GET,
-            },
-            ctx.port,
-        )?;
-        if matches!(
-            *request.method(),
-            Method::POST | Method::PUT | Method::PATCH
-        ) && h.contains_key("content-type")
-            && !is_json(h)
-        {
-            return Err(CommonError::new(
-                415,
-                "request.media_type",
-                "The request requires JSON.",
-            ));
-        }
-        let public = auth::is_public(request.method(), request.uri().path());
-        if !public {
+
+type Guard = (Ctx, Arc<HashMap<(Method, String), Access>>);
+async fn guard(State((ctx, access)): State<Guard>, request: Request, next: Next) -> Response {
+    let port = ctx.port;
+    let response = match admit(&ctx, &access, request) {
+        Ok(request) => error::normalize(next.run(request).await),
+        Err(e) => e.into_response(),
+    };
+    with_security_headers(response, port)
+}
+fn admit(
+    ctx: &Ctx,
+    access: &HashMap<(Method, String), Access>,
+    mut request: Request,
+) -> Result<Request, CommonError> {
+    let h = request.headers();
+    let header = |name: &str| h.get(name).map(|v| v.to_str().unwrap_or(""));
+    security::admit(
+        &security::RequestMeta {
+            host: header("host"),
+            origin: header("origin"),
+            fetch_site: header("sec-fetch-site"),
+            fetch_mode: header("sec-fetch-mode"),
+            api: request.uri().path().starts_with("/api/"),
+            get: request.method() == Method::GET,
+        },
+        ctx.port,
+    )?;
+    if matches!(
+        *request.method(),
+        Method::POST | Method::PUT | Method::PATCH
+    ) && h.contains_key("content-type")
+        && !is_json(h)
+    {
+        return Err(CommonError::MediaType);
+    }
+    // Access is looked up by the route the request matched, so a request that matches no
+    // public declaration needs a session. That includes unknown paths and HEAD.
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|p| p.as_str().to_owned());
+    let level = route
+        .and_then(|r| access.get(&(request.method().clone(), r)).copied())
+        .unwrap_or(Access::Session);
+    let websocket = request.uri().path() == "/api/v1/events";
+    let now = ctx.clock.now();
+    match level {
+        Access::Public => {}
+        Access::Pairing => ctx.auth.lock().check_pairing(request.headers())?,
+        Access::Session => {
             let client = ctx
                 .auth
                 .lock()
-                .unwrap()
-                .authenticate(request.headers(), request.uri().path() == "/api/v1/events")?;
+                .authenticate(request.headers(), websocket, now)?;
             request.extensions_mut().insert(client);
         }
-        Ok::<_, CommonError>(())
     }
-    .await;
-    let mut response = match check {
-        Ok(()) => next.run(request).await,
-        Err(e) => e.into_response(),
-    };
+    Ok(request)
+}
+fn with_security_headers(mut response: Response, port: u16) -> Response {
+    let headers = response.headers_mut();
     for (k, v) in [
         ("x-frame-options", "DENY"),
         ("x-content-type-options", "nosniff"),
@@ -305,23 +422,23 @@ async fn guard(State(ctx): State<Ctx>, mut request: Request, next: Next) -> Resp
         ("cross-origin-resource-policy", "same-origin"),
         ("cache-control", "no-store"),
     ] {
-        response
-            .headers_mut()
-            .insert(axum::http::HeaderName::from_static(k), v.parse().unwrap());
+        headers.insert(k, v.parse().unwrap());
     }
-    response.headers_mut().insert("content-security-policy",format!("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' ws://127.0.0.1:{} ws://localhost:{}; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",ctx.port,ctx.port).parse().unwrap());
+    let csp = format!(
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+         img-src 'self' blob: data:; connect-src 'self' ws://127.0.0.1:{port} ws://localhost:{port}; \
+         font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; \
+         frame-ancestors 'none'"
+    );
+    headers.insert("content-security-policy", csp.parse().unwrap());
     response
 }
 
 /// Whether the request declares a JSON body. A body without this header is refused, so a
 /// cross-site form post never reaches a handler.
-pub(crate) fn is_json(headers: &axum::http::HeaderMap) -> bool {
+pub(crate) fn is_json(headers: &HeaderMap) -> bool {
     headers
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.split(';').next().unwrap_or("").trim() == "application/json")
-}
-#[cfg(any(test, feature = "test-hooks"))]
-pub(crate) fn auth_declarations() -> Vec<String> {
-    auth::declarations()
 }

@@ -1,10 +1,40 @@
 use crate::{
-    api::{CommonError, Ctx, Endpoint, Feature, Registration, Req},
-    devices::DeviceSummary,
+    api::{ApiError, CommonError, Ctx, Endpoint, Feature, NoQuery, Registration, Req},
+    devices::{DeviceAdded, DeviceRemoved, DeviceSummary, DeviceUpdated},
 };
-use axum::http::Method;
+use axum::http::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+
+#[derive(Debug, thiserror::Error)]
+pub enum DeviceError {
+    #[error("The Device does not exist.")]
+    NotFound,
+    #[error(transparent)]
+    Common(#[from] CommonError),
+}
+impl ApiError for DeviceError {
+    const CODES: &'static [&'static str] = &["device.not_found"];
+    fn status(&self) -> StatusCode {
+        match self {
+            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::Common(e) => e.status(),
+        }
+    }
+    fn code(&self) -> &'static str {
+        match self {
+            Self::NotFound => "device.not_found",
+            Self::Common(e) => e.code(),
+        }
+    }
+    fn details(&self) -> Option<serde_json::Value> {
+        match self {
+            Self::NotFound => None,
+            Self::Common(e) => e.details(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, TS)]
 pub struct DevicePath {
     pub device: String,
@@ -15,7 +45,7 @@ impl Endpoint for List {
     const METHOD: Method = Method::GET;
     const PATH: &'static str = "/devices";
     type Path = ();
-    type Query = ();
+    type Query = NoQuery;
     type Body = ();
     type Ok = Vec<DeviceSummary>;
     type Error = CommonError;
@@ -29,10 +59,10 @@ impl Endpoint for Get {
     const METHOD: Method = Method::GET;
     const PATH: &'static str = "/devices/{device}";
     type Path = DevicePath;
-    type Query = ();
+    type Query = NoQuery;
     type Body = ();
     type Ok = DeviceSummary;
-    type Error = CommonError;
+    type Error = DeviceError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
         let id = &req.path.device;
         let serial = id.strip_prefix("port-").unwrap_or(id);
@@ -42,35 +72,14 @@ impl Endpoint for Get {
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
         {
-            return Err(CommonError::invalid("device", "Invalid Device id."));
+            return Err(CommonError::invalid("device", "Invalid Device id.").into());
         }
         ctx.devices
             .summaries()
             .into_iter()
             .find(|d| d.id == *id)
-            .ok_or_else(|| CommonError::new(404, "device.not_found", "The Device does not exist."))
+            .ok_or(DeviceError::NotFound)
     }
-}
-#[derive(Serialize, Deserialize, TS)]
-pub struct DeviceAdded {
-    pub data: DeviceSummary,
-}
-impl crate::api::Event for DeviceAdded {
-    const NAME: &'static str = "device.added";
-}
-#[derive(Serialize, Deserialize, TS)]
-pub struct DeviceUpdated {
-    pub data: DeviceSummary,
-}
-impl crate::api::Event for DeviceUpdated {
-    const NAME: &'static str = "device.updated";
-}
-#[derive(Serialize, Deserialize, TS)]
-pub struct DeviceRemoved {
-    pub id: String,
-}
-impl crate::api::Event for DeviceRemoved {
-    const NAME: &'static str = "device.removed";
 }
 fn feature() -> Feature {
     Feature::new("devices")
@@ -79,8 +88,6 @@ fn feature() -> Feature {
         .event::<DeviceAdded>()
         .event::<DeviceUpdated>()
         .event::<DeviceRemoved>()
-        .snapshot("devices", |ctx| {
-            serde_json::to_value(ctx.devices.summaries()).unwrap()
-        })
+        .snapshot("devices", |ctx| ctx.devices.summaries())
 }
-inventory::submit! {Registration(feature)}
+inventory::submit! { Registration(feature) }

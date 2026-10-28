@@ -1,6 +1,7 @@
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use td_companion::{
+    api::NoQuery,
     features::devices::{DevicePath, Get, List},
     testing::TestCompanion,
 };
@@ -9,7 +10,7 @@ async fn pairing_listing_and_removal() {
     let td = TestCompanion::start().await;
     let mut events = td.events().await;
     td.plug_device("mock0001").await;
-    let devices = td.call::<List>((), (), ()).await.unwrap();
+    let devices = td.call::<List>((), NoQuery, ()).await.unwrap();
     assert_eq!(devices.len(), 1);
     assert_eq!(devices[0].id, "mock0001");
     assert_eq!(
@@ -17,7 +18,7 @@ async fn pairing_listing_and_removal() {
             DevicePath {
                 device: "mock0001".into()
             },
-            (),
+            NoQuery,
             ()
         )
         .await
@@ -26,7 +27,7 @@ async fn pairing_listing_and_removal() {
         "mock0001"
     );
     td.plug_device("mock0002").await;
-    assert_eq!(td.call::<List>((), (), ()).await.unwrap().len(), 2);
+    assert_eq!(td.call::<List>((), NoQuery, ()).await.unwrap().len(), 2);
     td.unplug("mock0001").await;
     let removed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
@@ -42,7 +43,7 @@ async fn pairing_listing_and_removal() {
     .await
     .unwrap();
     assert_eq!(removed["data"]["id"], "mock0001");
-    assert_eq!(td.call::<List>((), (), ()).await.unwrap().len(), 1);
+    assert_eq!(td.call::<List>((), NoQuery, ()).await.unwrap().len(), 1);
 }
 #[tokio::test]
 async fn requests_are_rejected_before_shutdown() {
@@ -259,7 +260,7 @@ async fn websocket_attacks_are_rejected() {
 async fn window_session_ends_after_sixty_seconds_without_socket() {
     let td = TestCompanion::start().await;
     td.clock().advance(std::time::Duration::from_secs(59));
-    assert!(td.call::<List>((), (), ()).await.is_ok());
+    assert!(td.call::<List>((), NoQuery, ()).await.is_ok());
     td.clock().advance(std::time::Duration::from_secs(2));
     assert_eq!(
         td.raw()
@@ -286,7 +287,7 @@ async fn state_overflow_closes_and_releases_socket_capacity() {
         assert!(
             matches!(message,tokio_tungstenite::tungstenite::Message::Close(Some(c)) if u16::from(c.code)==4008)
         );
-        assert!(td.call::<List>((), (), ()).await.is_ok());
+        assert!(td.call::<List>((), NoQuery, ()).await.is_ok());
         let _replacement = td.events().await;
     }
 }
@@ -349,7 +350,7 @@ async fn sessions_list_and_revoke() {
         response.json::<Value>().await.unwrap()["error"]["code"],
         "auth.revoked"
     );
-    assert!(td.call::<List>((), (), ()).await.is_ok());
+    assert!(td.call::<List>((), NoQuery, ()).await.is_ok());
     let own = td
         .raw()
         .request(reqwest::Method::DELETE, "/api/v1/auth/sessions/self")
@@ -358,7 +359,7 @@ async fn sessions_list_and_revoke() {
         .await
         .unwrap();
     assert_eq!(own.status(), 204);
-    assert!(td.call::<List>((), (), ()).await.is_err());
+    assert!(td.call::<List>((), NoQuery, ()).await.is_err());
     // Revoking sessions leaves pairing alone, so a window can mint again.
     assert!(window_session(&td).await["token"].is_string());
 }
@@ -383,4 +384,113 @@ async fn unknown_and_malformed_device_ids() {
             code
         );
     }
+}
+#[tokio::test]
+async fn rejections_use_the_one_error_shape() {
+    let td = TestCompanion::start().await;
+    let token = format!("touchdeck.v1, touchdeck.bearer.{}", td.token);
+    let cases = [
+        (
+            reqwest::Method::GET,
+            "/api/v1/nowhere",
+            404,
+            "route.not_found",
+        ),
+        (
+            reqwest::Method::PUT,
+            "/api/v1/devices",
+            405,
+            "route.method_not_allowed",
+        ),
+    ];
+    for (method, path, status, code) in cases {
+        let response = td
+            .raw()
+            .request(method, path)
+            .bearer_auth(&td.token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), status, "{path}");
+        assert_eq!(
+            response.json::<Value>().await.unwrap()["error"]["code"],
+            code
+        );
+    }
+    // A plain GET on the events route is an axum upgrade rejection underneath.
+    let response = td
+        .raw()
+        .get("/api/v1/events")
+        .header("sec-websocket-protocol", token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["error"]["code"],
+        "request.invalid"
+    );
+}
+#[tokio::test]
+async fn session_create_checks_the_pairing_token_before_the_body() {
+    let td = TestCompanion::start().await;
+    let hits = td.handler_hits();
+    let response = td
+        .raw()
+        .post("/api/v1/auth/sessions")
+        .bearer_auth("tdp_wrong")
+        .header("content-type", "application/json")
+        .body("{not json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["error"]["code"],
+        "auth.invalid"
+    );
+    // A session token isn't the pairing token.
+    let response = td
+        .raw()
+        .post("/api/v1/auth/sessions")
+        .bearer_auth(&td.token)
+        .json(&json!({"kind": "window"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+    assert_eq!(td.handler_hits(), hits);
+}
+#[tokio::test]
+async fn session_labels_drop_control_characters() {
+    let td = TestCompanion::start().await;
+    let label = format!("Bad\u{1b}[31m\nlabel{}", "x".repeat(100));
+    td.raw()
+        .post("/api/v1/auth/sessions")
+        .bearer_auth(&td.pairing_token)
+        .json(&json!({"kind": "window", "label": label}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let list: Vec<Value> = td
+        .raw()
+        .get("/api/v1/auth/sessions")
+        .bearer_auth(&td.token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let stored = list
+        .iter()
+        .map(|s| s["label"].as_str().unwrap())
+        .find(|l| l.starts_with("Bad"))
+        .unwrap();
+    assert!(stored.starts_with("Bad[31mlabelx"));
+    assert!(!stored.chars().any(char::is_control));
+    assert_eq!(stored.chars().count(), 64);
+    assert!(list.iter().all(|s| s["kind"] == "window"));
 }

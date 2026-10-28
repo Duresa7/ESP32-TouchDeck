@@ -660,6 +660,7 @@ Features add codes as they land. This list is the starting set.
 | `auth.code_locked` | 429 | Too many wrong pairing codes. Start pairing again |
 | `request.invalid` | 400 | Malformed JSON, path or query. `details: {part, reason}`. Wraps axum rejections |
 | `request.too_large` | 413 | The body or decoded image passed its size or frame limit |
+| `request.timeout` | 408 | The request headers, body or handling took longer than the Request limits allow |
 | `limits.exceeded` | 429 | A pending upload, render Job, WebSocket or approval limit was reached |
 | `console.forbidden` | 403 | The line is not printable ASCII within 256 bytes or is not on the read-only allowlist |
 | `request.media_type` | 415 | The `Content-Type` is wrong for this route |

@@ -11,36 +11,25 @@ pub struct RequestMeta<'a> {
 pub fn admit(meta: &RequestMeta<'_>, port: u16) -> Result<(), CommonError> {
     let hosts = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
     if !hosts.iter().any(|s| Some(s.as_str()) == meta.host) {
-        return Err(CommonError::new(
-            421,
-            "security.host",
-            "The Host is not allowed.",
-        ));
+        return Err(CommonError::Host);
     }
     if let Some(origin) = meta.origin
         && !hosts.iter().any(|h| origin == format!("http://{h}"))
     {
-        return Err(CommonError::new(
-            403,
-            "security.origin",
-            "The Origin is not allowed.",
-        ));
+        return Err(CommonError::Origin);
     }
     if let Some(site) = meta.fetch_site
         && !matches!(site, "same-origin" | "none")
         && (meta.api || !meta.get || meta.fetch_mode != Some("navigate"))
     {
-        return Err(CommonError::new(
-            403,
-            "security.origin",
-            "The request site is not allowed.",
-        ));
+        return Err(CommonError::Origin);
     }
     Ok(())
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::ApiError;
     #[test]
     fn admission_matrix() {
         for host in ["127.0.0.1:50000", "localhost:50000"] {
@@ -65,8 +54,7 @@ mod tests {
                     50000
                 )
                 .unwrap_err()
-                .body
-                .code,
+                .code(),
                 "security.host"
             );
         }

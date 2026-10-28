@@ -59,7 +59,21 @@ mod platform {
         result
     }
 }
-pub(crate) use platform::write_runtime;
+use platform::write_runtime;
+/// Rewrites the runtime file off the async runtime, holding the runtime lock. Returns false
+/// when the file couldn't be secured.
+pub(crate) async fn rewrite_runtime(ctx: &Ctx) -> bool {
+    let Some(path) = ctx.runtime.clone() else {
+        return true;
+    };
+    let ctx = ctx.clone();
+    tokio::task::spawn_blocking(move || {
+        let _held = ctx.runtime_lock.lock();
+        write_runtime(&path, &ctx.runtime_value()).is_ok()
+    })
+    .await
+    .unwrap_or(false)
+}
 struct RuntimeFile(PathBuf);
 impl Drop for RuntimeFile {
     fn drop(&mut self) {
@@ -158,8 +172,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let maintenance = tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(60)).await;
-            let _runtime_lock = repair.runtime_lock.lock().unwrap();
-            if write_runtime(&runtime, &repair.runtime_value()).is_err() {
+            if !rewrite_runtime(&repair).await {
                 let _ = repair.shutdown.send(true);
                 break;
             }

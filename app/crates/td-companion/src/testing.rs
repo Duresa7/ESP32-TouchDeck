@@ -69,14 +69,24 @@ impl TestCompanion {
             .unwrap();
         self.ctx.devices.refresh(snapshot);
     }
+    /// How many requests reached a handler. A rejected request leaves it unchanged.
+    pub fn handler_hits(&self) -> usize {
+        self.ctx
+            .handler_hits
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+    /// Whether anything asked the Companion to stop.
+    pub fn shutdown_requested(&self) -> bool {
+        *self.ctx.shutdown.borrow()
+    }
     pub fn clock(&self) -> TestClock {
         TestClock(self.ctx.clone())
     }
     pub fn flood_state(&self, frames: usize, bytes: usize) {
         for _ in 0..frames {
-            self.ctx
-                .events
-                .publish(serde_json::json!({"type":"device.updated","data":"x".repeat(bytes)}));
+            self.ctx.events.publish_frame(
+                serde_json::json!({"type": "device.updated", "data": "x".repeat(bytes)}),
+            );
         }
     }
     pub fn raw(&self) -> RawClient {
@@ -155,7 +165,8 @@ impl RawClient {
 
 pub struct TestClock(Ctx);
 impl TestClock {
+    /// Moves the Companion's monotonic clock, which session expiry reads.
     pub fn advance(&self, duration: std::time::Duration) {
-        self.0.auth.lock().unwrap().offset_ms += duration.as_millis() as u64;
+        self.0.clock.advance(duration);
     }
 }

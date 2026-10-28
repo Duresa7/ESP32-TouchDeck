@@ -1,50 +1,87 @@
-use super::{CommonError, Ctx};
-use axum::{
-    Router,
-    extract::{Path, Request, State},
-    http::{HeaderMap, Method},
-    response::{IntoResponse, Response},
-    routing::{delete, get, post},
-};
+//! Tokens, sessions and the routes that mint and revoke them. Private to `api`.
+use super::{Access, CommonError, Ctx, Endpoint, Feature, NoQuery, Registration, Req};
+use axum::http::{HeaderMap, Method, StatusCode};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
+};
 use subtle::ConstantTimeEq;
 use ts_rs::TS;
 
-#[derive(Clone, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionKind {
+    Window,
+    Browser,
+}
+/// Who is calling: the session id and kind, for audit and for routes limited to a kind.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct ClientInfo {
     pub id: String,
-    pub kind: String,
+    pub kind: SessionKind,
 }
-#[derive(Clone, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct SessionInfo {
     pub id: String,
-    pub kind: String,
+    pub kind: SessionKind,
     pub label: String,
     pub created_ms: u64,
     pub last_used_ms: u64,
     pub current: bool,
 }
+
+/// The Companion's monotonic clock. Tests move it forward; wall-clock time is only shown.
+#[derive(Clone, Default)]
+pub(crate) struct Clock(Arc<AtomicU64>);
+impl Clock {
+    pub(crate) fn now(&self) -> Instant {
+        Instant::now() + Duration::from_millis(self.0.load(Ordering::SeqCst))
+    }
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn advance(&self, by: Duration) {
+        self.0.fetch_add(by.as_millis() as u64, Ordering::SeqCst);
+    }
+}
+
+/// A window session with no open WebSocket for this long ends.
+const WINDOW_IDLE: Duration = Duration::from_secs(60);
+/// Revoked sessions are kept so their tokens get `auth.revoked`, until the table is full.
+const MAX_SESSIONS: usize = 1024;
+const MAX_LABEL: usize = 64;
+
 struct Session {
     info: SessionInfo,
     revoked: bool,
     sockets: usize,
-    closed_ms: u64,
+    /// When the session last had no open socket.
+    idle_since: Instant,
+}
+impl Session {
+    fn expired(&self, now: Instant) -> bool {
+        self.info.kind == SessionKind::Window
+            && self.sockets == 0
+            && now.saturating_duration_since(self.idle_since) >= WINDOW_IDLE
+    }
 }
 pub(crate) struct Auth {
-    pub pairing: String,
-    pub(crate) offset_ms: u64,
-    sessions: HashMap<Vec<u8>, Session>,
+    pairing: String,
+    sessions: HashMap<[u8; 32], Session>,
 }
-/// Revoked sessions are kept so their tokens get `auth.revoked`, until the table is full.
-const MAX_SESSIONS: usize = 1024;
 pub(crate) fn token(prefix: &str) -> String {
     let mut bytes = [0; 32];
     getrandom::fill(&mut bytes).expect("OS random source unavailable");
     format!("{prefix}{}", URL_SAFE_NO_PAD.encode(bytes))
+}
+fn digest(token: &str) -> [u8; 32] {
+    Sha256::digest(token.as_bytes()).into()
 }
 fn bearer(headers: &HeaderMap) -> Option<&str> {
     headers
@@ -54,126 +91,126 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
         .strip_prefix("Bearer ")
 }
 impl Auth {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             pairing: token("tdp_"),
-            offset_ms: 0,
             sessions: HashMap::new(),
         }
     }
-    pub fn authenticate(
+    pub(crate) fn pairing(&self) -> &str {
+        &self.pairing
+    }
+    pub(crate) fn check_pairing(&self, headers: &HeaderMap) -> Result<(), CommonError> {
+        let supplied = bearer(headers).ok_or(CommonError::AuthMissing)?;
+        if bool::from(self.pairing.as_bytes().ct_eq(supplied.as_bytes())) {
+            Ok(())
+        } else {
+            Err(CommonError::AuthInvalid)
+        }
+    }
+    /// Reads the session token from `Authorization`, or on the events socket from the
+    /// `touchdeck.bearer.*` subprotocol entry.
+    pub(crate) fn authenticate(
         &mut self,
         headers: &HeaderMap,
-        ws: bool,
+        websocket: bool,
+        now: Instant,
     ) -> Result<ClientInfo, CommonError> {
-        let token = if ws {
+        let token = if websocket {
             headers
-                .get("sec-websocket-protocol")
-                .and_then(|h| h.to_str().ok())
-                .and_then(|h| {
-                    h.split(',')
-                        .map(str::trim)
-                        .find_map(|p| p.strip_prefix("touchdeck.bearer."))
-                })
+                .get_all("sec-websocket-protocol")
+                .iter()
+                .filter_map(|h| h.to_str().ok())
+                .flat_map(|h| h.split(','))
+                .find_map(|p| p.trim().strip_prefix("touchdeck.bearer."))
         } else {
             bearer(headers)
         };
-        let token = token
-            .ok_or_else(|| CommonError::new(401, "auth.missing", "A session token is required."))?;
+        let token = token.ok_or(CommonError::AuthMissing)?;
         let session = self
             .sessions
-            .get_mut(Sha256::digest(token.as_bytes()).as_slice())
-            .ok_or_else(|| CommonError::new(401, "auth.invalid", "The session is invalid."))?;
+            .get_mut(&digest(token))
+            .ok_or(CommonError::AuthInvalid)?;
         if session.revoked {
-            return Err(CommonError::new(
-                401,
-                "auth.revoked",
-                "The session was revoked.",
-            ));
+            return Err(CommonError::AuthRevoked("The session was revoked."));
         }
-        if session.sockets == 0
-            && (crate::now_ms() + self.offset_ms).saturating_sub(session.closed_ms) >= 60_000
-        {
+        if session.expired(now) {
             session.revoked = true;
-            return Err(CommonError::new(
-                401,
-                "auth.revoked",
-                "The window session ended.",
-            ));
+            return Err(CommonError::AuthRevoked("The window session ended."));
         }
-        session.info.last_used_ms = crate::now_ms() + self.offset_ms;
+        session.info.last_used_ms = crate::now_ms();
         Ok(ClientInfo {
             id: session.info.id.clone(),
-            kind: session.info.kind.clone(),
+            kind: session.info.kind,
         })
     }
-    pub fn active(&self, id: &str) -> bool {
+    fn mint(&mut self, label: Option<String>, now: Instant) -> Result<SessionCreated, CommonError> {
+        if self.sessions.len() >= MAX_SESSIONS {
+            // A revoked row still holding sockets keeps counting toward the socket caps.
+            self.sessions.retain(|_, s| !s.revoked || s.sockets > 0);
+        }
+        if self.sessions.len() >= MAX_SESSIONS {
+            return Err(CommonError::Limits(
+                "Too many sessions have been created. Restart the Companion.",
+            ));
+        }
+        let label: String = label
+            .unwrap_or_else(|| "Window".into())
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(MAX_LABEL)
+            .collect();
+        let id = token("session_");
+        let token = token("tds_");
+        let wall = crate::now_ms();
+        self.sessions.insert(
+            digest(&token),
+            Session {
+                info: SessionInfo {
+                    id: id.clone(),
+                    kind: SessionKind::Window,
+                    label,
+                    created_ms: wall,
+                    last_used_ms: wall,
+                    current: false,
+                },
+                revoked: false,
+                sockets: 0,
+                idle_since: now,
+            },
+        );
+        Ok(SessionCreated { id, token })
+    }
+    pub(crate) fn active(&self, id: &str) -> bool {
         self.sessions
             .values()
             .any(|s| s.info.id == id && !s.revoked)
     }
-    pub fn socket_open(&mut self, id: &str) -> Result<(), CommonError> {
+    pub(crate) fn socket_open(&mut self, id: &str) -> Result<(), CommonError> {
         if self.sessions.values().map(|s| s.sockets).sum::<usize>() >= 16 {
-            return Err(CommonError::new(
-                429,
-                "limits.exceeded",
-                "The Companion has too many sockets.",
-            ));
+            return Err(CommonError::Limits("The Companion has too many sockets."));
         }
         let s = self
             .sessions
             .values_mut()
             .find(|s| s.info.id == id && !s.revoked)
-            .ok_or_else(|| CommonError::new(401, "auth.revoked", "The session was revoked."))?;
+            .ok_or(CommonError::AuthRevoked("The session was revoked."))?;
         if s.sockets >= 4 {
-            return Err(CommonError::new(
-                429,
-                "limits.exceeded",
-                "The session has too many sockets.",
-            ));
+            return Err(CommonError::Limits("The session has too many sockets."));
         }
         s.sockets += 1;
         Ok(())
     }
-    pub fn socket_close(&mut self, id: &str) {
+    pub(crate) fn socket_close(&mut self, id: &str, now: Instant) {
         if let Some(s) = self.sessions.values_mut().find(|s| s.info.id == id) {
             s.sockets = s.sockets.saturating_sub(1);
-            s.closed_ms = crate::now_ms() + self.offset_ms;
+            if s.sockets == 0 {
+                s.idle_since = now;
+            }
         }
     }
 }
-pub(crate) fn is_public(method: &Method, path: &str) -> bool {
-    matches!(
-        (method.as_str(), path),
-        ("GET", "/api/v1/system/ping")
-            | ("POST", "/api/v1/auth/proof")
-            | ("POST", "/api/v1/auth/sessions")
-    )
-}
-pub(crate) fn routes(router: Router<Ctx>) -> Router<Ctx> {
-    router
-        .route(
-            "/api/v1/system/ping",
-            get(|| async { axum::Json(serde_json::json!({"api":["v1"]})) }),
-        )
-        .route("/api/v1/auth/proof", post(proof))
-        .route("/api/v1/auth/sessions", post(create).get(sessions))
-        .route("/api/v1/auth/sessions/{id}", delete(revoke))
-        .route("/api/v1/auth/reset", post(reset))
-}
-async fn json<T: serde::de::DeserializeOwned>(request: Request) -> Result<T, CommonError> {
-    if !super::is_json(request.headers()) {
-        return Err(CommonError::new(
-            415,
-            "request.media_type",
-            "The request requires JSON.",
-        ));
-    }
-    let bytes = axum::body::to_bytes(request.into_body(), 1 << 20)
-        .await
-        .map_err(|_| CommonError::new(413, "request.too_large", "The request is too large."))?;
-    serde_json::from_slice(&bytes).map_err(|e| CommonError::invalid("body", &e.to_string()))
-}
+
 #[derive(Serialize, Deserialize, TS)]
 pub struct ProofRequest {
     pub nonce: String,
@@ -184,7 +221,7 @@ pub struct Proof {
 }
 #[derive(Serialize, Deserialize, TS)]
 pub struct SessionRequest {
-    pub kind: String,
+    pub kind: SessionKind,
     pub label: Option<String>,
 }
 #[derive(Serialize, Deserialize, TS)]
@@ -192,144 +229,181 @@ pub struct SessionCreated {
     pub id: String,
     pub token: String,
 }
-async fn proof(State(ctx): State<Ctx>, request: Request) -> Result<axum::Json<Proof>, CommonError> {
-    let body: ProofRequest = json(request).await?;
-    let nonce = URL_SAFE_NO_PAD
-        .decode(body.nonce)
-        .map_err(|_| CommonError::invalid("nonce", "Expected base64url."))?;
-    if nonce.len() != 32 {
-        return Err(CommonError::invalid("nonce", "Expected 32 bytes."));
-    }
-    let mut mac = Hmac::<Sha256>::new_from_slice(ctx.pairing_token().as_bytes()).unwrap();
-    mac.update(b"touchdeck-companion-proof\0");
-    mac.update(&nonce);
-    Ok(axum::Json(Proof {
-        proof: URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes()),
-    }))
+#[derive(Serialize, Deserialize, TS)]
+pub struct Versions {
+    pub api: Vec<String>,
 }
-async fn create(
-    State(ctx): State<Ctx>,
-    request: Request,
-) -> Result<axum::Json<SessionCreated>, CommonError> {
-    let supplied = bearer(request.headers()).unwrap_or("").to_owned();
-    let body: SessionRequest = json(request).await?;
-    let mut auth = ctx.auth.lock().unwrap();
-    if !bool::from(auth.pairing.as_bytes().ct_eq(supplied.as_bytes())) {
-        return Err(CommonError::new(
-            401,
-            "auth.invalid",
-            "The pairing token is invalid.",
-        ));
-    }
-    if body.kind != "window" {
-        return Err(CommonError::new(
-            403,
-            "auth.forbidden",
-            "Only window sessions can be created here.",
-        ));
-    }
-    if auth.sessions.len() >= MAX_SESSIONS {
-        auth.sessions.retain(|_, s| !s.revoked);
-    }
-    if auth.sessions.len() >= MAX_SESSIONS {
-        return Err(CommonError::new(
-            429,
-            "limits.exceeded",
-            "Too many sessions have been created. Restart the Companion.",
-        ));
-    }
-    let id = token("session_");
-    let token = token("tds_");
-    let now = crate::now_ms() + auth.offset_ms;
-    auth.sessions.insert(
-        Sha256::digest(token.as_bytes()).to_vec(),
-        Session {
-            info: SessionInfo {
-                id: id.clone(),
-                kind: "window".into(),
-                label: body
-                    .label
-                    .map(|l| l.chars().take(64).collect())
-                    .unwrap_or_else(|| "Window".into()),
-                created_ms: now,
-                last_used_ms: now,
-                current: false,
-            },
-            revoked: false,
-            sockets: 0,
-            closed_ms: now,
-        },
-    );
-    Ok(axum::Json(SessionCreated { id, token }))
-}
-async fn sessions(
-    State(ctx): State<Ctx>,
-    axum::Extension(client): axum::Extension<ClientInfo>,
-) -> axum::Json<Vec<SessionInfo>> {
-    axum::Json(
-        ctx.auth
-            .lock()
-            .unwrap()
-            .sessions
-            .values()
-            .filter(|s| !s.revoked)
-            .map(|s| {
-                let mut info = s.info.clone();
-                info.current = info.id == client.id;
-                info
-            })
-            .collect(),
-    )
-}
-async fn revoke(
-    State(ctx): State<Ctx>,
-    Path(id): Path<String>,
-    axum::Extension(client): axum::Extension<ClientInfo>,
-) -> axum::http::StatusCode {
-    let id = if id == "self" { client.id } else { id };
-    if let Some(s) = ctx
-        .auth
-        .lock()
-        .unwrap()
-        .sessions
-        .values_mut()
-        .find(|s| s.info.id == id)
-    {
-        s.revoked = true;
-    }
-    ctx.events.notify();
-    axum::http::StatusCode::NO_CONTENT
-}
-async fn reset(State(ctx): State<Ctx>) -> Response {
-    let _runtime_lock = ctx.runtime_lock.lock().unwrap();
-    {
-        let mut auth = ctx.auth.lock().unwrap();
-        auth.pairing = token("tdp_");
-        for s in auth.sessions.values_mut() {
-            s.revoked = true;
-        }
-    }
-    ctx.events.notify();
-    if let Some(path) = &ctx.runtime
-        && super::process::write_runtime(path, &ctx.runtime_value()).is_err()
-    {
-        let _ = ctx.shutdown.send(true);
-        return CommonError::new(
-            503,
-            "companion.stopping",
-            "The runtime file could not be secured.",
-        )
-        .into_response();
-    }
-    axum::http::StatusCode::NO_CONTENT.into_response()
+#[derive(Serialize, Deserialize, TS)]
+pub struct SessionPath {
+    pub id: String,
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
-pub(super) fn declarations() -> Vec<String> {
-    vec![
-        ProofRequest::decl(),
-        Proof::decl(),
-        SessionRequest::decl(),
-        SessionCreated::decl(),
-    ]
+/// Public routes read at most this much body. Nothing is authenticated yet.
+const PUBLIC_BODY_LIMIT: usize = 4096;
+
+pub struct Ping;
+impl Endpoint for Ping {
+    const NAME: &'static str = "system.ping";
+    const METHOD: Method = Method::GET;
+    const PATH: &'static str = "/system/ping";
+    const BODY_LIMIT: usize = PUBLIC_BODY_LIMIT;
+    type Path = ();
+    type Query = NoQuery;
+    type Body = ();
+    type Ok = Versions;
+    type Error = CommonError;
+    async fn handle(_: Ctx, _: Req<Self>) -> Result<Versions, CommonError> {
+        Ok(Versions {
+            api: vec!["v1".into()],
+        })
+    }
 }
+pub struct ProofEndpoint;
+impl Endpoint for ProofEndpoint {
+    const NAME: &'static str = "auth.proof";
+    const METHOD: Method = Method::POST;
+    const PATH: &'static str = "/auth/proof";
+    const BODY_LIMIT: usize = PUBLIC_BODY_LIMIT;
+    type Path = ();
+    type Query = NoQuery;
+    type Body = ProofRequest;
+    type Ok = Proof;
+    type Error = CommonError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Proof, CommonError> {
+        let nonce = URL_SAFE_NO_PAD
+            .decode(req.body.nonce)
+            .map_err(|_| CommonError::invalid("nonce", "Expected base64url."))?;
+        if nonce.len() != 32 {
+            return Err(CommonError::invalid("nonce", "Expected 32 bytes."));
+        }
+        let pairing = ctx.auth.lock().pairing.clone();
+        let mut mac = Hmac::<Sha256>::new_from_slice(pairing.as_bytes()).unwrap();
+        mac.update(b"touchdeck-companion-proof\0");
+        mac.update(&nonce);
+        Ok(Proof {
+            proof: URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes()),
+        })
+    }
+}
+/// The guard checked the pairing token before the body was read.
+pub struct SessionCreate;
+impl Endpoint for SessionCreate {
+    const NAME: &'static str = "auth.session_create";
+    const METHOD: Method = Method::POST;
+    const PATH: &'static str = "/auth/sessions";
+    const BODY_LIMIT: usize = PUBLIC_BODY_LIMIT;
+    type Path = ();
+    type Query = NoQuery;
+    type Body = SessionRequest;
+    type Ok = SessionCreated;
+    type Error = CommonError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<SessionCreated, CommonError> {
+        if req.body.kind != SessionKind::Window {
+            return Err(CommonError::Forbidden(
+                "Only window sessions can be created here.",
+            ));
+        }
+        let now = ctx.clock.now();
+        ctx.auth.lock().mint(req.body.label, now)
+    }
+}
+pub struct Sessions;
+impl Endpoint for Sessions {
+    const NAME: &'static str = "auth.sessions";
+    const METHOD: Method = Method::GET;
+    const PATH: &'static str = "/auth/sessions";
+    type Path = ();
+    type Query = NoQuery;
+    type Body = ();
+    type Ok = Vec<SessionInfo>;
+    type Error = CommonError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Vec<SessionInfo>, CommonError> {
+        let own = &req.client().id;
+        let now = ctx.clock.now();
+        let mut list: Vec<_> = ctx
+            .auth
+            .lock()
+            .sessions
+            .values()
+            .filter(|s| !s.revoked && !s.expired(now))
+            .map(|s| SessionInfo {
+                current: s.info.id == *own,
+                ..s.info.clone()
+            })
+            .collect();
+        list.sort_by_key(|s| s.created_ms);
+        Ok(list)
+    }
+}
+pub struct SessionDelete;
+impl Endpoint for SessionDelete {
+    const NAME: &'static str = "auth.session_delete";
+    const METHOD: Method = Method::DELETE;
+    const PATH: &'static str = "/auth/sessions/{id}";
+    const STATUS: StatusCode = StatusCode::NO_CONTENT;
+    type Path = SessionPath;
+    type Query = NoQuery;
+    type Body = ();
+    type Ok = ();
+    type Error = CommonError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<(), CommonError> {
+        let id = match req.path.id.as_str() {
+            "self" => req.client().id.clone(),
+            id => id.to_owned(),
+        };
+        if let Some(s) = ctx
+            .auth
+            .lock()
+            .sessions
+            .values_mut()
+            .find(|s| s.info.id == id)
+        {
+            s.revoked = true;
+        }
+        ctx.events.notify();
+        Ok(())
+    }
+}
+/// Reset pairing: a new pairing token, every session revoked, the runtime file rewritten.
+pub struct Reset;
+impl Endpoint for Reset {
+    const NAME: &'static str = "auth.reset";
+    const METHOD: Method = Method::POST;
+    const PATH: &'static str = "/auth/reset";
+    const STATUS: StatusCode = StatusCode::NO_CONTENT;
+    type Path = ();
+    type Query = NoQuery;
+    type Body = ();
+    type Ok = ();
+    type Error = CommonError;
+    async fn handle(ctx: Ctx, _: Req<Self>) -> Result<(), CommonError> {
+        {
+            let mut auth = ctx.auth.lock();
+            auth.pairing = token("tdp_");
+            for s in auth.sessions.values_mut() {
+                s.revoked = true;
+            }
+        }
+        ctx.events.notify();
+        if !crate::process::rewrite_runtime(&ctx).await {
+            let _ = ctx.shutdown.send(true);
+            return Err(CommonError::Internal);
+        }
+        Ok(())
+    }
+}
+
+fn auth_feature() -> Feature {
+    Feature::new("auth")
+        .route::<ProofEndpoint>(Access::Public)
+        .route::<SessionCreate>(Access::Pairing)
+        .endpoint::<Sessions>()
+        .endpoint::<SessionDelete>()
+        .endpoint::<Reset>()
+}
+inventory::submit! { Registration(auth_feature) }
+/// `system.ping` is public, so it's declared here and merges into the `system` feature.
+fn ping_feature() -> Feature {
+    Feature::new("system").route::<Ping>(Access::Public)
+}
+inventory::submit! { Registration(ping_feature) }
