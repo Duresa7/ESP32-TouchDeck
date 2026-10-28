@@ -1,0 +1,21 @@
+import '@fontsource-variable/archivo/wdth.css';
+import './styles/tokens.css';
+import './styles/app.css';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './App.tsx';
+import { CompanionContext, connect, pageEnvironment, type Environment } from './companion/connection.ts';
+
+// The demo branch is dropped from production builds, fake Companion and all.
+const env: Environment =
+  import.meta.env.MODE === 'demo' ? (await import('./companion/demo.ts')).demoEnvironment(window) : pageEnvironment(window);
+
+const { companion } = connect(env);
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <CompanionContext value={companion}>
+      <App />
+    </CompanionContext>
+  </StrictMode>,
+);
