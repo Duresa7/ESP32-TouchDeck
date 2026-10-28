@@ -200,10 +200,11 @@ export function buildPage(page: Page, g: Geometry, options: SceneOptions = {}): 
   return { id: page.id, title: page.title, kind: page.kind, tiles: page.tiles.map((tile) => buildTile(page, tile, g, options)), rows: [] };
 }
 
-/** The page title at the top left, or null on a full-screen layout. */
+/** The page title at the top left, one line cut with dots to the screen less its margin each side, or null on a full-screen layout. */
 export function buildTitle(title: string, g: Geometry): TextView | null {
   if (g.fullScreen) return null;
-  return text(layoutLabel(title, FONTS[28]), 28, THEME.color.title, { x: g.titleX, y: g.titleY });
+  const label = layoutLabel(title, FONTS[28], { width: g.screen.w - 2 * g.titleX, height: FONTS[28].lineHeight, dots: true });
+  return text(label, 28, THEME.color.title, { x: g.titleX, y: g.titleY });
 }
 
 /** The page dots, the current one widened into a pill, or none on a full-screen layout. */

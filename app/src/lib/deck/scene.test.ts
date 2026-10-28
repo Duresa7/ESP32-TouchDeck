@@ -140,6 +140,18 @@ test('the title and dots follow the page, and a full-screen layout draws neither
   assert.deepEqual(buildDots(full, 2, 0), []);
 });
 
+test('a title too wide for the screen stays on one line, cut with dots short of the right margin', () => {
+  const portrait = geometry(screenSize('portrait'));
+  const fits = buildTitle('Usage on every account', portrait)!;
+  assert.deepEqual(fits.label.lines, layoutLabel('Usage on every account', FONTS[28]).lines);
+  assert.deepEqual([fits.x, fits.y, fits.label.height], [36, 14, 30]);
+  // 24 W are 768 px, wider than the 528 px between the margins of a portrait screen.
+  const wide = buildTitle('W'.repeat(24), portrait)!;
+  assert.equal(wide.label.width, 600 - 2 * 36);
+  assert.deepEqual(shown(wide), [`${'W'.repeat(15)}...`]);
+  assert.deepEqual(shown(buildTitle('W'.repeat(24), landscape)!), ['W'.repeat(24)]);
+});
+
 test('characters outside the deck font are listed once', () => {
   assert.deepEqual(missingGlyphs('Café ☕ é'), ['é', '☕']);
   assert.deepEqual(missingGlyphs('Play/Pause 100°'), []);

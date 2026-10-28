@@ -258,10 +258,11 @@ describe('the app, screen by screen, on the mock deck', () => {
     await browser.setWindowSize(1180, 760);
   });
 
-  it('keeps dashboard rows inside their rows at 1:1 in portrait, wrapped as before', async () => {
+  it('keeps dashboard rows inside their rows at 1:1 in portrait, wrapped as before, and cuts a title too wide', async () => {
     await browser.setWindowSize(1300, 1350);
     const dev = JSON.parse(text('dev.json'));
-    await importText(JSON.stringify({ ...dev, name: 'Dashboard', orientation: 'portrait', pages: [dev.pages[3]] }), 'dashboard.json');
+    const page = { ...dev.pages[3], title: 'W'.repeat(24) };
+    await importText(JSON.stringify({ ...dev, name: 'Dashboard', orientation: 'portrait', pages: [page] }), 'dashboard.json');
     await waitEvent('opened');
     await $('[data-testid="mode-preview"]').click();
     if (!(await $('[data-testid="actual-size"]').isSelected())) await $('[data-testid="actual-size"]').click();
@@ -279,6 +280,10 @@ describe('the app, screen by screen, on the mock deck', () => {
       [['claude  sam', '60px'], ['5h 18%  7d 61%', '60px']],
       [['gemini-cli  jo', '60px'], ['active', '30px']],
     ]);
+    const title = await $('[data-testid="deck-title"] [role="img"]');
+    note('dashboard_title_portrait', { text: await title.getAttribute('aria-label'), style: await title.getAttribute('style') });
+    expect(await title.getAttribute('aria-label')).toBe(`${'W'.repeat(15)}...`);
+    expect(await title.getAttribute('style')).toContain('width: 528px');
     await $('[data-testid="actual-size"]').click();
     await $('[data-testid="mode-edit"]').click();
     await $('[data-testid="orientation-landscape"]').click();
