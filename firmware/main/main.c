@@ -212,6 +212,9 @@ void app_main(void)
 
     int ticks = 0;
     while (true) {
+#if CONFIG_TD_PERF_TOOLS
+        display_perf_mem_sample();
+#endif
         ESP_LOGI(TAG, "alive %d, free heap %" PRIu32 " bytes",
                  ticks++, esp_get_free_heap_size());
         vTaskDelay(pdMS_TO_TICKS(2000));

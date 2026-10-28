@@ -380,8 +380,10 @@ settings on the deck stay as they are. `perf` then also takes:
   minimum free, and largest free internal RAM and free PSRAM after each boot
   stage. `perf mem heaps` prints ESP-IDF's per-heap summary of internal RAM to
   the log and replies with the totals. `perf mem last` reports what the previous
-  boot saved when it restarted: each heap's free and minimum free size and each
-  task's stack high-water mark, with `boot`, the boot that saved them. Otherwise
+  boot saved when it restarted: the latest runtime sample of each heap's free and
+  minimum free size and each task's stack high-water mark, with `boot`, the boot
+  that saved them. Sampling runs every two seconds; `uptime_ms` is the sample's
+  time. The shutdown handler only copies that completed record. Otherwise
   it replies `"saved":false`, with `stale_boot` when an older boot's record is
   left. A panic, a watchdog, or a power cut saves nothing.
 - `perf cpu <seconds>` replies when the time is up with each core's busy share and

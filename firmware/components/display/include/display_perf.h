@@ -23,6 +23,9 @@ void display_perf_input(bool pressed);
  * until the next reset, so pass a string literal. Only app_main's task calls it, the first time at its start. */
 void display_perf_boot_mark(const char *stage);
 
+/* Refreshes the precomputed restart record. Only app_main calls it, while normal scheduling is available. */
+void display_perf_mem_sample(void);
+
 #ifdef __cplusplus
 }
 #endif

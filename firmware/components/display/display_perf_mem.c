@@ -1,5 +1,6 @@
 #include "display_perf.h"
 #include "display_priv.h"
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,8 +21,8 @@
  * lists the free and minimum free internal RAM after each, so a drop in the minimum points at the stage that
  * caused it.
  *
- * Last boot: a shutdown handler, which esp_restart runs, saves the minimum free size of each heap and every task's
- * stack high-water mark to RTC memory that no reset clears, under a magic number and a CRC, and `perf mem last`
+ * Last boot: app_main samples the heaps and task stacks every two seconds. The shutdown handler only copies the
+ * latest completed sample to RTC memory, under a magic number and a CRC, and `perf mem last`
  * reports them after the restart. A panic, a watchdog or a power cut runs no shutdown handler, so the record then
  * stays the one an earlier restart saved, and `perf mem last` answers saved false with that boot in stale_boot.
  *
@@ -88,8 +89,12 @@ static RTC_NOINIT_ATTR last_mem_t s_last;
 static RTC_NOINIT_ATTR boot_stage_t s_stages[BOOT_STAGES_MAX];
 static uint32_t s_stages_n;
 static bool s_boot_started;
-/* save_last's task list, allocated at app_main, so the shutdown handler allocates nothing. */
+/* Only app_main samples. Shutdown stops future samples before reading the published buffer, so an in-progress
+ * sample can finish in the other buffer without overwriting the one being saved. Neither path waits for the other. */
 static TaskStatus_t *s_last_status;
+static last_mem_t s_samples[2];
+static atomic_uint s_sample_index;
+static atomic_bool s_stopping;
 
 static uint32_t last_crc(const last_mem_t *l)
 {
@@ -97,17 +102,20 @@ static uint32_t last_crc(const last_mem_t *l)
     return esp_rom_crc32_le(0, from, (uint32_t)((const uint8_t *)(l + 1) - from));
 }
 
-/*
- * Runs in esp_restart, on the task that called it, while the other core still runs, so it keeps to a few hundred
- * bytes of stack and takes no lock but the kernel's. The heap figures are counters it reads without a lock.
- * uxTaskGetSystemState walks the task lists and reads each stack's high-water mark under the kernel lock, so no task
- * moves between lists during the walk, which an unlocked walk with only this core's scheduler suspended allowed. It
- * lists no task when more exist than the array holds.
- */
 static void save_last(void)
 {
-    last_mem_t *l = &s_last;
-    l->magic = 0;
+    atomic_store(&s_stopping, true);
+    s_last = s_samples[atomic_load(&s_sample_index)];
+}
+
+void display_perf_mem_sample(void)
+{
+    if (atomic_load(&s_stopping)) {
+        return;
+    }
+    const unsigned next = atomic_load(&s_sample_index) ^ 1u;
+    last_mem_t *l = &s_samples[next];
+    memset(l, 0, sizeof *l);
     l->boot = s_boot_count.count;
     l->uptime_ms = (uint32_t)(esp_timer_get_time() / 1000);
     l->free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
@@ -125,6 +133,7 @@ static void save_last(void)
     l->tasks_n = n;
     l->crc = last_crc(l);
     l->magic = LAST_MAGIC;
+    atomic_store(&s_sample_index, next);
 }
 
 void display_perf_boot_mark(const char *stage)
@@ -141,6 +150,7 @@ void display_perf_boot_mark(const char *stage)
         s_boot_count.count = counted ? s_boot_count.count + 1 : 1;
         s_boot_count.check = ~s_boot_count.count;
         s_boot_count.magic = BOOT_MAGIC;
+        display_perf_mem_sample();
         (void)esp_register_shutdown_handler(save_last);
     }
     if (s_stages_n >= BOOT_STAGES_MAX) {
