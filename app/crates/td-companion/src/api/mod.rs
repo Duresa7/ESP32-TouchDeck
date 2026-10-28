@@ -31,8 +31,7 @@ pub struct Ctx {
     pub(crate) clock: Clock,
     pub(crate) shutdown: tokio::sync::watch::Sender<bool>,
     pub(crate) port: u16,
-    pub(crate) runtime: Option<std::path::PathBuf>,
-    pub(crate) runtime_lock: Arc<Mutex<()>>,
+    pub(crate) runtime: Option<Arc<crate::runtime::Runtime>>,
     pub(crate) mock: bool,
     pub(crate) limits: crate::Limits,
     pub(crate) started_ms: u64,
@@ -44,7 +43,7 @@ impl Ctx {
     pub(crate) fn new(
         port: u16,
         mock: bool,
-        runtime: Option<std::path::PathBuf>,
+        runtime: Option<Arc<crate::runtime::Runtime>>,
         limits: crate::Limits,
     ) -> Self {
         let events = Events::default();
@@ -56,7 +55,6 @@ impl Ctx {
             shutdown: tokio::sync::watch::channel(false).0,
             port,
             runtime,
-            runtime_lock: Arc::new(Mutex::new(())),
             mock,
             limits,
             started_ms: crate::now_ms(),

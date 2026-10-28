@@ -4,6 +4,7 @@ pub mod bindings;
 pub mod devices;
 pub mod features;
 mod process;
+mod runtime;
 mod serve;
 pub use serve::Limits;
 #[cfg(any(test, feature = "test-hooks"))]

@@ -83,14 +83,14 @@ All secrets come from the OS random source (`getrandom`). Tokens are base64url w
 **Writing it on Windows** (crate `windows-sys`):
 
 1. Read the user's SID from the process token (`OpenProcessToken`, `GetTokenInformation(TokenUser)`).
-2. Create `runtime\` if it's missing. If `runtime\` is a reparse point (a junction or symlink), refuse to start. Apply the protected DACL `D:P(A;OICI;FA;;;<SID>)` with owner `<SID>` through `SetNamedSecurityInfoW` and `PROTECTED_DACL_SECURITY_INFORMATION`. Nothing inherits from `%LOCALAPPDATA%`. There's no Administrators or SYSTEM entry, because admins can take ownership anyway and backup tools use the backup privilege.
+2. Create `runtime\` with `CreateDirectoryW` and `SECURITY_ATTRIBUTES` from `O:<SID>D:P(A;OICI;FA;;;<SID>)`, so it's the user's from the start. If `runtime\` already exists and is a reparse point (a junction or symlink), refuse to start. If another account owns it, refuse to start with a clear message; the Companion never takes ownership. Otherwise apply the protected DACL `D:P(A;OICI;FA;;;<SID>)` through `SetNamedSecurityInfoW` and `PROTECTED_DACL_SECURITY_INFORMATION`, leaving the owner alone, and verify the folder as step 5 verifies the file. Nothing inherits from `%LOCALAPPDATA%`. There's no Administrators or SYSTEM entry, because admins can take ownership anyway and backup tools use the backup privilege.
 3. Create `runtime\.companion.json.<pid>.tmp` with `CreateFileW(CREATE_NEW)` and `SECURITY_ATTRIBUTES` from `O:<SID>D:P(A;;FA;;;<SID>)`. The file is private from its first byte.
 4. Write it, call `FlushFileBuffers`, then `MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)`. A rename on one volume keeps the file's own security descriptor.
-5. Read the final file's security with `GetNamedSecurityInfoW`. The DACL must be protected, hold exactly one allow entry for the user's SID, and the owner must be the user. Otherwise the Companion deletes the file, refuses to serve the API, and shows a tray error.
+5. Read the final file's security with `GetNamedSecurityInfoW`. The DACL must be protected, hold exactly one allow entry for the user's SID, and the owner must be the user. Otherwise the Companion deletes the file, refuses to serve the API, and shows a tray error. A failed rename in step 4 only removes the temporary file; the previous file stays.
 6. Write the file only after the listener is bound. Delete it on clean shutdown. Sessions are never written to disk.
-7. Every 60 s, check that the file still exists with the same DACL. If it's gone or changed, rewrite it with the same token.
+7. Every 60 s, and on Reset pairing, check that the file exists with the expected contents and DACL, and rewrite it only if it drifted. The check runs off the async runtime under one lock. A failure is retried 3 times with backoff (0.2 s, 1 s, 3 s) before the Companion shuts down.
 
-**Single instance.** A named mutex `Local\touchdeck-companion`. `Local\` is per sign-in session, so two signed-in users get two Companions, each with its own port and file.
+**Single instance.** An exclusive lock on `runtime\companion.lock`, taken after the folder is secured in step 2. Only the user can create files there, so another account can't hold the lock first, as it could squat a named mutex. A second Companion for the same folder exits with "The Companion is already running." Each user has their own folder, so two signed-in users get two Companions, each with its own port and file. Two sign-ins of the same user share one.
 
 ### Request rules
 

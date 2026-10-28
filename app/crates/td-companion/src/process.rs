@@ -1,84 +1,23 @@
 use crate::{
     api::Ctx,
     devices::{PortSource, RealPorts},
+    runtime::Runtime,
 };
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
-#[cfg(windows)]
-#[path = "windows.rs"]
-mod platform;
-#[cfg(not(windows))]
-mod platform {
-    use std::{
-        fs::{File, OpenOptions},
-        io::{self, Write},
-        os::unix::fs::{OpenOptionsExt, PermissionsExt},
-        path::Path,
-    };
-    pub struct Instance {
-        _file: File,
-    }
-    impl Instance {
-        pub fn acquire(root: &Path) -> io::Result<Self> {
-            let file = OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .read(true)
-                .write(true)
-                .open(root.join("companion.lock"))?;
-            fs2::FileExt::try_lock_exclusive(&file)
-                .map_err(|_| io::Error::other("The Companion is already running."))?;
-            Ok(Self { _file: file })
-        }
-    }
-    pub fn write_runtime(path: &Path, value: &serde_json::Value) -> io::Result<()> {
-        let dir = path.parent().unwrap();
-        std::fs::create_dir_all(dir)?;
-        if std::fs::symlink_metadata(dir)?.file_type().is_symlink() {
-            return Err(io::Error::other("The runtime directory is a symlink."));
-        }
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
-        let temp = dir.join(format!(".companion.json.{}.tmp", std::process::id()));
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&temp)?;
-        let result = (|| {
-            file.write_all(&serde_json::to_vec(value)?)?;
-            file.sync_all()?;
-            std::fs::rename(&temp, path)
-        })();
-        if result.is_err() {
-            let _ = std::fs::remove_file(temp);
-        }
-        result
-    }
-}
-use platform::write_runtime;
-/// Rewrites the runtime file off the async runtime, holding the runtime lock. Returns false
-/// when the file couldn't be secured.
+/// Checks the runtime file off the async runtime and rewrites it on drift. Returns false when
+/// it couldn't be secured after retries.
 pub(crate) async fn rewrite_runtime(ctx: &Ctx) -> bool {
-    let Some(path) = ctx.runtime.clone() else {
+    let Some(runtime) = ctx.runtime.clone() else {
         return true;
     };
     let ctx = ctx.clone();
-    tokio::task::spawn_blocking(move || {
-        let _held = ctx.runtime_lock.lock();
-        write_runtime(&path, &ctx.runtime_value()).is_ok()
-    })
-    .await
-    .unwrap_or(false)
-}
-struct RuntimeFile(PathBuf);
-impl Drop for RuntimeFile {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
+    tokio::task::spawn_blocking(move || runtime.repair(&ctx.runtime_value()).is_ok())
+        .await
+        .unwrap_or(false)
 }
 fn root() -> std::io::Result<PathBuf> {
     std::env::var_os("TOUCHDECK_APP_DATA_DIR")
@@ -140,28 +79,32 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
     let root = root()?;
     std::fs::create_dir_all(&root)?;
-    let _instance = platform::Instance::acquire(&root)?;
-    let listener = bind(&root).await?;
-    assert!(listener.local_addr()?.ip().is_loopback());
-    let runtime = root.join("runtime/companion.json");
+    #[cfg(windows)]
+    let dir = root.join("runtime");
     #[cfg(not(windows))]
-    let runtime = if std::env::var_os("TOUCHDECK_APP_DATA_DIR").is_none() {
-        std::env::var_os("XDG_RUNTIME_DIR")
+    let dir = match std::env::var_os("TOUCHDECK_APP_DATA_DIR") {
+        Some(_) => root.join("runtime"),
+        None => std::env::var_os("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
             .ok_or("XDG_RUNTIME_DIR is required")?
-            .join("touchdeck/companion.json")
-    } else {
-        runtime
+            .join("touchdeck"),
     };
+    let runtime = Arc::new(Runtime::open(&dir)?);
+    let listener = bind(&root).await?;
+    assert!(listener.local_addr()?.ip().is_loopback());
     let ctx = Ctx::new(
         listener.local_addr()?.port(),
         mock,
         Some(runtime.clone()),
         crate::Limits::default(),
     );
-    write_runtime(&runtime, &ctx.runtime_value())
-        .map_err(|e| format!("The runtime file could not be secured: {e}"))?;
-    let _runtime = RuntimeFile(runtime.clone());
+    let initial = ctx.clone();
+    let written = tokio::task::spawn_blocking(move || {
+        let value = initial.runtime_value();
+        initial.runtime.as_ref().unwrap().repair(&value)
+    })
+    .await?;
+    written.map_err(|e| format!("The runtime file could not be secured: {e}"))?;
     let refresh = ctx.clone();
     let worker = tokio::spawn(async move {
         loop {
@@ -194,5 +137,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     crate::serve::serve(listener, crate::api::router(ctx), limits, stop).await;
     worker.abort();
     maintenance.abort();
+    runtime.remove();
     Ok(())
 }
