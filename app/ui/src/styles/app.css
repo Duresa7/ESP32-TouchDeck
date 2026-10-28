@@ -131,27 +131,6 @@ button {
   padding: var(--space-12) var(--space-12) 120px;
 }
 
-.device-cards {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: var(--space-6);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.device-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  width: 240px;
-  padding: var(--space-4) var(--space-5);
-  border-radius: var(--radius-group);
-  background: var(--surface-raised);
-  box-shadow: 0 0 0 1px var(--line), var(--shadow-float);
-}
-
 .device-name {
   font-size: var(--text-18);
   line-height: var(--leading-18);
