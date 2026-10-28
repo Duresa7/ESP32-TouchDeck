@@ -21,7 +21,12 @@ static bool rects_overlap(ui_rect_t a, ui_rect_t b)
 
 static ui_geometry_t geometry_of(ui_orientation_t orientation)
 {
-    return ui_geometry(ui_screen_size(orientation));
+    return ui_geometry(ui_screen_size(orientation), false);
+}
+
+static ui_geometry_t full_screen_of(ui_orientation_t orientation)
+{
+    return ui_geometry(ui_screen_size(orientation), true);
 }
 
 TEST_CASE("landscape geometry reproduces the milestone 1 pixel values", "[ui_geometry]")
@@ -61,11 +66,66 @@ TEST_CASE("portrait geometry is 600 by 1024 with the band, grid and dots inside 
     TEST_ASSERT_EQUAL_INT16(283, ui_geometry_dot_x(&g, 0, 2));
 }
 
+TEST_CASE("full-screen landscape geometry makes the band and the grid the whole 1024 by 600 screen", "[ui_geometry]")
+{
+    const ui_geometry_t g = full_screen_of(UI_LANDSCAPE);
+    TEST_ASSERT_EQUAL_INT16(1024, g.screen.w);
+    TEST_ASSERT_EQUAL_INT16(600, g.screen.h);
+    EXPECT_RECT(g.band, 0, 0, 1024, 600);
+    EXPECT_RECT(g.grid, 0, 0, 1024, 600);
+    TEST_ASSERT_EQUAL_INT16(16, g.gap);
+    TEST_ASSERT_EQUAL_INT16(36, g.title_x);
+    TEST_ASSERT_EQUAL_INT16(14, g.title_y);
+    TEST_ASSERT_EQUAL_INT16(580, g.dot_y);
+    TEST_ASSERT_EQUAL_INT16(34, g.dot_pitch);
+    TEST_ASSERT_EQUAL_INT16(12, g.dot_size);
+    TEST_ASSERT_EQUAL_INT16(11, g.dot_active_extra);
+    TEST_ASSERT_EQUAL_INT16(48, g.bounce_px);
+    TEST_ASSERT_EQUAL_INT16(16, g.slop);
+    TEST_ASSERT_EQUAL_INT16(96, g.swipe);
+    TEST_ASSERT_EQUAL_INT16(380, g.dash_value_x);
+    TEST_ASSERT_EQUAL_INT16(634, g.dash_bar_x);
+}
+
+TEST_CASE("full-screen portrait geometry makes the band and the grid the whole 600 by 1024 screen", "[ui_geometry]")
+{
+    const ui_geometry_t g = full_screen_of(UI_PORTRAIT);
+    TEST_ASSERT_EQUAL_INT16(600, g.screen.w);
+    TEST_ASSERT_EQUAL_INT16(1024, g.screen.h);
+    EXPECT_RECT(g.band, 0, 0, 600, 1024);
+    EXPECT_RECT(g.grid, 0, 0, 600, 1024);
+    TEST_ASSERT_EQUAL_INT16(16, g.gap);
+    TEST_ASSERT_EQUAL_INT16(36, g.title_x);
+    TEST_ASSERT_EQUAL_INT16(14, g.title_y);
+    TEST_ASSERT_EQUAL_INT16(1004, g.dot_y);
+    TEST_ASSERT_EQUAL_INT16(34, g.dot_pitch);
+    TEST_ASSERT_EQUAL_INT16(12, g.dot_size);
+    TEST_ASSERT_EQUAL_INT16(11, g.dot_active_extra);
+    TEST_ASSERT_EQUAL_INT16(48, g.bounce_px);
+    TEST_ASSERT_EQUAL_INT16(16, g.slop);
+    TEST_ASSERT_EQUAL_INT16(96, g.swipe);
+    TEST_ASSERT_EQUAL_INT16(223, g.dash_value_x);
+    TEST_ASSERT_EQUAL_INT16(371, g.dash_bar_x);
+}
+
+TEST_CASE("full-screen F-keys tiles run from the screen's top-left corner to its bottom-right corner", "[ui_geometry]")
+{
+    const td_layout_t *layout = td_layout_builtin();
+    TEST_ASSERT_NOT_NULL(layout);
+    const ui_page_t *page = &layout->pages[0];
+    const ui_geometry_t l = full_screen_of(UI_LANDSCAPE);
+    EXPECT_RECT(ui_tile_rect(page, ui_page_find_tile(page, "f1"), l.grid, l.gap), 0, 0, 244, 138);
+    EXPECT_RECT(ui_tile_rect(page, ui_page_find_tile(page, "win"), l.grid, l.gap), 780, 462, 244, 138);
+    const ui_geometry_t p = full_screen_of(UI_PORTRAIT);
+    EXPECT_RECT(ui_tile_rect(page, ui_page_find_tile(page, "f1"), p.grid, p.gap), 0, 0, 138, 244);
+    EXPECT_RECT(ui_tile_rect(page, ui_page_find_tile(page, "win"), p.grid, p.gap), 462, 780, 138, 244);
+}
+
 /* Every built-in tile in both orientations: inside the grid, inside the screen, and clear of every other tile on
  * its page. */
-static void check_builtin_tiles(ui_orientation_t orientation)
+static void check_builtin_tiles(ui_orientation_t orientation, bool full_screen)
 {
-    const ui_geometry_t g = geometry_of(orientation);
+    const ui_geometry_t g = ui_geometry(ui_screen_size(orientation), full_screen);
     const td_layout_t *layout = td_layout_builtin();
     TEST_ASSERT_NOT_NULL(layout);
     for (size_t p = 0; p < layout->page_count; p++) {
@@ -87,12 +147,14 @@ static void check_builtin_tiles(ui_orientation_t orientation)
 
 TEST_CASE("every built-in tile fits the screen and overlaps no other tile in landscape", "[ui_geometry]")
 {
-    check_builtin_tiles(UI_LANDSCAPE);
+    check_builtin_tiles(UI_LANDSCAPE, false);
+    check_builtin_tiles(UI_LANDSCAPE, true);
 }
 
 TEST_CASE("every built-in tile fits the screen and overlaps no other tile in portrait", "[ui_geometry]")
 {
-    check_builtin_tiles(UI_PORTRAIT);
+    check_builtin_tiles(UI_PORTRAIT, false);
+    check_builtin_tiles(UI_PORTRAIT, true);
 }
 
 TEST_CASE("portrait lays the F-keys grid out 4 wide and 4 tall, taller than wide", "[ui_geometry]")

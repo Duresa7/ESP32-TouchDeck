@@ -14,7 +14,7 @@ ui_size_t ui_screen_size(ui_orientation_t orientation)
     return orientation == UI_PORTRAIT ? (ui_size_t){ UI_PANEL_H, UI_PANEL_W } : (ui_size_t){ UI_PANEL_W, UI_PANEL_H };
 }
 
-ui_geometry_t ui_geometry(ui_size_t screen)
+ui_geometry_t ui_geometry(ui_size_t screen, bool full_screen)
 {
     const int32_t s = screen.w < screen.h ? screen.w : screen.h;
     const int16_t title_strip = scaled(56, s);
@@ -38,6 +38,10 @@ ui_geometry_t ui_geometry(ui_size_t screen)
     };
     g.grid = (ui_rect_t){ .x = margin_x, .y = (int16_t)(g.band.y + margin_y), .w = (int16_t)(screen.w - 2 * margin_x),
                           .h = (int16_t)(g.band.h - 2 * margin_y) };
+    if (full_screen) {
+        g.band = (ui_rect_t){ .x = 0, .y = 0, .w = screen.w, .h = screen.h };
+        g.grid = g.band;
+    }
     g.dash_value_x = (int16_t)(g.grid.w * 360 / DESIGN_DASH_W);
     g.dash_bar_x = (int16_t)(g.grid.w * 600 / DESIGN_DASH_W);
     return g;

@@ -97,7 +97,15 @@ pub struct Layout {
     pub schema: u8,
     pub name: String,
     pub orientation: Orientation,
+    /// Tiles use the whole screen, with no page title or page dots. Written only when true, so a layout that
+    /// leaves it off stays readable by firmware that predates it.
+    #[serde(rename = "fullScreen", default, skip_serializing_if = "is_false")]
+    pub full_screen: bool,
     pub pages: Vec<Page>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -742,6 +750,17 @@ impl Check {
     }
 
     fn object<'a>(&mut self, value: &'a Json, pointer: &str, fields: &[&str]) -> Option<Obj<'a>> {
+        self.object_with(value, pointer, fields, &[])
+    }
+
+    /// Like `object`, with `optional` members that may be left out.
+    fn object_with<'a>(
+        &mut self,
+        value: &'a Json,
+        pointer: &str,
+        fields: &[&str],
+        optional: &[&str],
+    ) -> Option<Obj<'a>> {
         let Json::Object(members) = value else {
             self.wrong_type(pointer, "object");
             return None;
@@ -758,7 +777,9 @@ impl Check {
         }
         let mut reported = HashSet::new();
         for (name, _) in members {
-            if !fields.contains(&name.text.as_str()) && reported.insert(name.text.as_str()) {
+            let known =
+                fields.contains(&name.text.as_str()) || optional.contains(&name.text.as_str());
+            if !known && reported.insert(name.text.as_str()) {
                 self.fail(
                     Rule::UnknownField,
                     pointer,
@@ -877,7 +898,12 @@ impl Check {
     }
 
     fn layout(&mut self, value: &Json) {
-        let Some(obj) = self.object(value, "", &["schema", "name", "orientation", "pages"]) else {
+        let Some(obj) = self.object_with(
+            value,
+            "",
+            &["schema", "name", "orientation", "pages"],
+            &["fullScreen"],
+        ) else {
             return;
         };
         if let Some(schema) = obj.get("schema")
@@ -900,6 +926,11 @@ impl Check {
                 "/orientation",
                 "must be equal to one of the allowed values (enum)",
             );
+        }
+        if let Some(full_screen) = obj.get("fullScreen")
+            && !matches!(full_screen, Json::Bool(_))
+        {
+            self.wrong_type("/fullScreen", "boolean");
         }
         let Some(pages) = obj.get("pages") else {
             return;
@@ -1113,7 +1144,7 @@ mod tests {
 
     #[test]
     fn bundled_layouts_are_valid() {
-        for name in ["builtin.json", "dev.json"] {
+        for name in ["builtin.json", "dev.json", "full-screen.json"] {
             let bytes = std::fs::read(schema_dir().join("examples").join(name)).unwrap();
             let layout =
                 Layout::parse(&bytes).unwrap_or_else(|errors| panic!("{name}: {errors:?}"));
@@ -1267,6 +1298,40 @@ mod tests {
             keys(&Layout::parse(text.replace(",\"type\":\"launch\"", "").as_bytes()).unwrap_err()),
             ["action.type"]
         );
+    }
+
+    #[test]
+    fn full_screen_round_trips_and_is_written_only_when_true() {
+        let canonical = |layout: &Layout| -> Value {
+            serde_json::from_slice(&layout.to_canonical_json()).unwrap()
+        };
+        let base = String::from_utf8(launch_layout("")).unwrap();
+        let plain = Layout::parse(base.as_bytes()).unwrap();
+        assert!(!plain.full_screen);
+        assert_eq!(canonical(&plain).get("fullScreen"), None);
+
+        let on = base.replacen("\"pages\"", "\"fullScreen\":true,\"pages\"", 1);
+        let layout = Layout::parse(on.as_bytes()).unwrap();
+        assert!(layout.full_screen);
+        assert_eq!(canonical(&layout)["fullScreen"], Value::Bool(true));
+        assert_eq!(Layout::parse(&layout.to_canonical_json()).unwrap(), layout);
+
+        let off = base.replacen("\"pages\"", "\"fullScreen\":false,\"pages\"", 1);
+        let layout = Layout::parse(off.as_bytes()).unwrap();
+        assert_eq!(layout, plain);
+        assert_eq!(layout.to_canonical_json(), plain.to_canonical_json());
+
+        for value in ["1", "0", "\"true\"", "null", "[]", "{}"] {
+            let text = base.replacen("\"pages\"", &format!("\"fullScreen\":{value},\"pages\""), 1);
+            assert_eq!(
+                keys(&Layout::parse(text.as_bytes()).unwrap_err()),
+                ["shape.type"],
+                "{value}"
+            );
+        }
+
+        let example = std::fs::read(schema_dir().join("examples/full-screen.json")).unwrap();
+        assert!(Layout::parse(&example).unwrap().full_screen);
     }
 
     #[test]

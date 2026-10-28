@@ -28,6 +28,7 @@ typedef struct {
     bool from_storage;
     char name[TD_LAYOUT_TITLE_MAX];
     char orientation[12];
+    bool full_screen;
     uint8_t pages;
     uint16_t tiles;
     uint16_t icons_loaded;

@@ -34,7 +34,7 @@ static lv_obj_t *row_label(lv_obj_t *row, int32_t x, int32_t w)
 }
 
 /* The rows fill the grid area. They start hidden and show as the app sends them, so an empty page shows only its
- * title. */
+ * title, or nothing at all on a full-screen layout. */
 void ui_dashboard_build(lv_obj_t *page_obj, const ui_page_t *page)
 {
     if (!ui_widget_add_page(page->id) || s_pages >= UI_DASH_PAGES_MAX) {

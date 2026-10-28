@@ -5,7 +5,8 @@
 #include "unity.h"
 #include "td_layout.h"
 
-/* The test app embeds dev.json and every file under schema/examples/invalid/, with a NUL after each. */
+/* The test app embeds dev.json, full-screen.json and every file under schema/examples/invalid/, with a NUL after
+ * each. */
 #define INVALID_FILES(X)                                                                                              \
     X(action_missing_type) X(blank_name) X(consumer_range) X(control_character) X(duplicate_id) X(duplicate_member) \
     X(duplicate_modifier) X(empty_label) X(empty_text) X(empty_title) X(extra_property) X(grid_bounds) X(grid_size)  \
@@ -19,6 +20,7 @@
     extern const char name##_end[] asm("_binary_" #name "_json_end");
 INVALID_FILES(DECLARE)
 DECLARE(dev)
+DECLARE(full_screen)
 
 typedef struct {
     const char *name;
@@ -67,6 +69,7 @@ TEST_CASE("builtin.json parses to the milestone 1 pages, 2 pages and 22 tiles", 
     TEST_ASSERT_EQUAL_UINT16(22, layout->tile_count);
     TEST_ASSERT_EQUAL_UINT16(0, layout->icons_wanted);
     TEST_ASSERT_EQUAL_STRING("landscape", layout->orientation);
+    TEST_ASSERT_FALSE(layout->full_screen);
     TEST_ASSERT_EQUAL_STRING("fkeys", layout->pages[0].id);
     TEST_ASSERT_EQUAL_STRING("F-Keys", layout->pages[0].title);
     TEST_ASSERT_EQUAL_UINT8(16, layout->pages[0].tile_count);
@@ -115,6 +118,7 @@ TEST_CASE("dev.json parses with every action type, its spans, its chord and its 
 {
     td_layout_t *layout = parse_ok(dev_start, (size_t)(dev_end - dev_start) - 1);
     TEST_ASSERT_FALSE(layout->builtin);
+    TEST_ASSERT_FALSE(layout->full_screen);
     TEST_ASSERT_EQUAL_UINT8(4, layout->page_count);
     TEST_ASSERT_EQUAL_UINT16(13, layout->tile_count);
 
@@ -223,6 +227,37 @@ TEST_CASE("the text rules match JSON.parse and the integer form", "[td_layout]")
     }
     expect_key(deep, "file.json");
     expect_key("[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]", "shape.type");
+}
+
+#define FULL_HEAD(value) "{\"schema\":1,\"name\":\"N\",\"orientation\":\"landscape\",\"fullScreen\":" value ",\"pages\":[{\"id\":\"p\",\"title\":\"P\",\"kind\":\"grid\",\"rows\":1,\"cols\":2,\"tiles\":["
+#define NONE_TILE MINI_TILE("a", 0, "{\"type\":\"none\"}")
+
+TEST_CASE("fullScreen is optional, false when left out, and must be a boolean", "[td_layout]")
+{
+    td_layout_t *layout = parse_ok(full_screen_start, (size_t)(full_screen_end - full_screen_start) - 1);
+    TEST_ASSERT_TRUE(layout->full_screen);
+    TEST_ASSERT_EQUAL_UINT8(2, layout->page_count);
+    td_layout_free(layout);
+
+    static const char on[] = FULL_HEAD("true") NONE_TILE MINI_TAIL;
+    static const char off[] = FULL_HEAD("false") NONE_TILE MINI_TAIL;
+    static const char absent[] = MINI_HEAD NONE_TILE MINI_TAIL;
+    layout = parse_ok(on, strlen(on));
+    TEST_ASSERT_TRUE(layout->full_screen);
+    td_layout_free(layout);
+    layout = parse_ok(off, strlen(off));
+    TEST_ASSERT_FALSE(layout->full_screen);
+    td_layout_free(layout);
+    layout = parse_ok(absent, strlen(absent));
+    TEST_ASSERT_FALSE(layout->full_screen);
+    td_layout_free(layout);
+
+    expect_key(FULL_HEAD("1") NONE_TILE MINI_TAIL, "shape.type");
+    expect_key(FULL_HEAD("0") NONE_TILE MINI_TAIL, "shape.type");
+    expect_key(FULL_HEAD("\"true\"") NONE_TILE MINI_TAIL, "shape.type");
+    expect_key(FULL_HEAD("null") NONE_TILE MINI_TAIL, "shape.type");
+    expect_key(FULL_HEAD("[]") NONE_TILE MINI_TAIL, "shape.type");
+    expect_key(FULL_HEAD("{}") NONE_TILE MINI_TAIL, "shape.type");
 }
 
 TEST_CASE("labels count code points and blank means Unicode whitespace", "[td_layout]")

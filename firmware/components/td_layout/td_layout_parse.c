@@ -364,8 +364,9 @@ static const cJSON *member(const cJSON *obj, const char *name)
     return cJSON_GetObjectItemCaseSensitive(obj, name);
 }
 
-static bool check_members(const cJSON *obj, const char *where, const char *const *names, size_t count,
-                          td_layout_error_t *err)
+/* The first `required` names must be present, and the rest may be. */
+static bool check_some_members(const cJSON *obj, const char *where, const char *const *names, size_t count,
+                               size_t required, td_layout_error_t *err)
 {
     for (const cJSON *c = obj->child; c != NULL; c = c->next) {
         bool known = false;
@@ -376,12 +377,18 @@ static bool check_members(const cJSON *obj, const char *where, const char *const
             return fail(err, "shape.unknown-field", "%s must NOT have additional properties \"%s\"", where, c->string);
         }
     }
-    for (size_t i = 0; i < count; i++) {
+    for (size_t i = 0; i < required; i++) {
         if (member(obj, names[i]) == NULL) {
             return fail(err, "shape.missing-field", "%s must have required property \"%s\"", where, names[i]);
         }
     }
     return true;
+}
+
+static bool check_members(const cJSON *obj, const char *where, const char *const *names, size_t count,
+                          td_layout_error_t *err)
+{
+    return check_some_members(obj, where, names, count, count, err);
 }
 
 /* Unicode White_Space, which the schema's \p{White_Space} matches. */
@@ -727,11 +734,11 @@ static bool check_page(const cJSON *p, int index, td_layout_error_t *err)
 
 static bool check_schema(const cJSON *root, td_layout_error_t *err)
 {
-    static const char *const members[] = { "schema", "name", "orientation", "pages" };
+    static const char *const members[] = { "schema", "name", "orientation", "pages", "fullScreen" };
     if (!cJSON_IsObject(root)) {
         return fail(err, "shape.type", "/ must be object");
     }
-    if (!check_members(root, "/", members, sizeof members / sizeof members[0], err)) {
+    if (!check_some_members(root, "/", members, sizeof members / sizeof members[0], 4, err)) {
         return false;
     }
     const cJSON *schema = member(root, "schema");
@@ -745,6 +752,10 @@ static bool check_schema(const cJSON *root, td_layout_error_t *err)
     if (!cJSON_IsString(orientation) ||
         (strcmp(orientation->valuestring, "landscape") != 0 && strcmp(orientation->valuestring, "portrait") != 0)) {
         return fail(err, "layout.orientation", "/orientation must be landscape or portrait");
+    }
+    const cJSON *full_screen = member(root, "fullScreen");
+    if (full_screen != NULL && !cJSON_IsBool(full_screen)) {
+        return fail(err, "shape.type", "/fullScreen must be boolean");
     }
     const cJSON *pages = member(root, "pages");
     if (!cJSON_IsArray(pages)) {
@@ -1005,6 +1016,7 @@ static bool build(const cJSON *root, td_layout_t **out, td_layout_error_t *err)
 
     layout->name = put(&next, member(root, "name"));
     layout->orientation = strcmp(member(root, "orientation")->valuestring, "portrait") == 0 ? "portrait" : "landscape";
+    layout->full_screen = cJSON_IsTrue(member(root, "fullScreen"));
     layout->pages = page_out;
     layout->page_count = (uint8_t)page_count;
     layout->tile_count = (uint16_t)tile_count;
