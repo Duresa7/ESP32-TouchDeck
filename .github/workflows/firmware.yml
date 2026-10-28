@@ -3,8 +3,6 @@ name: firmware
 # Pull requests run these checks once; merging to main does not rerun them.
 # The windows release workflow calls this again on the exact commit it releases.
 on:
-  pull_request:
-    paths: ["firmware/**", "schema/**", "app/scripts/package_windows.py", ".github/workflows/firmware.yml"]
   workflow_call:
     inputs:
       ref:

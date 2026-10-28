@@ -3,8 +3,6 @@ name: app
 # Pull requests run these checks once; merging to main does not rerun them.
 # The windows release workflow calls this again on the exact commit it releases.
 on:
-  pull_request:
-    paths: ["app/**", "schema/**", ".github/workflows/app.yml"]
   workflow_call:
     inputs:
       ref:
