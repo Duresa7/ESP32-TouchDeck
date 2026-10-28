@@ -1,0 +1,98 @@
+use super::CommonError;
+#[derive(Default)]
+pub struct RequestMeta<'a> {
+    pub host: Option<&'a str>,
+    pub origin: Option<&'a str>,
+    pub fetch_site: Option<&'a str>,
+    pub fetch_mode: Option<&'a str>,
+    pub api: bool,
+    pub get: bool,
+}
+pub fn admit(meta: &RequestMeta<'_>, port: u16) -> Result<(), CommonError> {
+    // Only 127.0.0.1 is bound. `localhost` could resolve to `[::1]`, where another process
+    // may listen on the same port.
+    let host = format!("127.0.0.1:{port}");
+    if meta.host != Some(host.as_str()) {
+        return Err(CommonError::Host);
+    }
+    if let Some(origin) = meta.origin
+        && origin != format!("http://{host}")
+    {
+        return Err(CommonError::Origin);
+    }
+    if let Some(site) = meta.fetch_site
+        && !matches!(site, "same-origin" | "none")
+        && (meta.api || !meta.get || meta.fetch_mode != Some("navigate"))
+    {
+        return Err(CommonError::Origin);
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::ApiError;
+    #[test]
+    fn admission_matrix() {
+        assert!(
+            admit(
+                &RequestMeta {
+                    host: Some("127.0.0.1:50000"),
+                    ..Default::default()
+                },
+                50000
+            )
+            .is_ok()
+        );
+        for host in [
+            None,
+            Some("evil.example:50000"),
+            Some("127.0.0.1:1"),
+            Some("localhost:50000"),
+            Some("[::1]:50000"),
+        ] {
+            assert_eq!(
+                admit(
+                    &RequestMeta {
+                        host,
+                        ..Default::default()
+                    },
+                    50000
+                )
+                .unwrap_err()
+                .code(),
+                "security.host"
+            );
+        }
+        for origin in [
+            "null",
+            "https://127.0.0.1:50000",
+            "http://evil.example",
+            "http://localhost:50000",
+        ] {
+            assert!(
+                admit(
+                    &RequestMeta {
+                        host: Some("127.0.0.1:50000"),
+                        origin: Some(origin),
+                        ..Default::default()
+                    },
+                    50000
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            admit(
+                &RequestMeta {
+                    host: Some("127.0.0.1:50000"),
+                    fetch_site: Some("cross-site"),
+                    api: true,
+                    ..Default::default()
+                },
+                50000
+            )
+            .is_err()
+        );
+    }
+}
