@@ -2,6 +2,9 @@
 export type AuthRevoked = Record<string, never>;
 export type ClientInfo = { id: string, kind: SessionKind, };
 export type CompanionStopping = { reason: string, };
+export type ConfigField = { name: string, kind: string, secret: boolean, };
+export type DataStream = { id: string, kind: string, unit: string | null, };
+export type Delivery = { device: string, sent: number, error: string | null, };
 export type DeviceAdded = DeviceSummary;
 export type DevicePath = { device: string, };
 export type DeviceRemoved = { id: string, };
@@ -9,12 +12,22 @@ export type DeviceSummary = { id: string, rev: number, name: string | null, setu
 export type DeviceUpdated = DeviceSummary;
 export type FirmwareInfo = { version: string, protocol: number, build: string, recovery: boolean, update_available: string | null, };
 export type Hello = { api: string, build: string, session: ClientInfo, };
+export type IntegrationPath = { integration: string, };
+export type IntegrationStatus = { state: string, message: string | null, delivery: Array<Delivery>, };
+export type IntegrationStatusEvent = IntegrationSummary;
+export type IntegrationSummary = { id: string, name: string, icon: string, enabled: boolean, status: IntegrationStatus, config_schema: Array<ConfigField>, streams: Array<DataStream>, actions: Array<string>, presets: Array<PresetTile>, };
+export type IntegrationView = { summary: IntegrationSummary, config: JsonValue, secrets: { [key in string]?: SecretState }, };
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;
 export type KeyMirrorState = { enabled: boolean, reason: string | null, };
 export type LinkState = { "state": "connected", port: string, since_ms: number, protocol: number, } | { "state": "offline" } | { "state": "lost", reason: string, detail: string, at_ms: number, };
 export type NoQuery = null;
+export type PresetTile = { id: string, name: string, action: JsonValue, };
 export type Proof = { proof: string, };
 export type ProofRequest = { nonce: string, };
+export type SecretHint = { hint: string, };
+export type SecretInput = { value: string, };
+export type SecretPath = { integration: string, field: string, };
+export type SecretState = { set: boolean, };
 export type SessionCreated = { id: string, token: string, };
 export type SessionInfo = { id: string, kind: SessionKind, label: string, created_ms: number, last_used_ms: number, current: boolean, };
 export type SessionKind = "window" | "browser";
@@ -30,13 +43,20 @@ export const endpoints = {
   'auth.sessions': { method: 'GET', path: '/auth/sessions', access: 'session' },
   'devices.get': { method: 'GET', path: '/devices/{device}', access: 'session' },
   'devices.list': { method: 'GET', path: '/devices', access: 'session' },
+  'integrations.config_put': { method: 'PUT', path: '/integrations/{integration}/config', access: 'session' },
+  'integrations.get': { method: 'GET', path: '/integrations/{integration}', access: 'session' },
+  'integrations.list': { method: 'GET', path: '/integrations', access: 'session' },
+  'integrations.refresh': { method: 'POST', path: '/integrations/{integration}/refresh', access: 'session' },
+  'integrations.secret_delete': { method: 'DELETE', path: '/integrations/{integration}/secrets/{field}', access: 'session' },
+  'integrations.secret_put': { method: 'PUT', path: '/integrations/{integration}/secrets/{field}', access: 'session' },
   'system.get': { method: 'GET', path: '/system', access: 'session' },
   'system.ping': { method: 'GET', path: '/system/ping', access: 'public' },
   'system.shutdown': { method: 'POST', path: '/system/shutdown', access: 'session' },
 } as const;
-export type ErrorCode = 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'device.not_found' | 'internal' | 'limits.exceeded' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin';
+export type ErrorCode = 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'device.not_found' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'limits.exceeded' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin';
 export type SyncData = {
   devices: Array<DeviceSummary>,
+  integrations: Array<IntegrationSummary>,
 };
 export type JobMap = Record<string, never>;
 export type EventMap = {
@@ -47,6 +67,7 @@ export type EventMap = {
   'device.added': DeviceAdded;
   'device.updated': DeviceUpdated;
   'device.removed': DeviceRemoved;
+  'integration.status': IntegrationStatusEvent;
 };
 
 export function createCompanion(base: string, token: () => string) {
@@ -72,6 +93,14 @@ export function createCompanion(base: string, token: () => string) {
     devices: {
       get: (path: { device: string, }, query: null = null, body: null = null, bearer?: string) => call<DeviceSummary>('devices.get', path, query, body, bearer),
       list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string) => call<Array<DeviceSummary>>('devices.list', path, query, body, bearer),
+    },
+    integrations: {
+      config_put: (path: { integration: string, }, query: null = null, body: number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null, bearer?: string) => call<IntegrationView>('integrations.config_put', path, query, body, bearer),
+      get: (path: { integration: string, }, query: null = null, body: null = null, bearer?: string) => call<IntegrationView>('integrations.get', path, query, body, bearer),
+      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string) => call<Array<IntegrationSummary>>('integrations.list', path, query, body, bearer),
+      refresh: (path: { integration: string, }, query: null = null, body: null = null, bearer?: string) => call<null>('integrations.refresh', path, query, body, bearer),
+      secret_delete: (path: { integration: string, field: string, }, query: null = null, body: null = null, bearer?: string) => call<null>('integrations.secret_delete', path, query, body, bearer),
+      secret_put: (path: { integration: string, field: string, }, query: null = null, body: { value: string, }, bearer?: string) => call<SecretHint>('integrations.secret_put', path, query, body, bearer),
     },
     system: {
       get: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string) => call<SystemInfo>('system.get', path, query, body, bearer),

@@ -507,6 +507,10 @@ Requests carrying a credential never follow a redirect to another origin. They s
 | `integrations.secret_delete` | `DELETE /integrations/{integration}/secrets/{field}` | → `()` |
 | `integrations.refresh` | `POST /integrations/{integration}/refresh` | → `()` |
 
+CLIProxyAPI config is `{enabled: boolean, url: string, interval_s: integer}`. The URL is trimmed and the interval has a 60-second floor. Unknown fields, including `management_key`, are rejected in config. Its write-only secret field is `management_key`; the secret-write hint is the constant `Set`, including for short keys.
+
+`IntegrationSummary` also includes `streams: {id, kind, unit}[]` and `actions: string[]`. Its `status` is `{state: "ok" | "error" | "not_configured", message, delivery: {device, sent, error}[]}`. Delivery entries are supplied by the Device scheduler; an Integration without a bound Device has an empty delivery list. Presets contain `{id, name, action}` with the existing Layout action shape. Live tile readings stay inside the Companion.
+
 Each Integration's Preset tiles are in `presets`. Live tiles get their values through the Device link, never through this API ([ADR 0004](adr/0004-firmware-draws-live-tiles.md)).
 
 ### System

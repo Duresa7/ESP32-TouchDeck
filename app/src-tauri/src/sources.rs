@@ -9,44 +9,11 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use td_core::app_dirs::Dirs;
 use td_core::{Layout, Request};
-use td_host::sources::{Config, Hub, KeyStore, MemoryKeys, Sink, Status, key_hint};
+use td_host::sources::{Config, Hub, KeyStore, Sink, Status, key_hint};
 use td_link::Session;
 
 const SEND_TIMEOUT: Duration = Duration::from_secs(1);
-const SERVICE: &str = "touchdeck";
-const ACCOUNT: &str = "cliproxyapi-management-key";
-
-/// The management key in the operating system's credential store.
-struct OsKeys;
-
-impl OsKeys {
-    fn entry() -> Result<keyring::Entry, String> {
-        keyring::Entry::new(SERVICE, ACCOUNT).map_err(|error| error.to_string())
-    }
-}
-
-impl KeyStore for OsKeys {
-    fn get(&self) -> Result<Option<String>, String> {
-        match OsKeys::entry()?.get_password() {
-            Ok(key) => Ok(Some(key)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(error.to_string()),
-        }
-    }
-
-    fn set(&self, key: &str) -> Result<(), String> {
-        OsKeys::entry()?
-            .set_password(key)
-            .map_err(|error| error.to_string())
-    }
-
-    fn clear(&self) -> Result<(), String> {
-        match OsKeys::entry()?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(error.to_string()),
-        }
-    }
-}
+use td_host::integrations::secrets::{BoundKeys, MemorySecrets, OsSecrets, SecretStore};
 
 struct SessionSink(Arc<Session>);
 
@@ -69,7 +36,7 @@ impl Sink for SessionSink {
 
 pub struct SourcesState {
     hub: Hub,
-    keys: Arc<dyn KeyStore>,
+    keys: Arc<BoundKeys>,
     config_file: PathBuf,
     config: Mutex<Config>,
     mock: bool,
@@ -78,17 +45,18 @@ pub struct SourcesState {
 impl SourcesState {
     /// The mock deck keeps source config in a temporary folder and its key in memory.
     pub fn new(mock: bool) -> SourcesState {
-        let (config_file, config, keys): (PathBuf, Config, Arc<dyn KeyStore>) = if mock {
+        let (config_file, config, store): (PathBuf, Config, Arc<dyn SecretStore>) = if mock {
             let base = std::env::temp_dir().join(format!("touchdeck-mock-{}", std::process::id()));
             (
                 base.join("config/sources.json"),
                 Config::default(),
-                Arc::new(MemoryKeys::default()),
+                Arc::new(MemorySecrets::default()),
             )
         } else {
             let file = Dirs::current().sources_config();
-            (file.clone(), Config::load(&file), Arc::new(OsKeys))
+            (file.clone(), Config::load(&file), Arc::new(OsSecrets))
         };
+        let keys = Arc::new(BoundKeys::from_config(store, &config.cliproxy_url));
         SourcesState {
             hub: Hub::start(config.clone(), keys.clone()),
             keys,
@@ -166,11 +134,15 @@ pub async fn sources_save(app: AppHandle, config: Config) -> Result<SourcesView,
         let mut config = config;
         config.cliproxy_url = config.cliproxy_url.trim().to_owned();
         config.cliproxy_interval_s = config.cliproxy_interval_s.max(60);
-        config
-            .save(&state.config_file)
-            .map_err(|error| format!("{}: {error}", state.config_file.display()))?;
-        *state.config.lock().unwrap() = config.clone();
+        let mut saved = state.config.lock().unwrap();
+        state.keys.rebind(&config.cliproxy_url)?;
+        if let Err(error) = config.save(&state.config_file) {
+            state.keys.rebind(&saved.cliproxy_url)?;
+            return Err(format!("{}: {error}", state.config_file.display()));
+        }
+        *saved = config.clone();
         state.hub.configure(config);
+        drop(saved);
         Ok(view(&state))
     })
     .await?
@@ -184,6 +156,7 @@ pub async fn sources_set_key(app: AppHandle, key: String) -> Result<Option<Strin
         if key.is_empty() {
             return Err("the management key is empty".to_owned());
         }
+        let _config = state.config.lock().unwrap();
         state.keys.set(key)?;
         state.hub.refresh(td_host::sources::CLIPROXYAPI);
         Ok(state.key_hint())

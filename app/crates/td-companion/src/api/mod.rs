@@ -25,6 +25,7 @@ use ts_rs::TS;
 
 #[derive(Clone)]
 pub struct Ctx {
+    pub integrations: crate::features::integrations::Service,
     pub devices: crate::devices::DeviceManager,
     pub events: Events,
     auth: Arc<Mutex<Auth>>,
@@ -48,6 +49,7 @@ impl Ctx {
     ) -> Self {
         let events = Events::default();
         Self {
+            integrations: crate::features::integrations::Service::new(mock, events.clone()),
             devices: crate::devices::DeviceManager::new(events.clone()),
             events,
             auth: Arc::new(Mutex::new(Auth::new())),
