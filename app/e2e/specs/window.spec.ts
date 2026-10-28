@@ -23,8 +23,12 @@ async function fits(where: string) {
   return layout;
 }
 
+/** Waits for the element to be drawn in the viewport, since a popover fades in and the deck list fills after a scan. */
 async function visible(id: string) {
-  const shown = await $(`[data-testid="${id}"]`).isDisplayed({ withinViewport: true });
+  const element = $(`[data-testid="${id}"]`);
+  const shown = await browser
+    .waitUntil(() => element.isDisplayed({ withinViewport: true }), { timeout: 5_000, interval: 100 })
+    .catch(() => false);
   if (!shown) throw new Error(`${id} is not in view`);
 }
 
