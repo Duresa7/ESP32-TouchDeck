@@ -26,7 +26,7 @@ async function readRuntime(path: string): Promise<Runtime> {
 
 async function request(origin: string, path: string, init: RequestInit = {}) {
   const response = await fetch(`${origin}/api/v1${path}`, {
-    ...init, redirect: 'error', signal: AbortSignal.timeout(1500),
+    ...init, redirect: 'error', signal: AbortSignal.timeout(5000),
     headers: { 'Content-Type': 'application/json', ...init.headers },
   });
   if (!response.ok) throw new Error('Companion request failed');
