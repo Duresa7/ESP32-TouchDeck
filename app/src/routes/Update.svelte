@@ -86,7 +86,7 @@
   <ol class="steps">
     <li>
       <span class="name">Choose the update file</span>
-      <span class="hint">It ends in .tdfw and comes with each TouchDeck release.</span>
+      <span class="hint">It ends in .tdfw and comes with each Open TouchDeck release.</span>
       <label class="button small file">
         {selected ? selected.name : 'Choose file…'}
         <input type="file" accept=".tdfw" onchange={(event) => (selected = event.currentTarget.files?.[0])} disabled={busy} data-testid="update-file" />
@@ -130,7 +130,7 @@
       </label>
       <button onclick={() => run(true)} disabled={busy || !selected || !target} data-testid="update-recover">Repair deck</button>
     </div>
-    <p class="hint">TouchDeck fills in the port of the connected deck. Choose the update file above first.</p>
+    <p class="hint">Open TouchDeck fills in the port of the connected deck. Choose the update file above first.</p>
   </section>
 </div>
 

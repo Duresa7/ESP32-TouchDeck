@@ -53,7 +53,7 @@
       case 'failed':
         return "didn't work";
       case 'unknown':
-        return "ignored, it isn't in the layout TouchDeck knows";
+        return "ignored, it isn't in the layout Open TouchDeck knows";
       default:
         return `${entry.status}${entry.exit_code === null ? '' : ` with code ${entry.exit_code}`}`;
     }
@@ -77,7 +77,7 @@
         Buttons come from <strong>“{layout.name}”</strong>
         ({layout.source === 'deck' ? 'read from your deck' : layout.source}), {plural(layout.pages, 'page')}, {plural(layout.tiles, 'button')}.
       {:else}
-        TouchDeck reads your deck's buttons when it connects.
+        Open TouchDeck reads your deck's buttons when it connects.
       {/if}
     </p>
     <label class="button small">

@@ -191,7 +191,7 @@ describe('the app, screen by screen, on the mock deck', () => {
   it('explains a refused change and a file it cannot open', async () => {
     await importText('{"schema": 1, "name": "Broken"', 'broken.json');
     expect(await status().getAttribute('data-kind')).toBe('error');
-    expect(await status().getText()).toContain("isn't a TouchDeck layout file");
+    expect(await status().getText()).toContain("isn't a Open TouchDeck layout file");
     await status().$('summary').click();
     await shot('error-state');
   });

@@ -72,6 +72,6 @@ export function friendlyRefusal(reason: string, layout?: Layout | null): string 
 
 /** A sentence for a layout file the editor could not read. */
 export function friendlyFileError(name: string, key: string): string {
-  if (key === 'file.json' || key === 'file.utf8') return `“${name}” isn't a TouchDeck layout file, so nothing changed.`;
+  if (key === 'file.json' || key === 'file.utf8') return `“${name}” isn't an Open TouchDeck layout file, so nothing changed.`;
   return `“${name}” has a problem the deck can't take, so nothing changed.`;
 }

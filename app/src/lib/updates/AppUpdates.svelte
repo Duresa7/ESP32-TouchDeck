@@ -20,7 +20,7 @@
 <section class="app-updates" aria-labelledby="app-updates-title" data-testid="app-updates">
   <header class="intro">
     <h1 id="app-updates-title">This app</h1>
-    <p>You have TouchDeck {version}. Your deck's own software updates separately, under Deck software.</p>
+    <p>You have Open TouchDeck {version}. Your deck's own software updates separately, under Deck software.</p>
   </header>
   <button onclick={() => { installError = ''; appUpdater.check(); }} disabled={busy} data-testid="app-update-check">
     {$appUpdateState.kind === 'checking' ? 'Checking for updates…' : 'Check for updates'}
@@ -37,7 +37,7 @@
     <pre class="notes">{$appUpdateState.update.notes || 'No release notes provided.'}</pre>
     {#if $appUpdateState.kind === 'available'}
       <button onclick={() => appUpdater.download()} data-testid="app-update-download">Download update</button>
-      <p>Downloads and verifies the signed installer. TouchDeck stays open.</p>
+      <p>Downloads and verifies the signed installer. Open TouchDeck stays open.</p>
     {:else if $appUpdateState.kind === 'downloading'}
       <p role="status">Downloading update: {Math.round($appUpdateState.progress.downloaded / 1024)} KB
         {#if $appUpdateState.progress.total !== null} of {Math.round($appUpdateState.progress.total / 1024)} KB{/if}</p>
@@ -45,11 +45,11 @@
       <p>The signature is verified before installation is offered.</p>
     {:else if $appUpdateState.kind === 'ready'}
       <p role="status">Download verified. Save or export any unsaved layout edits before installing.</p>
-      <p>Installation closes TouchDeck. Open it again when the installer finishes; your saved settings stay in place.</p>
+      <p>Installation closes Open TouchDeck. Open it again when the installer finishes; your saved settings stay in place.</p>
       {#if online}<p>Disconnect the deck and wait for transfers to finish before installing.</p>{/if}
-      <button onclick={install} disabled={online} data-testid="app-update-install">Install and close TouchDeck</button>
+      <button onclick={install} disabled={online} data-testid="app-update-install">Install and close Open TouchDeck</button>
     {:else if $appUpdateState.kind === 'installing'}
-      <p role="status">Starting the installer. TouchDeck will close; installation progress appears in the installer.</p>
+      <p role="status">Starting the installer. Open TouchDeck will close; installation progress appears in the installer.</p>
     {/if}
   {/if}
   {#if installError}<p class="problem" role="alert">{installError}</p>{/if}

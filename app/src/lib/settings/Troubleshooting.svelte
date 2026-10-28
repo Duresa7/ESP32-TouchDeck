@@ -5,7 +5,7 @@
   import { deck, entries, friendlyConnection, lost, online, problem, sendConsole } from '../connection.ts';
   import { HELLO_FIELDS } from '../deck.ts';
 
-  let { title }: { title: string } = $props();
+  let { buildSha }: { buildSha: string } = $props();
 
   let line = $state('');
   let log = $state<HTMLOListElement>();
@@ -21,8 +21,6 @@
     recovery: 'Safe mode',
     layout: 'Layout on screen',
   };
-
-  const build = $derived(/[0-9a-f]{40}/.exec(title)?.[0] ?? null);
 
   function show(value: unknown) {
     if (value === true) return 'yes';
@@ -48,14 +46,14 @@
 <div class="help">
   <header class="intro">
     <h1>Troubleshooting</h1>
-    <p class="hint">What TouchDeck knows about your deck, and tools to check that buttons reach this computer. You won't need these day to day.</p>
+    <p class="hint">What Open TouchDeck knows about your deck, and tools to check that buttons reach this computer. You won't need these day to day.</p>
   </header>
 
   <section class="section" aria-labelledby="help-connection">
     <header>
       <h3 id="help-connection">Connection</h3>
       {#if $online && $deck}
-        <p class="hint">Connected through {$deck.port === 'mock' ? 'the practice deck built into TouchDeck' : `USB port ${$deck.port}`}.</p>
+        <p class="hint">Connected through {$deck.port === 'mock' ? 'the practice deck built into Open TouchDeck' : `USB port ${$deck.port}`}.</p>
       {:else if $lost && $problem}
         <p class="hint">{friendlyConnection($problem)}</p>
       {:else}
@@ -75,8 +73,8 @@
         {/each}
       </dl>
     {/if}
-    {#if build}
-      <p class="hint">App build <code data-testid="app-build">{build}</code></p>
+    {#if buildSha}
+      <p class="hint">App build <code data-testid="app-build">{buildSha}</code></p>
     {/if}
   </section>
 

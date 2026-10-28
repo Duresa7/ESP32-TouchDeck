@@ -15,7 +15,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "TouchDeck",
+        "title": "Open TouchDeck",
         "width": 1180,
         "height": 760,
         "minWidth": 960,

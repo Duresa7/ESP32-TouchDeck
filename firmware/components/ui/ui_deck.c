@@ -679,6 +679,23 @@ void ui_layout_boot(const char *orientation)
     s_boot_prepare_us = esp_timer_get_time() - started;
 }
 
+static void show_boot_brand(void)
+{
+    const ui_geometry_t *g = ui_geo();
+    lv_obj_t *boot = lv_obj_create(lv_screen_active());
+    lv_obj_remove_style_all(boot);
+    lv_obj_set_size(boot, g->screen.w, g->screen.h);
+    lv_obj_set_style_bg_color(boot, ui_color(ui_theme.color.bg), 0);
+    lv_obj_set_style_bg_opa(boot, LV_OPA_COVER, 0);
+    lv_obj_set_scrollable(boot, false);
+
+    lv_obj_t *brand = lv_label_create(boot);
+    lv_obj_add_style(brand, &ui_styles()->title, 0);
+    lv_label_set_text_static(brand, "Open TouchDeck");
+    lv_obj_center(brand);
+    lv_obj_delete_delayed(boot, 3000);
+}
+
 void ui_build(void)
 {
     make_locks();
@@ -694,6 +711,7 @@ void ui_build(void)
     }
     xSemaphoreTake(s.reload_lock, portMAX_DELAY);
     load_locked(s.boot, &s.boot_info, esp_timer_get_time() - s_boot_prepare_us);
+    show_boot_brand();
     xSemaphoreGive(s.reload_lock);
 }
 

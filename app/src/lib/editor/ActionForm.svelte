@@ -39,7 +39,7 @@
       ],
     },
     {
-      name: 'On this computer, through TouchDeck',
+      name: 'On this computer, through Open TouchDeck',
       types: [
         { type: 'launch', name: 'Open an app' },
         { type: 'open', name: 'Open a file, folder, or website' },
@@ -290,10 +290,10 @@
     </label>
     <label class="field">
       <span class="name">Run it in this folder</span>
-      <input value={draft.cwd} oninput={(e) => set('cwd', e.currentTarget.value)} placeholder="TouchDeck's folder" data-testid="action-cwd" spellcheck="false" />
+      <input value={draft.cwd} oninput={(e) => set('cwd', e.currentTarget.value)} placeholder="Open TouchDeck's folder" data-testid="action-cwd" spellcheck="false" />
     </label>
     <label class="check"><input type="checkbox" checked={draft.shell} onchange={(e) => set('shell', e.currentTarget.checked)} data-testid="action-shell" /> Run it through the system shell</label>
-    <p class="hint">TouchDeck shows you the exact command and asks before it runs.</p>
+    <p class="hint">Open TouchDeck shows you the exact command and asks before it runs.</p>
   {:else if draft.type === 'widget'}
     <label class="field">
       <span class="name">From</span>
@@ -326,7 +326,7 @@
         <input value={draft.account} oninput={(e) => set('account', e.currentTarget.value)} placeholder="All accounts" data-testid="action-account" spellcheck="false" />
       {/if}
     </label>
-    <p class="hint">The deck shows the number with a bar, and updates it while TouchDeck runs. Set up the hub under AI usage.</p>
+    <p class="hint">The deck shows the number with a bar, and updates it while Open TouchDeck runs. Set up the hub under AI usage.</p>
   {:else if draft.type === 'none'}
     <p class="hint">The button shows on the deck but does nothing. Handy as a label.</p>
   {/if}

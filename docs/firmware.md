@@ -1,7 +1,7 @@
 # Firmware reference
 
 This reference is for people who build or change the deck firmware.
-To use TouchDeck, read the [user guide](usage.md) instead.
+To use Open TouchDeck, read the [user guide](usage.md) instead.
 
 ## Build and flash
 

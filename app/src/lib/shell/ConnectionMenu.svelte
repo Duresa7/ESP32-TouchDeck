@@ -63,7 +63,7 @@
       {:else}
         <header>
           <h3>Connect your deck</h3>
-          <p class="hint">Plug your TouchDeck into this computer with a USB cable, then choose it below.</p>
+          <p class="hint">Plug your Device into this computer with a USB cable, then choose it below.</p>
         </header>
       {/if}
 
@@ -72,7 +72,7 @@
           <li class="deck" data-testid="deck-row" data-port={candidate.port} data-status={candidate.status}>
             <svg class="glyph" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="2.5" /><path d="M7 9.5h3M14 9.5h3M7 14.5h3M14 14.5h3" /></svg>
             <div class="text">
-              <span class="name">{candidate.port === 'mock' ? 'Practice deck' : 'TouchDeck'}</span>
+              <span class="name">{candidate.port === 'mock' ? 'Practice deck' : 'Open TouchDeck'}</span>
               <span class="detail">{describeCandidate(candidate)}{candidate.port === 'mock' ? '' : ` · ${candidate.port}`}</span>
             </div>
             {#if $online && $deck?.port === candidate.port}

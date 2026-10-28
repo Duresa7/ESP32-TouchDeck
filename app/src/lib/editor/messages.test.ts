@@ -19,7 +19,7 @@ test('rule keys read as what to do', () => {
   assert.equal(friendlyRefusal('label.too-long: /pages/0/tiles/0/label must NOT have more than 16 characters (maxLength)'), 'Button names can be up to 16 characters.');
   assert.equal(friendlyRefusal('text.empty: /pages/1/tiles/0/action/path must NOT have fewer than 1 characters (minLength)'), 'Choose the app to open.');
   assert.equal(friendlyRefusal('something.new: whatever'), "The deck can't take that change.");
-  assert.equal(friendlyFileError('notes.txt', 'file.json'), '“notes.txt” isn\'t a TouchDeck layout file, so nothing changed.');
+  assert.equal(friendlyFileError('notes.txt', 'file.json'), '“notes.txt” isn\'t an Open TouchDeck layout file, so nothing changed.');
 });
 
 test('counts read naturally', () => {

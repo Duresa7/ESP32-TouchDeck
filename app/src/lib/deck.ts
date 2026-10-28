@@ -47,7 +47,7 @@ export const onLinkClosed = (handler: (closed: LinkClosed) => void): Promise<Unl
 export function describe(candidate: Candidate): string {
   switch (candidate.status) {
     case 'deck':
-      return `TouchDeck ${candidate.hello.version}`;
+      return `Open TouchDeck ${candidate.hello.version}`;
     case 'silent':
       return 'No answer to hello';
     case 'busy':
