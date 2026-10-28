@@ -258,6 +258,33 @@ describe('the app, screen by screen, on the mock deck', () => {
     await browser.setWindowSize(1180, 760);
   });
 
+  it('keeps dashboard rows inside their rows at 1:1 in portrait, wrapped as before', async () => {
+    await browser.setWindowSize(1300, 1350);
+    const dev = JSON.parse(text('dev.json'));
+    await importText(JSON.stringify({ ...dev, name: 'Dashboard', orientation: 'portrait', pages: [dev.pages[3]] }), 'dashboard.json');
+    await waitEvent('opened');
+    await $('[data-testid="mode-preview"]').click();
+    if (!(await $('[data-testid="actual-size"]').isSelected())) await $('[data-testid="actual-size"]').click();
+    await settled();
+    await deckShot('preview-1to1-dashboard-portrait');
+    const rows = await browser.execute(() =>
+      Array.from(document.querySelectorAll('[data-testid="dashboard-page"] .row'), (row) =>
+        Array.from(row.querySelectorAll<HTMLElement>('[role="img"]'), (text) => [text.getAttribute('aria-label'), text.style.height]),
+      ),
+    );
+    note('dashboard_rows_portrait', rows);
+    // A portrait row holds three lines, so the sample rows that take two still wrap, uncut.
+    expect(rows).toEqual([
+      [['codex alex', '30px'], ['5h 42%  7d 10%', '60px']],
+      [['claude  sam', '60px'], ['5h 18%  7d 61%', '60px']],
+      [['gemini-cli  jo', '60px'], ['active', '30px']],
+    ]);
+    await $('[data-testid="actual-size"]').click();
+    await $('[data-testid="mode-edit"]').click();
+    await $('[data-testid="orientation-landscape"]').click();
+    await browser.setWindowSize(1180, 760);
+  });
+
   it('draws the built-in pages at one deck pixel per screen pixel', async () => {
     await browser.setWindowSize(1500, 1000);
     await importText(text('builtin.json'), 'builtin.json');

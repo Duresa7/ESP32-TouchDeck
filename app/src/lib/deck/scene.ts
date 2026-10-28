@@ -172,8 +172,11 @@ function buildRows(g: Geometry, rows: RowSample[]): RowView[] {
   const { dash, color } = THEME;
   const rowH = div(g.grid.h - (dash.rowsMax - 1) * dash.rowGap, dash.rowsMax);
   const barMax = g.grid.w - g.dashBarX - dash.pad;
+  // row_label: wrapped in its column for as many whole lines as the row holds, the last ending in dots when cut.
+  const maxH = div(rowH, FONTS[28].lineHeight) * FONTS[28].lineHeight;
   const cell = (value: string, x: number, width: number, tint: string, align: Align = 'left') => {
-    const label = layoutLabel(value, FONTS[28], { width, align });
+    const height = Math.min(textSize(codepoints(value), FONTS[28], width).h, maxH);
+    const label = layoutLabel(value, FONTS[28], { width, height, align, dots: true });
     return text(label, 28, tint, { x, y: div(rowH, 2) - div(label.height, 2) });
   };
   return rows.slice(0, dash.rowsMax).map((row, i) => {
