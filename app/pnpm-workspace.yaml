@@ -1,4 +1,10 @@
+packages:
+  - ui
+
 allowBuilds:
   edgedriver: false
   esbuild: true
   geckodriver: false
+
+minimumReleaseAgeExclude:
+  - lucide-react@1.63.0

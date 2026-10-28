@@ -90,11 +90,14 @@ UI tickets copy strings from here. When a screen needs a string this guide doesn
 | Card status, unplugged or not answering | Not connected |
 | Card status, opening the port | Connecting… |
 | Card status, Firmware update running | Updating… {pct}% |
+| Card status, Firmware update running, no progress yet | Updating… |
 | Card status, restarting | Restarting… |
 | Card badge, newer Firmware exists | Firmware update |
 | Card, a port another program holds | In use by another program |
 | Card hint for "In use by another program" | Close the other program. {device} connects on its own. |
 | Card for a New board | New board |
+| Card name, a Device not named yet | Unnamed Device |
+| Device list label | Devices |
 | Card tooltip | Edit Layout |
 | Empty state title | Plug in your Device |
 | Empty state body | Connect an Open TouchDeck to this PC with a USB data cable. |
@@ -220,6 +223,7 @@ Opens from the Device's name.
 | Element | String |
 | --- | --- |
 | Page title | Integrations |
+| Page subtitle | Connect apps and services, then add their Preset tiles to any Page. |
 | Status, working | Connected |
 | Status, turned off | Off |
 | Status, first check | Checking… |
@@ -242,6 +246,7 @@ Opens from the Device's name.
 | Element | String |
 | --- | --- |
 | Dialog title | Settings |
+| Close button label | Close |
 | Start at sign-in toggle | Start at sign-in |
 | Start at sign-in hint | Runs in the tray when you sign in to Windows, so your Devices work right away. |
 | Appearance label | Appearance |
