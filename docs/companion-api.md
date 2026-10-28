@@ -248,6 +248,7 @@ Image uploads for Assets stay on the API (`POST /uploads`). The Companion decode
   - It's an opaque string matching `^[0-9a-z]{1,32}$`. The `DevicePath` extractor checks it once, and handlers receive a typed `DeviceId`.
   - Protocol v2 `hello` also reports the id, and the Companion compares the two. If they disagree, the USB serial wins and the Companion logs a warning. v1 Firmware has no id in `hello`, and the USB serial still identifies it.
   - If a driver reports no serial number, the id falls back to `port-<sanitized port name>`, and the summary sets `stable_id: false`.
+  - If two Devices' ids come out the same, the one that already holds it keeps it. The other gets the first 27 characters, `x`, and 4 hex digits of its port name's SHA-256, such as `a0b1c2d3e4f5x9c1e`. That id holds while the Device stays on that port, so its summary sets `stable_id: false`.
   - Mock Devices use `mock0001`, `mock0002` and so on.
 - **The port** (`COM7`) is for diagnostics only. It appears in `DeviceSummary.link.port` and never in a route. Every command that took a `port` today takes a `DeviceId` instead.
 

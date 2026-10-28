@@ -140,6 +140,35 @@ impl PortSource for RealPorts {
         found
     }
 }
+/// The serial lowercased with separators removed, or `port-<port>` when the driver reports none.
+fn base_id(port: &PortDevice) -> String {
+    let clean = |s: &str| {
+        s.chars()
+            .filter(char::is_ascii_alphanumeric)
+            .flat_map(char::to_lowercase)
+            .take(32)
+            .collect::<String>()
+    };
+    port.serial
+        .as_deref()
+        .map(clean)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("port-{}", clean(&port.port)))
+}
+fn connected_on(state: &BTreeMap<String, DeviceSummary>, id: &str, port: &str) -> bool {
+    state
+        .get(id)
+        .is_some_and(|d| matches!(&d.link, LinkState::Connected { port: p, .. } if p == port))
+}
+/// The id for a second Device whose serial normalizes to one already in use: the first 27
+/// characters, `x`, and 4 hex digits of the port name's SHA-256. It stays the same while the
+/// Device stays on that port.
+fn suffixed_id(base: &str, port: &str) -> String {
+    use sha2::Digest;
+    let hash = sha2::Sha256::digest(port.as_bytes());
+    let head: String = base.chars().take(27).collect();
+    format!("{head}x{:02x}{:02x}", hash[0], hash[1])
+}
 #[derive(Clone)]
 pub struct DeviceManager {
     state: Arc<Mutex<BTreeMap<String, DeviceSummary>>>,
@@ -155,29 +184,24 @@ impl DeviceManager {
     pub fn summaries(&self) -> Vec<DeviceSummary> {
         self.state.lock().values().cloned().collect()
     }
-    pub fn refresh(&self, ports: Vec<PortDevice>) {
+    pub fn refresh(&self, mut ports: Vec<PortDevice>) {
         let mut state = self.state.lock();
         let mut seen = std::collections::BTreeSet::new();
+        // A Device that already holds an id keeps it, so a newcomer can't take it over.
+        ports.sort_by_cached_key(|p| (!connected_on(&state, &base_id(p), &p.port), p.port.clone()));
         for port in ports {
-            let stable_id = port.serial.is_some();
-            let clean = |s: &str| {
-                s.chars()
-                    .filter(char::is_ascii_alphanumeric)
-                    .flat_map(char::to_lowercase)
-                    .take(32)
-                    .collect::<String>()
+            let base = base_id(&port);
+            let suffixed = suffixed_id(&base, &port.port);
+            let id = if connected_on(&state, &suffixed, &port.port) || seen.contains(&base) {
+                suffixed
+            } else {
+                base.clone()
             };
-            let id = port
-                .serial
-                .as_deref()
-                .map(clean)
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| format!("port-{}", clean(&port.port)));
-            seen.insert(id.clone());
-            if state
-                .get(&id)
-                .is_some_and(|d| matches!(&d.link,LinkState::Connected{port:p,..} if p==&port.port))
-            {
+            if !seen.insert(id.clone()) {
+                continue;
+            }
+            let stable_id = port.serial.is_some() && id == base;
+            if connected_on(&state, &id, &port.port) {
                 continue;
             }
             let rev = state.get(&id).map_or(1, |d| d.rev + 1);
@@ -260,5 +284,63 @@ impl PortSource for MockPorts {
                 })
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn port(name: &str, serial: &str) -> PortDevice {
+        let td_link::discover::Probe::Deck { hello } =
+            td_link::discover::probe_transport(Box::new(td_link::MockDeck::new().connect()))
+        else {
+            panic!("the mock Device should answer")
+        };
+        PortDevice {
+            serial: Some(serial.into()),
+            port: name.into(),
+            hello,
+        }
+    }
+    fn ids(devices: &DeviceManager) -> Vec<(String, u64, bool)> {
+        devices
+            .summaries()
+            .into_iter()
+            .map(|d| (d.id, d.rev, d.stable_id))
+            .collect()
+    }
+
+    #[test]
+    fn serials_that_normalize_alike_get_distinct_stable_ids() {
+        let devices = DeviceManager::new(Events::default());
+        devices.refresh(vec![port("COM5", "AB:12")]);
+        // A newcomer on a lower port sorts first but can't take the id.
+        devices.refresh(vec![port("COM3", "ab12"), port("COM5", "AB:12")]);
+        let second = suffixed_id("ab12", "COM3");
+        assert_eq!(
+            ids(&devices),
+            [("ab12".into(), 1, true), (second.clone(), 1, false)]
+        );
+        assert!(second.len() <= 32 && second.chars().all(|c| c.is_ascii_alphanumeric()));
+        // Scan order doesn't matter, and nothing changes between scans.
+        devices.refresh(vec![port("COM5", "AB:12"), port("COM3", "ab12")]);
+        assert_eq!(
+            ids(&devices),
+            [("ab12".into(), 1, true), (second.clone(), 1, false)]
+        );
+        // The second Device keeps its id after the first one leaves.
+        devices.refresh(vec![port("COM3", "ab12")]);
+        assert_eq!(ids(&devices), [(second, 1, false)]);
+    }
+
+    #[test]
+    fn a_long_serial_keeps_the_id_within_32_characters() {
+        let devices = DeviceManager::new(Events::default());
+        let serial = "a".repeat(40);
+        devices.refresh(vec![port("COM1", &serial), port("COM2", &serial)]);
+        let ids: Vec<_> = devices.summaries().into_iter().map(|d| d.id).collect();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.iter().all(|id| id.len() == 32), "{ids:?}");
     }
 }
