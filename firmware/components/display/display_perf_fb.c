@@ -209,7 +209,10 @@ static void cmd_check(void)
     td_shot_image_t img;
     esp_err_t err = display_snapshot(&img);
     if (err != ESP_OK) {
-        release_snapshot();
+        /* Busy means an earlier request's job still owns the buffer, and that job frees it. */
+        if (err != ESP_ERR_INVALID_STATE) {
+            release_snapshot();
+        }
         display_perf_send_error(err == ESP_ERR_INVALID_STATE ? "busy" :
                                 err == ESP_ERR_TIMEOUT ? "display busy" : "snapshot failed");
         return;

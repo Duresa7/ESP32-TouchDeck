@@ -69,7 +69,10 @@ static int cmd_screenshot(int argc, char **argv)
     esp_err_t err = display_snapshot(&img);
     if (err != ESP_OK) {
 #if CONFIG_TD_LAZY_SNAPSHOT_BUF
-        display_snapshot_release();
+        /* Busy means an earlier request's job still owns the buffer, and that job frees it. */
+        if (err != ESP_ERR_INVALID_STATE) {
+            display_snapshot_release();
+        }
 #endif
         send_error("screenshot", err == ESP_ERR_INVALID_STATE ? "busy" :
                                  err == ESP_ERR_TIMEOUT ? "display busy" : "snapshot failed");
