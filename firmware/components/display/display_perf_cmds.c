@@ -50,6 +50,11 @@
 #else
 #define SPIRAM_XIP false
 #endif
+#ifdef CONFIG_TD_LAZY_SNAPSHOT_BUF
+#define LAZY_SNAPSHOT_BUF true
+#else
+#define LAZY_SNAPSHOT_BUF false
+#endif
 #ifdef CONFIG_TD_PAY_COPY_DEBT
 #define PAY_COPY_DEBT true
 #else
@@ -267,6 +272,7 @@ static void cmd_info(void)
     td_reply_int(&r, "dcache_line", CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE);
     td_reply_int(&r, "icache_kb", CONFIG_ESP32S3_INSTRUCTION_CACHE_SIZE / 1024);
     td_reply_bool(&r, "lv_tick_cb", lv_tick_get_cb() != NULL);
+    td_reply_bool(&r, "lazy_snapshot_buf", LAZY_SNAPSHOT_BUF);
     td_reply_bool(&r, "pay_copy_debt", PAY_COPY_DEBT);
 #if CONFIG_TD_PAY_COPY_DEBT
     td_reply_int(&r, "copy_debt_steps", display_copy_debt_paid());

@@ -200,6 +200,12 @@ void display_copy_debt_attach(lv_display_t *disp);
 uint32_t display_copy_debt_paid(void);
 #endif
 
+#if CONFIG_TD_LAZY_SNAPSHOT_BUF
+/* With the lazy buffer, display_snapshot allocates the buffer and its caller hands it back here once done with the
+ * view, after a failure too. A job that a timed-out request left behind keeps it until that job has run. */
+void display_snapshot_release(void);
+#endif
+
 /* Invalidates the whole screen every LVGL cycle for `seconds` and counts the frames flushed to the panel.
  * Blocks the caller for that time. */
 esp_err_t display_perf_run(uint32_t seconds, display_perf_t *out);

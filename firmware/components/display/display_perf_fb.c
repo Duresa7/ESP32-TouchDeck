@@ -183,6 +183,13 @@ static bool settle(uint32_t *frames)
     }
 }
 
+static void release_snapshot(void)
+{
+#if CONFIG_TD_LAZY_SNAPSHOT_BUF
+    display_snapshot_release();
+#endif
+}
+
 static void cmd_check(void)
 {
     const display_perf_config_t *c = display_perf_config();
@@ -202,11 +209,13 @@ static void cmd_check(void)
     td_shot_image_t img;
     esp_err_t err = display_snapshot(&img);
     if (err != ESP_OK) {
+        release_snapshot();
         display_perf_send_error(err == ESP_ERR_INVALID_STATE ? "busy" :
                                 err == ESP_ERR_TIMEOUT ? "display busy" : "snapshot failed");
         return;
     }
     if (!snapshot_fits(&img, c->rotation)) {
+        release_snapshot();
         display_perf_send_error("snapshot size");
         return;
     }
@@ -215,6 +224,7 @@ static void cmd_check(void)
     if (copy == NULL || buf == NULL) {
         heap_caps_free(copy);
         free(buf);
+        release_snapshot();
         display_perf_send_error("no memory");
         return;
     }
@@ -239,6 +249,7 @@ static void cmd_check(void)
     const uint32_t snapshot_crc = esp_rom_crc32_le(0, img.px, (uint32_t)img.stride * img.height);
     const uint32_t submits = display_perf_submits();
     heap_caps_free(copy);
+    release_snapshot();
     if (changed) {
         free(buf);
         display_perf_send_error("screen changed");

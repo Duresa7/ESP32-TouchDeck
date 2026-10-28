@@ -68,6 +68,9 @@ static int cmd_screenshot(int argc, char **argv)
     td_shot_image_t img;
     esp_err_t err = display_snapshot(&img);
     if (err != ESP_OK) {
+#if CONFIG_TD_LAZY_SNAPSHOT_BUF
+        display_snapshot_release();
+#endif
         send_error("screenshot", err == ESP_ERR_INVALID_STATE ? "busy" :
                                  err == ESP_ERR_TIMEOUT ? "display busy" : "snapshot failed");
         return 0;
@@ -88,6 +91,9 @@ static int cmd_screenshot(int argc, char **argv)
 
     uint32_t crc = 0;
     err = td_shot_stream(&img, scale, stdout_sink, NULL, &crc);
+#if CONFIG_TD_LAZY_SNAPSHOT_BUF
+    display_snapshot_release();
+#endif
 
     td_reply_begin(&r, buf, sizeof buf, "screenshot", err == ESP_OK);
     td_reply_str(&r, "phase", "end");

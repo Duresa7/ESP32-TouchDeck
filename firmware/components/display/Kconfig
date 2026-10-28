@@ -45,4 +45,13 @@ menu "TouchDeck display"
             tick timer, which otherwise wakes the esp_timer task every millisecond to call lv_tick_inc(), gets the
             longest period the adapter accepts, about 71.6 minutes. Off, the adapter's 1 ms timer drives the clock.
 
+    config TD_LAZY_SNAPSHOT_BUF
+        bool "Allocate the screenshot buffer only while a screenshot runs"
+        default y
+        help
+            The 1228800-byte PSRAM buffer that `screenshot` renders into is allocated when a screenshot or
+            `perf fb check` asks for it and freed when that is done, instead of living from boot. A snapshot job that
+            is still queued after its request timed out frees the buffer itself when it ends. Off, the buffer is
+            allocated at boot and kept.
+
 endmenu

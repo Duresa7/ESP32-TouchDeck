@@ -30,13 +30,27 @@
 
 static const char *TAG = "display";
 
+#if CONFIG_TD_LAZY_SNAPSHOT_BUF
+/* Who may touch the snapshot buffer. QUEUED: a request waits for its job. ORPHANED: the request timed out, and the job,
+ * which may still run, frees the buffer when it ends. IDLE: no job is queued, so the console owns the buffer. */
+enum {
+    SNAP_IDLE,
+    SNAP_QUEUED,
+    SNAP_ORPHANED,
+};
+#endif
+
 static struct {
     lv_display_t *lv;
     lv_draw_buf_t shot;
     atomic_uint frames;
     SemaphoreHandle_t first_frame;
     SemaphoreHandle_t snap_done;
+#if CONFIG_TD_LAZY_SNAPSHOT_BUF
+    atomic_int snap_job;
+#else
     atomic_bool snap_pending;
+#endif
     bool snap_ok;
     atomic_bool ready;
     bool portrait;
@@ -67,6 +81,14 @@ static esp_err_t alloc_snapshot_buffer(void)
     ESP_RETURN_ON_FALSE(res == LV_RESULT_OK, ESP_FAIL, TAG, "snapshot buffer init");
     return ESP_OK;
 }
+
+#if CONFIG_TD_LAZY_SNAPSHOT_BUF
+static void free_snapshot_buffer(void)
+{
+    heap_caps_free(s.shot.data);
+    s.shot.data = NULL;
+}
+#endif
 
 #if CONFIG_TD_LV_TICK_CB
 /* LVGL's millisecond clock. It wraps after 49.7 days like LVGL's own counter, which lv_tick_diff allows for. */
@@ -148,7 +170,9 @@ esp_err_t display_start(bool portrait, display_build_fn build)
 #if CONFIG_TD_PERF_TOOLS
     display_perf_boot_mark("adapter");
 #endif
+#if !CONFIG_TD_LAZY_SNAPSHOT_BUF
     ESP_RETURN_ON_ERROR(alloc_snapshot_buffer(), TAG, "snapshot buffer");
+#endif
 
     esp_lv_adapter_display_config_t config =
         ESP_LV_ADAPTER_DISPLAY_RGB_DEFAULT_CONFIG(panel, NULL, TD_LCD_H_RES, TD_LCD_V_RES, rotation);
@@ -201,15 +225,39 @@ static void snapshot_job(void *arg)
     (void)arg;
     s.snap_ok = lv_snapshot_take_to_draw_buf(lv_screen_active(), LV_COLOR_FORMAT_RGB565, &s.shot) == LV_RESULT_OK;
     xSemaphoreGive(s.snap_done);
+#if CONFIG_TD_LAZY_SNAPSHOT_BUF
+    int queued = SNAP_QUEUED;
+    if (!atomic_compare_exchange_strong(&s.snap_job, &queued, SNAP_IDLE)) {
+        /* The request timed out and left the buffer to this job. It goes before the state says idle, so the next
+         * request finds no buffer and allocates its own. */
+        free_snapshot_buffer();
+        atomic_store(&s.snap_job, SNAP_IDLE);
+    }
+#else
     atomic_store(&s.snap_pending, false);
+#endif
 }
 
 esp_err_t display_snapshot(td_shot_image_t *out)
 {
+#if CONFIG_TD_LAZY_SNAPSHOT_BUF
+    int idle = SNAP_IDLE;
+    if (!atomic_compare_exchange_strong(&s.snap_job, &idle, SNAP_QUEUED)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+#else
     if (atomic_exchange(&s.snap_pending, true)) {
         return ESP_ERR_INVALID_STATE;
     }
+#endif
     xSemaphoreTake(s.snap_done, 0);
+#if CONFIG_TD_LAZY_SNAPSHOT_BUF
+    /* No job is queued, so nothing else touches the buffer until this request queues one. */
+    if (s.shot.data == NULL && alloc_snapshot_buffer() != ESP_OK) {
+        atomic_store(&s.snap_job, SNAP_IDLE);
+        return ESP_ERR_NO_MEM;
+    }
+#endif
 
     esp_err_t err = esp_lv_adapter_lock(LOCK_TIMEOUT_MS);
     if (err == ESP_OK) {
@@ -217,17 +265,47 @@ esp_err_t display_snapshot(td_shot_image_t *out)
         esp_lv_adapter_unlock();
     }
     if (err != ESP_OK) {
+#if CONFIG_TD_LAZY_SNAPSHOT_BUF
+        atomic_store(&s.snap_job, SNAP_IDLE);
+#else
         atomic_store(&s.snap_pending, false);
+#endif
         return err;
     }
+#if CONFIG_TD_LAZY_SNAPSHOT_BUF
+    if (xSemaphoreTake(s.snap_done, pdMS_TO_TICKS(SNAPSHOT_TIMEOUT_MS)) != pdTRUE) {
+        /* The job may still run and write the buffer, so it gets the buffer to free. If it ended just now, the
+         * exchange finds the state idle, and display_snapshot_release frees the buffer instead. */
+        int queued = SNAP_QUEUED;
+        (void)atomic_compare_exchange_strong(&s.snap_job, &queued, SNAP_ORPHANED);
+        ESP_LOGE(TAG, "snapshot timed out");
+        return ESP_ERR_TIMEOUT;
+    }
+#else
     ESP_RETURN_ON_FALSE(xSemaphoreTake(s.snap_done, pdMS_TO_TICKS(SNAPSHOT_TIMEOUT_MS)) == pdTRUE, ESP_ERR_TIMEOUT, TAG,
                         "snapshot timed out");
+#endif
     ESP_RETURN_ON_FALSE(s.snap_ok, ESP_FAIL, TAG, "snapshot");
 
     const lv_image_header_t *h = &s.shot.header;
     *out = (td_shot_image_t){ .px = s.shot.data, .width = (uint16_t)h->w, .height = (uint16_t)h->h, .stride = h->stride };
     return ESP_OK;
 }
+
+#if CONFIG_TD_LAZY_SNAPSHOT_BUF
+void display_snapshot_release(void)
+{
+    /* Idle means no job is queued, and a job sets idle only after it is done with the buffer. A job that a timed-out
+     * request left behind frees the buffer itself. Queued here means the job has given the token and not yet set
+     * idle, a few instructions, so this waits them out. */
+    while (atomic_load(&s.snap_job) == SNAP_QUEUED) {
+        vTaskDelay(1);
+    }
+    if (atomic_load(&s.snap_job) == SNAP_IDLE && s.shot.data != NULL) {
+        free_snapshot_buffer();
+    }
+}
+#endif
 
 static void invalidate_screen(lv_timer_t *timer)
 {
