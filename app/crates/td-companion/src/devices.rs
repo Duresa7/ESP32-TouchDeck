@@ -1,8 +1,9 @@
 use crate::api::Events;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 use ts_rs::TS;
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -55,30 +56,61 @@ pub struct PortDevice {
 pub trait PortSource: Send + Sync + 'static {
     fn scan(&self) -> Vec<PortDevice>;
 }
-pub struct RealPorts;
+/// Today's `td-link` discovery. Each port is probed once when it appears, because opening
+/// it on every scan would disturb the Device on it. A port that didn't answer as a Device is
+/// probed again after `RETRY`.
+#[derive(Default)]
+pub struct RealPorts {
+    seen: Mutex<HashMap<(String, Option<String>), Seen>>,
+}
+struct Seen {
+    hello: Option<td_core::Hello>,
+    at: Instant,
+}
+const RETRY: Duration = Duration::from_secs(10);
 impl PortSource for RealPorts {
     fn scan(&self) -> Vec<PortDevice> {
-        let ports = serialport::available_ports().unwrap_or_default();
-        td_link::discover::discover()
+        let ports: Vec<(String, Option<String>)> = serialport::available_ports()
+            .unwrap_or_default()
             .into_iter()
-            .filter_map(|candidate| {
-                let td_link::discover::Probe::Deck { hello } = candidate.probe else {
-                    return None;
-                };
-                let serial = ports
-                    .iter()
-                    .find(|p| p.port_name == candidate.port)
-                    .and_then(|p| match &p.port_type {
-                        serialport::SerialPortType::UsbPort(u) => u.serial_number.clone(),
-                        _ => None,
-                    });
-                Some(PortDevice {
-                    serial,
-                    port: candidate.port,
-                    hello,
-                })
+            .filter_map(|p| match p.port_type {
+                serialport::SerialPortType::UsbPort(u)
+                    if u.vid == td_link::VID && u.pid == td_link::PID =>
+                {
+                    Some((p.port_name, u.serial_number))
+                }
+                _ => None,
             })
-            .collect()
+            .collect();
+        let mut seen = self.seen.lock().unwrap();
+        seen.retain(|key, _| ports.contains(key));
+        let mut found = Vec::new();
+        for key in ports {
+            let fresh = seen
+                .get(&key)
+                .is_some_and(|s| s.hello.is_some() || s.at.elapsed() < RETRY);
+            if !fresh {
+                let hello = match td_link::discover::probe_port(&key.0) {
+                    td_link::discover::Probe::Deck { hello } => Some(hello),
+                    _ => None,
+                };
+                seen.insert(
+                    key.clone(),
+                    Seen {
+                        hello,
+                        at: Instant::now(),
+                    },
+                );
+            }
+            if let Some(hello) = seen[&key].hello.clone() {
+                found.push(PortDevice {
+                    serial: key.1,
+                    port: key.0,
+                    hello,
+                });
+            }
+        }
+        found
     }
 }
 #[derive(Clone)]

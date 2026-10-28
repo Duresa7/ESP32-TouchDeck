@@ -3,11 +3,12 @@ use axum::{
     Extension,
     extract::{
         State, WebSocketUpgrade,
-        ws::{CloseFrame, Message},
+        ws::{CloseFrame, Message, WebSocket},
     },
     response::Response,
 };
 use futures_util::{SinkExt, StreamExt};
+use serde_json::json;
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex, Weak},
@@ -87,35 +88,93 @@ pub(super) async fn upgrade(
         ctx: ctx.clone(),
         id: client.id.clone(),
     };
-    Ok(ws.protocols(["touchdeck.v1"]).max_message_size(4096).on_upgrade(move|socket|async move{
-        let _lease=lease;
-        let subscriber=ctx.events.subscribe();
-        let (mut sink,mut stream)=socket.split();
-        let mut seq=0u64;
-        let mut snapshot=serde_json::Map::new();
-        for feature in super::registry(){for entry in feature.snapshots{snapshot.insert(entry.key.into(),(entry.read)(&ctx));}}
-        for frame in [serde_json::json!({"type":"hello","api":"v1","build":env!("TD_BUILD"),"session":client}),serde_json::json!({"type":"sync","data":snapshot})] {
-            let mut frame=frame;frame["seq"]=seq.into();seq+=1;
-            if sink.send(Message::Text(frame.to_string().into())).await.is_err(){return;}
+    // Only `touchdeck.v1` is selected, so the bearer entry is never echoed.
+    Ok(ws
+        .protocols(["touchdeck.v1"])
+        .max_message_size(4096)
+        .on_upgrade(move |socket| async move {
+            let _lease = lease;
+            serve(socket, ctx, client).await;
+        }))
+}
+fn frame(mut value: serde_json::Value, seq: &mut u64) -> Message {
+    value["seq"] = (*seq).into();
+    *seq += 1;
+    Message::Text(value.to_string().into())
+}
+async fn serve(socket: WebSocket, ctx: Ctx, client: ClientInfo) {
+    let subscriber = ctx.events.subscribe();
+    let (mut sink, mut stream) = socket.split();
+    let mut seq = 0u64;
+    let mut snapshot = serde_json::Map::new();
+    for feature in super::registry() {
+        for entry in feature.snapshots {
+            snapshot.insert(entry.key.into(), (entry.read)(&ctx));
         }
-        let mut shutdown=ctx.shutdown.subscribe();
-        let mut ping=tokio::time::interval(Duration::from_secs(20));ping.tick().await;let mut missed=0;
-        let code=loop {
-            if !ctx.auth.lock().unwrap().active(&client.id) {
-                let _=sink.send(Message::Text(serde_json::json!({"type":"auth.revoked","seq":seq,"data":{}}).to_string().into())).await;break 4401;
+    }
+    let hello = json!({"type": "hello", "api": "v1", "build": env!("TD_BUILD"), "session": client});
+    let sync = json!({"type": "sync", "data": snapshot});
+    for value in [hello, sync] {
+        if sink.send(frame(value, &mut seq)).await.is_err() {
+            return;
+        }
+    }
+    let mut shutdown = ctx.shutdown.subscribe();
+    let mut ping = tokio::time::interval(Duration::from_secs(20));
+    ping.tick().await;
+    let mut missed = 0;
+    let code = loop {
+        if !ctx.auth.lock().unwrap().active(&client.id) {
+            let revoked = json!({"type": "auth.revoked", "data": {}});
+            let _ = sink.send(frame(revoked, &mut seq)).await;
+            break 4401;
+        }
+        let next = {
+            let mut queue = subscriber.queue.lock().unwrap();
+            if queue.overflow {
+                break 4008;
             }
-            let next={let mut q=subscriber.queue.lock().unwrap();if q.overflow {break 4008;}let f=q.frames.pop_front();if let Some(f)=&f{q.bytes-=f.len();}f};
-            if let Some(frame)=next {
-                let mut frame:serde_json::Value=serde_json::from_str(&frame).unwrap();frame["seq"]=seq.into();seq+=1;
-                if !matches!(tokio::time::timeout(Duration::from_secs(2),sink.send(Message::Text(frame.to_string().into()))).await,Ok(Ok(()))){break 4008;}continue;
+            let next = queue.frames.pop_front();
+            if let Some(f) = &next {
+                queue.bytes -= f.len();
             }
-            tokio::select! {
-                _=subscriber.notify.notified()=>{},
-                _=shutdown.changed()=>{let _=sink.send(Message::Text(serde_json::json!({"type":"companion.stopping","seq":seq,"data":{"reason":"shutdown"}}).to_string().into())).await;break 1001;},
-                _=ping.tick()=>{if missed>=2{break 1001;}missed+=1;if sink.send(Message::Ping(Vec::new().into())).await.is_err(){break 1001;}},
-                message=stream.next()=>match message {Some(Ok(Message::Pong(_)))=>missed=0,Some(Ok(Message::Close(_)))|None|Some(Err(_))=>break 1000,_=>{}}
-            }
+            next
         };
-        let _=tokio::time::timeout(Duration::from_secs(2),sink.send(Message::Close(Some(CloseFrame{code,reason:"".into()})))).await;
-    }))
+        if let Some(next) = next {
+            let value = serde_json::from_str(&next).unwrap();
+            let sent =
+                tokio::time::timeout(Duration::from_secs(2), sink.send(frame(value, &mut seq)));
+            if !matches!(sent.await, Ok(Ok(()))) {
+                break 4008;
+            }
+            continue;
+        }
+        tokio::select! {
+            _ = subscriber.notify.notified() => {}
+            _ = shutdown.changed() => {
+                let stopping = json!({"type": "companion.stopping", "data": {"reason": "shutdown"}});
+                let _ = sink.send(frame(stopping, &mut seq)).await;
+                break 1001;
+            }
+            _ = ping.tick() => {
+                if missed >= 2 {
+                    break 1001;
+                }
+                missed += 1;
+                if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break 1001;
+                }
+            }
+            message = stream.next() => match message {
+                Some(Ok(Message::Pong(_))) => missed = 0,
+                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break 1000,
+                _ => {}
+            },
+        }
+    };
+    let close = Message::Close(Some(CloseFrame {
+        code,
+        reason: "".into(),
+    }));
+    let _ = tokio::time::timeout(Duration::from_secs(2), sink.send(close)).await;
 }

@@ -767,6 +767,8 @@ Two mechanisms can collect the features. #71 tries the first with a short spike 
 - **A build-script registry.** `build.rs` lists `src/features/*` and writes `$OUT_DIR/features.rs` with one `mod` per file and `pub fn all() -> Vec<Feature>`. `src/features.rs` holds only the `include!`. Keep it only if rust-analyzer resolves the generated modules: go to definition, completion and errors inside a feature file must all work.
 - **Distributed registration with `inventory` (or `linkme`).** Each feature submits its `feature` function with `inventory::submit!`, and the kernel collects them with `inventory::iter`. Rust still needs a `mod` line per feature. If #71 can't generate those lines, they sit in `src/features/mod.rs`, one per line in sorted order, and that line is the only shared edit a feature makes.
 
+**#71 chose `inventory`.** The build-script spike wasn't finished inside its time box, so the fallback applies. Each feature ends with `inventory::submit! { Registration(feature) }`, and `src/features/mod.rs` holds one `mod` line per feature in sorted order. `api::registry()` sorts features by name, so route order and the generated file don't depend on link order.
+
 Either way:
 
 - An `Endpoint` that's declared but never passed to `.endpoint::<X>()` is a never-built struct, so `dead_code` warns, and the zero-warning build fails.
@@ -777,6 +779,18 @@ Either way:
 ## HTTP framework
 
 axum 0.8 on tokio. tokio, hyper, tower and tower-http are already in `Cargo.lock` through reqwest, and axum itself is there through the WebDriver plugin. The Companion adds axum's own small crates, `tungstenite` for the WebSocket, and the tower-http `limit` and `set-header` features. Removing Tauri drops much more than that. The scaffold ticket measures the release binary's growth and records it. The budget is 1.5 MB.
+
+**Measured in #71** with Rust 1.99.1 on Windows x64. Every row is a release build without test hooks:
+
+| Binary | Default release profile | LTO, one codegen unit, `panic = "abort"` |
+|---|---|---|
+| Empty tokio program | 434,176 B | 249,856 B |
+| tokio and `td-link` discovery | 914,432 B | 508,416 B |
+| The same plus a minimal axum server with a WebSocket | 1,798,144 B | 957,952 B |
+| The Companion with the #71 slice | 2,596,864 B | 1,353,216 B |
+| Growth over the empty tokio program | 2,162,688 B (2.06 MiB) | 1,103,360 B (1.05 MiB) |
+
+Under the workspace's default release profile the growth is over the 1.5 MB budget. With the size settings it's under. The workspace profile also builds the Tauri app, so #71 leaves it alone, and the packaging ticket picks the Companion's shipping profile.
 
 Rejected: actix-web (a second runtime layered on tokio), warp (filter types make per-feature routes and error mapping awkward), poem (a much smaller community, and its OpenAPI story uses the attribute-declared responses rejected above), tiny_http with tungstenite (a thread per connection, and hand-built upgrade, limits and middleware), and raw hyper (every layer above it would be ours).
 
@@ -875,7 +889,7 @@ Never add a public route, a CORS header, a route that answers approvals, or a ro
 | Browsers may drop the URL fragment when the Companion opens the link | **Resolved.** The query form is allowed, and the user can type the code |
 | A tray program's dialog may not get the foreground on Windows | **Reduced.** The tray notification and `approvals.show`. The approval waits up to 5 minutes |
 | `assets.create` with `kind: "app"` takes any path, so a session can learn whether a file exists | **Accepted.** The Companion returns only a rendered icon, never file contents |
-| The build-script registry may confuse rust-analyzer | **Open**, #71 decides between it and `inventory` |
+| The build-script registry may confuse rust-analyzer | **Resolved.** #71 uses `inventory` (see Feature modules) |
 | `td-link`'s blocking `Session` under async handlers needs one actor thread per Device | **Open**, the Device manager ticket (#74) builds it |
 | With Fast User Switching, two Companions try to open the same COM ports | **Open.** The second sees the port as `busy`. #74 decides whether to back off |
 | A browser tab can't show the app update icon, because updates live in Electron | **Open.** The browser shows nothing for now |

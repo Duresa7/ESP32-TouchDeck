@@ -39,6 +39,8 @@ pub(crate) struct Auth {
     pub(crate) offset_ms: u64,
     sessions: HashMap<Vec<u8>, Session>,
 }
+/// Revoked sessions are kept so their tokens get `auth.revoked`, until the table is full.
+const MAX_SESSIONS: usize = 1024;
 pub(crate) fn token(prefix: &str) -> String {
     let mut bytes = [0; 32];
     getrandom::fill(&mut bytes).expect("OS random source unavailable");
@@ -160,12 +162,7 @@ pub(crate) fn routes(router: Router<Ctx>) -> Router<Ctx> {
         .route("/api/v1/auth/reset", post(reset))
 }
 async fn json<T: serde::de::DeserializeOwned>(request: Request) -> Result<T, CommonError> {
-    if !request
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|s| s.split(';').next().unwrap_or("").trim() == "application/json")
-    {
+    if !super::is_json(request.headers()) {
         return Err(CommonError::new(
             415,
             "request.media_type",
@@ -231,7 +228,10 @@ async fn create(
             "Only window sessions can be created here.",
         ));
     }
-    if auth.sessions.len() >= 1024 {
+    if auth.sessions.len() >= MAX_SESSIONS {
+        auth.sessions.retain(|_, s| !s.revoked);
+    }
+    if auth.sessions.len() >= MAX_SESSIONS {
         return Err(CommonError::new(
             429,
             "limits.exceeded",
@@ -247,7 +247,10 @@ async fn create(
             info: SessionInfo {
                 id: id.clone(),
                 kind: "window".into(),
-                label: body.label.unwrap_or_else(|| "Window".into()),
+                label: body
+                    .label
+                    .map(|l| l.chars().take(64).collect())
+                    .unwrap_or_else(|| "Window".into()),
                 created_ms: now,
                 last_used_ms: now,
                 current: false,
@@ -321,6 +324,7 @@ async fn reset(State(ctx): State<Ctx>) -> Response {
     axum::http::StatusCode::NO_CONTENT.into_response()
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn declarations() -> Vec<String> {
     vec![
         ProofRequest::decl(),

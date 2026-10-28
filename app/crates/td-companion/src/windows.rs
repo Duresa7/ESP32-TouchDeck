@@ -126,12 +126,17 @@ pub fn write_runtime(path: &Path, value: &serde_json::Value) -> io::Result<()> {
             &mut owner,
             &mut defaulted,
         ))?;
+        // Changing the owner needs WRITE_OWNER, which an owner doesn't hold implicitly.
+        // The Companion usually created `runtime\` and owns it already, so only a foreign
+        // owner is replaced, and that fails closed when the user can't take it.
+        let mut information = DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION;
+        if !owned_by(dir, owner)? {
+            information |= OWNER_SECURITY_INFORMATION;
+        }
         let status = SetNamedSecurityInfoW(
             wide(dir).as_ptr(),
             SE_FILE_OBJECT,
-            OWNER_SECURITY_INFORMATION
-                | DACL_SECURITY_INFORMATION
-                | PROTECTED_DACL_SECURITY_INFORMATION,
+            information,
             owner,
             null_mut(),
             dacl,
@@ -176,6 +181,27 @@ pub fn write_runtime(path: &Path, value: &serde_json::Value) -> io::Result<()> {
             let _ = std::fs::remove_file(path);
         }
         result
+    }
+}
+fn owned_by(path: &Path, sid: PSID) -> io::Result<bool> {
+    unsafe {
+        let mut owner = null_mut();
+        let mut sd = null_mut();
+        let status = GetNamedSecurityInfoW(
+            wide(path).as_ptr(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            &mut sd,
+        );
+        if status != 0 {
+            return Err(io::Error::from_raw_os_error(status as i32));
+        }
+        let _allocated = Local(sd);
+        Ok(EqualSid(owner, sid) != 0)
     }
 }
 fn verify(path: &Path, sid: &str) -> io::Result<()> {

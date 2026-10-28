@@ -103,34 +103,27 @@ async fn bind(root: &Path) -> std::io::Result<tokio::net::TcpListener> {
 }
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    #[cfg(feature = "test-hooks")]
-    if args.first().map(String::as_str) == Some("--emit-ts") {
-        let path = args.get(1).ok_or("--emit-ts requires a path")?;
-        if let Some(parent) = Path::new(path).parent() {
-            std::fs::create_dir_all(parent)?;
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (source, mock): (Arc<dyn PortSource>, bool) = match args.as_slice() {
+        [] => (Arc::new(RealPorts::default()), false),
+        #[cfg(feature = "test-hooks")]
+        ["--emit-ts", path] => {
+            if let Some(parent) = Path::new(path).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, crate::bindings::generate())?;
+            return Ok(());
         }
-        std::fs::write(path, crate::bindings::generate())?;
-        return Ok(());
-    }
-    let mut source: Arc<dyn PortSource> = Arc::new(RealPorts);
-    let mut mock = false;
-    #[cfg(feature = "test-hooks")]
-    if args.first().map(String::as_str) == Some("--mock-devices") {
-        let count: usize = args
-            .get(1)
-            .ok_or("--mock-devices requires a count")?
-            .parse()?;
-        let ports = crate::devices::MockPorts::default();
-        for n in 1..=count {
-            ports.plug(&format!("mock{n:04}"));
+        #[cfg(feature = "test-hooks")]
+        ["--mock-devices", count] => {
+            let ports = crate::devices::MockPorts::default();
+            for n in 1..=count.parse::<usize>()? {
+                ports.plug(&format!("mock{n:04}"));
+            }
+            (Arc::new(ports), true)
         }
-        source = Arc::new(ports);
-        mock = true;
-    }
-    if !args.is_empty() && !mock {
-        return Err("Unknown Companion argument.".into());
-    }
-    let _ = (&mut source, &mut mock);
+        _ => return Err("Unknown Companion argument.".into()),
+    };
     let root = root()?;
     std::fs::create_dir_all(&root)?;
     let _instance = platform::Instance::acquire(&root)?;
@@ -147,7 +140,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         runtime
     };
     let ctx = Ctx::new(listener.local_addr()?.port(), mock, Some(runtime.clone()));
-    write_runtime(&runtime, &ctx.runtime_value())?;
+    write_runtime(&runtime, &ctx.runtime_value())
+        .map_err(|e| format!("The runtime file could not be secured: {e}"))?;
     let _runtime = RuntimeFile(runtime.clone());
     let refresh = ctx.clone();
     let worker = tokio::spawn(async move {
@@ -173,7 +167,16 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     let mut shutdown = ctx.shutdown.subscribe();
     let signal = ctx.shutdown.clone();
-    axum::serve(listener,crate::api::router(ctx)).with_graceful_shutdown(async move{tokio::select!{_=tokio::signal::ctrl_c()=>{let _=signal.send(true);},_=shutdown.changed()=>{}}}).await?;
+    axum::serve(listener, crate::api::router(ctx))
+        .with_graceful_shutdown(async move {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    let _ = signal.send(true);
+                }
+                _ = shutdown.changed() => {}
+            }
+        })
+        .await?;
     worker.abort();
     maintenance.abort();
     Ok(())

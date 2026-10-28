@@ -52,6 +52,9 @@ async fn requests_are_rejected_before_shutdown() {
         ("authorization", "Bearer wrong", 401, "auth.invalid"),
         ("host", "evil.example:1", 421, "security.host"),
         ("host", "", 421, "security.host"),
+        ("host", "127.0.0.1", 421, "security.host"),
+        ("host", "localhost", 421, "security.host"),
+        ("host", "localhost:1", 421, "security.host"),
         ("origin", "http://evil.example", 403, "security.origin"),
         ("origin", "null", 403, "security.origin"),
         ("sec-fetch-site", "cross-site", 403, "security.origin"),
@@ -81,6 +84,36 @@ async fn requests_are_rejected_before_shutdown() {
             "rejection must not shut down the Companion"
         );
     }
+    // A cross-site form post carries a foreign Origin and no token.
+    let response = td
+        .raw()
+        .post("/api/v1/system/shutdown")
+        .header("origin", "http://evil.example")
+        .header("content-type", "text/plain")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 403);
+    // A body without a Content-Type is refused even with a valid token.
+    let response = td
+        .raw()
+        .post("/api/v1/system/shutdown")
+        .bearer_auth(&td.token)
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 415);
+    assert!(
+        td.raw()
+            .get("/api/v1/system/ping")
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success()
+    );
     let response = td
         .raw()
         .request(reqwest::Method::OPTIONS, "/api/v1/system/shutdown")
@@ -255,5 +288,99 @@ async fn state_overflow_closes_and_releases_socket_capacity() {
         );
         assert!(td.call::<List>((), (), ()).await.is_ok());
         let _replacement = td.events().await;
+    }
+}
+
+async fn window_session(td: &TestCompanion) -> Value {
+    td.raw()
+        .post("/api/v1/auth/sessions")
+        .bearer_auth(&td.pairing_token)
+        .json(&json!({"kind": "window", "label": "Second window"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+#[tokio::test]
+async fn sessions_list_and_revoke() {
+    let td = TestCompanion::start().await;
+    let second = window_session(&td).await;
+    let second_token = second["token"].as_str().unwrap();
+    let list: Vec<Value> = td
+        .raw()
+        .get("/api/v1/auth/sessions")
+        .bearer_auth(&td.token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(list.len(), 2);
+    let own = list.iter().find(|s| s["current"] == true).unwrap();
+    assert_ne!(own["id"], second["id"]);
+    assert!(list.iter().any(|s| s["label"] == "Second window"));
+    assert!(
+        list.iter()
+            .all(|s| s.as_object().unwrap().keys().all(|k| k != "token"))
+    );
+    let revoke = td
+        .raw()
+        .request(
+            reqwest::Method::DELETE,
+            &format!("/api/v1/auth/sessions/{}", second["id"].as_str().unwrap()),
+        )
+        .bearer_auth(&td.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(revoke.status(), 204);
+    let response = td
+        .raw()
+        .post("/api/v1/system/shutdown")
+        .bearer_auth(second_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["error"]["code"],
+        "auth.revoked"
+    );
+    assert!(td.call::<List>((), (), ()).await.is_ok());
+    let own = td
+        .raw()
+        .request(reqwest::Method::DELETE, "/api/v1/auth/sessions/self")
+        .bearer_auth(&td.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(own.status(), 204);
+    assert!(td.call::<List>((), (), ()).await.is_err());
+    // Revoking sessions leaves pairing alone, so a window can mint again.
+    assert!(window_session(&td).await["token"].is_string());
+}
+#[tokio::test]
+async fn unknown_and_malformed_device_ids() {
+    let td = TestCompanion::start().await;
+    for (id, status, code) in [
+        ("mock0009", 404, "device.not_found"),
+        ("MOCK0001", 400, "request.invalid"),
+        ("a%2Fb", 400, "request.invalid"),
+    ] {
+        let response = td
+            .raw()
+            .get(&format!("/api/v1/devices/{id}"))
+            .bearer_auth(&td.token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), status, "{id}");
+        assert_eq!(
+            response.json::<Value>().await.unwrap()["error"]["code"],
+            code
+        );
     }
 }

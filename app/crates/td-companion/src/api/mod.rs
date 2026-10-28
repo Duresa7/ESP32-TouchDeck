@@ -90,13 +90,23 @@ pub struct Req<E: Endpoint> {
 }
 pub type NoBody = ();
 pub type Json<T> = T;
+/// TypeScript type strings exist only where the generator and contract tests run, so the
+/// release binary carries none of them.
+#[cfg(any(test, feature = "test-hooks"))]
+pub type EventType = String;
+#[cfg(not(any(test, feature = "test-hooks")))]
+pub type EventType = ();
 pub struct EndpointInfo {
     pub name: &'static str,
     pub method: Method,
     pub path: &'static str,
+    #[cfg(any(test, feature = "test-hooks"))]
     pub path_type: String,
+    #[cfg(any(test, feature = "test-hooks"))]
     pub query_type: String,
+    #[cfg(any(test, feature = "test-hooks"))]
     pub body_type: String,
+    #[cfg(any(test, feature = "test-hooks"))]
     pub ok_type: String,
 }
 pub struct Snapshot {
@@ -105,7 +115,8 @@ pub struct Snapshot {
 }
 pub struct Feature {
     pub snapshots: Vec<Snapshot>,
-    pub events: Vec<(&'static str, String)>,
+    /// Each event's name and, for the generated client, its TypeScript type.
+    pub events: Vec<(&'static str, EventType)>,
     pub name: &'static str,
     pub endpoints: Vec<EndpointInfo>,
     pub(crate) router: Router<Ctx>,
@@ -121,7 +132,11 @@ impl Feature {
         }
     }
     pub fn event<E: Event + TS>(mut self) -> Self {
-        self.events.push((E::NAME, E::inline()));
+        #[cfg(any(test, feature = "test-hooks"))]
+        let typ = E::inline();
+        #[cfg(not(any(test, feature = "test-hooks")))]
+        let typ = ();
+        self.events.push((E::NAME, typ));
         self
     }
     pub fn snapshot(mut self, key: &'static str, read: fn(&Ctx) -> serde_json::Value) -> Self {
@@ -133,9 +148,13 @@ impl Feature {
             name: E::NAME,
             method: E::METHOD,
             path: E::PATH,
+            #[cfg(any(test, feature = "test-hooks"))]
             path_type: E::Path::inline(),
+            #[cfg(any(test, feature = "test-hooks"))]
             query_type: E::Query::inline(),
+            #[cfg(any(test, feature = "test-hooks"))]
             body_type: E::Body::inline(),
+            #[cfg(any(test, feature = "test-hooks"))]
             ok_type: E::Ok::name(),
         });
         self.router = self.router.route(
@@ -162,7 +181,7 @@ async fn dispatch<E: Endpoint>(State(ctx): State<Ctx>, request: Request) -> Resp
             .extensions
             .remove::<ClientInfo>()
             .ok_or_else(|| CommonError::new(401, "auth.missing", "A session is required."))?;
-        let path = if E::Path::name() == "null" {
+        let path = if !E::PATH.contains('{') {
             serde_json::from_str("null")
                 .map_err(|e| CommonError::invalid("path", &e.to_string()))?
         } else {
@@ -172,7 +191,8 @@ async fn dispatch<E: Endpoint>(State(ctx): State<Ctx>, request: Request) -> Resp
                 .map_err(|e| CommonError::invalid("path", &e.to_string()))?
                 .0
         };
-        let query = if E::Query::name() == "null" {
+        // A query type without fields, such as `()`, ignores the query string.
+        let query = if size_of::<E::Query>() == 0 {
             E::Query::default()
         } else {
             serde_urlencoded::from_str(parts.uri.query().unwrap_or(""))
@@ -181,6 +201,13 @@ async fn dispatch<E: Endpoint>(State(ctx): State<Ctx>, request: Request) -> Resp
         let bytes = to_bytes(body, E::BODY_LIMIT).await.map_err(|_| {
             CommonError::new(413, "request.too_large", "The request body is too large.")
         })?;
+        if !bytes.is_empty() && !is_json(&parts.headers) {
+            return Err(CommonError::new(
+                415,
+                "request.media_type",
+                "The request requires JSON.",
+            ));
+        }
         let body = serde_json::from_slice(if bytes.is_empty() { b"null" } else { &bytes })
             .map_err(|e| CommonError::invalid("body", &e.to_string()))?;
         let value = E::handle(
@@ -245,8 +272,8 @@ async fn guard(State(ctx): State<Ctx>, mut request: Request, next: Next) -> Resp
         if matches!(
             *request.method(),
             Method::POST | Method::PUT | Method::PATCH
-        ) && header("content-type")
-            .is_some_and(|v| v.split(';').next().unwrap_or("").trim() != "application/json")
+        ) && h.contains_key("content-type")
+            && !is_json(h)
         {
             return Err(CommonError::new(
                 415,
@@ -286,6 +313,15 @@ async fn guard(State(ctx): State<Ctx>, mut request: Request, next: Next) -> Resp
     response
 }
 
+/// Whether the request declares a JSON body. A body without this header is refused, so a
+/// cross-site form post never reaches a handler.
+pub(crate) fn is_json(headers: &axum::http::HeaderMap) -> bool {
+    headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(';').next().unwrap_or("").trim() == "application/json")
+}
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn auth_declarations() -> Vec<String> {
     auth::declarations()
 }

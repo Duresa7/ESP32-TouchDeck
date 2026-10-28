@@ -164,5 +164,22 @@ async fn process_single_instance_runtime_and_restart() {
         assert!(!status.success());
         assert!(!target.path().join("companion.json").exists());
         std::fs::remove_dir(root.path().join("runtime")).unwrap();
+
+        // A data folder where the user holds only inherited Modify, so no WRITE_OWNER.
+        let restricted = tempfile::tempdir().unwrap();
+        let script = "$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; icacls $env:TD_DIR /inheritance:r /grant:r \"*$($sid):(OI)(CI)M\" | Out-Null; exit $LASTEXITCODE";
+        assert!(
+            Command::new("pwsh")
+                .args(["-NoProfile", "-NonInteractive", "-Command", script])
+                .env("TD_DIR", restricted.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+        let mut limited = launch(restricted.path());
+        let info = runtime(restricted.path()).await;
+        let url = format!("http://127.0.0.1:{}", info["port"]);
+        let token = session(&client, &url, &info).await;
+        stop(&mut limited, &client, &url, &token).await;
     }
 }

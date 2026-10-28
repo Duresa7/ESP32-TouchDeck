@@ -113,7 +113,11 @@ export function createCompanion(base: string, token: () => string) {
             };
             out.push_str(&format!("      {action}: (path: {path}, query: {} = null as {}, body: {} = null as {}) => call<{}>('{}', path, query, body),\n",e.query_type,e.query_type,e.body_type,e.body_type,e.ok_type,e.name));
         }
-        if feature.name == "system" {out.push_str("      ping: () => call<{ api: string[] }>('system.ping', {}, null, null),\n");}
+        if feature.name == "system" {
+            out.push_str(
+                "      ping: () => call<{ api: string[] }>('system.ping', {}, null, null),\n",
+            );
+        }
         out.push_str("    },\n");
     }
     out.push_str(r#"    auth: {

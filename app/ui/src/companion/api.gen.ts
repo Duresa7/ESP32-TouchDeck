@@ -45,7 +45,7 @@ export function createCompanion(base: string, token: () => string) {
     for (const [key, value] of Object.entries(path)) route = route.replace(`{${key}}`, encodeURIComponent(value));
     const url = new URL(`/api/v1${route}`, base);
     if (query) for (const [key, value] of Object.entries(query)) url.searchParams.set(key, String(value));
-    const response = await fetch(url, { method: endpoint.method, headers: { Authorization: `Bearer ${token()}`, ...(body == null ? {} : { 'Content-Type': 'application/json' }) }, ...(body == null ? {} : { body: JSON.stringify(body) }) });
+    const response = await fetch(url, { method: endpoint.method, headers: { ...(name === 'auth.proof' || name === 'system.ping' ? {} : { Authorization: `Bearer ${token()}` }), ...(body == null ? {} : { 'Content-Type': 'application/json' }) }, ...(body == null ? {} : { body: JSON.stringify(body) }) });
     if (!response.ok) throw (await response.json()).error;
     return response.status === 204 ? undefined as T : response.json();
   }
@@ -57,6 +57,7 @@ export function createCompanion(base: string, token: () => string) {
     system: {
       get: (path: Record<string, never> = {}, query: null = null as null, body: null = null as null) => call<SystemInfo>('system.get', path, query, body),
       shutdown: (path: Record<string, never> = {}, query: null = null as null, body: null = null as null) => call<null>('system.shutdown', path, query, body),
+      ping: () => call<{ api: string[] }>('system.ping', {}, null, null),
     },
     auth: {
       proof: (body: ProofRequest) => call<Proof>('auth.proof', {}, null, body),
