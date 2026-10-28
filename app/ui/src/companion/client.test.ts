@@ -124,4 +124,12 @@ describe('sessions', () => {
     const error = await companion.system.get().catch((e: unknown) => e);
     expect(isApiError(error, 'auth.missing')).toBe(true);
   });
+
+  test('a session that cannot be fetched is unreachable, and nothing is sent', async () => {
+    const bridge = { ...fake.bridge, session: () => Promise.reject(new TypeError('Failed to fetch')) };
+    const companion = createClient(BASE, windowSession(bridge));
+    const error = await companion.system.get().catch((e: unknown) => e);
+    expect(isApiError(error, 'client.unreachable')).toBe(true);
+    expect(fake.requests).toBe(0);
+  });
 });

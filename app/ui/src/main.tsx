@@ -6,9 +6,13 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App.tsx';
 import { CompanionContext, connect, pageEnvironment, type Environment } from './companion/connection.ts';
 
-// The demo branch is dropped from production builds, fake Companion and all.
+// The demo and dev branches are dropped from production builds, fake Companion and all.
 const env: Environment =
-  import.meta.env.MODE === 'demo' ? (await import('./companion/demo.ts')).demoEnvironment(window) : pageEnvironment(window);
+  import.meta.env.MODE === 'demo'
+    ? (await import('./companion/demo.ts')).demoEnvironment(window)
+    : import.meta.env.DEV
+      ? (await import('./companion/dev.ts')).devEnvironment(window)
+      : pageEnvironment(window);
 
 const { companion } = connect(env);
 

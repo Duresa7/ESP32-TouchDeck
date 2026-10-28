@@ -2,8 +2,10 @@ import { defineConfig, devices } from '@playwright/test';
 
 // Component and e2e specs run against `pnpm dev:demo`, the UI on the fake Companion.
 // On Windows they drive the installed Microsoft Edge, so no browser download is needed.
+// companion.spec.ts needs the real Companion: playwright.companion.config.ts runs it.
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: 'companion.spec.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   reporter: [['list']],

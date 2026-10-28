@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import react from '@vitejs/plugin-react';
 import type { Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
+import { companionDev } from './dev/companion.ts';
 
 const require = createRequire(import.meta.url);
 
@@ -20,7 +21,7 @@ function archivoLicense(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), archivoLicense()],
+  plugins: [react(), archivoLicense(), companionDev()],
   clearScreen: false,
   server: { host: '127.0.0.1', port: 5174, strictPort: true },
   preview: { host: '127.0.0.1', port: 5174, strictPort: true },

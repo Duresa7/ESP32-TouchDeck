@@ -17,5 +17,5 @@
     "isolatedModules": true,
     "skipLibCheck": true
   },
-  "include": ["src", "e2e", "vite.config.ts", "playwright.config.ts"]
+  "include": ["src", "dev", "e2e", "vite.config.ts", "playwright.config.ts", "playwright.companion.config.ts"]
 }

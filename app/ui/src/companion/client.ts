@@ -1,5 +1,5 @@
 import { createCompanion } from './api.ts';
-import { isSessionError, toApiError } from './errors.ts';
+import { ApiError, isSessionError, toApiError } from './errors.ts';
 import type { Session } from './session.ts';
 
 export type Companion = ReturnType<typeof createCompanion>;
@@ -9,7 +9,12 @@ export type Companion = ReturnType<typeof createCompanion>;
  * ApiError. A 401 asks the session for a new token and retries once.
  */
 export async function request<T>(session: Session, send: () => Promise<T>): Promise<T> {
-  const token = await session.token();
+  let token: string | null;
+  try {
+    token = await session.token();
+  } catch (error) {
+    throw new ApiError('client.unreachable', error instanceof Error ? error.message : "Couldn't get a session.");
+  }
   try {
     return await send();
   } catch (first) {

@@ -18,7 +18,8 @@
     "dev:ui:demo": "pnpm --filter touchdeck-ui dev:demo",
     "build:ui": "pnpm --filter touchdeck-ui build",
     "test:ui": "pnpm --filter touchdeck-ui test",
-    "e2e:ui": "pnpm --filter touchdeck-ui e2e"
+    "e2e:ui": "pnpm --filter touchdeck-ui e2e",
+    "e2e:ui:companion": "pnpm --filter touchdeck-ui e2e:companion"
   },
   "dependencies": {
     "@tauri-apps/api": "~2.11.1"
