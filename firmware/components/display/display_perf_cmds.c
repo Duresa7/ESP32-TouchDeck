@@ -630,14 +630,15 @@ static void cmd_cpu(int argc, char **argv)
     }
 }
 
-/* Keep the installed sensor until reset, including after an enable failure. Only the console task uses it. */
+/* The sensor stays installed until reset, after an enable failure too. Only the console task uses it. */
 static temperature_sensor_handle_t s_temp_sensor;
 static bool s_temp_enabled;
 
 static esp_err_t temp_sensor_start(void)
 {
     if (s_temp_sensor == NULL) {
-        const temperature_sensor_config_t config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(TEMP_RANGE_MIN_C, TEMP_RANGE_MAX_C);
+        const temperature_sensor_config_t config =
+            TEMPERATURE_SENSOR_CONFIG_DEFAULT(TEMP_RANGE_MIN_C, TEMP_RANGE_MAX_C);
         esp_err_t err = temperature_sensor_install(&config, &s_temp_sensor);
         if (err != ESP_OK) {
             return err;

@@ -22,8 +22,8 @@
  * caused it.
  *
  * Last boot: app_main samples the heaps and task stacks every two seconds. The shutdown handler only copies the
- * latest completed sample to RTC memory, under a magic number and a CRC, and `perf mem last`
- * reports them after the restart. A panic, a watchdog or a power cut runs no shutdown handler, so the record then
+ * latest completed sample to RTC memory, under a magic number and a CRC, and `perf mem last` reports it after the
+ * restart. A panic, a watchdog or a power cut runs no shutdown handler, so the record then
  * stays the one an earlier restart saved, and `perf mem last` answers saved false with that boot in stale_boot.
  *
  * The boot count lives in that memory too, and starts again from 1 when power-on leaves it holding garbage.
@@ -89,8 +89,9 @@ static RTC_NOINIT_ATTR last_mem_t s_last;
 static RTC_NOINIT_ATTR boot_stage_t s_stages[BOOT_STAGES_MAX];
 static uint32_t s_stages_n;
 static bool s_boot_started;
-/* Only app_main samples. Shutdown stops future samples before reading the published buffer, so an in-progress
- * sample can finish in the other buffer without overwriting the one being saved. Neither path waits for the other. */
+/* Only app_main samples, into the buffer s_sample_index does not name, and then names it. The shutdown handler stops
+ * further samples before it copies the named one, so a sample still in progress finishes in the other buffer and
+ * never overwrites the one being saved. Neither waits for the other. */
 static TaskStatus_t *s_last_status;
 static last_mem_t s_samples[2];
 static atomic_uint s_sample_index;
