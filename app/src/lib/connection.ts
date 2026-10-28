@@ -56,6 +56,8 @@ export async function connectTo(port: string) {
 
 export async function leave() {
   lost.set(false);
+  // Clear the deck first, so the session's close event, which may arrive later, does not report a lost link.
+  deck.set(null);
   await disconnect();
 }
 
