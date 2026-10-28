@@ -19,7 +19,7 @@ use axum::{
 pub use error::{ApiError, CommonError, ErrorBody};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-pub use socket::{Event, Events};
+pub use socket::{Event, Events, Topic};
 use std::{collections::HashMap, future::Future, sync::Arc};
 use ts_rs::TS;
 

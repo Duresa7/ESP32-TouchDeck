@@ -1,8 +1,4 @@
-use crate::{
-    api::Ctx,
-    devices::{PortSource, RealPorts},
-    runtime::Runtime,
-};
+use crate::{api::Ctx, devices::Config, runtime::Runtime};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -63,24 +59,21 @@ async fn bind(root: &Path) -> std::io::Result<tokio::net::TcpListener> {
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let (source, mock): (Arc<dyn PortSource>, bool) = match args.as_slice() {
-        [] => (Arc::new(RealPorts::default()), false),
+    // How many mock Devices to plug in, when the Companion runs on mock ports.
+    let mock_devices: Option<usize> = match args.as_slice() {
+        [] => None,
         #[cfg(feature = "test-hooks")]
         ["--emit-ts", path] => {
             if let Some(parent) = Path::new(path).parent() {
                 std::fs::create_dir_all(parent)?;
             }
             std::fs::write(path, crate::bindings::generate())?;
+            let test = Path::new(path).with_file_name("api.test.gen.ts");
+            std::fs::write(test, crate::bindings::generate_test())?;
             return Ok(());
         }
         #[cfg(feature = "test-hooks")]
-        ["--mock-devices", count] => {
-            let ports = crate::devices::MockPorts::default();
-            for n in 1..=count.parse::<usize>()? {
-                ports.plug(&format!("mock{n:04}"));
-            }
-            (Arc::new(ports), true)
-        }
+        ["--mock-devices", count] => Some(count.parse()?),
         _ => return Err("Unknown Companion argument.".into()),
     };
     let root = root()?;
@@ -100,7 +93,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert!(listener.local_addr()?.ip().is_loopback());
     let ctx = Ctx::new(
         listener.local_addr()?.port(),
-        mock,
+        mock_devices.is_some(),
         Some(runtime.clone()),
         crate::Limits::default(),
     );
@@ -111,17 +104,21 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     })
     .await?;
     written.map_err(|e| format!("The runtime file could not be secured: {e}"))?;
-    let refresh = ctx.clone();
-    let worker = tokio::spawn(async move {
-        loop {
-            let source = source.clone();
-            let ports = tokio::task::spawn_blocking(move || source.scan())
-                .await
-                .unwrap_or_default();
-            refresh.devices.refresh(ports);
-            tokio::time::sleep(Duration::from_secs(1)).await;
+    match mock_devices {
+        None => ctx.devices.start(Config::real(&root)),
+        #[cfg(feature = "test-hooks")]
+        Some(count) => {
+            // Mock Devices are kept in memory, so they never reach a real `devices.json`.
+            let config = Config::mock(None);
+            let (ports, _) = config.mock.clone().expect("mock config");
+            ctx.devices.start(config);
+            for n in 1..=count {
+                ports.plug(&format!("mock{n:04}"), crate::devices::BoardKind::Device);
+            }
         }
-    });
+        #[cfg(not(feature = "test-hooks"))]
+        Some(_) => unreachable!("only test-hooks builds take --mock-devices"),
+    }
     let repair = ctx.clone();
     let maintenance = tokio::spawn(async move {
         loop {
@@ -140,8 +137,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     let stop = ctx.shutdown.subscribe();
     let limits = ctx.limits;
+    let devices = ctx.devices.clone();
     crate::serve::serve(listener, crate::api::router(ctx), limits, stop).await;
-    worker.abort();
+    devices.stop();
     maintenance.abort();
     runtime.remove();
     Ok(())

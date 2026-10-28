@@ -248,7 +248,7 @@ Image uploads for Assets stay on the API (`POST /uploads`). The Companion decode
 - **`DeviceId`** is the USB serial number from `serialport::UsbPortInfo.serial_number`, which is the chip's MAC on the ESP32-S3 USB-Serial/JTAG, lowercased with separators removed, such as `a0b1c2d3e4f5`.
   - It's an opaque string matching `^[0-9a-z]{1,32}$`. The `DevicePath` extractor checks it once, and handlers receive a typed `DeviceId`.
   - Protocol v2 `hello` also reports the id, and the Companion compares the two. If they disagree, the USB serial wins and the Companion logs a warning. v1 Firmware has no id in `hello`, and the USB serial still identifies it.
-  - If a driver reports no serial number, the id falls back to `port-<sanitized port name>`, and the summary sets `stable_id: false`.
+  - If a driver reports no serial number, the id falls back to `port` followed by the port name lowercased with everything but letters and digits removed, such as `portcom7`, and the summary sets `stable_id: false`. #74 dropped the hyphen this rule used to have, so the fallback matches the id pattern.
   - If two Devices' ids come out the same, the one that already holds it keeps it. The other gets the first 27 characters, `x`, and 4 hex digits of its port name's SHA-256, such as `a0b1c2d3e4f5x9c1e`. That id holds while the Device stays on that port, so its summary sets `stable_id: false`.
   - Mock Devices use `mock0001`, `mock0002` and so on.
 - **The port** (`COM7`) is for diagnostics only. It appears in `DeviceSummary.link.port` and never in a route. Every command that took a `port` today takes a `DeviceId` instead.
@@ -285,6 +285,27 @@ pub enum LostReason { Unplugged, Timeout, IoError, Closed }
 ```
 
 `Lost` and `Disconnected` are separate variants, so the UI can't confuse "Connection lost" with "Device not connected".
+
+How the Device manager (#74) moves between them:
+
+| From | Event | To |
+|---|---|---|
+| `offline`, `lost` with `unplugged` | Its port appears | `connecting` |
+| `connecting`, `lost` | `hello` answers | `connected` |
+| `connecting` | Still silent 3 s after the port appeared (the boot grace), or answers as other Firmware | `unresponsive` |
+| `connecting`, `unresponsive` | The port is held by another program | `busy` |
+| `connected` | The session ends on its own: missed pings, an I/O error, a closed stream, or a ping that shows the Device restarted | `lost` with `timeout`, `io-error` or `closed`. The Companion keeps probing; silence keeps it `lost` |
+| `connected` | `devices.restart` | `connecting`, then `connected` with a fresh `hello` once it boots |
+| `connected`, `lost` | Its port leaves | `lost` with `unplugged`, until replug or restart |
+| `connecting`, `busy`, `unresponsive`, `disconnected` | Its port leaves | `offline`. Unplugging also ends a Disconnect |
+| any | `devices.disconnect` | `disconnected` |
+| `disconnected` | `devices.connect` | `connecting` if plugged in, else `offline` |
+
+- The scan thread wakes on a USB change (`CM_Register_Notification` on Windows) and polls every second as a fallback. Each port is probed with `hello` at a 500 ms timeout. A port that isn't a Device is probed again after 0.25 s, doubling up to 10 s; `ports.rescan`, `devices.connect`, a lost link and a replug reset that.
+- A probe that finds a Device keeps its session, so a Device connects with one open. The session and its blocking calls live on that Device's actor thread.
+- A silent board stays unclassified during the boot grace, so a Device being plugged in doesn't flash `unresponsive` or a New board.
+- On Windows a Device that restarts keeps its COM port open, so the session would outlive the restart and the Device would count the app as offline until the next `hello`. So `devices.restart` closes the link after sending `reboot`, and a ping whose uptime went backwards closes it too. Both start a fresh probe under a new boot grace.
+- A Device found by `hello` is `setup: "ready"`. `needs-setup` is for a New board that just got Firmware (#77). Known Devices and their names are saved in `devices.json`; at start they load as `offline`.
 
 ```rust
 pub struct DeviceSummary {
@@ -328,7 +349,7 @@ pub enum BoardProbe { Silent, Busy { detail: String }, OtherFirmware { product: 
 
 ### Topics
 
-The client sends `{"op": "subscribe", "topic": "console", "device": "a0b1c2d3e4f5"}` or the same with `"op": "unsubscribe"`. Until the first opt-in topic ships, the Companion accepts these and ignores them, and the socket stays open.
+The client sends `{"op": "subscribe", "topic": "console", "device": "a0b1c2d3e4f5"}` or the same with `"op": "unsubscribe"`. Each socket keeps its own set of topic and Device pairs. A request with an unknown op or topic, an invalid Device id, or the `state` topic changes nothing, and the socket stays open. There's no reply, so a client that needs the first frame retries until it arrives.
 
 | Topic | Default | Carries |
 |---|---|---|
@@ -414,7 +435,7 @@ Feature modules `devices`, `ports` and `console`.
 | `devices.get` | `GET /devices/{device}` | → `DeviceSummary` |
 | `devices.connect` | `POST /devices/{device}/connect` | → `DeviceSummary`. Turns auto-connect back on after a Disconnect |
 | `devices.disconnect` | `POST /devices/{device}/disconnect` | → `DeviceSummary` with `link.state: "disconnected"`. Releases the port until replug or Connect |
-| `devices.forget` | `DELETE /devices/{device}` | → `()`. Only for a Device that isn't connected |
+| `devices.forget` | `DELETE /devices/{device}` | → `()`. Only for a Device that isn't connected; a connected one gives 409 `device.connected` |
 | `devices.restart` | `POST /devices/{device}/restart` | → `()`, then `device.updated` events |
 | `devices.settings_get` | `GET /devices/{device}/settings` | → `DeviceSettings {idle_timeout_s, orientation, name?, brightness?}`. v2 fields are `null` on v1 Firmware |
 | `devices.settings_patch` | `PATCH /devices/{device}/settings` | `DeviceSettingsPatch`, every field optional → `{settings, restart_required}`. A v2 field on v1 Firmware gives 409 `device.needs_firmware` |
@@ -675,10 +696,11 @@ Features add codes as they land. This list is the starting set.
 | `route.method_not_allowed` | 405 | The path exists with another method |
 | `device.not_found` | 404 | No Device with that id |
 | `device.not_connected` | 409 | The Device is known but offline, disconnected, busy or unresponsive. `details.link` |
+| `device.connected` | 409 | `devices.forget` on a connected Device. Disconnect it first |
 | `device.busy` | 409 | A Job holds the Device. `details.job` |
 | `device.timeout` | 504 | The Device didn't reply in time |
 | `device.link` | 502 | Link I/O failed or the Device refused. `details.reason` |
-| `device.needs_firmware` | 409 | The feature needs newer Firmware. `details.version` |
+| `device.needs_firmware` | 409 | The feature needs newer Firmware. `details.field` names the setting; `details.version` is the version that adds it, or `null` while no released Firmware has it (brightness today) |
 | `new_board.not_found` | 404 | No New board with that id |
 | `layout.invalid` | 422 | The Layout fails validation. `details.issues` |
 | `layout.orientation_mismatch` | 422 | The path and body orientations differ |
@@ -898,7 +920,7 @@ Never add a public route, a CORS header, a route that answers approvals, or a ro
 | A tray program's dialog may not get the foreground on Windows | **Reduced.** The tray notification and `approvals.show`. The approval waits up to 5 minutes |
 | `assets.create` with `kind: "app"` takes any path, so a session can learn whether a file exists | **Accepted.** The Companion returns only a rendered icon, never file contents |
 | The build-script registry may confuse rust-analyzer | **Resolved.** #71 uses `inventory` (see Feature modules) |
-| `td-link`'s blocking `Session` under async handlers needs one actor thread per Device | **Open**, the Device manager ticket (#74) builds it |
-| With Fast User Switching, two Companions try to open the same COM ports | **Open.** The second sees the port as `busy`. #74 decides whether to back off |
+| `td-link`'s blocking `Session` under async handlers needs one actor thread per Device | **Resolved** in #74. Each Device's actor thread owns its session and runs requests one at a time; probes run on the scan thread |
+| With Fast User Switching, two Companions try to open the same COM ports | **Reduced** in #74. A COM port opens exclusively, so the Companion that holds a Device keeps it; the other user's Companion shows it `busy` and retries with backoff up to every 10 s, taking it over only once the first lets go. Each user has their own runtime folder, file, lock and port, so the two Companions never share a pairing token |
 | A browser tab can't show the app update icon, because updates live in Electron | **Open.** The browser shows nothing for now |
 | The key monitor's `focus_window` may need to come back | **Open.** If so, one preload call, through security review |

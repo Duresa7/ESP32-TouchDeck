@@ -5172,6 +5172,7 @@ dependencies = [
  "subtle",
  "td-companion",
  "td-core",
+ "td-host",
  "td-link",
  "tempfile",
  "thiserror 2.0.21",

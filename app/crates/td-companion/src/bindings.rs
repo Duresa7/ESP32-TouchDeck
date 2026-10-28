@@ -53,8 +53,39 @@ pub fn events(features: &[Feature]) -> Vec<EventInfo> {
     events
 }
 
+/// The feature whose routes go to `api.test.gen.ts` instead, so the product UI can't import them.
+const TEST_FEATURE: &str = "test";
+
+/// The test hooks' routes and types, for the e2e harness.
+pub fn generate_test() -> String {
+    let features: Vec<Feature> = crate::api::registry()
+        .into_iter()
+        .filter(|f| f.name == TEST_FEATURE)
+        .collect();
+    let mut decls = Decls::default();
+    for e in features.iter().flat_map(|f| &f.endpoints) {
+        (e.types)(&mut decls);
+    }
+    let mut out = String::from("// Generated from td-companion's test hooks. Do not edit.\n");
+    for decl in decls.decls.values() {
+        out.push_str(&format!("export {decl}\n"));
+    }
+    out.push_str("export const testEndpoints = {\n");
+    for e in features.iter().flat_map(|f| &f.endpoints) {
+        out.push_str(&format!(
+            "  '{}': {{ method: '{}', path: '{}', access: 'session' }},\n",
+            e.name, e.method, e.path
+        ));
+    }
+    out.push_str("} as const;\n");
+    out.replace("bigint", "number")
+}
+
 pub fn generate() -> String {
-    let features = crate::api::registry();
+    let features: Vec<Feature> = crate::api::registry()
+        .into_iter()
+        .filter(|f| f.name != TEST_FEATURE)
+        .collect();
     let events = events(&features);
     let mut decls = Decls::default();
     for feature in &features {
