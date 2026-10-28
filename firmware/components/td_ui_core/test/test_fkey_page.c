@@ -38,9 +38,9 @@ static void record_mod(void *ctx, key_mod_t mod)
 
 static const ui_action_ops_t k_ops = { .key = record_key, .mod = record_mod };
 
-/* Copies of the deck's pager config in ui_deck.c and grid in ui_theme.c. */
+/* Copies of the deck's pager config in ui_deck.c and landscape grid in ui_geometry.c. */
 static const ui_pager_cfg_t k_pager_cfg = { .page_w = 1024, .slop = 16, .swipe = 96 };
-static const ui_rect_t k_area = { .x = 28, .y = 76, .w = 968, .h = 464 };
+static const ui_rect_t k_area = { .x = 28, .y = 76, .w = 968, .h = 468 };
 #define GAP 16
 
 static const struct {

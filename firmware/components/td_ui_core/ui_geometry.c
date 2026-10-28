@@ -1,8 +1,21 @@
 #include "ui_geometry.h"
 
-/* The milestone 1 design was drawn for a short side of 600 px, and the dashboard columns for a 968 px grid. */
+/* docs/design.md draws the screen for a short side of 600 px, and the dashboard columns for a 968 px grid. */
 #define DESIGN_SHORT 600
 #define DESIGN_DASH_W 968
+
+/* The Geometry table of docs/design.md. The band reaches BAND_MARGIN past the grid above and below. */
+#define PAD_X 28
+#define PAD_TOP 76
+#define PAD_BOTTOM 56
+#define BAND_MARGIN 20
+#define GAP 16
+#define TITLE_X 36
+#define TITLE_Y 22
+#define PAGER_DOT 12
+#define PAGER_CURRENT 36
+#define PAGER_GAP 12
+#define PAGER_BOTTOM 18
 
 static int16_t scaled(int32_t px, int32_t short_side)
 {
@@ -17,21 +30,21 @@ ui_size_t ui_screen_size(ui_orientation_t orientation)
 ui_geometry_t ui_geometry(ui_size_t screen, bool full_screen)
 {
     const int32_t s = screen.w < screen.h ? screen.w : screen.h;
-    const int16_t title_strip = scaled(56, s);
-    const int16_t dot_strip = scaled(40, s);
-    const int16_t margin_x = scaled(28, s);
-    const int16_t margin_y = scaled(20, s);
+    const int16_t title_strip = scaled(PAD_TOP - BAND_MARGIN, s);
+    const int16_t pager_strip = scaled(PAD_BOTTOM - BAND_MARGIN, s);
+    const int16_t margin_x = scaled(PAD_X, s);
+    const int16_t margin_y = scaled(BAND_MARGIN, s);
 
     ui_geometry_t g = {
         .screen = screen,
-        .band = { .x = 0, .y = title_strip, .w = screen.w, .h = (int16_t)(screen.h - title_strip - dot_strip) },
-        .gap = scaled(16, s),
-        .title_x = scaled(36, s),
-        .title_y = scaled(14, s),
-        .dot_y = (int16_t)(screen.h - scaled(20, s)),
-        .dot_pitch = scaled(34, s),
-        .dot_size = scaled(12, s),
-        .dot_active_extra = scaled(11, s),
+        .band = { .x = 0, .y = title_strip, .w = screen.w, .h = (int16_t)(screen.h - title_strip - pager_strip) },
+        .gap = scaled(GAP, s),
+        .title_x = scaled(TITLE_X, s),
+        .title_y = scaled(TITLE_Y, s),
+        .dot_y = (int16_t)(screen.h - scaled(PAGER_BOTTOM + PAGER_DOT / 2, s)),
+        .dot_size = scaled(PAGER_DOT, s),
+        .dot_current = scaled(PAGER_CURRENT, s),
+        .dot_gap = scaled(PAGER_GAP, s),
         .bounce_px = scaled(48, s),
         .slop = scaled(16, s),
         .swipe = scaled(96, s),
@@ -47,10 +60,20 @@ ui_geometry_t ui_geometry(ui_size_t screen, bool full_screen)
     return g;
 }
 
-int16_t ui_geometry_dot_x(const ui_geometry_t *g, uint8_t index, uint8_t count)
+ui_rect_t ui_geometry_pager_dot(const ui_geometry_t *g, uint8_t index, uint8_t count, uint8_t current)
 {
-    const int span = (count > 0 ? count - 1 : 0) * g->dot_pitch;
-    return (int16_t)((g->screen.w - span) / 2 + index * g->dot_pitch);
+    const int32_t pitch = g->dot_size + g->dot_gap;
+    const int32_t row_w = (count > 0 ? count - 1 : 0) * pitch + g->dot_current;
+    int32_t x = (g->screen.w - row_w) / 2 + index * pitch;
+    if (index > current) {
+        x += g->dot_current - g->dot_size;
+    }
+    return (ui_rect_t){
+        .x = (int16_t)x,
+        .y = (int16_t)(g->dot_y - g->dot_size / 2),
+        .w = index == current ? g->dot_current : g->dot_size,
+        .h = g->dot_size,
+    };
 }
 
 static int32_t clamp(int32_t v, int32_t size)

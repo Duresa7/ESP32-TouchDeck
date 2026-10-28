@@ -22,7 +22,7 @@
         TEST_ASSERT_EQUAL_INT16((want_h), (got).h);      \
     } while (0)
 
-static const ui_rect_t k_area = { .x = 28, .y = 76, .w = 968, .h = 464 };
+static const ui_rect_t k_area = { .x = 28, .y = 76, .w = 968, .h = 468 };
 
 static const char *const k_fkeys_ids[] = {
     "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "shift", "ctrl", "alt", "win",
@@ -264,35 +264,35 @@ TEST_CASE("the Media page has transport tiles on row 0 and volume tiles on row 1
     expect_tiles(builtin_page(1), k_media_ids, k_media_labels, 6, 3);
 }
 
-TEST_CASE("F-Keys tile rects follow from the deck's 968 by 464 grid with a 16 pixel gap", "[ui_pages]")
+TEST_CASE("F-Keys tile rects follow from the deck's 968 by 468 grid with a 16 pixel gap", "[ui_pages]")
 {
     const ui_page_t *page = builtin_page(0);
-    /* Columns are 230 wide at x 28, 274, 520 and 766. Rows are 104 high at y 76, 196, 316 and 436. */
-    EXPECT_RECT(rect_of(page, "f1"), 28, 76, 230, 104);
-    EXPECT_RECT(rect_of(page, "f2"), 274, 76, 230, 104);
-    EXPECT_RECT(rect_of(page, "f4"), 766, 76, 230, 104);
-    EXPECT_RECT(rect_of(page, "f6"), 274, 196, 230, 104);
-    EXPECT_RECT(rect_of(page, "f10"), 274, 316, 230, 104);
-    EXPECT_RECT(rect_of(page, "f12"), 766, 316, 230, 104);
-    EXPECT_RECT(rect_of(page, "shift"), 28, 436, 230, 104);
-    EXPECT_RECT(rect_of(page, "win"), 766, 436, 230, 104);
+    /* Columns are 230 wide at x 28, 274, 520 and 766. Rows are 105 high at y 76, 197, 318 and 439. */
+    EXPECT_RECT(rect_of(page, "f1"), 28, 76, 230, 105);
+    EXPECT_RECT(rect_of(page, "f2"), 274, 76, 230, 105);
+    EXPECT_RECT(rect_of(page, "f4"), 766, 76, 230, 105);
+    EXPECT_RECT(rect_of(page, "f6"), 274, 197, 230, 105);
+    EXPECT_RECT(rect_of(page, "f10"), 274, 318, 230, 105);
+    EXPECT_RECT(rect_of(page, "f12"), 766, 318, 230, 105);
+    EXPECT_RECT(rect_of(page, "shift"), 28, 439, 230, 105);
+    EXPECT_RECT(rect_of(page, "win"), 766, 439, 230, 105);
 
     const ui_rect_t f4 = rect_of(page, "f4");
     TEST_ASSERT_EQUAL_INT_MESSAGE(996, f4.x + f4.w, "the last column ends on the area's right edge");
     const ui_rect_t win = rect_of(page, "win");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(540, win.y + win.h, "the last row ends on the area's bottom edge");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(544, win.y + win.h, "the last row ends on the area's bottom edge");
 }
 
-TEST_CASE("Media tile rects follow from the deck's 968 by 464 grid with a 16 pixel gap", "[ui_pages]")
+TEST_CASE("Media tile rects follow from the deck's 968 by 468 grid with a 16 pixel gap", "[ui_pages]")
 {
     const ui_page_t *page = builtin_page(1);
-    /* Columns are 312 wide at x 28, 356 and 684. Rows are 224 high at y 76 and 316. */
-    EXPECT_RECT(rect_of(page, "prev"), 28, 76, 312, 224);
-    EXPECT_RECT(rect_of(page, "playpause"), 356, 76, 312, 224);
-    EXPECT_RECT(rect_of(page, "next"), 684, 76, 312, 224);
-    EXPECT_RECT(rect_of(page, "mute"), 28, 316, 312, 224);
-    EXPECT_RECT(rect_of(page, "voldown"), 356, 316, 312, 224);
-    EXPECT_RECT(rect_of(page, "volup"), 684, 316, 312, 224);
+    /* Columns are 312 wide at x 28, 356 and 684. Rows are 226 high at y 76 and 318. */
+    EXPECT_RECT(rect_of(page, "prev"), 28, 76, 312, 226);
+    EXPECT_RECT(rect_of(page, "playpause"), 356, 76, 312, 226);
+    EXPECT_RECT(rect_of(page, "next"), 684, 76, 312, 226);
+    EXPECT_RECT(rect_of(page, "mute"), 28, 318, 312, 226);
+    EXPECT_RECT(rect_of(page, "voldown"), 356, 318, 312, 226);
+    EXPECT_RECT(rect_of(page, "volup"), 684, 318, 312, 226);
 }
 
 TEST_CASE("built-in tiles stay in the area, never overlap and sit exactly one gap apart", "[ui_pages]")
@@ -313,10 +313,10 @@ TEST_CASE("a tile that spans cells covers them and the gaps between them", "[ui_
     const ui_page_t page = page_of(4, 4, tiles, 3);
     TEST_ASSERT_TRUE(ui_page_valid(&page));
 
-    /* big is 230 + 16 + 230 wide and 104 + 16 + 104 high. wide is 3 * 230 + 2 * 16. tall is 104 + 16 + 104. */
-    EXPECT_RECT(rect_of(&page, "big"), 28, 76, 476, 224);
-    EXPECT_RECT(rect_of(&page, "wide"), 28, 436, 722, 104);
-    EXPECT_RECT(rect_of(&page, "tall"), 766, 316, 230, 224);
+    /* big is 230 + 16 + 230 wide and 105 + 16 + 105 high. wide is 3 * 230 + 2 * 16. tall is 105 + 16 + 105. */
+    EXPECT_RECT(rect_of(&page, "big"), 28, 76, 476, 226);
+    EXPECT_RECT(rect_of(&page, "wide"), 28, 439, 722, 105);
+    EXPECT_RECT(rect_of(&page, "tall"), 766, 318, 230, 226);
 
     const ui_page_t *fkeys = builtin_page(0);
     const ui_rect_t f1 = rect_of(fkeys, "f1");

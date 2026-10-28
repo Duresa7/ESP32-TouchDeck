@@ -29,41 +29,85 @@ static ui_geometry_t full_screen_of(ui_orientation_t orientation)
     return ui_geometry(ui_screen_size(orientation), true);
 }
 
-TEST_CASE("landscape geometry reproduces the milestone 1 pixel values", "[ui_geometry]")
+TEST_CASE("landscape geometry reproduces the design's screen pixels", "[ui_geometry]")
 {
     const ui_geometry_t g = geometry_of(UI_LANDSCAPE);
     TEST_ASSERT_EQUAL_INT16(1024, g.screen.w);
     TEST_ASSERT_EQUAL_INT16(600, g.screen.h);
-    EXPECT_RECT(g.band, 0, 56, 1024, 504);
-    EXPECT_RECT(g.grid, 28, 76, 968, 464);
+    EXPECT_RECT(g.band, 0, 56, 1024, 508);
+    /* 28 px left and right, 76 px on top and 56 px over the pager. */
+    EXPECT_RECT(g.grid, 28, 76, 968, 468);
+    TEST_ASSERT_EQUAL_INT16(600 - 56, g.grid.y + g.grid.h);
     TEST_ASSERT_EQUAL_INT16(16, g.gap);
     TEST_ASSERT_EQUAL_INT16(36, g.title_x);
-    TEST_ASSERT_EQUAL_INT16(14, g.title_y);
-    TEST_ASSERT_EQUAL_INT16(580, g.dot_y);
-    TEST_ASSERT_EQUAL_INT16(34, g.dot_pitch);
+    TEST_ASSERT_EQUAL_INT16(22, g.title_y);
+    TEST_ASSERT_EQUAL_INT16(576, g.dot_y);
     TEST_ASSERT_EQUAL_INT16(12, g.dot_size);
-    TEST_ASSERT_EQUAL_INT16(11, g.dot_active_extra);
+    TEST_ASSERT_EQUAL_INT16(36, g.dot_current);
+    TEST_ASSERT_EQUAL_INT16(12, g.dot_gap);
     TEST_ASSERT_EQUAL_INT16(48, g.bounce_px);
     TEST_ASSERT_EQUAL_INT16(16, g.slop);
     TEST_ASSERT_EQUAL_INT16(96, g.swipe);
     TEST_ASSERT_EQUAL_INT16(360, g.dash_value_x);
     TEST_ASSERT_EQUAL_INT16(600, g.dash_bar_x);
-    TEST_ASSERT_EQUAL_INT16(495, ui_geometry_dot_x(&g, 0, 2));
-    TEST_ASSERT_EQUAL_INT16(529, ui_geometry_dot_x(&g, 1, 2));
 }
 
-TEST_CASE("portrait geometry is 600 by 1024 with the band, grid and dots inside it", "[ui_geometry]")
+TEST_CASE("the landscape pager draws the current Page as a 36 px pill 18 px above the bottom edge", "[ui_geometry]")
+{
+    const ui_geometry_t g = geometry_of(UI_LANDSCAPE);
+    EXPECT_RECT(ui_geometry_pager_dot(&g, 0, 2, 0), 482, 570, 36, 12);
+    EXPECT_RECT(ui_geometry_pager_dot(&g, 1, 2, 0), 530, 570, 12, 12);
+    EXPECT_RECT(ui_geometry_pager_dot(&g, 0, 2, 1), 482, 570, 12, 12);
+    EXPECT_RECT(ui_geometry_pager_dot(&g, 1, 2, 1), 506, 570, 36, 12);
+    const ui_rect_t only = ui_geometry_pager_dot(&g, 0, 1, 0);
+    EXPECT_RECT(only, 494, 570, 36, 12);
+    TEST_ASSERT_EQUAL_INT16(600 - 18, only.y + only.h);
+}
+
+/* For every Page count and every current Page: one pill, every gap dot_gap, the row centred and on the screen. */
+static void check_pager(ui_orientation_t orientation)
+{
+    const ui_geometry_t g = geometry_of(orientation);
+    for (uint8_t count = 1; count <= 8; count++) {
+        for (uint8_t current = 0; current < count; current++) {
+            const ui_rect_t first = ui_geometry_pager_dot(&g, 0, count, current);
+            const ui_rect_t last = ui_geometry_pager_dot(&g, (uint8_t)(count - 1), count, current);
+            const int left = first.x;
+            const int right = g.screen.w - (last.x + last.w);
+            TEST_ASSERT_TRUE(left - right >= -1 && left - right <= 1);
+            for (uint8_t i = 0; i < count; i++) {
+                const ui_rect_t d = ui_geometry_pager_dot(&g, i, count, current);
+                TEST_ASSERT_EQUAL_INT16(i == current ? g.dot_current : g.dot_size, d.w);
+                TEST_ASSERT_EQUAL_INT16(g.dot_size, d.h);
+                TEST_ASSERT_EQUAL_INT16(g.dot_y - g.dot_size / 2, d.y);
+                TEST_ASSERT_TRUE(d.x >= 0 && d.x + d.w <= g.screen.w);
+                if (i > 0) {
+                    const ui_rect_t prev = ui_geometry_pager_dot(&g, (uint8_t)(i - 1), count, current);
+                    TEST_ASSERT_EQUAL_INT16(g.dot_gap, d.x - (prev.x + prev.w));
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("the pager keeps one pill and even gaps for every Page count in both orientations", "[ui_geometry]")
+{
+    check_pager(UI_LANDSCAPE);
+    check_pager(UI_PORTRAIT);
+}
+
+TEST_CASE("portrait geometry is 600 by 1024 with the band, grid and pager inside it", "[ui_geometry]")
 {
     const ui_geometry_t g = geometry_of(UI_PORTRAIT);
     TEST_ASSERT_EQUAL_INT16(600, g.screen.w);
     TEST_ASSERT_EQUAL_INT16(1024, g.screen.h);
-    EXPECT_RECT(g.band, 0, 56, 600, 928);
-    EXPECT_RECT(g.grid, 28, 76, 544, 888);
-    TEST_ASSERT_EQUAL_INT16(1004, g.dot_y);
+    EXPECT_RECT(g.band, 0, 56, 600, 932);
+    EXPECT_RECT(g.grid, 28, 76, 544, 892);
+    TEST_ASSERT_EQUAL_INT16(1000, g.dot_y);
     TEST_ASSERT_EQUAL_INT16(16, g.gap);
     TEST_ASSERT_EQUAL_INT16(96, g.swipe);
     TEST_ASSERT_TRUE(g.dash_value_x < g.dash_bar_x && g.dash_bar_x < g.grid.w);
-    TEST_ASSERT_EQUAL_INT16(283, ui_geometry_dot_x(&g, 0, 2));
+    EXPECT_RECT(ui_geometry_pager_dot(&g, 0, 2, 0), 270, 994, 36, 12);
 }
 
 TEST_CASE("full-screen landscape geometry makes the band and the grid the whole 1024 by 600 screen", "[ui_geometry]")
@@ -75,11 +119,11 @@ TEST_CASE("full-screen landscape geometry makes the band and the grid the whole 
     EXPECT_RECT(g.grid, 0, 0, 1024, 600);
     TEST_ASSERT_EQUAL_INT16(16, g.gap);
     TEST_ASSERT_EQUAL_INT16(36, g.title_x);
-    TEST_ASSERT_EQUAL_INT16(14, g.title_y);
-    TEST_ASSERT_EQUAL_INT16(580, g.dot_y);
-    TEST_ASSERT_EQUAL_INT16(34, g.dot_pitch);
+    TEST_ASSERT_EQUAL_INT16(22, g.title_y);
+    TEST_ASSERT_EQUAL_INT16(576, g.dot_y);
     TEST_ASSERT_EQUAL_INT16(12, g.dot_size);
-    TEST_ASSERT_EQUAL_INT16(11, g.dot_active_extra);
+    TEST_ASSERT_EQUAL_INT16(36, g.dot_current);
+    TEST_ASSERT_EQUAL_INT16(12, g.dot_gap);
     TEST_ASSERT_EQUAL_INT16(48, g.bounce_px);
     TEST_ASSERT_EQUAL_INT16(16, g.slop);
     TEST_ASSERT_EQUAL_INT16(96, g.swipe);
@@ -96,11 +140,11 @@ TEST_CASE("full-screen portrait geometry makes the band and the grid the whole 6
     EXPECT_RECT(g.grid, 0, 0, 600, 1024);
     TEST_ASSERT_EQUAL_INT16(16, g.gap);
     TEST_ASSERT_EQUAL_INT16(36, g.title_x);
-    TEST_ASSERT_EQUAL_INT16(14, g.title_y);
-    TEST_ASSERT_EQUAL_INT16(1004, g.dot_y);
-    TEST_ASSERT_EQUAL_INT16(34, g.dot_pitch);
+    TEST_ASSERT_EQUAL_INT16(22, g.title_y);
+    TEST_ASSERT_EQUAL_INT16(1000, g.dot_y);
     TEST_ASSERT_EQUAL_INT16(12, g.dot_size);
-    TEST_ASSERT_EQUAL_INT16(11, g.dot_active_extra);
+    TEST_ASSERT_EQUAL_INT16(36, g.dot_current);
+    TEST_ASSERT_EQUAL_INT16(12, g.dot_gap);
     TEST_ASSERT_EQUAL_INT16(48, g.bounce_px);
     TEST_ASSERT_EQUAL_INT16(16, g.slop);
     TEST_ASSERT_EQUAL_INT16(96, g.swipe);
@@ -167,7 +211,7 @@ TEST_CASE("portrait lays the F-keys grid out 4 wide and 4 tall, taller than wide
     TEST_ASSERT_EQUAL_UINT8(4, page->cols);
     const ui_rect_t f1 = ui_tile_rect(page, ui_page_find_tile(page, "f1"), g.grid, g.gap);
     const ui_rect_t win = ui_tile_rect(page, ui_page_find_tile(page, "win"), g.grid, g.gap);
-    EXPECT_RECT(f1, 28, 76, 124, 210);
+    EXPECT_RECT(f1, 28, 76, 124, 211);
     TEST_ASSERT_EQUAL_INT16(g.grid.x + g.grid.w, win.x + win.w);
     TEST_ASSERT_EQUAL_INT16(g.grid.y + g.grid.h, win.y + win.h);
 }
