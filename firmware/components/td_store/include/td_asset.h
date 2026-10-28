@@ -10,7 +10,8 @@ extern "C" {
 
 /*
  * Assets on the storage volume, keyed by the SHA-256 of their bytes, as schema/protocol/link-v2.md says. A committed
- * Asset is /storage/assets/<id>.bin, where <id> is 64 lowercase hex digits. An upload streams into
+ * Asset is /storage/assets/<shard>/<id>.bin, where <id> is 64 lowercase hex digits and <shard> is its first digit, so
+ * no directory LittleFS has to walk holds more than a sixteenth of the Assets. An upload streams into
  * /storage/assets/upload.tmp while its SHA-256 is computed, and only a complete file whose hash and format check out is
  * renamed into place, so a cut upload never publishes a partial Asset. The mount removes a leftover upload.tmp.
  *

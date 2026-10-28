@@ -12,7 +12,12 @@
 
 #define UPLOAD_TMP TD_ASSET_DIR "/upload.tmp"
 #define BIN_SUFFIX ".bin"
-#define ASSET_PATH_MAX (sizeof(TD_ASSET_DIR) + TD_ASSET_ID_LEN + sizeof(BIN_SUFFIX))
+/* "/storage/assets/<shard>/<id>.bin". The shard is the id's first hex digit, so no directory holds more than a
+ * sixteenth of the Assets. LittleFS looks names up by walking a directory, and each directory costs a two-block
+ * metadata pair, so sixteen shards keep lookups short for at most 128 KB of directories. */
+#define SHARD_PATH_MAX (sizeof(TD_ASSET_DIR) + 2)
+#define ASSET_PATH_MAX (SHARD_PATH_MAX + TD_ASSET_ID_LEN + sizeof(BIN_SUFFIX))
+#define SHARDS "0123456789abcdef"
 /* esp_littlefs formats with 4096-byte blocks. A file block past the first spends up to 8 bytes on its skip-list. */
 #define BLOCK_BYTES 4096u
 #define BLOCK_DATA (BLOCK_BYTES - 8u)
@@ -94,9 +99,14 @@ static td_asset_format_t detect(const uint8_t head[HEAD_BYTES], uint32_t bytes)
     return TD_ASSET_FMT_NONE;
 }
 
+static void shard_path(char out[SHARD_PATH_MAX], char shard)
+{
+    snprintf(out, SHARD_PATH_MAX, TD_ASSET_DIR "/%c", shard);
+}
+
 static void asset_path(char out[ASSET_PATH_MAX], const char *id)
 {
-    snprintf(out, ASSET_PATH_MAX, TD_ASSET_DIR "/%s" BIN_SUFFIX, id);
+    snprintf(out, ASSET_PATH_MAX, TD_ASSET_DIR "/%c/%s" BIN_SUFFIX, id[0], id);
 }
 
 static void hex(const uint8_t digest[TD_SHA256_BYTES], char out[TD_ASSET_ID_LEN + 1])
@@ -218,40 +228,60 @@ typedef struct {
     size_t count;
 } list_walk_t;
 
-static bool list_cb(void *ctx, const char *name, uint32_t size, bool is_dir)
+static void list_take(list_walk_t *walk, const char *id)
 {
-    list_walk_t *walk = ctx;
-    char id[TD_ASSET_ID_LEN + 1];
-    if (is_dir || !name_id(name, id) || (walk->after != NULL && strcmp(id, walk->after) <= 0)) {
-        return true;
-    }
     size_t at = walk->count;
     while (at > 0 && strcmp(walk->found[at - 1].id, id) > 0) {
         at--;
     }
     if (at > TD_ASSET_PAGE) {
-        return true;
+        return;
     }
     const size_t keep = walk->count < TD_ASSET_PAGE + 1 ? walk->count : TD_ASSET_PAGE;
     memmove(&walk->found[at + 1], &walk->found[at], (keep - at) * sizeof walk->found[0]);
     strlcpy(walk->found[at].id, id, sizeof walk->found[at].id);
-    walk->found[at].bytes = size;
     walk->count = keep + 1;
+}
+
+/* Reads one shard's names, without a stat per entry. False on a read error other than a missing shard. */
+static bool list_shard(list_walk_t *walk, char shard)
+{
+    char dir[SHARD_PATH_MAX];
+    shard_path(dir, shard);
+    DIR *d = opendir(dir);
+    if (d == NULL) {
+        return errno == ENOENT;
+    }
+    struct dirent *e;
+    char id[TD_ASSET_ID_LEN + 1];
+    while ((e = readdir(d)) != NULL) {
+        if (e->d_type != DT_DIR && name_id(e->d_name, id) && id[0] == shard
+            && (walk->after == NULL || strcmp(id, walk->after) > 0)) {
+            list_take(walk, id);
+        }
+    }
+    closedir(d);
     return true;
 }
 
-static td_asset_format_t read_format(const char *id, uint32_t bytes)
+/* Size and format of a listed Asset. TD_ASSET_FMT_NONE when it is not a valid committed file. */
+static td_asset_format_t read_item(td_asset_item_t *item)
 {
     char path[ASSET_PATH_MAX];
-    asset_path(path, id);
+    asset_path(path, item->id);
+    struct stat st;
     uint8_t head[HEAD_BYTES] = { 0 };
+    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
+        return TD_ASSET_FMT_NONE;
+    }
+    item->bytes = (uint32_t)st.st_size;
     const int fd = open(path, O_RDONLY);
     if (fd < 0) {
         return TD_ASSET_FMT_NONE;
     }
     const ssize_t n = read(fd, head, sizeof head);
     close(fd);
-    return n == HEAD_BYTES ? detect(head, bytes) : TD_ASSET_FMT_NONE;
+    return n == HEAD_BYTES ? detect(head, item->bytes) : TD_ASSET_FMT_NONE;
 }
 
 td_asset_result_t td_asset_list(const char *after, td_asset_item_t items[TD_ASSET_PAGE], size_t *count, bool *more)
@@ -264,14 +294,22 @@ td_asset_result_t td_asset_list(const char *after, td_asset_item_t items[TD_ASSE
     static list_walk_t walk;
     td_store_lock();
     walk = (list_walk_t){ .after = after };
-    const esp_err_t err = td_store_list(TD_ASSET_DIR, list_cb, &walk);
-    if (err != ESP_OK && err != ESP_ERR_NOT_FOUND) {
+    /* Shards hold ascending id ranges, so the walk starts at the cursor's shard and stops once a page and one more
+     * id are in hand. */
+    bool ok = true;
+    for (const char *shard = after ? strchr(SHARDS, after[0]) : SHARDS; ok && shard && *shard; shard++) {
+        ok = list_shard(&walk, *shard);
+        if (walk.count > TD_ASSET_PAGE) {
+            break;
+        }
+    }
+    if (!ok) {
         td_store_unlock();
         return TD_ASSET_STORAGE;
     }
     /* A file that fails its format check is not a committed Asset. It is skipped, and a later id fills the page. */
     for (size_t i = 0; i < walk.count && *count < TD_ASSET_PAGE; i++) {
-        walk.found[i].format = read_format(walk.found[i].id, walk.found[i].bytes);
+        walk.found[i].format = read_item(&walk.found[i]);
         if (walk.found[i].format != TD_ASSET_FMT_NONE) {
             items[(*count)++] = walk.found[i];
         }
@@ -289,9 +327,13 @@ td_asset_result_t td_asset_delete(const char *id, bool *deleted)
     }
     char path[ASSET_PATH_MAX];
     asset_path(path, id);
+    char shard[SHARD_PATH_MAX];
+    shard_path(shard, id[0]);
     td_store_lock();
     const int rc = unlink(path);
     const int saved = errno;
+    /* An empty shard gives its metadata blocks back. A shard that still holds Assets refuses, which is fine. */
+    rmdir(shard);
     td_store_unlock();
     if (rc == 0) {
         *deleted = true;
@@ -338,6 +380,7 @@ td_asset_result_t td_asset_upload_begin(const char *id, uint32_t bytes, td_asset
         td_store_unlock();
         return TD_ASSET_FULL;
     }
+    /* The shard is made at commit, so an upload that never commits leaves no empty shard behind. */
     if (mkdir(TD_ASSET_DIR, 0777) != 0 && errno != EEXIST) {
         td_store_unlock();
         return TD_ASSET_STORAGE;
@@ -407,23 +450,30 @@ td_asset_result_t td_asset_upload_finish(void)
         return result;
     }
     char path[ASSET_PATH_MAX];
+    char shard[SHARD_PATH_MAX];
     asset_path(path, s_up.id);
+    shard_path(shard, s_up.id[0]);
     td_store_lock();
     bool ok = fsync(s_up.fd) == 0;
     int saved = ok ? 0 : errno;
     ok = close(s_up.fd) == 0 && ok;
     s_up.fd = -1;
+    if (ok && mkdir(shard, 0777) != 0 && errno != EEXIST) {
+        saved = errno;
+        ok = false;
+    }
     if (ok && rename(UPLOAD_TMP, path) != 0) {
         saved = errno;
         ok = false;
     }
     if (!ok) {
         unlink(UPLOAD_TMP);
+        rmdir(shard);
     }
     td_store_unlock();
     s_up.open = false;
     if (!ok) {
-        ESP_LOGW(TAG, "commit of %.12s failed, errno %d", path + sizeof(TD_ASSET_DIR), saved);
+        ESP_LOGW(TAG, "commit of %.12s failed, errno %d", s_up.id, saved);
         return saved == ENOSPC ? TD_ASSET_FULL : TD_ASSET_STORAGE;
     }
     return TD_ASSET_OK;

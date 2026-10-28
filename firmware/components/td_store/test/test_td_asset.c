@@ -80,6 +80,15 @@ static bool temp_exists(void)
     return stat(TD_ASSET_DIR "/upload.tmp", &st) == 0;
 }
 
+/* Whether the id's shard directory exists. The tests run on an otherwise empty Asset store. */
+static bool shard_exists(const char *id)
+{
+    char shard[sizeof TD_ASSET_DIR + 2];
+    snprintf(shard, sizeof shard, TD_ASSET_DIR "/%c", id[0]);
+    struct stat st;
+    return stat(shard, &st) == 0;
+}
+
 TEST_CASE("Asset put commits by hash, a duplicate is present, and delete removes it", "[td_asset]")
 {
     mount();
@@ -125,6 +134,7 @@ TEST_CASE("Asset put that does not hash to its id commits nothing", "[td_asset]"
     TEST_ASSERT_EQUAL(TD_ASSET_HASH, put(id, file, ICON_BYTES));
     TEST_ASSERT_FALSE(td_asset_present(id, NULL, NULL));
     TEST_ASSERT_FALSE(temp_exists());
+    TEST_ASSERT_FALSE(shard_exists(id));
     TEST_ASSERT_NULL(td_asset_upload_id());
     free(file);
 }
@@ -178,6 +188,7 @@ TEST_CASE("An interrupted Asset upload leaves no partial Asset and reserves its 
     TEST_ASSERT_TRUE(temp_exists());
     td_asset_upload_abort();
     TEST_ASSERT_FALSE(temp_exists());
+    TEST_ASSERT_FALSE(shard_exists(id));
     TEST_ASSERT_NULL(td_asset_upload_id());
     TEST_ASSERT_FALSE(td_asset_present(id, NULL, NULL));
     td_asset_space_t closed;
@@ -186,16 +197,25 @@ TEST_CASE("An interrupted Asset upload leaves no partial Asset and reserves its 
     free(file);
 }
 
-TEST_CASE("Asset listing pages four at a time in id order", "[td_asset]")
+#define LISTED 24
+
+TEST_CASE("Asset listing pages four at a time in id order across shards, and delete drops empty shards", "[td_asset]")
 {
     mount();
-    char ids[6][TD_ASSET_ID_LEN + 1];
-    for (uint8_t i = 0; i < 6; i++) {
+    static char ids[LISTED][TD_ASSET_ID_LEN + 1];
+    bool shard_used[16] = { false };
+    for (uint8_t i = 0; i < LISTED; i++) {
         uint8_t *file = icon(10 + i);
         id_of(file, ICON_BYTES, ids[i]);
         TEST_ASSERT_EQUAL(TD_ASSET_OK, put(ids[i], file, ICON_BYTES));
+        shard_used[strchr("0123456789abcdef", ids[i][0]) - "0123456789abcdef"] = true;
         free(file);
     }
+    size_t shards = 0;
+    for (int i = 0; i < 16; i++) {
+        shards += shard_used[i];
+    }
+    TEST_ASSERT_GREATER_THAN(4, shards);
     td_asset_item_t items[TD_ASSET_PAGE];
     size_t count;
     bool more;
@@ -204,18 +224,25 @@ TEST_CASE("Asset listing pages four at a time in id order", "[td_asset]")
     do {
         TEST_ASSERT_EQUAL(TD_ASSET_OK, td_asset_list(last[0] ? last : NULL, items, &count, &more));
         TEST_ASSERT_LESS_OR_EQUAL(TD_ASSET_PAGE, count);
+        TEST_ASSERT_TRUE(!more || count == TD_ASSET_PAGE);
         for (size_t i = 0; i < count; i++) {
             TEST_ASSERT_LESS_THAN(0, strcmp(last, items[i].id));
+            TEST_ASSERT_EQUAL_UINT32(ICON_BYTES, items[i].bytes);
             strlcpy(last, items[i].id, sizeof last);
-            for (size_t k = 0; k < 6; k++) {
+            for (size_t k = 0; k < LISTED; k++) {
                 seen += strcmp(ids[k], items[i].id) == 0;
             }
         }
     } while (more);
-    TEST_ASSERT_EQUAL(6, seen);
-    for (int i = 0; i < 6; i++) {
+    TEST_ASSERT_EQUAL(LISTED, seen);
+    for (int i = 0; i < LISTED; i++) {
         bool deleted;
         TEST_ASSERT_EQUAL(TD_ASSET_OK, td_asset_delete(ids[i], &deleted));
         TEST_ASSERT_TRUE(deleted);
+        bool shard_left = false;
+        for (int k = i + 1; k < LISTED; k++) {
+            shard_left |= ids[k][0] == ids[i][0];
+        }
+        TEST_ASSERT_EQUAL(shard_left, shard_exists(ids[i]));
     }
 }
