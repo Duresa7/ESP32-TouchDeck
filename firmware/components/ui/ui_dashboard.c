@@ -2,11 +2,13 @@
 #include <string.h>
 #include "ui_theme.h"
 
-/* One row's objects. bar_max is the bar's width at a fraction of 1. */
+/* One row's objects. `bar` is the fill on `track`, and bar_max is the track's width, the fill's width at a fraction
+ * of 1. */
 typedef struct {
     lv_obj_t *row;
     lv_obj_t *label;
     lv_obj_t *value;
+    lv_obj_t *track;
     lv_obj_t *bar;
     int32_t bar_max;
 } row_objs_t;
@@ -25,11 +27,12 @@ void ui_dashboard_begin(void)
  * there is more, so a long label or value never runs out of its row. Text that fits wraps and sits where it always
  * did, though a first letter that reaches left of its box, such as j, now shows the 1 to 3 px the old clip mode cut.
  * LVGL's dots mode needs its own writable copy of the text, which ui_dashboard_draw gives it. */
-static lv_obj_t *row_label(lv_obj_t *row, int32_t x, int32_t w, int32_t row_h)
+static lv_obj_t *row_label(lv_obj_t *row, const lv_style_t *style, const lv_font_t *font, int32_t x, int32_t w,
+                           int32_t row_h)
 {
-    const int32_t line_h = lv_font_get_line_height(ui_theme.font_caption);
+    const int32_t line_h = lv_font_get_line_height(font);
     lv_obj_t *label = lv_label_create(row);
-    lv_obj_add_style(label, &ui_styles()->tile_caption, 0);
+    lv_obj_add_style(label, style, 0);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_width(label, w);
     lv_obj_set_style_max_height(label, row_h / line_h * line_h, 0);
@@ -64,19 +67,32 @@ void ui_dashboard_build(lv_obj_t *page_obj, const ui_page_t *page)
         lv_obj_set_hidden(row, true);
 
         rows[i].row = row;
-        rows[i].label = row_label(row, t->dash.pad, g->dash_value_x - 2 * t->dash.pad, row_h);
-        rows[i].value = row_label(row, g->dash_value_x, g->dash_bar_x - g->dash_value_x - t->dash.pad, row_h);
-        lv_obj_set_style_text_color(rows[i].value, ui_color(t->color.text), 0);
+        rows[i].label = row_label(row, &st->tile_label, t->font_label, t->dash.pad,
+                                  g->dash_value_x - 2 * t->dash.pad, row_h);
+        rows[i].value = row_label(row, &st->dash_value, t->font_value, g->dash_value_x,
+                                  g->dash_bar_x - g->dash_value_x - t->dash.pad, row_h);
 
-        lv_obj_t *bar = lv_obj_create(row);
+        const int32_t bar_max = row_w - g->dash_bar_x - t->dash.pad;
+        lv_obj_t *track = lv_obj_create(row);
+        lv_obj_remove_style_all(track);
+        lv_obj_add_style(track, &st->bar_track, 0);
+        lv_obj_set_size(track, bar_max, t->dash.bar_h);
+        lv_obj_align(track, LV_ALIGN_LEFT_MID, g->dash_bar_x, 0);
+        lv_obj_set_clickable(track, false);
+        lv_obj_set_scrollable(track, false);
+        lv_obj_set_hidden(track, true);
+
+        lv_obj_t *bar = lv_obj_create(track);
         lv_obj_remove_style_all(bar);
-        lv_obj_add_style(bar, &st->widget_bar, 0);
+        lv_obj_add_style(bar, &st->bar_fill, 0);
         lv_obj_set_size(bar, 0, t->dash.bar_h);
-        lv_obj_align(bar, LV_ALIGN_LEFT_MID, g->dash_bar_x, 0);
+        lv_obj_set_pos(bar, 0, 0);
         lv_obj_set_clickable(bar, false);
+        lv_obj_set_scrollable(bar, false);
         lv_obj_set_hidden(bar, true);
+        rows[i].track = track;
         rows[i].bar = bar;
-        rows[i].bar_max = row_w - g->dash_bar_x - t->dash.pad;
+        rows[i].bar_max = bar_max;
     }
 }
 
@@ -103,6 +119,7 @@ void ui_dashboard_draw(int index, const ui_dash_state_t *state)
         lv_label_set_text(o->label, r->label);
         lv_label_set_text(o->value, r->value);
 #endif
+        lv_obj_set_hidden(o->track, r->bar < 0.0f);
         const int32_t bar_w = r->bar < 0.0f ? 0 : (int32_t)(r->bar * (float)o->bar_max + 0.5f);
         lv_obj_set_width(o->bar, bar_w);
         lv_obj_set_hidden(o->bar, bar_w == 0);

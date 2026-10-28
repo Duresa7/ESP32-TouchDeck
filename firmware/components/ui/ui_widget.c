@@ -10,13 +10,16 @@
 #include "freertos/semphr.h"
 #include "ui_theme.h"
 
-/* The labels and bar of one widget tile, at the same index as its entry in the table. */
+/* The labels and bar of one widget tile, at the same index as its entry in the table. `bar` is the fill on `track`,
+ * and bar_w is the track's width, the fill's width at a fraction of 1. */
 typedef struct {
     lv_obj_t *value;
     lv_obj_t *caption;
+    lv_obj_t *track;
     lv_obj_t *bar;
     const char *label;
     int32_t w;
+    int32_t bar_w;
 } widget_objs_t;
 
 /*
@@ -80,7 +83,7 @@ static void apply_dim(bool dimmed)
 static void draw_value(lv_obj_t *value, const char *text, int32_t tile_w)
 {
     lv_point_t size;
-    lv_text_get_size(&size, text, ui_theme.font_tile, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_text_get_size(&size, text, ui_theme.font_big, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
     const int32_t max_w = tile_w - 2 * ui_theme.media.label_inset;
     lv_obj_set_width(value, size.x > max_w ? max_w : LV_SIZE_CONTENT);
 #if CONFIG_TD_UI_SKIP_NOOP_SETS
@@ -102,7 +105,9 @@ static void draw_widget(const widget_objs_t *o, const ui_widget_state_t *st)
     lv_obj_set_style_text_opa(o->value, st->stale ? ui_theme.stale_opa : LV_OPA_COVER, 0);
     lv_obj_set_style_text_opa(o->caption, st->stale ? ui_theme.stale_opa : LV_OPA_COVER, 0);
 #endif
-    const int32_t bar_w = st->bar < 0.0f ? 0 : (int32_t)(st->bar * (float)o->w + 0.5f);
+    /* A bar of -1 is no bar, so the track shows only for a fraction, and an empty fill only for one of 0. */
+    lv_obj_set_hidden(o->track, st->bar < 0.0f);
+    const int32_t bar_w = st->bar < 0.0f ? 0 : (int32_t)(st->bar * (float)o->bar_w + 0.5f);
     lv_obj_set_width(o->bar, bar_w);
     lv_obj_set_hidden(o->bar, bar_w == 0);
 }
@@ -177,26 +182,36 @@ void ui_widget_build(lv_obj_t *obj, const ui_tile_t *tile, ui_rect_t rect)
 {
     const ui_styles_t *st = ui_styles();
     lv_obj_t *value = lv_label_create(obj);
-    lv_obj_add_style(value, &st->tile_label, 0);
+    lv_obj_add_style(value, &st->widget_value, 0);
     lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_height(value, lv_font_get_line_height(ui_theme.font_tile));
+    lv_obj_set_height(value, lv_font_get_line_height(ui_theme.font_big));
     lv_label_set_long_mode(value, LV_LABEL_LONG_MODE_DOTS);
     draw_value(value, "--", rect.w);
     lv_obj_align(value, LV_ALIGN_CENTER, 0, -ui_theme.widget.value_dy);
 
     /* One line, cut with dots, whatever text the app sends. LVGL's dots mode needs its own writable copy of the text. */
     lv_obj_t *caption = lv_label_create(obj);
-    lv_obj_add_style(caption, &st->tile_caption, 0);
-    lv_obj_set_size(caption, rect.w - 2 * ui_theme.media.label_inset, lv_font_get_line_height(ui_theme.font_caption));
+    lv_obj_add_style(caption, &st->tile_label, 0);
+    lv_obj_set_size(caption, rect.w - 2 * ui_theme.media.label_inset, lv_font_get_line_height(ui_theme.font_label));
     lv_label_set_long_mode(caption, LV_LABEL_LONG_MODE_DOTS);
     lv_label_set_text(caption, tile->label);
     lv_obj_align(caption, LV_ALIGN_CENTER, 0, ui_theme.widget.caption_dy);
 
-    lv_obj_t *bar = lv_obj_create(obj);
+    const int32_t bar_w = rect.w - 2 * ui_theme.widget.pad;
+    lv_obj_t *track = lv_obj_create(obj);
+    lv_obj_remove_style_all(track);
+    lv_obj_add_style(track, &st->bar_track, 0);
+    lv_obj_set_size(track, bar_w, ui_theme.widget.bar_h);
+    lv_obj_set_pos(track, ui_theme.widget.pad, rect.h - ui_theme.widget.bar_bottom - ui_theme.widget.bar_h);
+    lv_obj_set_clickable(track, false);
+    lv_obj_set_scrollable(track, false);
+    lv_obj_set_hidden(track, true);
+
+    lv_obj_t *bar = lv_obj_create(track);
     lv_obj_remove_style_all(bar);
-    lv_obj_add_style(bar, &st->widget_bar, 0);
+    lv_obj_add_style(bar, &st->bar_fill, 0);
     lv_obj_set_size(bar, 0, ui_theme.widget.bar_h);
-    lv_obj_set_pos(bar, 0, rect.h - ui_theme.widget.bar_bottom - ui_theme.widget.bar_h);
+    lv_obj_set_pos(bar, 0, 0);
     lv_obj_set_clickable(bar, false);
     lv_obj_set_scrollable(bar, false);
     lv_obj_set_hidden(bar, true);
@@ -210,7 +225,8 @@ void ui_widget_build(lv_obj_t *obj, const ui_tile_t *tile, ui_rect_t rect)
     table_unlock();
     if (index >= 0) {
         s.widgets[index] = (widget_objs_t){
-            .value = value, .caption = caption, .bar = bar, .label = tile->label, .w = rect.w,
+            .value = value, .caption = caption, .track = track, .bar = bar, .label = tile->label, .w = rect.w,
+            .bar_w = bar_w,
         };
     }
 }
