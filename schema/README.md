@@ -314,3 +314,10 @@ A location is `page <index> "<id>"` or `page <index> "<id>" tile <index> "<id>"`
 with zero-based indexes, so two uses of one ID always differ.
 The duplicate check includes page IDs and tile IDs. Overlap reports both tile
 IDs once per pair, even when the pair shares several cells.
+
+## USB link v2
+
+[USB link v2](protocol/link-v2.md) defines negotiated Device capabilities, names,
+Assets, live values, and photo idle mode. Its [golden frames](protocol/golden-frames-v2.json)
+share the v1 codec format. Runtime support and the Layout schema 2 validator
+are separate implementation work; the schema 1 rules above remain unchanged.
