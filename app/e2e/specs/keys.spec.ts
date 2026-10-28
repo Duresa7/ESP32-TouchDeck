@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { connectFirstDeck, mockAction, waitForDot } from '../deck.ts';
+import { connectFirstDeck, mockAction, openSettings, waitForDot } from '../deck.ts';
 import { note, shot } from '../report.ts';
 
 // Only F13 to F24 and pairs of mute taps may reach the operating system. F13 opens Windows' Open with
@@ -150,7 +150,7 @@ describe('key mirror on the mock deck', () => {
     await connectFirstDeck();
     fake = (await invoke<string[] | null>('e2e_input_log')) !== null;
     note('input', fake ? 'fake sink' : 'operating system');
-    await $('[data-testid="nav-actions"]').click();
+    await openSettings('help');
     await browser.waitUntil(async () => (await invoke<{ enabled: boolean }>('mirror_state')).enabled, {
       timeout: 3_000,
       timeoutMsg: 'mirroring is not on',
@@ -212,7 +212,7 @@ describe('key mirror on the mock deck', () => {
     const seen = await eventsSince(start, 6);
     note('lost_release', seen);
     expect(seen).toEqual(['down F16', 'up F16', 'down Mute', 'up Mute', 'down Mute', 'up Mute']);
-    expect((await reports()).some((line) => line.includes('lost') && line.includes('released all'))).toBe(true);
+    expect((await reports()).some((line) => line.includes('missed') && line.includes('every key was let go'))).toBe(true);
   });
 
   it('sets the held state exactly on key.resync', async () => {
@@ -258,9 +258,9 @@ describe('key mirror on the mock deck', () => {
   });
 
   it('types exactly 200 F14 taps from a burst and ends on a release', async () => {
-    await $('[data-testid="nav-deck"]').click();
+    await $('[data-testid="nav-buttons"]').click();
     await connectFirstDeck();
-    await $('[data-testid="nav-actions"]').click();
+    await openSettings('help');
     await clearMonitor();
     const start = (await keyEvents()).length;
     await emit([kbd(0, [F14]), kbd(0, [])], 200, 25);

@@ -28,7 +28,7 @@
         icons = list;
         for (const icon of list) loadIcon(icon.id);
       })
-      .catch((error) => (problem = `Built-in icons: ${String(error)}`));
+      .catch((error) => (problem = `The picture gallery didn't load. Restart TouchDeck to try again. (${String(error)})`));
   });
 
   $effect(() => {
@@ -58,7 +58,7 @@
       loadIcon(id);
       use(id);
     } catch (error) {
-      problem = `No app icon: ${String(error)}`;
+      problem = `Couldn't take that app's icon. Check the app's path, or choose a picture instead. (${String(error)})`;
     } finally {
       taking = false;
     }
@@ -72,20 +72,20 @@
         <canvas use:paint={$iconPixels[current]}></canvas>
       {/if}
     </span>
-    <button onclick={() => (open = !open)} data-testid="icon-picker-toggle">{open ? 'Hide icons' : 'Choose icon'}</button>
+    <button class="small" onclick={() => (open = !open)} aria-expanded={open} data-testid="icon-picker-toggle">{open ? 'Hide pictures' : 'Choose a picture'}</button>
     {#if tile.action.type === 'launch'}
-      <button onclick={useAppIcon} disabled={taking || !tile.action.path} data-testid="use-app-icon">{taking ? 'Taking icon' : 'Use app icon'}</button>
+      <button class="small" onclick={useAppIcon} disabled={taking || !tile.action.path} data-testid="use-app-icon">{taking ? 'Getting icon…' : "Use the app's icon"}</button>
     {/if}
     {#if suggested && suggested.id !== current}
-      <button class="suggest" onclick={() => use(suggested!.id)} title="Suggested for this action" data-testid="icon-suggested" data-name={suggested.name}>
+      <button class="small suggest" onclick={() => use(suggested!.id)} title="Suggested for what this button does" data-testid="icon-suggested" data-name={suggested.name}>
         {#if $iconPixels[suggested.id]}<canvas use:paint={$iconPixels[suggested.id]}></canvas>{/if}
-        {suggested.label}
+        Suggested: {suggested.label}
       </button>
     {/if}
   </div>
 
   {#if open}
-    <input type="search" placeholder="Search icons" bind:value={query} data-testid="icon-search" />
+    <input type="search" placeholder="Search pictures, like music or mail" bind:value={query} data-testid="icon-search" aria-label="Search pictures" />
     <div class="grid" data-testid="icon-grid" data-count={shown.length}>
       {#each shown as icon (icon.name)}
         <button
@@ -101,10 +101,10 @@
           <span>{icon.name}</span>
         </button>
       {:else}
-        <p class="empty">No icon matches "{query}"</p>
+        <p class="empty">No picture matches “{query}”. Try a shorter word.</p>
       {/each}
     </div>
-    <button class="prune" onclick={() => editor.removeUnusedIcons()} data-testid="remove-unused-icons">Remove unused icons</button>
+    <button class="small quiet prune" onclick={() => editor.removeUnusedIcons()} title="Frees space on the deck" data-testid="remove-unused-icons">Clear unused pictures from the deck</button>
   {/if}
 
   {#if problem}
@@ -130,9 +130,9 @@
     place-items: center;
     width: 40px;
     height: 40px;
-    border: 1px dashed #2f3b50;
+    border: 1px dashed var(--line-strong);
     border-radius: 8px;
-    background: #111827;
+    background: var(--sunken);
   }
 
   .preview canvas {
@@ -164,8 +164,11 @@
     display: grid;
     justify-items: center;
     gap: 2px;
-    padding: 6px 2px;
+    height: auto;
     min-width: 0;
+    padding: 6px 2px;
+    border-color: var(--line);
+    background: var(--sunken);
   }
 
   .option canvas {
@@ -184,7 +187,7 @@
 
   .option.chosen {
     border-color: var(--accent);
-    box-shadow: 0 0 0 2px rgb(59 130 246 / 0.35);
+    box-shadow: 0 0 0 2px var(--accent-soft);
   }
 
   .empty {

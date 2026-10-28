@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { connectFirstDeck } from '../deck.ts';
+import { connectFirstDeck, openSettings } from '../deck.ts';
 import { note, out, shot } from '../report.ts';
 
 async function selectBundle(name: string) {
@@ -25,13 +25,15 @@ async function mockMode(action: string) {
     await core.invoke('e2e_mock', { action });
   }, action);
 }
-const status = () => $('[data-testid="update-status"]').getText();
+// The status line speaks plainly and keeps the update's own words in data-raw, which the log shows too.
+const status = async () => String(await $('[data-testid="update-status"]').getAttribute('data-raw'));
+const history = async () => (await $$('[data-testid="update-history"] li').map((item) => item.getAttribute('data-raw'))).join('\n');
 const finished = async (text: string, timeout = 10_000) => browser.waitUntil(async () => (await status()).includes(text), { timeout, timeoutMsg: `update did not show ${text}` });
 
 describe('firmware update on the mock deck', () => {
   it('refuses an incomplete bundle before transfer', async () => {
     await connectFirstDeck();
-    await $('[data-testid="nav-update"]').click();
+    await openSettings('software');
     await selectBundle('touchdeck-test-missing.tdfw');
     await $('[data-testid="update-start"]').click();
     await finished('Failed');
@@ -41,16 +43,18 @@ describe('firmware update on the mock deck', () => {
     await selectBundle('touchdeck-test.tdfw');
     await $('[data-testid="update-start"]').click();
     await finished('Firmware updated');
-    const history = await $('[data-testid="update-history"]').getText();
-    for (const state of ['Checking', 'Sending 100%', 'Rebooting', 'Confirming', 'Firmware updated']) expect(history).toContain(state);
-    writeFileSync(join(out, 'states.json'), JSON.stringify({ history }, null, 2));
-    note('states', history);
+    const states = await history();
+    for (const state of ['Checking', 'Sending 100%', 'Rebooting', 'Confirming', 'Firmware updated']) expect(states).toContain(state);
+    expect(await $('[data-testid="update-status"]').getText()).toBe('Done. Your deck is running the new software.');
+    writeFileSync(join(out, 'states.json'), JSON.stringify({ history: states }, null, 2));
+    note('states', states);
     await shot('mock-update');
   });
   it('skips the current build', async () => {
     await $('[data-testid="update-start"]').click();
     await finished('Already on this build');
-    expect(await $('[data-testid="update-history"]').getText()).not.toContain('Sending');
+    expect(await history()).not.toContain('Sending');
+    expect(await $('[data-testid="update-status"]').getText()).toBe('Your deck already has this version, so nothing changed.');
     await shot('same');
   });
   it('reports a rollback and keeps recovery available', async () => {

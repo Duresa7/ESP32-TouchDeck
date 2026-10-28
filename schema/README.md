@@ -80,6 +80,7 @@ Unicode code points for length limits, as JSON Schema specifies.
 | `name` | Display name of 1 to 24 characters with at least one that is not whitespace. |
 | `orientation` | `landscape` or `portrait`. Each layout describes one orientation. |
 | `pages` | Array of 1 to 8 pages, in swipe order. |
+| `fullScreen` | Optional boolean. `true` hides the page title and page dots and lets the grid fill the whole screen. Absent means `false`; writers omit it unless it is `true`. |
 
 Whitespace means the Unicode `White_Space` property, so a no-break space and an
 ideographic space count. A zero-width space does not.

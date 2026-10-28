@@ -1,4 +1,4 @@
-import { connectFirstDeck } from '../deck.ts';
+import { closeConnection, connectFirstDeck, openConnection, openSettings } from '../deck.ts';
 import { note, shot } from '../report.ts';
 
 const SIZES = [
@@ -6,28 +6,57 @@ const SIZES = [
   { name: 'large', width: 1600, height: 1000 },
 ];
 
+const measure = () =>
+  browser.execute(() => ({
+    inner: [window.innerWidth, window.innerHeight],
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+    bodyScrollWidth: document.body.scrollWidth,
+  }));
+
+/** No horizontal scroll bar on the current screen. */
+async function fits(where: string) {
+  const layout = await measure();
+  if (layout.scrollWidth > layout.clientWidth || layout.bodyScrollWidth > layout.clientWidth) {
+    throw new Error(`${where} scrolls sideways: ${JSON.stringify(layout)}`);
+  }
+  return layout;
+}
+
+/** Waits for the element to be drawn in the viewport, since a popover fades in and the deck list fills after a scan. */
+async function visible(id: string) {
+  const element = $(`[data-testid="${id}"]`);
+  const shown = await browser
+    .waitUntil(() => element.isDisplayed({ withinViewport: true }), { timeout: 5_000, interval: 100 })
+    .catch(() => false);
+  if (!shown) throw new Error(`${id} is not in view`);
+}
+
 describe('window sizes', () => {
   before(async () => {
     await connectFirstDeck();
+    await $('[data-testid="empty-starter"]').click();
   });
 
   for (const size of SIZES) {
-    it(`shows the deck list, status, and console at ${size.width} by ${size.height} with no horizontal scroll bar`, async () => {
+    it(`shows the deck indicator, the deck list, the preview, and the console at ${size.width} by ${size.height} with no horizontal scroll bar`, async () => {
       await browser.setWindowSize(size.width, size.height);
+      await $('[data-testid="nav-buttons"]').click();
       await browser.pause(300);
-      for (const id of ['deck-list', 'link-status', 'console', 'console-input']) {
-        expect(await $(`[data-testid="${id}"]`).isDisplayed({ withinViewport: true })).toBe(true);
-      }
-      const layout = await browser.execute(() => ({
-        inner: [window.innerWidth, window.innerHeight],
-        scrollWidth: document.documentElement.scrollWidth,
-        clientWidth: document.documentElement.clientWidth,
-        bodyScrollWidth: document.body.scrollWidth,
-      }));
-      note(size.name, { requested: [size.width, size.height], window: await browser.getWindowSize(), ...layout });
-      expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth);
-      expect(layout.bodyScrollWidth).toBeLessThanOrEqual(layout.clientWidth);
+      for (const id of ['link-status', 'connection', 'deck-preview', 'push']) await visible(id);
+      const layout = await fits('Buttons');
+      await openConnection();
+      await visible('deck-list');
       await shot(size.name);
+      await closeConnection();
+      await $('[data-testid="nav-usage"]').click();
+      await fits('AI usage');
+      await openSettings('help');
+      await $('[data-testid="console-input"]').scrollIntoView();
+      for (const id of ['console', 'console-input']) await visible(id);
+      await fits('Troubleshooting');
+      note(size.name, { requested: [size.width, size.height], window: await browser.getWindowSize(), ...layout });
+      await shot(`${size.name}-troubleshooting`);
     });
   }
 });

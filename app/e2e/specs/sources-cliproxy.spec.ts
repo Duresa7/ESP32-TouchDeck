@@ -191,7 +191,7 @@ describe('cliproxyapi source', () => {
   });
 
   it('offers usage fields and distinct account keys in the widget editor', async () => {
-    await $('[data-testid="nav-editor"]').click();
+    await $('[data-testid="nav-buttons"]').click();
     await $('[data-testid="import-file"]').waitForExist();
     await browser.execute((content) => {
       const input = document.querySelector<HTMLInputElement>('[data-testid="import-file"]')!;

@@ -53,6 +53,8 @@ export interface Layout {
   schema: 1;
   name: string;
   orientation: Orientation;
+  /** True gives the tiles the whole screen, with no page title and no page dots. A file writes it only when true. */
+  fullScreen?: boolean;
   pages: Page[];
 }
 
@@ -131,7 +133,7 @@ function structuralErrors(root: unknown): LayoutError[] {
   const at = (key: string, pointer: string, message: string) => errors.push(fail(key, `${place(pointer)} ${message}`));
   const wrongType = (pointer: string, expected: string) => at('shape.type', pointer, `must be ${expected} (type)`);
 
-  const object = (value: unknown, pointer: string, fields: string[]) => {
+  const object = (value: unknown, pointer: string, fields: string[], optional: string[] = []) => {
     if (!isObject(value)) {
       wrongType(pointer, 'object');
       return undefined;
@@ -140,7 +142,7 @@ function structuralErrors(root: unknown): LayoutError[] {
       if (!Object.hasOwn(value, field)) at('shape.missing-field', pointer, `must have required property '${field}' (required) ${JSON.stringify(field)}`);
     }
     for (const name of Object.keys(value)) {
-      if (!fields.includes(name)) at('shape.unknown-field', pointer, `must NOT have additional properties (additionalProperties) ${JSON.stringify(name)}`);
+      if (!fields.includes(name) && !optional.includes(name)) at('shape.unknown-field', pointer, `must NOT have additional properties (additionalProperties) ${JSON.stringify(name)}`);
     }
     return value;
   };
@@ -262,8 +264,9 @@ function structuralErrors(root: unknown): LayoutError[] {
     tiles.forEach((item, index) => tile(item, `${pointer}/tiles/${index}`));
   };
 
-  const layout = object(root, '', ['schema', 'name', 'orientation', 'pages']);
+  const layout = object(root, '', ['schema', 'name', 'orientation', 'pages'], ['fullScreen']);
   if (!layout) return errors;
+  if (Object.hasOwn(layout, 'fullScreen') && typeof layout.fullScreen !== 'boolean') wrongType('/fullScreen', 'boolean');
   if (Object.hasOwn(layout, 'schema') && layout.schema !== 1) at('layout.schema-version', '/schema', 'must be equal to constant (const)');
   if (Object.hasOwn(layout, 'name')) bounded(layout.name, '/name', NAME);
   if (Object.hasOwn(layout, 'orientation') && layout.orientation !== 'landscape' && layout.orientation !== 'portrait') {
@@ -522,6 +525,44 @@ export function removeTile(layout: Layout, page: string, id: string): Edit {
   });
 }
 
+export function setLayoutName(layout: Layout, name: string): Edit {
+  const next = copy(layout);
+  next.name = name;
+  return checked(next);
+}
+
+export function setPageTitle(layout: Layout, page: string, title: string): Edit {
+  const next = copy(layout);
+  const found = next.pages.find((candidate) => candidate.id === page);
+  if (!found) return refuse(`no page ${page}`);
+  found.title = title;
+  return checked(next);
+}
+
+/** Changes a grid page's rows and columns. A tile that would fall outside the new grid refuses it, by its id. */
+export function setGridSize(layout: Layout, page: string, rows: number, cols: number): Edit {
+  const next = copy(layout);
+  const grid = gridOf(next, page);
+  if (typeof grid === 'string') return refuse(grid);
+  if (!Number.isInteger(rows) || !Number.isInteger(cols) || rows < 1 || cols < 1 || rows > 8 || cols > 8) return refuse('grid.size');
+  const outside = grid.tiles.find((tile) => tile.row + tile.rowSpan > rows || tile.col + tile.colSpan > cols);
+  if (outside) return refuse(`grid.too-small: ${outside.id}`);
+  grid.rows = rows;
+  grid.cols = cols;
+  return checked(next);
+}
+
+/** Turns the full-screen look on or off. Off removes the member, so the file matches one written before it existed. */
+export function setFullScreen(layout: Layout, on: boolean): Edit {
+  const next = copy(layout);
+  if (on) {
+    const { pages, ...head } = next;
+    return checked({ ...head, fullScreen: true, pages });
+  }
+  delete next.fullScreen;
+  return checked(next);
+}
+
 export function addPage(layout: Layout, page: Page): Edit {
   if (layout.pages.length >= PAGES_MAX) return refuse(`a layout holds at most ${PAGES_MAX} pages`);
   const next = copy(layout);
@@ -577,6 +618,73 @@ export function newGridPage(id: string, title: string): GridPage {
 
 export function newLayout(orientation: Orientation): Layout {
   return { schema: 1, name: 'New layout', orientation, pages: [newGridPage('page1', 'Page 1')] };
+}
+
+const key = (id: string, label: string, row: number, col: number, letter: string, mods: Modifier[]): Tile => ({
+  id,
+  label,
+  row,
+  col,
+  rowSpan: 1,
+  colSpan: 1,
+  icon: null,
+  action: { type: 'key', usage: 4 + letter.charCodeAt(0) - 65, mods },
+});
+
+const media = (id: string, label: string, col: number, row: number, usage: number, icon: string): Tile => ({
+  id,
+  label,
+  row,
+  col,
+  rowSpan: 1,
+  colSpan: 1,
+  icon,
+  action: { type: 'consumer', usage },
+});
+
+/** A first layout with buttons people use every day: media controls and editing shortcuts. */
+export function starterLayout(orientation: Orientation): Layout {
+  return {
+    schema: 1,
+    name: 'My buttons',
+    orientation,
+    pages: [
+      {
+        id: 'media',
+        title: 'Media',
+        kind: 'grid',
+        rows: 2,
+        cols: 3,
+        tiles: [
+          media('prev', 'Previous', 0, 0, 182, 'lv:prev'),
+          media('playpause', 'Play/Pause', 1, 0, 205, 'lv:play_pause'),
+          media('next', 'Next', 2, 0, 181, 'lv:next'),
+          media('mute', 'Mute', 0, 1, 226, 'lv:mute'),
+          media('voldown', 'Volume down', 1, 1, 234, 'lv:volume_mid'),
+          media('volup', 'Volume up', 2, 1, 233, 'lv:volume_max'),
+        ],
+      },
+      {
+        id: 'shortcuts',
+        title: 'Shortcuts',
+        kind: 'grid',
+        rows: 3,
+        cols: 4,
+        tiles: [
+          key('copy', 'Copy', 0, 0, 'C', ['ctrl']),
+          key('paste', 'Paste', 0, 1, 'V', ['ctrl']),
+          key('cut', 'Cut', 0, 2, 'X', ['ctrl']),
+          key('selectall', 'Select all', 0, 3, 'A', ['ctrl']),
+          key('undo', 'Undo', 1, 0, 'Z', ['ctrl']),
+          key('redo', 'Redo', 1, 1, 'Y', ['ctrl']),
+          key('save', 'Save', 1, 2, 'S', ['ctrl']),
+          key('find', 'Find', 1, 3, 'F', ['ctrl']),
+          key('snip', 'Screenshot', 2, 0, 'S', ['shift', 'win']),
+          key('desktop', 'Show desktop', 2, 1, 'D', ['win']),
+        ],
+      },
+    ],
+  };
 }
 
 export function counts(layout: Layout) {

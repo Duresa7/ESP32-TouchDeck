@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { connectFirstDeck } from '../deck.ts';
+import { exportText, statusText, waitEvent } from '../editor.ts';
 import { note, out, shot } from '../report.ts';
 
 const index = JSON.parse(readFileSync(join(import.meta.dirname, '..', '..', 'icons', 'builtin', 'index.json'), 'utf8')) as { icons: { name: string }[] };
@@ -24,7 +25,6 @@ interface MockRecord {
   layouts: { landscape: unknown };
 }
 
-const status = () => $('[data-testid="editor-status"]').getText();
 const record = () => invoke<MockRecord>('e2e_mock_record');
 const glyph = (tile: string) => $(`[data-testid="tile"][data-id="${tile}"] [data-testid="tile-glyph"]`);
 
@@ -35,11 +35,6 @@ const glyphOpaque = (tile: string) =>
     const data = canvas?.getContext('2d')?.getImageData(0, 0, canvas.width, canvas.height).data ?? new Uint8ClampedArray();
     return data.filter((a, i) => i % 4 === 3 && a > 0).length;
   }, tile);
-
-async function waitStatus(match: RegExp, timeout = 10_000) {
-  await browser.waitUntil(async () => match.test(await status()), { timeout, interval: 50, timeoutMsg: `status never matched ${match}: "${await status()}"` });
-  return status();
-}
 
 async function setField(testid: string, value: string) {
   await browser.execute(
@@ -65,20 +60,13 @@ async function addTile(): Promise<string> {
 
 async function openPicker() {
   const toggle = $('[data-testid="icon-picker-toggle"]');
-  if ((await toggle.getText()) === 'Choose icon') await toggle.click();
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
   await $('[data-testid="icon-grid"]').waitForExist({ timeout: 5_000 });
 }
 
 /** The editor's current layout, read back through its export. */
 async function currentLayout(): Promise<string> {
-  await browser.execute(() => {
-    const host = window as unknown as { tdExported?: string; showSaveFilePicker?: unknown };
-    host.tdExported = undefined;
-    host.showSaveFilePicker = async () => ({ createWritable: async () => ({ write: async (data: string) => void (host.tdExported = data), close: async () => {} }) });
-  });
-  await $('[data-testid="export"]').click();
-  await browser.waitUntil(async () => (await browser.execute(() => (window as unknown as { tdExported?: string }).tdExported)) !== undefined, { timeout: 5_000 });
-  return JSON.stringify(JSON.parse(await browser.execute(() => (window as unknown as { tdExported: string }).tdExported)));
+  return JSON.stringify(JSON.parse(await exportText()));
 }
 
 /** Each picker option's name and how many pixels its canvas draws with any alpha. */
@@ -101,10 +89,10 @@ describe('tile icons on the mock deck', () => {
 
   before(async () => {
     note('port', await connectFirstDeck());
-    await $('[data-testid="nav-editor"]').click();
+    await $('[data-testid="nav-buttons"]').click();
     await $('[data-testid="editor"]').waitForExist({ timeout: 5_000 });
     await $('[data-testid="new-layout"]').click();
-    await waitStatus(/^New layout/);
+    await waitEvent('new');
   });
 
   it('draws every built-in icon in the picker grid', async () => {
@@ -142,7 +130,7 @@ describe('tile icons on the mock deck', () => {
 
   it('pushes the terminal icon once, and a second push sends none', async () => {
     await $('[data-testid="push"]').click();
-    const text = await waitStatus(/^Deck shows .*1 icon sent$/);
+    const text = await waitEvent('pushed', /1 icon sent$/, 10_000);
     expect((await record()).icons).toEqual([terminalId]);
     const again = await invoke<{ state: { icons_loaded: number; icons_missing: number }; icons: { sent: string[] } }>('push_layout', { layout: await currentLayout() });
     expect(again.icons.sent).toEqual([]);
@@ -173,7 +161,7 @@ describe('tile icons on the mock deck', () => {
     mkdirSync(out, { recursive: true });
     writeFileSync(join(out, 'icon.bin'), Buffer.from(file));
     await $('[data-testid="push"]').click();
-    const text = await waitStatus(/^Deck shows .*1 icon sent$/);
+    const text = await waitEvent('pushed', /1 icon sent$/, 10_000);
     expect((await record()).icons).toContain(iconId);
     note('app_icon', { path: NOTEPAD, id: iconId, opaque, tile_glyph_pixels: drawn, status: text });
     await shot('app-icon');
@@ -186,13 +174,14 @@ describe('tile icons on the mock deck', () => {
     const browserId = String(await $('[data-testid="icon-option"][data-name="browser"]').getAttribute('data-id'));
     await $('[data-testid="icon-option"][data-name="browser"]').click();
     await $('[data-testid="push"]').click();
-    await waitStatus(/^Deck shows .*1 icon sent$/);
+    await waitEvent('pushed', /1 icon sent$/, 10_000);
     const before = (await record()).icons;
     expect(before).toContain(terminalId);
     await $('[data-testid="remove-unused-icons"]').click();
-    const text = await waitStatus(/unused icons? removed$/);
+    await waitEvent('icons-removed', /./, 10_000);
+    const text = await statusText();
     const after = (await record()).icons;
-    expect(text).toBe('1 unused icon removed');
+    expect(text).toBe('Removed 1 unused icon from your deck.');
     expect(after).not.toContain(terminalId);
     expect(after).toContain(browserId);
     expect(after.length).toBe(before.length - 1);

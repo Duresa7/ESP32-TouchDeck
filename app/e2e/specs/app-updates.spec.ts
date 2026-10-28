@@ -1,4 +1,4 @@
-import { connectFirstDeck, waitForDot } from '../deck.ts';
+import { connectFirstDeck, openConnection, openSettings, waitForDot } from '../deck.ts';
 import { note, shot } from '../report.ts';
 
 type Scenario = 'current' | 'available' | 'network' | 'signature' | 'metadata' | 'unconfigured' | 'unsupported' | 'busy' | 'installer' | 'internal';
@@ -23,7 +23,7 @@ async function shows(text: string) {
 
 async function capture(name: string) {
   await browser.execute(() => {
-    const settings = document.querySelector<HTMLElement>('[data-testid="settings"]')!;
+    const settings = document.querySelector<HTMLElement>('[data-testid="settings-content"]')!;
     settings.scrollTop = settings.scrollHeight;
   });
   await browser.waitUntil(async () => browser.execute(() => {
@@ -54,7 +54,7 @@ async function finishDownload() {
 
 describe('Settings > App updates with scripted updater I/O', () => {
   it('shows the up-to-date state when the check finds no update', async () => {
-    await $('[data-testid="nav-settings"]').click();
+    await openSettings('app');
     await checkScenario('current');
     await shows('You’re on the latest app version.');
     expect(await check().isEnabled()).toBe(true);
@@ -101,16 +101,16 @@ describe('Settings > App updates with scripted updater I/O', () => {
     await capture('d-install-refused');
 
     // With the UI aware of the connection it prevents the action before IPC as well.
-    await $('[data-testid="nav-deck"]').click();
+    await $('[data-testid="nav-buttons"]').click();
     await connectFirstDeck();
-    await $('[data-testid="nav-settings"]').click();
+    await openSettings('app');
     expect(await install().isEnabled()).toBe(false);
     await shows('Disconnect the deck and wait for transfers to finish before installing.');
     await capture('d-connected');
-    await $('[data-testid="nav-deck"]').click();
+    await openConnection();
     await $('[data-testid="disconnect"]').click();
     await waitForDot('offline', 5_000);
-    await $('[data-testid="nav-settings"]').click();
+    await openSettings('app');
     expect(await install().isEnabled()).toBe(true);
   });
 
@@ -167,8 +167,8 @@ describe('Settings > App updates with scripted updater I/O', () => {
     expect(await script()).toMatchObject({ checks: 1, downloads: 1, installs: 1 });
     expect(await check().isEnabled()).toBe(false);
     // Another rendered interaction and IPC query prove the fake never exited the app.
-    await $('[data-testid="nav-deck"]').click();
-    await $('[data-testid="nav-settings"]').click();
+    await $('[data-testid="nav-buttons"]').click();
+    await openSettings('app');
     await shows('Starting the installer. TouchDeck will close');
     expect((await script()).installs).toBe(1);
     note('installed', await script());

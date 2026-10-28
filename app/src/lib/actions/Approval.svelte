@@ -45,36 +45,36 @@
 {#if current}
   <div class="backdrop">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="approval-title" data-testid="approval-modal" data-id={current.id} data-hash={current.hash}>
-      <h2 id="approval-title">Run this command?</h2>
-      <p class="from">Tile <code>{current.tile}</code> on page <code>{current.page}</code> asks to run:</p>
+      <h2 id="approval-title">Let this button run a command?</h2>
+      <p class="from">The button <strong>{current.tile}</strong> on page <strong>{current.page}</strong> wants to run this on your computer. Only allow it if you set it up.</p>
       <dl>
         <dt>Program</dt>
         <dd><code data-testid="approval-program">{current.program}</code></dd>
-        <dt>Arguments</dt>
+        <dt>With</dt>
         <dd>
           <ol class="args" data-testid="approval-args">
             {#each current.args as arg, i (i)}
               <li><code data-testid="approval-arg">{arg}</code></li>
             {:else}
-              <li class="none">none</li>
+              <li class="none">nothing else</li>
             {/each}
           </ol>
         </dd>
-        <dt>Directory</dt>
-        <dd><code data-testid="approval-cwd">{current.cwd || "the app's directory"}</code></dd>
-        <dt>Shell</dt>
-        <dd data-testid="approval-shell">{current.shell ? 'yes, through the system shell' : 'no'}</dd>
+        <dt>In folder</dt>
+        <dd><code data-testid="approval-cwd">{current.cwd || "TouchDeck's folder"}</code></dd>
+        <dt>System shell</dt>
+        <dd data-testid="approval-shell" data-shell={current.shell}>{current.shell ? 'Yes, it runs through the system shell' : 'No'}</dd>
       </dl>
       {#if queue.length > 1}
-        <p class="more">{queue.length - 1} more waiting</p>
+        <p class="more">{queue.length - 1} more {queue.length - 1 === 1 ? 'button is' : 'buttons are'} waiting after this one.</p>
       {/if}
       {#if problem}
-        <p class="problem">{problem}</p>
+        <p class="problem">TouchDeck couldn't pass on your answer. Press the button on the deck again. ({problem})</p>
       {/if}
       <div class="buttons">
-        <button onclick={() => answer('deny')} data-testid="approval-deny">Deny</button>
-        <button onclick={() => answer('always')} data-testid="approval-always">Always allow</button>
-        <button class="primary" onclick={() => answer('once')} data-testid="approval-once">Allow once</button>
+        <button onclick={() => answer('deny')} data-testid="approval-deny">Don't run</button>
+        <button onclick={() => answer('always')} data-testid="approval-always" title="Runs this exact command from now on without asking">Always allow</button>
+        <button class="primary" onclick={() => answer('once')} data-testid="approval-once">Run once</button>
       </div>
     </div>
   </div>
@@ -84,46 +84,63 @@
   .backdrop {
     position: fixed;
     inset: 0;
-    z-index: 10;
+    z-index: 30;
     display: grid;
     place-items: center;
-    padding: 24px;
-    background: rgb(0 0 0 / 0.55);
+    padding: var(--space-5);
+    background: rgb(4 6 10 / 0.6);
+    animation: fade 180ms ease;
   }
 
   .modal {
+    display: grid;
+    gap: var(--space-4);
     width: min(560px, 100%);
     max-height: 100%;
     overflow: auto;
-    padding: 18px 20px;
-    border: 1px solid var(--line);
-    border-radius: 12px;
+    padding: var(--space-5);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-l);
     background: var(--panel);
+    box-shadow: 0 24px 64px -16px rgb(0 0 0 / 0.7);
+    animation: rise 220ms var(--ease-out);
   }
 
-  h2 {
-    margin: 0 0 8px;
-    color: var(--text);
-    font-size: 16px;
-    letter-spacing: 0;
-    text-transform: none;
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+  }
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
   }
 
   .from {
-    margin: 0 0 12px;
     color: var(--muted);
+  }
+
+  .from strong {
+    color: var(--text);
   }
 
   dl {
     display: grid;
-    grid-template-columns: 96px minmax(0, 1fr);
-    gap: 6px 10px;
+    grid-template-columns: 110px minmax(0, 1fr);
+    gap: var(--space-2) var(--space-3);
     margin: 0;
+    padding: var(--space-4);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-m);
+    background: var(--sunken);
   }
 
   dt {
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--text-s);
   }
 
   dd {
@@ -133,7 +150,7 @@
 
   code {
     font-family: var(--mono);
-    font-size: 12.5px;
+    font-size: var(--text-s);
   }
 
   .args {
@@ -153,7 +170,12 @@
   .buttons {
     display: flex;
     justify-content: flex-end;
-    gap: 8px;
-    margin-top: 16px;
+    gap: var(--space-2);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .modal {
+      animation: fade 180ms ease;
+    }
   }
 </style>

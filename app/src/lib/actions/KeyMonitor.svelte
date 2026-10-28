@@ -70,26 +70,26 @@
       onkeydown={record}
       onkeyup={record}
       onfocus={bringToFront}
-      placeholder="Focus here, then press a key on the deck"
-      aria-label="Key monitor"
+      placeholder="Click here, then press a button on your deck"
+      aria-label="Key tester"
       data-testid="key-monitor"
       data-front={front === null ? null : String(front)}
     ></textarea>
-    <button onclick={clear} data-testid="key-monitor-clear">Clear</button>
+    <button class="small" onclick={clear} data-testid="key-monitor-clear">Clear</button>
   </div>
   <div class="lists">
     <div>
-      <h3>Mirrored reports</h3>
+      <h4>What the deck sent</h4>
       <ol data-testid="key-reports">
         {#each reports as report, i (i)}
           <li data-testid="key-report" data-outcome={report.outcome} data-seq={report.seq} data-arrived={report.arrived_ms}>
-            {report.report}{report.gap ? ` (lost ${report.gap[0]} to ${report.gap[1]}, released all)` : ''}{report.outcome === 'typed' ? '' : ` (${report.outcome})`}
+            {report.report}{report.gap ? ` (missed ${report.gap[0]} to ${report.gap[1]}, so every key was let go)` : ''}{report.outcome === 'typed' ? '' : ` (${report.outcome})`}
           </li>
         {/each}
       </ol>
     </div>
     <div>
-      <h3>Key events</h3>
+      <h4>What this computer typed</h4>
       <ol data-testid="key-events">
         {#each events as event, i (i)}
           <li data-testid="key-event" data-type={event.type} data-key={event.key} data-at={event.at_ms}>{event.type} {event.key}</li>
@@ -118,12 +118,12 @@
     min-width: 0;
     height: 64px;
     padding: 8px 10px;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: var(--bg);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-s);
+    background: var(--sunken);
     color: var(--text);
     font-family: var(--mono);
-    font-size: 12.5px;
+    font-size: var(--text-s);
     resize: none;
   }
 
@@ -139,11 +139,11 @@
     min-height: 0;
   }
 
-  h3 {
-    margin: 0 0 4px;
+  h4 {
+    margin: 0 0 6px;
     color: var(--muted);
-    font-size: 12px;
-    font-weight: 600;
+    font-size: var(--text-xs);
+    font-weight: 500;
   }
 
   ol {
@@ -151,10 +151,11 @@
     margin: 0;
     padding: 6px 8px;
     overflow: auto;
-    border-radius: 8px;
-    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-m);
+    background: var(--sunken);
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--text-xs);
     list-style: none;
   }
 </style>
