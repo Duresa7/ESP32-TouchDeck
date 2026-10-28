@@ -29,13 +29,17 @@ typedef struct {
 
 /*
  * Where the deck draws, for one screen size. The band is the strip that slides, the full screen width and as tall
- * as the screen less the title strip above it and the dot strip below it. The grid sits inside the band with a
- * margin. The title, the dot row, the gap, the slop and the swipe threshold scale with the short side, which is 600
+ * as the screen less the title strip above it and the pager strip below it. The grid sits inside the band with a
+ * margin. The title, the pager, the gap, the slop and the swipe threshold scale with the short side, which is 600
  * in both orientations. The dashboard's value and bar columns sit at the same fractions of the grid width. Landscape
- * gives the milestone 1 pixel values exactly.
+ * gives the screen pixels of the Geometry table in docs/design.md exactly.
  *
- * A full-screen layout draws no title and no dots, so the band and the grid are both the whole screen, with no
- * margin. The gap, the pager distances and the title and dot fields keep their values, and the dashboard columns
+ * The pager is a row of dot_size dots, dot_gap apart and centred on the screen, whose middle sits dot_y down. The
+ * current Page's dot is a pill dot_current wide. dot_y leaves the pager's bottom edge the design's 18 px above the
+ * screen's.
+ *
+ * A full-screen layout draws no title and no pager, so the band and the grid are both the whole screen, with no
+ * margin. The gap, the pager distances and the title and pager fields keep their values, and the dashboard columns
  * follow the wider grid.
  */
 typedef struct {
@@ -46,9 +50,9 @@ typedef struct {
     int16_t title_x;
     int16_t title_y;
     int16_t dot_y;
-    int16_t dot_pitch;
     int16_t dot_size;
-    int16_t dot_active_extra;
+    int16_t dot_current;
+    int16_t dot_gap;
     int16_t bounce_px;
     int16_t slop;
     int16_t swipe;
@@ -61,8 +65,9 @@ ui_size_t ui_screen_size(ui_orientation_t orientation);
 
 ui_geometry_t ui_geometry(ui_size_t screen, bool full_screen);
 
-/* The x of the centre of dot `index` when `count` dots sit in a row centred on the screen. */
-int16_t ui_geometry_dot_x(const ui_geometry_t *g, uint8_t index, uint8_t count);
+/* The box of pager dot `index` of `count` while Page `current` shows: a dot_size circle, or the dot_current pill for
+ * the current Page. The dots after the pill sit further right by the pill's extra width, so the gaps stay dot_gap. */
+ui_rect_t ui_geometry_pager_dot(const ui_geometry_t *g, uint8_t index, uint8_t count, uint8_t current);
 
 /*
  * A point the touch controller reported on the landscape panel, in screen coordinates. Portrait undoes the display's

@@ -66,12 +66,16 @@ static void cmd_state(void)
     td_reply_int(&r, "transition_frames", st.transition_frames);
     td_reply_int(&r, "last_ms", st.last_ms);
     td_reply_int(&r, "last_frames", st.last_frames);
-    td_reply_int(&r, "dot_x", ui_dot_x(0, st.pages));
-    td_reply_int(&r, "dot_pitch", ui_geo()->dot_pitch);
-    td_reply_int(&r, "dot_y", ui_geo()->dot_y);
-    td_reply_int(&r, "dot_active", ui_theme.color.dot_active);
-    td_reply_int(&r, "dot_idle", ui_theme.color.dot_idle);
-    td_reply_int(&r, "glow", ui_theme.color.glow);
+    /* dot_x is the centre of the first dot at rest on the showing page, and dot_pitch the distance between the centres
+     * of two idle neighbours. glow keeps its name and reports the accent, the one-shot ring's color. */
+    const ui_geometry_t *g = ui_geo();
+    const ui_rect_t dot = ui_geometry_pager_dot(g, 0, st.pages, st.page);
+    td_reply_int(&r, "dot_x", dot.x + dot.w / 2);
+    td_reply_int(&r, "dot_pitch", g->dot_size + g->dot_gap);
+    td_reply_int(&r, "dot_y", g->dot_y);
+    td_reply_int(&r, "dot_active", ui_theme.color.accent);
+    td_reply_int(&r, "dot_idle", ui_theme.color.pager_idle);
+    td_reply_int(&r, "glow", ui_theme.color.accent);
     td_reply_bool(&r, "online", st.online);
     td_reply_int(&r, "dimmed", st.dimmed);
     send(&r);

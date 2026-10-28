@@ -1,27 +1,44 @@
 #include "ui_theme.h"
 #include "display.h"
 
+/* docs/design.md gives every screen token's RGB565 value, so a lossy edit to a macro fails the build. */
+_Static_assert(UI_SCREEN_BG == 0x0883, "--screen-bg");
+_Static_assert(UI_SCREEN_TILE == 0x1906, "--screen-tile");
+_Static_assert(UI_SCREEN_TILE_RAISED == 0x2168, "--screen-tile-raised");
+_Static_assert(UI_SCREEN_TRACK == 0x31C9, "--screen-track");
+_Static_assert(UI_SCREEN_PAGER_IDLE == 0x632E, "--screen-pager-idle");
+_Static_assert(UI_SCREEN_OUTLINE == 0x2966, "--screen-outline");
+_Static_assert(UI_SCREEN_INK == 0xF79F, "--screen-ink");
+_Static_assert(UI_SCREEN_INK_2 == 0x94D6, "--screen-ink-2");
+_Static_assert(UI_SCREEN_ACCENT == 0x5D5F, "--screen-accent");
+_Static_assert(UI_SCREEN_LIVE == 0x46D2, "--screen-live");
+_Static_assert(UI_SCREEN_SIGNAL == 0xFD84, "--screen-signal");
+_Static_assert(UI_SCREEN_DANGER == 0xFACC, "--screen-danger");
+_Static_assert(UI_TILE_COLOR_VIOLET == 0x49F8, "--tile-color-violet");
+_Static_assert(UI_TILE_COLOR_GREEN == 0x138A, "--tile-color-green");
+_Static_assert(UI_TILE_COLOR_BLUE == 0x22F7, "--tile-color-blue");
+_Static_assert(UI_TILE_COLOR_RED == 0xB146, "--tile-color-red");
+_Static_assert(UI_TILE_COLOR_ORANGE == 0xA2C2, "--tile-color-orange");
+_Static_assert(UI_TILE_COLOR_SLATE == 0x632E, "--tile-color-slate");
+_Static_assert(UI_TILE_ACCENT_BACKLIGHT == 0x5D5F, "--tile-accent-backlight");
+_Static_assert(UI_TILE_ACCENT_VIOLET == 0xA47F, "--tile-accent-violet");
+_Static_assert(UI_TILE_ACCENT_CORAL == 0xFC4D, "--tile-accent-coral");
+_Static_assert(UI_TILE_ACCENT_MINT == 0x66B8, "--tile-accent-mint");
+
 const ui_theme_t ui_theme = {
     .color = {
-        .bg = UI_RGB565(8, 8, 16),
-        .tile = UI_RGB565(24, 32, 48),
-        .tile_down = UI_RGB565(40, 64, 104),
-        .text = UI_RGB565(232, 236, 248),
-        .title = UI_RGB565(120, 132, 152),
-        .caption = UI_RGB565(160, 172, 192),
-        .dot_idle = UI_RGB565(64, 72, 88),
-        .dot_active = UI_RGB565(72, 160, 255),
-        .glow = UI_RGB565(72, 160, 255),
-        .mod_locked = UI_RGB565(32, 96, 192),
-        .lock = UI_RGB565(232, 236, 248),
+        .bg = UI_SCREEN_BG,
+        .tile = UI_SCREEN_TILE,
+        .tile_raised = UI_SCREEN_TILE_RAISED,
+        .track = UI_SCREEN_TRACK,
+        .pager_idle = UI_SCREEN_PAGER_IDLE,
+        .ink = UI_SCREEN_INK,
+        .ink_2 = UI_SCREEN_INK_2,
+        .accent = UI_SCREEN_ACCENT,
+        .signal = UI_SCREEN_SIGNAL,
     },
-    .tile_radius = 20,
-    .tile_down_border = 3,
-    .glow_width = 28,
-    .glow_spread = 2,
-    .glow_opa = 120,
-    .mod_outline_width = 4,
-    .mod_outline_pad = 2,
+    .tile_radius = 18,
+    .ring_width = 4,
     .lock = {
         .w = 26,
         .h = 32,
@@ -33,42 +50,45 @@ const ui_theme_t ui_theme = {
         .inset = 18,
     },
     .media = {
-        .gap = 14,
+        .gap = 18,
         .label_inset = 16,
     },
     .mod_poll_ms = 50,
     .dim_opa = LV_OPA_40,
     .stale_opa = LV_OPA_60,
     .widget = {
-        .value_dy = 16,
-        .caption_dy = 30,
-        .bar_h = 6,
-        .bar_bottom = 12,
-        .bar_radius = 3,
+        .value_dy = 18,
+        .caption_dy = 26,
+        .pad = 24,
+        .bar_h = 8,
+        .bar_bottom = 24,
         .redraw_ms = 100,
     },
     .dash = {
         .row_gap = 8,
-        .radius = 10,
+        .radius = 12,
         .pad = 20,
-        .bar_h = 12,
+        .bar_h = 8,
     },
     .anim_settle_ms = 260,
     .anim_bounce_out_ms = 110,
     .anim_bounce_back_ms = 150,
     .anim_press_ms = 120,
     .anim_dot_ms = 160,
-    .font_tile = &lv_font_montserrat_48,
-    .font_title = &lv_font_montserrat_28,
-    .font_caption = &lv_font_montserrat_28,
-    .font_small = &lv_font_montserrat_14,
+    .font_legend = &ui_font_medium_44,
+    .font_label = &ui_font_medium_26,
+    .font_sub = &ui_font_medium_22,
+    .font_value = &ui_font_semibold_32,
+    .font_big = &ui_font_semibold_40,
+    .font_title = &ui_font_nameplate_26,
+    .font_icon = &lv_font_montserrat_48,
 };
 
 static const lv_style_prop_t k_tile_transition_props[] = {
-    LV_STYLE_BG_COLOR, LV_STYLE_BORDER_WIDTH, LV_STYLE_SHADOW_WIDTH, LV_STYLE_SHADOW_OPA, 0,
+    LV_STYLE_BG_COLOR, 0,
 };
 static const lv_style_prop_t k_dot_transition_props[] = {
-    LV_STYLE_BG_COLOR, LV_STYLE_TRANSFORM_WIDTH, 0,
+    LV_STYLE_BG_COLOR, 0,
 };
 
 static lv_style_transition_dsc_t s_tile_transition;
@@ -82,6 +102,7 @@ lv_color_t ui_color(uint16_t rgb565)
                          (uint8_t)((rgb565 & 0x1F) << 3));
 }
 
+/* A pressed tile rises to the raised fill. No border, glow or shadow: the Device draws flat fills only. */
 static void init_tile_styles(ui_styles_t *st)
 {
     const ui_theme_t *t = &ui_theme;
@@ -94,28 +115,24 @@ static void init_tile_styles(ui_styles_t *st)
     lv_style_set_bg_color(&st->tile, ui_color(t->color.tile));
     lv_style_set_border_opa(&st->tile, LV_OPA_COVER);
     lv_style_set_border_width(&st->tile, 0);
-    lv_style_set_border_color(&st->tile, ui_color(t->color.glow));
-    lv_style_set_shadow_width(&st->tile, 0);
-    lv_style_set_shadow_spread(&st->tile, t->glow_spread);
-    lv_style_set_shadow_color(&st->tile, ui_color(t->color.glow));
-    lv_style_set_shadow_opa(&st->tile, LV_OPA_TRANSP);
     lv_style_set_pad_all(&st->tile, 0);
     lv_style_set_transition(&st->tile, &s_tile_transition);
 
     lv_style_init(&st->tile_down);
-    lv_style_set_bg_color(&st->tile_down, ui_color(t->color.tile_down));
-    lv_style_set_border_width(&st->tile_down, t->tile_down_border);
-    lv_style_set_shadow_width(&st->tile_down, t->glow_width);
-    lv_style_set_shadow_opa(&st->tile_down, t->glow_opa);
+    lv_style_set_bg_color(&st->tile_down, ui_color(t->color.tile_raised));
+
+    lv_style_init(&st->tile_legend);
+    lv_style_set_text_font(&st->tile_legend, t->font_legend);
+    lv_style_set_text_color(&st->tile_legend, ui_color(t->color.ink));
 
     lv_style_init(&st->tile_label);
-    lv_style_set_text_font(&st->tile_label, t->font_tile);
-    lv_style_set_text_color(&st->tile_label, ui_color(t->color.text));
+    lv_style_set_text_font(&st->tile_label, t->font_label);
+    lv_style_set_text_color(&st->tile_label, ui_color(t->color.ink_2));
+    lv_style_set_text_align(&st->tile_label, LV_TEXT_ALIGN_CENTER);
 
-    lv_style_init(&st->tile_caption);
-    lv_style_set_text_font(&st->tile_caption, t->font_caption);
-    lv_style_set_text_color(&st->tile_caption, ui_color(t->color.caption));
-    lv_style_set_text_align(&st->tile_caption, LV_TEXT_ALIGN_CENTER);
+    lv_style_init(&st->tile_icon);
+    lv_style_set_text_font(&st->tile_icon, t->font_icon);
+    lv_style_set_text_color(&st->tile_icon, ui_color(t->color.ink));
 }
 
 static void init_text_and_dot_styles(ui_styles_t *st)
@@ -126,52 +143,51 @@ static void init_text_and_dot_styles(ui_styles_t *st)
 
     lv_style_init(&st->title);
     lv_style_set_text_font(&st->title, t->font_title);
-    lv_style_set_text_color(&st->title, ui_color(t->color.title));
+    lv_style_set_text_color(&st->title, ui_color(t->color.ink_2));
 
     lv_style_init(&st->dot);
     lv_style_set_radius(&st->dot, LV_RADIUS_CIRCLE);
     lv_style_set_bg_opa(&st->dot, LV_OPA_COVER);
-    lv_style_set_bg_color(&st->dot, ui_color(t->color.dot_idle));
+    lv_style_set_bg_color(&st->dot, ui_color(t->color.pager_idle));
     lv_style_set_border_width(&st->dot, 0);
     lv_style_set_transition(&st->dot, &s_dot_transition);
 
     lv_style_init(&st->dot_on);
-    lv_style_set_bg_color(&st->dot_on, ui_color(t->color.dot_active));
-    lv_style_set_transform_width(&st->dot_on, ui_geo()->dot_active_extra);
+    lv_style_set_bg_color(&st->dot_on, ui_color(t->color.accent));
 }
 
 /* LVGL ranks a state's styles by the state's value, CHECKED 4, PRESSED 128, USER_1 4096, so a press still shows the
- * pressed fill over a locked tile. The outline is not in the tile's transition list, so the ring appears in one
- * frame. */
+ * raised fill inside a ring. A border is drawn inside the tile, so it is the design's inset ring. The border is not in
+ * the tile's transition list, so the ring appears in one frame. */
 static void init_mod_styles(ui_styles_t *st)
 {
     const ui_theme_t *t = &ui_theme;
 
     lv_style_init(&st->mod_one_shot);
-    lv_style_set_outline_width(&st->mod_one_shot, t->mod_outline_width);
-    lv_style_set_outline_pad(&st->mod_one_shot, t->mod_outline_pad);
-    lv_style_set_outline_color(&st->mod_one_shot, ui_color(t->color.glow));
-    lv_style_set_outline_opa(&st->mod_one_shot, LV_OPA_COVER);
+    lv_style_set_border_width(&st->mod_one_shot, t->ring_width);
+    lv_style_set_border_color(&st->mod_one_shot, ui_color(t->color.accent));
 
     lv_style_init(&st->mod_locked);
-    lv_style_set_bg_color(&st->mod_locked, ui_color(t->color.mod_locked));
+    lv_style_set_border_width(&st->mod_locked, t->ring_width);
+    lv_style_set_border_color(&st->mod_locked, ui_color(t->color.ink));
 
     lv_style_init(&st->lock_shackle);
     lv_style_set_radius(&st->lock_shackle, LV_RADIUS_CIRCLE);
     lv_style_set_bg_opa(&st->lock_shackle, LV_OPA_TRANSP);
     lv_style_set_border_opa(&st->lock_shackle, LV_OPA_COVER);
     lv_style_set_border_width(&st->lock_shackle, t->lock.stroke);
-    lv_style_set_border_color(&st->lock_shackle, ui_color(t->color.lock));
+    lv_style_set_border_color(&st->lock_shackle, ui_color(t->color.ink));
     lv_style_set_border_side(&st->lock_shackle, LV_BORDER_SIDE_TOP | LV_BORDER_SIDE_LEFT | LV_BORDER_SIDE_RIGHT);
 
     lv_style_init(&st->lock_body);
     lv_style_set_radius(&st->lock_body, t->lock.radius);
     lv_style_set_bg_opa(&st->lock_body, LV_OPA_COVER);
-    lv_style_set_bg_color(&st->lock_body, ui_color(t->color.lock));
+    lv_style_set_bg_color(&st->lock_body, ui_color(t->color.ink));
     lv_style_set_border_width(&st->lock_body, 0);
 }
 
-/* The dim style sits in LV_STATE_USER_2, which ranks above PRESSED, so a dimmed tile stays dim under a finger. */
+/* The dim style sits in LV_STATE_USER_2, which ranks above PRESSED, so a dimmed tile stays dim under a finger. A bar
+ * is a flat fill on a flat track, both with round ends. */
 static void init_widget_styles(ui_styles_t *st)
 {
     const ui_theme_t *t = &ui_theme;
@@ -179,11 +195,26 @@ static void init_widget_styles(ui_styles_t *st)
     lv_style_init(&st->tile_dim);
     lv_style_set_opa(&st->tile_dim, t->dim_opa);
 
-    lv_style_init(&st->widget_bar);
-    lv_style_set_radius(&st->widget_bar, t->widget.bar_radius);
-    lv_style_set_bg_opa(&st->widget_bar, LV_OPA_COVER);
-    lv_style_set_bg_color(&st->widget_bar, ui_color(t->color.glow));
-    lv_style_set_border_width(&st->widget_bar, 0);
+    lv_style_init(&st->bar_track);
+    lv_style_set_radius(&st->bar_track, LV_RADIUS_CIRCLE);
+    lv_style_set_bg_opa(&st->bar_track, LV_OPA_COVER);
+    lv_style_set_bg_color(&st->bar_track, ui_color(t->color.track));
+    lv_style_set_border_width(&st->bar_track, 0);
+    lv_style_set_pad_all(&st->bar_track, 0);
+
+    lv_style_init(&st->bar_fill);
+    lv_style_set_radius(&st->bar_fill, LV_RADIUS_CIRCLE);
+    lv_style_set_bg_opa(&st->bar_fill, LV_OPA_COVER);
+    lv_style_set_bg_color(&st->bar_fill, ui_color(t->color.accent));
+    lv_style_set_border_width(&st->bar_fill, 0);
+
+    lv_style_init(&st->widget_value);
+    lv_style_set_text_font(&st->widget_value, t->font_big);
+    lv_style_set_text_color(&st->widget_value, ui_color(t->color.ink));
+
+    lv_style_init(&st->dash_value);
+    lv_style_set_text_font(&st->dash_value, t->font_value);
+    lv_style_set_text_color(&st->dash_value, ui_color(t->color.ink));
 
     lv_style_init(&st->dash_row);
     lv_style_set_radius(&st->dash_row, t->dash.radius);
@@ -206,10 +237,8 @@ const ui_styles_t *ui_styles(void)
 }
 
 /* Only the band slides, so a slide redraws the band and leaves the strips above and below it alone. It is taller than
- * the grid by 20 px each side, and a pressed tile's glow reaches 17 px (glow_width / 2 + 1 + glow_spread). A
- * full-screen band is the screen itself, so the glow of an edge tile only loses what falls off the glass. The screen
- * size is fixed once display_start has run, so the geometry is worked out again only when the size or the full-screen
- * choice differs from the last. */
+ * the grid by 20 px each side. A full-screen band is the screen itself. The screen size is fixed once display_start
+ * has run, so the geometry is worked out again only when the size or the full-screen choice differs from the last. */
 static ui_geometry_t s_geo;
 static bool s_geo_full_screen;
 static bool s_want_full_screen;
@@ -228,9 +257,4 @@ void ui_geo_set_full_screen(bool full_screen)
 {
     s_want_full_screen = full_screen;
     ui_geo();
-}
-
-int16_t ui_dot_x(uint8_t index, uint8_t count)
-{
-    return ui_geometry_dot_x(ui_geo(), index, count);
 }
