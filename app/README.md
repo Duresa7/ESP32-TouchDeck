@@ -103,6 +103,21 @@ press events, drop messages, or close the connection. Fake input records key
 operations without typing into the host session. Mock checks do not verify real
 serial permissions, keyboard input, credential storage, or physical panel behavior.
 
+### Electron shell
+
+`electron/` is the thin Electron window that loads the UI the Companion serves.
+`pnpm dev:electron` builds the Companion with `--features test-hooks`, starts it
+with one mock Device in a scratch data directory, and opens the window. The
+window's end-to-end tests need that build too:
+
+```sh
+cargo build -p td-companion --features test-hooks
+pnpm --filter @touchdeck/electron e2e
+```
+
+The shell starts the Companion from `TOUCHDECK_COMPANION_BIN` in development and
+tests, and from `td-companion` next to the app executable when packaged.
+
 ## Repository layout
 
 | Path | Responsibility |
