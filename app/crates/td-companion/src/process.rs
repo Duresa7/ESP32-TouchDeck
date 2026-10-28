@@ -96,6 +96,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         mock_devices.is_some(),
         Some(runtime.clone()),
         crate::Limits::default(),
+        &root,
     );
     let initial = ctx.clone();
     let written = tokio::task::spawn_blocking(move || {

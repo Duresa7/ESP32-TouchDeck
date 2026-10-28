@@ -418,6 +418,15 @@ pub struct Job {
 - **One active Job per Device or New board scope**, including `waiting_for_confirmation`. A second one gets 409 `device.busy` with `details.job` set to the active Job, so a double click can attach to it. There's no queue. Companion-scoped Asset render Jobs instead share the two-Job limit in Limits.
 - `GET /jobs` lists active Jobs and the last 50 finished ones, kept for 10 minutes. `GET /jobs/{id}` reads one. `DELETE /jobs/{id}` cancels one, or returns 409 `job.not_cancellable`.
 - In TypeScript, `companion.jobs.wait(job)` resolves with the typed `result` on `succeeded` and rejects with the `ApiError` on `failed`. It follows `job.updated` events and re-reads `GET /jobs/{id}` after a reconnect.
+- **As built in #75.** The generated `companion.jobs.wait<K>(job)` reads `GET /jobs/{id}` every 250 ms until the Job finishes; the UI's event client can resolve it from `job.updated` instead. A cancelled Job ends in `cancelled` with the error `job.cancelled`, and `wait` rejects with it. A Companion-scoped kind at its limit gets 429 `limits.exceeded`, not a queue.
+
+Feature module `jobs`.
+
+| Name | Method and path | Request → Response |
+|---|---|---|
+| `jobs.list` | `GET /jobs` | → `Job[]`: active Jobs, then the finished ones kept, oldest first. Also the `jobs` key of `sync` |
+| `jobs.get` | `GET /jobs/{job}` | → `Job`. 404 `job.not_found` |
+| `jobs.cancel` | `DELETE /jobs/{job}` | → `Job`, with its current state. The Job reads `cancelled` once its work notices. 409 `job.not_cancellable` when the phase or a finished Job forbids it |
 - **Crash halfway.** Jobs aren't saved. OTA rollback covers a Firmware Job lost mid-flash: the Device reconnects on its old or new build, and the UI shows its version. A lost Layout push leaves the Device's previous Layout, because the put is atomic on the Device (`xfer.end`).
 - **Uploads aren't Jobs.** `POST /uploads` returns an id after upload validation; `POST /firmware/bundles/pick` returns after the native file dialog closes, and Jobs then refer to that id.
 
@@ -470,6 +479,16 @@ Feature module `layouts`.
 
 The `Layout` body extractor runs `td_core::Layout` validation once. On failure it returns 422 `layout.invalid` with `details.issues: [{path, message}]`.
 
+As built in #75:
+
+- **Revision.** The CRC-32 of the stored bytes as 8 lowercase hex digits, such as `"1c291ca3"`. `ETag` sends it quoted. `PushReport.revision` gives the pushed Layout's revision, so the next push can send it without a read.
+- **`If-Match`.** Quoted or bare revisions, comma-separated, or `*` for any stored Layout. The Companion reads the Device's revision before it accepts the push, and the Job reads it again before the put. A mismatch before the Job is 412 `layout.changed` with `details.revision` (the current one, or `null` for an empty slot). A mismatch the Job finds fails it with the same error.
+- **An empty slot.** `layouts.get` returns 404 `layout.not_found`.
+- **Issues.** Each issue also has `rule`, the rule key from `schema/README.md`. `path` is the JSON pointer when the rule's message starts with one, otherwise empty.
+- **The Layout store.** The Companion keeps each Device's Layouts as `layouts/<device>/<orientation>.json` under its data folder, in canonical form. A Layout lands there after a successful push or read. Today's app keeps no Layout on the PC, so there's nothing to read from it; #91 owns migration.
+- **Sessions.** Layout and Asset work runs on the session the Device manager keeps for each Device (#74), one operation at a time per Device, through `link::Links::with`. The port is never opened twice. The actor's own requests can interleave with it, since a session matches replies to requests by sequence number.
+- **Assets on push.** The Job sends the icons the Layout names that the Device lacks over today's v1 `icon.*` messages, then puts the Layout. #93 replaces that step with the v2 Asset store.
+
 ### Firmware
 
 Feature module `firmware`.
@@ -498,6 +517,12 @@ Feature module `assets`. Assets reach a Device only through `layouts.push`, whic
 | `assets.catalog_search` | `GET /assets/catalog/search?q=&catalog=` | → `CatalogHit[]`. The Companion fetches and caches catalogs |
 | `assets.on_device` | `GET /devices/{device}/assets` | → `{ids: AssetId[], storage_free}` |
 | `assets.prune` | `POST /devices/{device}/assets/prune` | `{also_keep: AssetId[]}` → 202 Job `assets.prune`. Removes Assets no stored Layout uses |
+
+As built in #75:
+
+- `assets.create` takes the `app` source only; #93 adds `upload` and `catalog`. `fit` is `"contain"` (the default: the whole image inside the Tile) or `"cover"` (cropped to a centered square first). The result's `kind` is `tdi1`, 64 by 64. A third render while two run gets 429 `limits.exceeded`.
+- `assets.prune` keeps the Assets that `also_keep` names, that the Companion's stored Layouts for the Device use, and that the Device's own stored Layouts use, as today's `remove_unused_icons` does.
+- `assets.file` reads built-in icons and the Companion's Asset files, kept as `assets/<id>.bin` under its data folder. The generated client returns a `Blob` for it.
 
 ### Actions and approvals
 
@@ -706,6 +731,7 @@ Features add codes as they land. This list is the starting set.
 | `layout.orientation_mismatch` | 422 | The path and body orientations differ |
 | `layout.changed` | 412 | The Device's Layout changed since it was loaded |
 | `layout.stored_invalid` | 502 | The Layout stored on the Device fails validation |
+| `layout.not_found` | 404 | The Device stores no Layout for that orientation |
 | `firmware.bundle_invalid` | 422 | The picked file isn't a valid bundle |
 | `firmware.bundle_not_found` | 404 | The `BundleId` expired, was consumed, belongs to another target or never existed |
 | `firmware.declined` | Job error | The user declined native confirmation; no Firmware write occurred |
@@ -717,6 +743,7 @@ Features add codes as they land. This list is the starting set.
 | `upload.not_found` | 404 | The upload expired or never existed |
 | `job.not_found` | 404 | No Job with that id |
 | `job.not_cancellable` | 409 | The Job's current phase can't be cancelled |
+| `job.cancelled` | Job error | The Job was cancelled |
 | `approval.not_found` | 404 | The request was answered or expired |
 | `action.not_found` | 404 | No always-allowed action with that hash |
 | `integration.not_found` | 404 | No Integration with that id |
@@ -754,7 +781,7 @@ pub struct Req<E: Endpoint> { pub path: E::Path, pub query: E::Query, pub body: 
 
 ### Generated TypeScript
 
-ts-rs derives each type. The Companion's generator writes `<ui>/src/companion/api.gen.ts` with every type, an endpoint table, typed wrappers `companion.<feature>.<action>()`, the `EventMap`, the `JobMap`, the `ErrorCode` union and `SyncData`. The file starts with `// Generated from td-companion. Do not edit.` and uses LF endings. `pnpm gen:api` runs `cargo run -p td-companion --features test-hooks -- --emit-ts <path>`.
+ts-rs derives each type. The Companion's generator writes `<ui>/src/companion/api.gen.ts` with every type, an endpoint table, typed wrappers `companion.<feature>.<action>()`, the `EventMap`, the `JobMap`, the `ErrorCode` union and `SyncData`. Each wrapper takes optional request headers after the bearer, such as `If-Match`. A response that isn't JSON comes back as a `Blob`. The file starts with `// Generated from td-companion. Do not edit.` and uses LF endings. `pnpm gen:api` runs `cargo run -p td-companion --features test-hooks -- --emit-ts <path>`.
 
 `td-core` gains an optional `ts` feature that adds `#[cfg_attr(feature = "ts", derive(TS))]` to `Layout`, `Hello`, `Settings`, `Orientation` and the other types the API carries.
 

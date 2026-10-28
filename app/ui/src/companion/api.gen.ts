@@ -1,9 +1,28 @@
 // Generated from td-companion. Do not edit.
+export type AssetBytes = Blob;
+export type AssetPath = { asset: string, };
+export type AssetRef = { id: string, 
+/**
+ * `tdi1`, the Device's icon format.
+ */
+kind: string, width: number, height: number, bytes: number, };
+export type AssetSource = { "kind": "app", path: string, };
+export type AssetSync = { 
+/**
+ * Assets the Layout uses that the Device lacked and the Companion sent.
+ */
+sent: Array<string>, 
+/**
+ * Assets the Layout uses that the Device lacked and the Companion has no file for.
+ */
+unavailable: Array<string>, };
 export type AuthRevoked = Record<string, never>;
+export type Builtin = { name: string, label: string, tags: Array<string>, id: string, };
 export type Capabilities = { screen: [number, number], grid: [number, number], pages: number, tiles: number, layout_bytes: number, storage_free: number, tile_kinds: Array<string>, asset_bytes: number, formats: Array<string>, image: [number, number], };
 export type ClientInfo = { id: string, kind: SessionKind, };
 export type CompanionStopping = { reason: string, };
 export type ConsoleLine = { line: string, };
+export type CreateAsset = { source: AssetSource, fit?: Fit, };
 export type DeviceAdded = DeviceSummary;
 export type DeviceConsole = { device: DeviceId, line: string, };
 export type DeviceEvent = { device: DeviceId, event: JsonValue, };
@@ -17,6 +36,7 @@ outcome: string,
  * The sequence numbers that never arrived, whose held keys were released.
  */
 gap: [number, number] | null, errors: Array<string>, arrived_ms: number, };
+export type DeviceLayoutState = { source: string, name: string, orientation: Orientation, pages: number, tiles: number, icons_loaded: number | null, icons_missing: number | null, bytes: number | null, load_ms: number | null, error: string | null, };
 export type DevicePath = { device: DeviceId, };
 export type DeviceRemoved = { id: DeviceId, };
 export type DeviceSettings = { idle_timeout_s: number, 
@@ -27,20 +47,70 @@ orientation: string, name: string | null, brightness: number | null, };
 export type DeviceSettingsPatch = { idle_timeout_s: number | null, orientation: string | null, name: string | null, brightness: number | null, };
 export type DeviceSummary = { id: DeviceId, rev: number, name: string | null, setup: SetupState, link: LinkState, firmware: FirmwareInfo | null, capabilities: Capabilities | null, orientation: string | null, layout: JsonValue | null, key_mirror: KeyMirrorState, stable_id: boolean, };
 export type DeviceUpdated = DeviceSummary;
+export type ErrorBody = { code: string, message: string, details: JsonValue | null, };
 export type FirmwareInfo = { version: string, protocol: number, build: string, recovery: boolean, update_available: string | null, };
+export type Fit = "contain" | "cover";
 export type Hello = { api: string, build: string, session: ClientInfo, };
+export type Job = { id: string, kind: string, scope: JobScope, state: JobState, 
+/**
+ * Typed per kind in `JobMap`.
+ */
+progress: JsonValue, 
+/**
+ * Typed per kind in `JobMap`. Set once the Job succeeds.
+ */
+result: JsonValue | null, error: ErrorBody | null, 
+/**
+ * Whether the current phase allows `DELETE /jobs/{id}`.
+ */
+cancellable: boolean, created_ms: number, finished_ms: number | null, rev: number, };
+export type JobPath = { job: string, };
+export type JobScope = { "kind": "device", "id": string } | { "kind": "new-board", "id": string } | { "kind": "companion" };
+export type JobState = "queued" | "waiting_for_confirmation" | "running" | "succeeded" | "failed" | "cancelled";
+export type JobUpdated = Job;
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;
 export type KeyMirrorState = { enabled: boolean, reason: string | null, };
 export type Lagged = { topic: Topic, device: string, dropped: number, };
+export type Layout = { schema: number, name: string, orientation: Orientation, 
+/**
+ * Tiles use the whole screen, with no page title or page dots. Written only when true, so a layout that
+ * leaves it off stays readable by firmware that predates it.
+ */
+fullScreen?: boolean, pages: Array<Page>, };
+export type LayoutBody = Layout;
+export type LayoutPath = { device: string, orientation: Orientation, };
+export type LayoutRead = { layout: Layout, 
+/**
+ * The Device's CRC-32 of the stored Layout as 8 hex digits, also sent as `ETag`.
+ */
+revision: string, };
 export type LinkState = { "state": "connected", port: string, since_ms: number, protocol: number, } | { "state": "connecting", port: string, } | { "state": "offline" } | { "state": "lost", reason: LostReason, detail: string, at_ms: number, } | { "state": "disconnected" } | { "state": "busy", port: string, detail: string, } | { "state": "unresponsive", port: string, } | { "state": "updating", job: string, };
 export type LostReason = "unplugged" | "timeout" | "io-error" | "closed";
+export type Modifier = "ctrl" | "shift" | "alt" | "win";
 export type NewBoard = { id: DeviceId, port: string, seen_ms: number, } & ({ "probe": "silent" } | { "probe": "busy", detail: string, } | { "probe": "other-firmware", product: string, detail: string, });
 export type NewBoardAdded = NewBoard;
 export type NewBoardRemoved = { id: DeviceId, };
 export type NoQuery = null;
+export type Orientation = "landscape" | "portrait";
+export type Page = { "kind": "grid", id: string, title: string, rows: number, cols: number, tiles: Array<Tile>, } | { "kind": "dashboard", id: string, title: string, source: string, };
 export type PortProbe = { port: string, usb_serial: string | null, id: DeviceId, probed_ms: number | null, } & ({ "status": "pending" } | { "status": "device", protocol: number, version: string, } | { "status": "silent" } | { "status": "busy", detail: string, } | { "status": "other-firmware", product: string, detail: string, });
 export type Proof = { proof: string, };
 export type ProofRequest = { nonce: string, };
+export type PruneProgress = { removed: number, total: number, };
+export type PruneRequest = { 
+/**
+ * Assets to keep besides the ones the Device's stored Layouts use, such as those of a
+ * Layout being edited.
+ */
+also_keep: Array<string>, };
+export type PruneResult = { removed: Array<string>, };
+export type PushProgress = { assets_sent: number, assets_total: number, bytes_sent: number, bytes_total: number, };
+export type PushReport = { state: DeviceLayoutState, bytes: number, chunks: number, retransmits: number, elapsed_ms: number, assets: AssetSync, 
+/**
+ * The pushed Layout's revision, for the next `If-Match`.
+ */
+revision: string, };
+export type RenderProgress = { frames_done: number, frames_total: number, };
 export type SessionCreated = { id: string, token: string, };
 export type SessionInfo = { id: string, kind: SessionKind, label: string, created_ms: number, last_used_ms: number, current: boolean, };
 export type SessionKind = "window" | "browser";
@@ -52,10 +122,18 @@ export type SettingsPatched = { settings: DeviceSettings,
  */
 restart_required: boolean, };
 export type SetupState = "needs-setup" | "ready";
+export type SuggestRequest = { action: TileAction, };
 export type SystemInfo = { version: string, build: string, api: string, mock: boolean, data_dir_override: boolean, };
+export type Tile = { id: string, label: string, row: number, col: number, rowSpan: number, colSpan: number, icon: string | null, action: TileAction, };
+export type TileAction = { "type": "key", usage: number, mods: Array<Modifier>, } | { "type": "mod", mod: Modifier, } | { "type": "consumer", usage: number, } | { "type": "page", page: string, } | { "type": "none" } | { "type": "launch", path: string, args: Array<string>, cwd: string, } | { "type": "open", target: string, } | { "type": "command", program: string, args: Array<string>, cwd: string, shell: boolean, } | { "type": "widget", source: string, field: string, account: string, };
 export type Topic = "state" | "console" | "key-mirror" | "device-events";
 export type Versions = { api: Array<string>, };
 export const endpoints = {
+  'assets.builtin': { method: 'GET', path: '/assets/builtin', access: 'session' },
+  'assets.create': { method: 'POST', path: '/assets', access: 'session' },
+  'assets.file': { method: 'GET', path: '/assets/{asset}', access: 'session' },
+  'assets.prune': { method: 'POST', path: '/devices/{device}/assets/prune', access: 'session' },
+  'assets.suggest': { method: 'POST', path: '/assets/builtin/suggest', access: 'session' },
   'auth.proof': { method: 'POST', path: '/auth/proof', access: 'public' },
   'auth.reset': { method: 'POST', path: '/auth/reset', access: 'session' },
   'auth.session_create': { method: 'POST', path: '/auth/sessions', access: 'pairing' },
@@ -70,6 +148,11 @@ export const endpoints = {
   'devices.restart': { method: 'POST', path: '/devices/{device}/restart', access: 'session' },
   'devices.settings_get': { method: 'GET', path: '/devices/{device}/settings', access: 'session' },
   'devices.settings_patch': { method: 'PATCH', path: '/devices/{device}/settings', access: 'session' },
+  'jobs.cancel': { method: 'DELETE', path: '/jobs/{job}', access: 'session' },
+  'jobs.get': { method: 'GET', path: '/jobs/{job}', access: 'session' },
+  'jobs.list': { method: 'GET', path: '/jobs', access: 'session' },
+  'layouts.get': { method: 'GET', path: '/devices/{device}/layouts/{orientation}', access: 'session' },
+  'layouts.push': { method: 'PUT', path: '/devices/{device}/layouts/{orientation}', access: 'session' },
   'new_boards.list': { method: 'GET', path: '/new-boards', access: 'session' },
   'ports.list': { method: 'GET', path: '/ports', access: 'session' },
   'ports.rescan': { method: 'POST', path: '/ports/rescan', access: 'session' },
@@ -77,12 +160,17 @@ export const endpoints = {
   'system.ping': { method: 'GET', path: '/system/ping', access: 'public' },
   'system.shutdown': { method: 'POST', path: '/system/shutdown', access: 'session' },
 } as const;
-export type ErrorCode = 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'console.forbidden' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'internal' | 'limits.exceeded' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin';
+export type ErrorCode = 'asset.not_found' | 'asset.render_failed' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.changed' | 'layout.invalid' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin';
 export type SyncData = {
   devices: Array<DeviceSummary>,
+  jobs: Array<Job>,
   new_boards: Array<NewBoard>,
 };
-export type JobMap = Record<string, never>;
+export type JobMap = {
+  'assets.prune': { progress: PruneProgress; result: PruneResult };
+  'assets.render': { progress: RenderProgress; result: AssetRef };
+  'layouts.push': { progress: PushProgress; result: PushReport };
+};
 export type EventMap = {
   'hello': Hello;
   'sync': SyncData;
@@ -95,54 +183,88 @@ export type EventMap = {
   'device.removed': DeviceRemoved;
   'device.key-mirror': DeviceKeyMirror;
   'device.event': DeviceEvent;
+  'job.updated': JobUpdated;
   'new-board.added': NewBoardAdded;
   'new-board.removed': NewBoardRemoved;
 };
 
 export function createCompanion(base: string, token: () => string) {
-  async function call<T>(name: keyof typeof endpoints, path: Record<string, string>, query: unknown, body: unknown, bearer?: string): Promise<T> {
+  async function call<T>(name: keyof typeof endpoints, path: Record<string, string>, query: unknown, body: unknown, bearer?: string, headers?: Record<string, string>): Promise<T> {
     const endpoint = endpoints[name];
     let route: string = endpoint.path;
     for (const [key, value] of Object.entries(path)) route = route.replace(`{${key}}`, encodeURIComponent(value));
     const url = new URL(`/api/v1${route}`, base);
     if (query) for (const [key, value] of Object.entries(query)) url.searchParams.set(key, String(value));
     const auth = bearer ?? (endpoint.access === 'session' ? token() : undefined);
-    const response = await fetch(url, { method: endpoint.method, headers: { ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...(body == null ? {} : { 'Content-Type': 'application/json' }) }, ...(body == null ? {} : { body: JSON.stringify(body) }) });
+    const response = await fetch(url, { method: endpoint.method, headers: { ...headers, ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...(body == null ? {} : { 'Content-Type': 'application/json' }) }, ...(body == null ? {} : { body: JSON.stringify(body) }) });
     if (!response.ok) throw (await response.json()).error;
-    return response.status === 204 ? undefined as T : response.json();
+    if (response.status === 204) return undefined as T;
+    // Asset files come back as raw bytes with their media type.
+    return (response.headers.get('Content-Type') ?? '').startsWith('application/json') ? response.json() : response.blob() as T;
+  }
+  /** Resolves with the Job's typed result once it succeeds, and rejects with its error otherwise. */
+  async function wait<K extends keyof JobMap>(job: Job, every = 250): Promise<JobMap[K]['result']> {
+    for (;;) {
+      if (job.state === 'succeeded') return job.result as JobMap[K]['result'];
+      if (job.state === 'failed' || job.state === 'cancelled') throw job.error;
+      await new Promise((resolve) => setTimeout(resolve, every));
+      job = await call<Job>('jobs.get', { job: job.id }, null, null);
+    }
   }
   return {
+    assets: {
+      builtin: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<Builtin>>('assets.builtin', path, query, body, bearer, headers),
+      create: (path: Record<string, never> = {}, query: null = null, body: { source: AssetSource, fit?: Fit, }, bearer?: string, headers?: Record<string, string>) => call<Job>('assets.create', path, query, body, bearer, headers),
+      file: (path: { asset: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<AssetBytes>('assets.file', path, query, body, bearer, headers),
+      prune: (path: { device: DeviceId, }, query: null = null, body: { 
+/**
+ * Assets to keep besides the ones the Device's stored Layouts use, such as those of a
+ * Layout being edited.
+ */
+also_keep: Array<string>, }, bearer?: string, headers?: Record<string, string>) => call<Job>('assets.prune', path, query, body, bearer, headers),
+      suggest: (path: Record<string, never> = {}, query: null = null, body: { action: TileAction, }, bearer?: string, headers?: Record<string, string>) => call<Builtin | null>('assets.suggest', path, query, body, bearer, headers),
+    },
     auth: {
-      proof: (path: Record<string, never> = {}, query: null = null, body: { nonce: string, }, bearer?: string) => call<Proof>('auth.proof', path, query, body, bearer),
-      reset: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string) => call<null>('auth.reset', path, query, body, bearer),
-      session_create: (path: Record<string, never> = {}, query: null = null, body: { kind: SessionKind, label: string | null, }, bearer?: string) => call<SessionCreated>('auth.session_create', path, query, body, bearer),
-      session_delete: (path: { id: string, }, query: null = null, body: null = null, bearer?: string) => call<null>('auth.session_delete', path, query, body, bearer),
-      sessions: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string) => call<Array<SessionInfo>>('auth.sessions', path, query, body, bearer),
+      proof: (path: Record<string, never> = {}, query: null = null, body: { nonce: string, }, bearer?: string, headers?: Record<string, string>) => call<Proof>('auth.proof', path, query, body, bearer, headers),
+      reset: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('auth.reset', path, query, body, bearer, headers),
+      session_create: (path: Record<string, never> = {}, query: null = null, body: { kind: SessionKind, label: string | null, }, bearer?: string, headers?: Record<string, string>) => call<SessionCreated>('auth.session_create', path, query, body, bearer, headers),
+      session_delete: (path: { id: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('auth.session_delete', path, query, body, bearer, headers),
+      sessions: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<SessionInfo>>('auth.sessions', path, query, body, bearer, headers),
     },
     console: {
-      send: (path: { device: DeviceId, }, query: null = null, body: { line: string, }, bearer?: string) => call<null>('console.send', path, query, body, bearer),
+      send: (path: { device: DeviceId, }, query: null = null, body: { line: string, }, bearer?: string, headers?: Record<string, string>) => call<null>('console.send', path, query, body, bearer, headers),
     },
     devices: {
-      connect: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string) => call<DeviceSummary>('devices.connect', path, query, body, bearer),
-      disconnect: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string) => call<DeviceSummary>('devices.disconnect', path, query, body, bearer),
-      forget: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string) => call<null>('devices.forget', path, query, body, bearer),
-      get: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string) => call<DeviceSummary>('devices.get', path, query, body, bearer),
-      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string) => call<Array<DeviceSummary>>('devices.list', path, query, body, bearer),
-      restart: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string) => call<null>('devices.restart', path, query, body, bearer),
-      settings_get: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string) => call<DeviceSettings>('devices.settings_get', path, query, body, bearer),
-      settings_patch: (path: { device: DeviceId, }, query: null = null, body: { idle_timeout_s: number | null, orientation: string | null, name: string | null, brightness: number | null, }, bearer?: string) => call<SettingsPatched>('devices.settings_patch', path, query, body, bearer),
+      connect: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<DeviceSummary>('devices.connect', path, query, body, bearer, headers),
+      disconnect: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<DeviceSummary>('devices.disconnect', path, query, body, bearer, headers),
+      forget: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('devices.forget', path, query, body, bearer, headers),
+      get: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<DeviceSummary>('devices.get', path, query, body, bearer, headers),
+      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<DeviceSummary>>('devices.list', path, query, body, bearer, headers),
+      restart: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('devices.restart', path, query, body, bearer, headers),
+      settings_get: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<DeviceSettings>('devices.settings_get', path, query, body, bearer, headers),
+      settings_patch: (path: { device: DeviceId, }, query: null = null, body: { idle_timeout_s: number | null, orientation: string | null, name: string | null, brightness: number | null, }, bearer?: string, headers?: Record<string, string>) => call<SettingsPatched>('devices.settings_patch', path, query, body, bearer, headers),
+    },
+    jobs: {
+      cancel: (path: { job: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Job>('jobs.cancel', path, query, body, bearer, headers),
+      get: (path: { job: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Job>('jobs.get', path, query, body, bearer, headers),
+      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<Job>>('jobs.list', path, query, body, bearer, headers),
+      wait,
+    },
+    layouts: {
+      get: (path: { device: string, orientation: Orientation, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<LayoutRead>('layouts.get', path, query, body, bearer, headers),
+      push: (path: { device: string, orientation: Orientation, }, query: null = null, body: Layout, bearer?: string, headers?: Record<string, string>) => call<Job>('layouts.push', path, query, body, bearer, headers),
     },
     new_boards: {
-      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string) => call<Array<NewBoard>>('new_boards.list', path, query, body, bearer),
+      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<NewBoard>>('new_boards.list', path, query, body, bearer, headers),
     },
     ports: {
-      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string) => call<Array<PortProbe>>('ports.list', path, query, body, bearer),
-      rescan: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string) => call<null>('ports.rescan', path, query, body, bearer),
+      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<PortProbe>>('ports.list', path, query, body, bearer, headers),
+      rescan: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('ports.rescan', path, query, body, bearer, headers),
     },
     system: {
-      get: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string) => call<SystemInfo>('system.get', path, query, body, bearer),
-      ping: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string) => call<Versions>('system.ping', path, query, body, bearer),
-      shutdown: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string) => call<null>('system.shutdown', path, query, body, bearer),
+      get: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<SystemInfo>('system.get', path, query, body, bearer, headers),
+      ping: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Versions>('system.ping', path, query, body, bearer, headers),
+      shutdown: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('system.shutdown', path, query, body, bearer, headers),
     },
   };
 }

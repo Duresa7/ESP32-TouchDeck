@@ -58,6 +58,12 @@ impl fmt::Display for DeviceId {
         f.write_str(&self.0)
     }
 }
+impl std::ops::Deref for DeviceId {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
 impl PartialEq<&str> for DeviceId {
     fn eq(&self, other: &&str) -> bool {
         self.0 == *other
@@ -622,6 +628,16 @@ impl DeviceManager {
         });
         sender.send(job).map_err(|_| not_connected())?;
         answer.await.map_err(|_| not_connected())
+    }
+    /// The connected Device's live session, for blocking work off the async runtime that
+    /// runs alongside the actor's. Requests on one session are matched by sequence number.
+    pub fn session(&self, id: &DeviceId) -> Result<Arc<Session>, Reach> {
+        let reg = self.inner.reg.lock();
+        let entry = reg.devices.get(id).ok_or(Reach::NotFound)?;
+        match (&entry.actor, &entry.summary.link) {
+            (Some(actor), LinkState::Connected { .. }) => Ok(actor.session()),
+            (_, link) => Err(Reach::NotConnected(link.clone())),
+        }
     }
     /// Restarts the Device and closes its link, so it comes back with a fresh `hello`: a
     /// restarted Device counts the app as offline until it gets one.

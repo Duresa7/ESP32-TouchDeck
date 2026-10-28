@@ -1,5 +1,7 @@
 //! One Device's actor. Its work thread owns the link session and runs requests one at a
 //! time; its forwarder thread turns what the Device sends into events and mirrored keys.
+//! Layout and Asset work borrows the same session (see `crate::link`), since the port can
+//! only be open once.
 use super::{
     DeviceConsole, DeviceEvent, DeviceId, DeviceKeyMirror, Inner, InputFactory, KeyMirrorState,
 };
@@ -19,10 +21,15 @@ pub type Work = Box<dyn FnOnce(&Session) + Send>;
 pub(super) struct Handle {
     pub generation: u64,
     work: Sender<Work>,
+    session: Arc<Session>,
 }
 impl Handle {
     pub(super) fn sender(&self) -> Sender<Work> {
         self.work.clone()
+    }
+    /// The live session. It stops answering once the work thread closes it.
+    pub(super) fn session(&self) -> Arc<Session> {
+        self.session.clone()
     }
 }
 
@@ -35,6 +42,8 @@ pub(super) fn spawn(
     mirror: Option<Mirror>,
 ) -> Handle {
     let (work, jobs) = mpsc::channel::<Work>();
+    let session = Arc::new(session);
+    let shared = session.clone();
     thread::Builder::new()
         .name(format!("td-device-{id}"))
         .spawn(move || {
@@ -48,7 +57,11 @@ pub(super) fn spawn(
         .name(format!("td-device-{id}-in"))
         .spawn(move || forward(&inner, &id, generation, incoming, mirror))
         .expect("the Device forwarder starts");
-    Handle { generation, work }
+    Handle {
+        generation,
+        work,
+        session: shared,
+    }
 }
 
 /// A key mirror for a Device, unless it types through its own USB HID or the PC has no sink.

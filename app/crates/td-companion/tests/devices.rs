@@ -8,7 +8,7 @@ use td_companion::{
     devices::{BoardKind, BoardProbe, DeviceId, LinkState},
     features::devices::{
         Connect, DevicePath, DeviceSettingsPatch, Disconnect, Get, List, NewBoardsList, PortsList,
-        Restart, SettingsGet, SettingsPatch,
+        PortsRescan, Restart, SettingsGet, SettingsPatch,
     },
     testing::TestCompanion,
 };
@@ -91,6 +91,23 @@ async fn two_devices_are_live_at_once_and_told_apart() {
     td.unplug("mock0001").await;
     let b = td.call::<Get>(path(&b), NoQuery, ()).await.unwrap();
     assert!(matches!(b.link, LinkState::Connected { .. }));
+}
+
+#[tokio::test]
+async fn a_connected_device_is_probed_once_and_keeps_its_link_across_scans() {
+    let td = TestCompanion::start().await;
+    let id = td.plug_device("mock0001").await;
+    let hellos = || {
+        let received = td.deck("mock0001").received();
+        received.iter().filter(|m| m["m"] == "hello").count()
+    };
+    let probed = hellos();
+    // Longer than two 1 s polls: a scan never reprobes a connected port.
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    td.call::<PortsRescan>((), NoQuery, ()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(hellos(), probed);
+    assert_eq!(td.device(&id).unwrap().rev, 1, "the link never changed");
 }
 
 #[tokio::test]
