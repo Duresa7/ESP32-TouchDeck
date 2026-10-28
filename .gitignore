@@ -22,6 +22,9 @@ node_modules/
 # Hardware verification evidence
 /.verify/
 
+# Local reports for the maintainer
+/human-folder/
+
 # ESP-IDF generated files
 sdkconfig.old
 managed_components/
