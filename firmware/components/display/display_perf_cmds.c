@@ -630,32 +630,33 @@ static void cmd_cpu(int argc, char **argv)
     }
 }
 
-/* The first reading installs and enables the sensor, and it stays that way until the next reset. Installing and
- * removing it for every reading was followed by watchdog resets on the next `reboot`. Only the console task, which
- * runs one command at a time, touches it. */
+/* Keep the installed sensor until reset, including after an enable failure. Only the console task uses it. */
 static temperature_sensor_handle_t s_temp_sensor;
+static bool s_temp_enabled;
 
 static esp_err_t temp_sensor_start(void)
 {
-    const temperature_sensor_config_t config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(TEMP_RANGE_MIN_C, TEMP_RANGE_MAX_C);
-    temperature_sensor_handle_t sensor = NULL;
-    esp_err_t err = temperature_sensor_install(&config, &sensor);
-    if (err != ESP_OK) {
-        return err;
+    if (s_temp_sensor == NULL) {
+        const temperature_sensor_config_t config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(TEMP_RANGE_MIN_C, TEMP_RANGE_MAX_C);
+        esp_err_t err = temperature_sensor_install(&config, &s_temp_sensor);
+        if (err != ESP_OK) {
+            return err;
+        }
     }
-    err = temperature_sensor_enable(sensor);
-    if (err != ESP_OK) {
-        (void)temperature_sensor_uninstall(sensor);
-        return err;
+    if (!s_temp_enabled) {
+        esp_err_t err = temperature_sensor_enable(s_temp_sensor);
+        if (err != ESP_OK) {
+            return err;
+        }
+        s_temp_enabled = true;
     }
-    s_temp_sensor = sensor;
     return ESP_OK;
 }
 
 static void cmd_temp(void)
 {
     float celsius = 0;
-    esp_err_t err = s_temp_sensor != NULL ? ESP_OK : temp_sensor_start();
+    esp_err_t err = temp_sensor_start();
     if (err == ESP_OK) {
         err = temperature_sensor_get_celsius(s_temp_sensor, &celsius);
     }
