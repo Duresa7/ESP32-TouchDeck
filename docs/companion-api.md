@@ -565,8 +565,7 @@ Release builds of `app/src-tauri` register 33 commands. `--features e2e` adds 7,
 | 8 | `disconnect` | `devices.disconnect` | Per Device |
 | 9 | `deck_info` | `devices.get` | `online` becomes `link.state` |
 | 10 | `console_send` | `console.send`; `test.console` for the e2e harness | Per Device; release route permits only the read-only allowlist |
-| 11 | `e2e_mock` (e2e) | `test.console` | `POST /test/devices/{device}/console` | `{line}` → `()`. Full console for the e2e harness |
-| `test.mock` | Per mock Device |
+| 11 | `e2e_mock` (e2e) | `test.mock` | Per mock Device |
 | 12 | `e2e_mock_press` (e2e) | `test.press` | Per mock Device |
 | 13 | `e2e_mock_sets` (e2e) | `test.sets` | Per mock Device |
 | 14 | `push_layout` | `layouts.push` | Typed `Layout` body instead of a string. Returns a Job whose result is `PushReport` |
