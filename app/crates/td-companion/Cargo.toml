@@ -12,9 +12,11 @@ test-hooks = ["dep:reqwest", "dep:tokio-tungstenite", "dep:tempfile"]
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 serde.workspace = true
-serde_json.workspace = true
-td-core.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+td-core = { workspace = true, features = ["ts"] }
+td-host.workspace = true
 td-link.workspace = true
+image = { version = "0.25", default-features = false }
 ts-rs = { version = "11", features = ["serde-json-impl"] }
 inventory = "0.3"
 getrandom = "0.3"

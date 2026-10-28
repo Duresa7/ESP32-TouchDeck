@@ -264,6 +264,10 @@ impl MockPorts {
     pub fn unplug(&self, id: &str) {
         self.devices.lock().remove(id);
     }
+    /// The mock Device plugged in under `id`.
+    pub fn deck(&self, id: &str) -> Option<td_link::MockDeck> {
+        self.devices.lock().get(id).cloned()
+    }
 }
 #[cfg(any(test, feature = "test-hooks"))]
 impl PortSource for MockPorts {

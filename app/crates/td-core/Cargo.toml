@@ -9,3 +9,8 @@ rust-version.workspace = true
 dirs = "6"
 serde.workspace = true
 serde_json.workspace = true
+ts-rs = { version = "11", optional = true, features = ["serde-json-impl"] }
+
+[features]
+# TypeScript declarations for the types the Companion API carries.
+ts = ["dep:ts-rs"]
