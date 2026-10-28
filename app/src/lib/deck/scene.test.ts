@@ -101,12 +101,12 @@ test('a dashboard row wraps its text only as far as the row holds, the last line
     { label: 'claude jordan.k', value: '5h 100% 7d 100%', bar: 1 },
     { label: 'WWWWWWWWWWWWWWWW', value: '0000000000000000', bar: -1 },
   ];
-  const asBefore = (value: string, width: number) => layoutLabel(value, FONTS[28], { width });
+  const uncut = (value: string, g: typeof landscape) => layoutLabel(value, FONTS[28], { width: g.dashValueX - 2 * THEME.dash.pad });
 
   // A landscape row is 51 px, one 30 px line, so a value wider than its 220 px column stays on one line.
   const wide = buildPage(dashboard, landscape, { rows });
   const [label, value] = wide.rows[0].texts;
-  assert.deepEqual(label.label, asBefore('claude jordan.k', landscape.dashValueX - 40));
+  assert.deepEqual(label.label, uncut('claude jordan.k', landscape));
   assert.equal(label.y, 25 - 15);
   assert.deepEqual(shown(value), ['5h 100% 7d 1...']);
   assert.deepEqual([value.label.width, value.label.height, value.y], [220, 30, 25 - 15]);
@@ -116,11 +116,11 @@ test('a dashboard row wraps its text only as far as the row holds, the last line
   const portrait = geometry(screenSize('portrait'));
   const tall = buildPage(dashboard, portrait, { rows });
   const [twoLines, twoValues] = tall.rows[0].texts;
-  assert.deepEqual(twoLines.label, asBefore('claude jordan.k', portrait.dashValueX - 40));
+  assert.deepEqual(twoLines.label, uncut('claude jordan.k', portrait));
   assert.deepEqual(shown(twoValues), ['5h 100% ', '7d 100%']);
   assert.equal(twoValues.y, 52 - 30);
   const cut = tall.rows[1].texts[0];
-  assert.equal(asBefore('WWWWWWWWWWWWWWWW', portrait.dashValueX - 40).lines.length, 4);
+  assert.equal(uncut('WWWWWWWWWWWWWWWW', portrait).lines.length, 4);
   assert.deepEqual([cut.label.height, cut.y, cut.label.lines.length], [90, 52 - 45, 3]);
   assert.match(shown(cut)[2], /^W+\.\.\.$/);
 
