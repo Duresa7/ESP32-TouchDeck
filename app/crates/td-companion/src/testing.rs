@@ -6,6 +6,7 @@ use futures_util::StreamExt;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::client::IntoClientRequest};
 pub struct TestCompanion {
     ctx: Ctx,
+    _data: tempfile::TempDir,
     ports: MockPorts,
     task: tokio::task::JoinHandle<()>,
     pub token: String,
@@ -21,7 +22,16 @@ impl TestCompanion {
     pub async fn start_with(limits: crate::Limits) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let ctx = Ctx::new(port, true, None, limits);
+        let ports = MockPorts::default();
+        let data = tempfile::tempdir().unwrap();
+        let ctx = Ctx::new(
+            port,
+            true,
+            None,
+            limits,
+            data.path(),
+            std::sync::Arc::new(ports.clone()),
+        );
         let router = crate::api::router(ctx.clone());
         let stop = ctx.shutdown.subscribe();
         let task = tokio::spawn(crate::serve::serve(listener, router, limits, stop));
@@ -42,7 +52,8 @@ impl TestCompanion {
             .unwrap();
         Self {
             ctx,
-            ports: MockPorts::default(),
+            _data: data,
+            ports,
             task,
             token: session["token"].as_str().unwrap().into(),
             pairing_token,
@@ -101,12 +112,45 @@ impl TestCompanion {
             url: self.url.clone(),
         }
     }
-    pub async fn call<E: Endpoint>(
+    /// The mock Device plugged in under `id`, to inspect or script it.
+    pub fn deck(&self, id: &str) -> td_link::MockDeck {
+        self.ports.deck(id).expect("the mock Device is plugged in")
+    }
+    /// Makes Jobs that start from now on wait, running, until `release_jobs`.
+    pub fn hold_jobs(&self) {
+        self.ctx.jobs.hold();
+    }
+    pub fn release_jobs(&self) {
+        self.ctx.jobs.release();
+    }
+    /// Reads the Job until it finishes, as `companion.jobs.wait` does.
+    pub async fn wait(&self, job: &crate::jobs::Job) -> crate::jobs::Job {
+        use crate::features::jobs::{Get, JobPath};
+        let path = || JobPath {
+            job: job.id.clone(),
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let job = self
+                    .call::<Get>(path(), crate::api::NoQuery, ())
+                    .await
+                    .unwrap();
+                if job.state.finished() {
+                    return job;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the Job finishes within 10 s")
+    }
+    /// A typed request with the session token, for tests that add headers or read errors.
+    pub fn request<E: Endpoint>(
         &self,
         path: E::Path,
         query: E::Query,
-        body: E::Body,
-    ) -> Result<E::Ok, reqwest::Error> {
+        body: &E::Body,
+    ) -> reqwest::RequestBuilder {
         let mut route = E::PATH.to_owned();
         if let Some(fields) = serde_json::to_value(path).unwrap().as_object() {
             for (k, v) in fields {
@@ -120,10 +164,22 @@ impl TestCompanion {
         if !serde_json::to_value(&query).unwrap().is_null() {
             req = req.query(&query);
         }
-        if !serde_json::to_value(&body).unwrap().is_null() {
-            req = req.json(&body);
+        if !serde_json::to_value(body).unwrap().is_null() {
+            req = req.json(body);
         }
-        let response = req.send().await?.error_for_status()?;
+        req
+    }
+    pub async fn call<E: Endpoint>(
+        &self,
+        path: E::Path,
+        query: E::Query,
+        body: E::Body,
+    ) -> Result<E::Ok, reqwest::Error> {
+        let response = self
+            .request::<E>(path, query, &body)
+            .send()
+            .await?
+            .error_for_status()?;
         if response.status() == 204 {
             return Ok(serde_json::from_value(serde_json::Value::Null).unwrap());
         }

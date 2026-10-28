@@ -1,6 +1,7 @@
 use crate::{
     api::Ctx,
     devices::{PortSource, RealPorts},
+    link::{SerialSessions, Sessions},
     runtime::Runtime,
 };
 use std::{
@@ -63,8 +64,13 @@ async fn bind(root: &Path) -> std::io::Result<tokio::net::TcpListener> {
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let (source, mock): (Arc<dyn PortSource>, bool) = match args.as_slice() {
-        [] => (Arc::new(RealPorts::default()), false),
+    type Source = (Arc<dyn PortSource>, Arc<dyn Sessions>, bool);
+    let (source, sessions, mock): Source = match args.as_slice() {
+        [] => (
+            Arc::new(RealPorts::default()),
+            Arc::new(SerialSessions),
+            false,
+        ),
         #[cfg(feature = "test-hooks")]
         ["--emit-ts", path] => {
             if let Some(parent) = Path::new(path).parent() {
@@ -79,7 +85,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             for n in 1..=count.parse::<usize>()? {
                 ports.plug(&format!("mock{n:04}"));
             }
-            (Arc::new(ports), true)
+            (Arc::new(ports.clone()), Arc::new(ports), true)
         }
         _ => return Err("Unknown Companion argument.".into()),
     };
@@ -103,6 +109,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         mock,
         Some(runtime.clone()),
         crate::Limits::default(),
+        &root,
+        sessions,
     );
     let initial = ctx.clone();
     let written = tokio::task::spawn_blocking(move || {
