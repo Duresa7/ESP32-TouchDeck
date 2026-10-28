@@ -22,8 +22,9 @@ void ui_dashboard_begin(void)
 }
 
 /* Text wraps in its column for as many whole lines as a row_h tall row holds, and the last of them ends in dots when
- * there is more, so a long label or value never runs out of its row. Text that fits sits where it always did. LVGL's
- * dots mode needs its own writable copy of the text, which ui_dashboard_draw gives it. */
+ * there is more, so a long label or value never runs out of its row. Text that fits wraps and sits where it always
+ * did, though a first letter that reaches left of its box, such as j, now shows the 1 to 3 px the old clip mode cut.
+ * LVGL's dots mode needs its own writable copy of the text, which ui_dashboard_draw gives it. */
 static lv_obj_t *row_label(lv_obj_t *row, int32_t x, int32_t w, int32_t row_h)
 {
     const int32_t line_h = lv_font_get_line_height(ui_theme.font_caption);
