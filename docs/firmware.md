@@ -309,8 +309,9 @@ the screen shows. Each is on by default, and menuconfig can turn it off:
   slide's frame, leaves the two other frame buffers behind, and each of the next
   two refreshes copies most of the screen into one of them, about 60 ms each.
   With this option LVGL redraws one unchanged pixel twice once it has been idle
-  for 120 ms, so those copies happen before the next touch. The first tap after
-  a slide then reaches the panel in about 7 to 24 ms instead of 63 to 74 ms.
+  for 120 ms, so those copies happen before the next touch. A tap half a
+  second after a slide then finishes its frame in about 7 to 24 ms instead of
+  62 to 66 ms.
 - `CONFIG_TD_LV_TICK_CB`, in `TouchDeck display`. LVGL reads its millisecond
   clock from `esp_timer_get_time()`, so the adapter's 1 ms tick timer no longer
   wakes the `esp_timer` task a thousand times a second. Core 0 is about a third
@@ -323,7 +324,9 @@ the screen shows. Each is on by default, and menuconfig can turn it off:
   `keys record dump` answers with a count of 0.
 - `CONFIG_TD_UI_SKIP_NOOP_SETS`, in `TouchDeck UI`. A widget or dashboard update
   sets a label's text or a widget's text opacity only when the label would
-  change, so an update that repeats the shown values draws no frame.
+  change, so an update that repeats the shown values draws no frame. A label
+  cut with dots is always set again, so a repeated value too long for its tile
+  still redraws.
 
 ### Perf tools (test builds only)
 

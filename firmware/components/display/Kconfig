@@ -34,8 +34,9 @@ menu "TouchDeck display"
             that area into one of them, about 60 ms for the whole screen. With this on, 120 ms after the last such
             refresh, and only while no area waits to be drawn, no animation runs and no pointer is pressed, LVGL
             redraws one unchanged pixel twice, so those copies happen before the next touch and not in its refresh.
-            The pixels on the panel stay the same. Off, the next refreshes pay the copies, so the first tap after a
-            page slide waits for them.
+            The pixels on the panel stay the same. While LVGL stays busy, for example during a long press, the timer
+            checks again every 120 ms. Off, the next refreshes pay the copies, so the first tap after a page slide
+            waits for them.
 
     config TD_LV_TICK_CB
         bool "Read LVGL's clock from esp_timer instead of a 1 ms tick timer"
