@@ -6,6 +6,7 @@
 #include "esp_timer.h"
 #include "power.h"
 #include "td_frame.h"
+#include "td_asset.h"
 #include "td_layout.h"
 #include "td_store.h"
 #include "td_update.h"
@@ -25,11 +26,13 @@ typedef enum {
     KIND_ICON_PUT,
     KIND_GET,
     KIND_UPDATE,
+    KIND_ASSET_PUT,
 } kind_t;
 
 /* One transfer at a time. A put holds the whole file in PSRAM and writes it with td_store_write_atomic at xfer.end,
  * so a cut transfer leaves nothing on the volume. A get reads the file once and sends it from memory. A firmware
- * update holds no buffer: td_update writes each chunk into the other OTA slot as it arrives. */
+ * update holds no buffer: td_update writes each chunk into the other OTA slot as it arrives. A v2 Asset put holds no
+ * buffer either: td_asset streams each chunk into a temporary file and hashes it, and v2.asset.end commits it. */
 static struct {
     kind_t kind;
     td_xfer_t x;
@@ -41,11 +44,40 @@ static struct {
     uint32_t last_ms;
     uint8_t last_id;
     uint8_t tx_seq;
+    /* Why the sink of an Asset put failed, or NULL. */
+    const char *asset_failure;
+    char asset_id[TD_ASSET_ID_LEN + 1];
 } s;
+
+/* The outcome of the last v2 Asset transfer that closed, which v2.asset.end repeats for its xfer until the next bulk
+ * open: the committed id and size, or the refusal reason. */
+static struct {
+    uint8_t xfer;
+    const char *reason;
+    char id[TD_ASSET_ID_LEN + 1];
+    uint32_t bytes;
+} s_asset_end;
+
+static void asset_end_record(uint8_t xfer, const char *reason, const char *id, uint32_t bytes)
+{
+    s_asset_end.xfer = xfer;
+    s_asset_end.reason = reason;
+    s_asset_end.bytes = bytes;
+    snprintf(s_asset_end.id, sizeof s_asset_end.id, "%s", id ? id : "");
+}
+
+/* Any bulk open, v1 or v2, ends the replay of the last Asset end. */
+static void bulk_opened(void)
+{
+    s_asset_end.xfer = 0;
+}
 
 /* Frees the buffer and forgets the transfer, and leaves a running update alone. */
 static void drop_xfer(void)
 {
+    if (s.kind == KIND_ASSET_PUT) {
+        td_asset_upload_abort();
+    }
     heap_caps_free(s.buf);
     s.buf = NULL;
     s.fill = 0;
@@ -64,6 +96,7 @@ static void close_xfer(void)
 static bool open_xfer(kind_t kind, uint32_t bytes)
 {
     close_xfer();
+    bulk_opened();
     s.buf = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (s.buf == NULL) {
         s.buf = heap_caps_malloc(bytes, MALLOC_CAP_8BIT);
@@ -294,6 +327,10 @@ void td_link_xfer_end(const cJSON *request, cJSON *reply)
     uint32_t id;
     if (!u32_arg(request, "xfer", &id)) {
         td_link_fail(reply, "xfer.end needs xfer");
+    } else if (s.kind == KIND_ASSET_PUT) {
+        /* A v1 end never finishes or cuts a v2 Asset put. */
+        td_link_fail(reply, id == s.x.id ? "end an Asset with v2.asset.end" : "no transfer with that xfer");
+        return;
     } else if (s.kind == KIND_NONE || id != s.x.id) {
         td_link_fail(reply, "no transfer with that xfer");
     } else if (s.kind == KIND_UPDATE) {
@@ -328,6 +365,7 @@ void td_link_update_begin(const cJSON *request, cJSON *reply)
         return;
     }
     drop_xfer();
+    bulk_opened();
     s.kind = KIND_UPDATE;
     s.last_id = s.last_id % 255 + 1;
     s.last_ms = (uint32_t)(esp_timer_get_time() / 1000);
@@ -377,7 +415,8 @@ static void send_chunk(uint16_t idx)
 
 void td_link_files_chunk(uint8_t seq, const uint8_t *payload, size_t len)
 {
-    if (len < TD_FRAME_CHUNK_HEADER || (s.kind != KIND_LAYOUT_PUT && s.kind != KIND_ICON_PUT && s.kind != KIND_UPDATE)
+    if (len < TD_FRAME_CHUNK_HEADER
+        || (s.kind != KIND_LAYOUT_PUT && s.kind != KIND_ICON_PUT && s.kind != KIND_UPDATE && s.kind != KIND_ASSET_PUT)
         || payload[0] != s.x.id) {
         td_link_count_drop();
         return;
@@ -386,6 +425,12 @@ void td_link_files_chunk(uint8_t seq, const uint8_t *payload, size_t len)
     /* A duplicate, a gap and a chunk past the window all get the same answer: the next index the deck wants. */
     td_xfer_receive(&s.x, idx, payload + TD_FRAME_CHUNK_HEADER, len - TD_FRAME_CHUNK_HEADER);
     s.last_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    if (s.kind == KIND_ASSET_PUT && s.asset_failure != NULL) {
+        /* A failed sink ends the transfer and stops the acks. v2.asset.end reports why. */
+        asset_end_record(s.x.id, s.asset_failure, NULL, 0);
+        drop_xfer();
+        return;
+    }
     const uint8_t ack[3] = { s.x.id, s.x.next & 0xff, s.x.next >> 8 };
     td_link_send(TD_FRAME_ACK, seq, TD_FRAME_RESPONSE, ack, sizeof ack);
 }
@@ -566,4 +611,228 @@ void td_link_store_stat(const cJSON *request, cJSON *reply)
     cJSON_AddNumberToObject(reply, "used_bytes", info.used_bytes);
     cJSON_AddNumberToObject(reply, "layouts", layouts);
     cJSON_AddNumberToObject(reply, "icons", icons);
+}
+
+static bool asset_sink(void *ctx, const uint8_t *data, size_t len)
+{
+    (void)ctx;
+    const td_asset_result_t result = td_asset_upload_write(data, len);
+    if (result != TD_ASSET_OK) {
+        s.asset_failure = td_asset_result_reason(result);
+        return false;
+    }
+    return true;
+}
+
+void td_link_files_select(void)
+{
+    if (s.kind == KIND_ASSET_PUT) {
+        drop_xfer();
+    }
+}
+
+static const char *asset_id_field(const cJSON *request)
+{
+    const char *id = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(request, "id"));
+    return td_asset_id_valid(id) ? id : NULL;
+}
+
+void td_link_asset_stat(const cJSON *request, cJSON *reply)
+{
+    td_asset_space_t space;
+    if (!td_link_v2_fields(request, NULL, 0)) {
+        td_link_v2_fail(reply, "args", "Invalid request fields");
+    } else if (td_asset_space(&space) != TD_ASSET_OK) {
+        td_link_v2_fail(reply, "storage", "Storage unavailable");
+    } else {
+        cJSON_AddNumberToObject(reply, "total_bytes", space.total_bytes);
+        cJSON_AddNumberToObject(reply, "used_bytes", space.used_bytes);
+        cJSON_AddNumberToObject(reply, "reserved_bytes", space.reserved_bytes);
+        cJSON_AddNumberToObject(reply, "free_bytes", space.free_bytes);
+    }
+}
+
+void td_link_asset_list(const cJSON *request, cJSON *reply)
+{
+    static const char *const keys[] = { "after" };
+    const cJSON *after = cJSON_GetObjectItemCaseSensitive(request, "after");
+    if (!td_link_v2_fields(request, keys, 1) || after == NULL
+        || !(cJSON_IsNull(after) || td_asset_id_valid(cJSON_GetStringValue(after)))) {
+        td_link_v2_fail(reply, "args", "Invalid request fields");
+        return;
+    }
+    td_asset_item_t items[TD_ASSET_PAGE];
+    size_t count = 0;
+    bool more = false;
+    if (td_asset_list(cJSON_GetStringValue(after), items, &count, &more) != TD_ASSET_OK) {
+        td_link_v2_fail(reply, "storage", "Storage unavailable");
+        return;
+    }
+    cJSON *list = cJSON_AddArrayToObject(reply, "items");
+    for (size_t i = 0; list != NULL && i < count; i++) {
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddStringToObject(item, "id", items[i].id);
+        cJSON_AddNumberToObject(item, "bytes", items[i].bytes);
+        cJSON_AddStringToObject(item, "format", td_asset_format_name(items[i].format));
+        cJSON_AddItemToArray(list, item);
+    }
+    if (more && count > 0) {
+        cJSON_AddStringToObject(reply, "next", items[count - 1].id);
+    } else {
+        cJSON_AddNullToObject(reply, "next");
+    }
+}
+
+void td_link_asset_put(const cJSON *request, cJSON *reply)
+{
+    static const char *const keys[] = { "id", "bytes", "format" };
+    const char *id = asset_id_field(request);
+    const char *format_name = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(request, "format"));
+    uint32_t bytes;
+    if (!td_link_v2_fields(request, keys, 3) || id == NULL || format_name == NULL || !u32_arg(request, "bytes", &bytes)
+        || bytes == 0) {
+        td_link_v2_fail(reply, "args", "Invalid request fields");
+        return;
+    }
+    const td_asset_format_t format = td_asset_format_parse(format_name);
+    if (format == TD_ASSET_FMT_NONE) {
+        td_link_v2_fail(reply, "format", "Unsupported Asset format");
+        return;
+    }
+    if (bytes > TD_ASSET_MAX_BYTES) {
+        td_link_v2_fail(reply, "size", "Asset too large");
+        return;
+    }
+    if (!td_store_mounted()) {
+        td_link_v2_fail(reply, "storage", "Storage unavailable");
+        return;
+    }
+    uint32_t stored_bytes;
+    td_asset_format_t stored_format;
+    if (td_asset_present(id, &stored_bytes, &stored_format)) {
+        if (stored_bytes != bytes || stored_format != format) {
+            td_link_v2_fail(reply, "format", "Asset differs from the stored one");
+            return;
+        }
+        cJSON_AddBoolToObject(reply, "present", true);
+        cJSON_AddNullToObject(reply, "xfer");
+        return;
+    }
+    if (s.kind != KIND_NONE) {
+        td_link_v2_fail(reply, "busy", "Another transfer is open");
+        return;
+    }
+    const td_asset_result_t result = td_asset_upload_begin(id, bytes, format);
+    if (result != TD_ASSET_OK) {
+        td_link_v2_fail(reply, td_asset_result_reason(result),
+                        result == TD_ASSET_FULL ? "Not enough free space" : "Storage unavailable");
+        return;
+    }
+    bulk_opened();
+    s.kind = KIND_ASSET_PUT;
+    s.asset_failure = NULL;
+    snprintf(s.asset_id, sizeof s.asset_id, "%s", id);
+    s.last_id = s.last_id % 255 + 1;
+    s.last_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    td_xfer_init(&s.x, s.last_id, false, bytes, 0, asset_sink, NULL);
+    cJSON_AddBoolToObject(reply, "present", false);
+    cJSON_AddNumberToObject(reply, "xfer", s.x.id);
+}
+
+static void asset_end_reply(cJSON *reply)
+{
+    if (s_asset_end.reason != NULL) {
+        td_link_v2_fail(reply, s_asset_end.reason, "Asset not stored");
+        return;
+    }
+    cJSON_AddStringToObject(reply, "id", s_asset_end.id);
+    cJSON_AddNumberToObject(reply, "bytes", s_asset_end.bytes);
+}
+
+void td_link_asset_end(const cJSON *request, cJSON *reply)
+{
+    static const char *const keys[] = { "xfer" };
+    uint32_t id;
+    if (!td_link_v2_fields(request, keys, 1) || !u32_arg(request, "xfer", &id) || id == 0 || id > 255) {
+        td_link_v2_fail(reply, "args", "Invalid request fields");
+        return;
+    }
+    if (s.kind == KIND_ASSET_PUT && s.x.id == id) {
+        const td_asset_result_t result = td_asset_upload_finish();
+        if (result == TD_ASSET_INCOMPLETE) {
+            td_link_v2_fail(reply, "incomplete", "Bytes are still missing");
+            return;
+        }
+        asset_end_record(s.x.id, result == TD_ASSET_OK ? NULL : td_asset_result_reason(result), s.asset_id, s.x.bytes);
+        drop_xfer();
+        asset_end_reply(reply);
+    } else if (s_asset_end.xfer != 0 && s_asset_end.xfer == id) {
+        asset_end_reply(reply);
+    } else {
+        td_link_v2_fail(reply, "state", "No Asset transfer with that xfer");
+    }
+}
+
+/* Why a stored Layout keeps the Asset, or NULL. Runs under the store lock, as a Layout commit does. */
+static const char *asset_in_use(const char *id)
+{
+    static const char *const orientations[] = { "landscape", "portrait" };
+    char needle[sizeof "sha256:" + TD_ASSET_ID_LEN];
+    snprintf(needle, sizeof needle, "sha256:%s", id);
+    char *buf = NULL;
+    const char *reason = NULL;
+    for (size_t i = 0; i < 2 && reason == NULL; i++) {
+        char path[TD_STORE_PATH_MAX];
+        td_layout_path(orientations[i], path, sizeof path);
+        td_store_stat_t stat;
+        if (td_store_stat(path, &stat) == ESP_ERR_NOT_FOUND) {
+            continue;
+        }
+        if (buf == NULL) {
+            buf = heap_caps_malloc(TD_LAYOUT_MAX_BYTES + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        }
+        size_t len = 0;
+        if (buf == NULL) {
+            reason = "memory";
+        } else if (td_store_read(path, buf, TD_LAYOUT_MAX_BYTES, &len) != ESP_OK) {
+            reason = "storage";
+        } else {
+            buf[len] = '\0';
+            reason = strstr(buf, needle) ? "in-use" : NULL;
+        }
+    }
+    heap_caps_free(buf);
+    return reason;
+}
+
+void td_link_asset_delete(const cJSON *request, cJSON *reply)
+{
+    static const char *const keys[] = { "id" };
+    const char *id = asset_id_field(request);
+    if (!td_link_v2_fields(request, keys, 1) || id == NULL) {
+        td_link_v2_fail(reply, "args", "Invalid request fields");
+        return;
+    }
+    const char *upload = td_asset_upload_id();
+    if (upload != NULL && strcmp(upload, id) == 0) {
+        td_link_v2_fail(reply, "busy", "The Asset is being uploaded");
+        return;
+    }
+    if (!td_store_mounted()) {
+        td_link_v2_fail(reply, "storage", "Storage unavailable");
+        return;
+    }
+    bool deleted = false;
+    td_store_lock();
+    const char *reason = asset_in_use(id);
+    if (reason == NULL && td_asset_delete(id, &deleted) != TD_ASSET_OK) {
+        reason = "storage";
+    }
+    td_store_unlock();
+    if (reason != NULL) {
+        td_link_v2_fail(reply, reason,
+                        strcmp(reason, "in-use") == 0 ? "A stored Layout uses the Asset" : "Asset not deleted");
+        return;
+    }
+    cJSON_AddBoolToObject(reply, "deleted", deleted);
 }

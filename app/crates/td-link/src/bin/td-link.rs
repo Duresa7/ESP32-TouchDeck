@@ -4,10 +4,11 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use td_core::{Layout, Orientation, Pong, Request, Settings};
+use td_link::asset::{asset_space, delete_asset, list_assets, put_asset};
 use td_link::discover::{Candidate, candidate_ports, discover, probe_transport};
 use td_link::mock::MOCK_PORT;
 use td_link::xfer::{check_layout_orientation, get_layout, put_layout};
-use td_link::{Incoming, MockDeck, Serial, Session, SessionConfig, Transport};
+use td_link::{AssetFormat, Incoming, MockDeck, Serial, Session, SessionConfig, Transport};
 
 const USAGE: &str = "usage: td-link [--port <port> | --mock] [--timeout <ms>] <command>
 commands:
@@ -27,6 +28,11 @@ commands:
   settings get           print the deck settings
   settings put [--idle <s>] [--orientation <o>]
                          store settings; unnamed fields keep the deck's values
+  asset put <file> [--format tdi1|gif|jpeg]
+                         store an Asset unless the Device has it; a PNG becomes a 64 by 64 tdi1
+  asset ls               list the Assets on the Device
+  asset rm <id>          remove one Asset by its SHA-256 id
+  asset df               print the Device's space for Assets
   update <bundle>        update firmware over the link
   recover <bundle>       restore firmware through USB-Serial/JTAG
   reboot                 restart the deck through its console";
@@ -102,7 +108,13 @@ fn orientation(rest: &[String]) -> Result<Option<Orientation>, String> {
 
 fn transport(args: &Args) -> Result<Box<dyn Transport>, String> {
     if args.mock {
-        return Ok(Box::new(MockDeck::new().connect()));
+        // Assets need protocol 2, so the asset commands talk to a v2 mock Device.
+        let device = if args.command == "asset" {
+            MockDeck::v2()
+        } else {
+            MockDeck::new()
+        };
+        return Ok(Box::new(device.connect()));
     }
     let port = match &args.port {
         Some(port) => port.clone(),
@@ -133,6 +145,43 @@ fn quiet() -> SessionConfig {
 
 fn print(value: &Value) {
     println!("{}", serde_json::to_string(value).expect("JSON prints"));
+}
+
+const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+
+/// The bytes and format to store for a file: a PNG goes through the icon packer to a 64 by 64
+/// tdi1, and anything else is stored as it is, in the format named or sniffed from its first bytes.
+fn asset_file(path: &str, format: Option<&str>) -> Result<(Vec<u8>, AssetFormat), String> {
+    let bytes = std::fs::read(path).map_err(|error| format!("{path}: {error}"))?;
+    let named = format
+        .map(|name| {
+            AssetFormat::parse(name).ok_or(format!("--format is tdi1, gif or jpeg, not {name:?}"))
+        })
+        .transpose()?;
+    if bytes.starts_with(PNG_SIGNATURE) && named.is_none_or(|format| format == AssetFormat::Tdi1) {
+        let image = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
+            .map_err(|error| format!("{path}: {error}"))?
+            .to_rgba8();
+        return Ok((td_host::icon_pack::pack_any(&image), AssetFormat::Tdi1));
+    }
+    let format = named.or_else(|| AssetFormat::sniff(&bytes)).ok_or(format!(
+        "{path}: not a PNG, tdi1, GIF or JPEG file; name one with --format"
+    ))?;
+    Ok((bytes, format))
+}
+
+/// Opens a session and selects protocol 2, which Assets need.
+fn open_v2(args: &Args) -> Result<Session, String> {
+    let (session, _) = open(args, quiet())?;
+    let identity = session
+        .identity(args.timeout)
+        .map_err(|error| error.to_string())?;
+    if identity.protocol != 2 {
+        return Err(
+            "the Device runs protocol 1 Firmware, which stores no Assets; update it".into(),
+        );
+    }
+    Ok(session)
 }
 
 fn percentile(sorted: &[f64], p: f64) -> f64 {
@@ -330,6 +379,40 @@ fn run(args: &Args) -> Result<bool, String> {
                 Some(other) => Err(format!("settings takes get or put, not {other:?}")),
             }
         }
+        "asset" => {
+            let error = |error: td_link::AssetError| error.to_string();
+            match args.rest.first().map(String::as_str) {
+                Some("put") => {
+                    let path = args.rest.get(1).ok_or("asset put needs a file")?;
+                    let (data, format) = asset_file(path, text_option(&args.rest, "--format")?)?;
+                    let session = open_v2(args)?;
+                    let report = put_asset(&session, &data, format).map_err(error)?;
+                    let mut out = serde_json::to_value(&report).expect("reports serialize");
+                    out["ok"] = json!(true);
+                    print(&out);
+                }
+                Some("ls") => {
+                    let session = open_v2(args)?;
+                    let items = list_assets(&session).map_err(error)?;
+                    print(&json!({"ok": true, "count": items.len(), "items": items}));
+                }
+                Some("rm") => {
+                    let id = args.rest.get(1).ok_or("asset rm needs an id")?;
+                    let session = open_v2(args)?;
+                    let deleted = delete_asset(&session, id).map_err(error)?;
+                    print(&json!({"ok": true, "id": id, "deleted": deleted}));
+                }
+                Some("df") => {
+                    let session = open_v2(args)?;
+                    let space = asset_space(&session).map_err(error)?;
+                    let mut out = serde_json::to_value(space).expect("space serializes");
+                    out["ok"] = json!(true);
+                    print(&out);
+                }
+                other => return Err(format!("asset takes put, ls, rm or df, not {other:?}")),
+            }
+            Ok(true)
+        }
         "reboot" => {
             let (session, incoming) = open(args, quiet())?;
             session
@@ -379,6 +462,59 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_png_becomes_a_tdi1_asset_and_other_files_keep_their_bytes() {
+        let dir = std::env::temp_dir().join(format!("td-link-asset-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = dir.join("wide.png");
+        image::RgbaImage::from_pixel(128, 32, image::Rgba([255, 0, 0, 255]))
+            .save(&png)
+            .unwrap();
+        let (data, format) = asset_file(png.to_str().unwrap(), None).unwrap();
+        assert_eq!((data.len(), format), (12300, AssetFormat::Tdi1));
+        assert!(data.starts_with(b"TDI1"));
+
+        let gif = dir.join("raw.gif");
+        std::fs::write(&gif, b"GIF89a-not-validated-here").unwrap();
+        let (data, format) = asset_file(gif.to_str().unwrap(), None).unwrap();
+        assert_eq!(
+            (data.as_slice(), format),
+            (&b"GIF89a-not-validated-here"[..], AssetFormat::Gif)
+        );
+
+        let unknown = dir.join("notes.txt");
+        std::fs::write(&unknown, b"hello").unwrap();
+        assert!(asset_file(unknown.to_str().unwrap(), None).is_err());
+        assert!(asset_file(unknown.to_str().unwrap(), Some("bmp")).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn asset_commands_run_against_the_v2_mock() {
+        let dir = std::env::temp_dir().join(format!("td-link-asset-cli-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = dir.join("icon.png");
+        image::RgbaImage::from_pixel(64, 64, image::Rgba([0, 128, 255, 255]))
+            .save(&png)
+            .unwrap();
+        let args = |rest: &[&str]| {
+            parse(
+                ["--mock", "asset"]
+                    .iter()
+                    .chain(rest)
+                    .map(|arg| (*arg).to_owned()),
+            )
+            .unwrap()
+        };
+        assert_eq!(run(&args(&["put", png.to_str().unwrap()])), Ok(true));
+        assert_eq!(run(&args(&["ls"])), Ok(true));
+        assert_eq!(run(&args(&["df"])), Ok(true));
+        assert_eq!(run(&args(&["rm", &"0".repeat(64)])), Ok(true));
+        assert!(run(&args(&["rm", "zz"])).is_err());
+        assert!(run(&args(&["mv"])).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn a_mismatched_orientation_override_is_refused_before_opening_a_port() {

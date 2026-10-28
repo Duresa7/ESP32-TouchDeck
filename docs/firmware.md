@@ -149,8 +149,8 @@ volume, mounted at `/storage` before the console starts. The first boot after th
 partition was erased formats it and logs `store: formatted`, and every boot logs
 `store: mounted, <used>/<total> bytes`. Flashing the firmware leaves the volume
 alone. The paths the firmware uses are `/storage/settings.json`,
-`/storage/layouts/<orientation>.json`, `/storage/icons/<id>.bin`, and
-`/storage/recovery`.
+`/storage/layouts/<orientation>.json`, `/storage/icons/<id>.bin`,
+`/storage/assets/<sha256>.bin`, and `/storage/recovery`.
 
 A write goes to `<path>.tmp`, is flushed with `fsync`, and is renamed over the
 target. LittleFS makes the rename atomic across power loss, so a reader sees the
@@ -501,8 +501,37 @@ The `td-link` CLI provides `discover-identities`, `identity`, `name`, and
 `set-name "Studio"`. Names default to `Open TouchDeck`, contain 1–48 UTF-8
 bytes, and persist in NVS separately from Layouts. See the
 [protocol contract](../schema/protocol/link-v2.md) for validation rules.
-Only static Tiles and the existing tdi1 format are advertised. Asset, live,
-photo, idle, and clock requests remain unsupported in this slice.
+Only static Tiles and the existing tdi1 format are advertised. Live, photo,
+idle, and clock requests remain unsupported.
+
+### Assets
+
+With protocol 2 selected, the Device stores Assets by the SHA-256 of their bytes,
+as the [protocol contract](../schema/protocol/link-v2.md#assets-and-bulk-transfers)
+says. `v2.asset.stat` reports the space, `v2.asset.list` pages through the stored
+Assets four at a time, `v2.asset.put` opens a transfer or answers
+`present:true` for an Asset the Device already has, `v2.asset.end` commits it,
+and `v2.asset.delete` removes one. This Firmware takes tdi1 icons only, so
+`caps.asset_bytes` is 12300 and `caps.formats` is `["tdi1"]`.
+
+An upload streams into `/storage/assets/upload.tmp` as its chunks arrive and is
+hashed on the way, so no Asset is held whole in RAM. `v2.asset.end` checks the
+size, the SHA-256 and the tdi1 header, then flushes the file and renames it to
+`/storage/assets/<sha256>.bin`. A cut upload never publishes a partial Asset, and
+the next mount removes a leftover `upload.tmp`. The Asset ids are longer than the
+32-character path segments of the `store` console command, so `store ls
+/storage/assets` lists them, but `store stat` and `store rm` cannot name one.
+
+`free_bytes`, here and in `caps`, keeps 65536 bytes of the volume back for
+Layouts, settings and LittleFS metadata, and an open upload reserves its size, so
+Assets never fill the volume past what a Layout save needs. A put that does not
+fit is refused with `full`. A delete is refused with `in-use` while a stored
+Layout names the Asset as `sha256:<id>`.
+
+The `td-link` CLI wraps them: `asset put <file>` packs a PNG into a 64 by 64
+tdi1 with the app's icon packer, or sends a tdi1 file as it is, and skips the
+upload when the Device has the Asset. `asset ls`, `asset rm <id>`, and
+`asset df` list, remove, and report space.
 
 The Firmware test app links the link dispatcher to exercise maximum-size hello
 replies and NVS persistence. Its pinned UI dependencies and LVGL snapshot and

@@ -15,6 +15,7 @@ use td_core::{
     Body, Event, Frame, Hello, ICON_PAGE, Item, Layout, Orientation, Role, Settings, StreamDecoder,
 };
 
+use crate::asset::{ASSET_PAGE, AssetFormat, asset_id, refusal, valid_asset_id};
 use crate::xfer::{ICON_BYTES, LayoutState, RETRY_AFTER, TRANSMISSIONS, WINDOW, crc32};
 use crate::{READ_TICK, Transport};
 
@@ -25,12 +26,17 @@ const DASHBOARD_ROWS: usize = 8;
 const ONLINE_FOR: Duration = Duration::from_secs(5);
 const HEARTBEAT: Duration = Duration::from_secs(2);
 const BUILTIN: &[u8] = include_bytes!("../../../../schema/examples/builtin.json");
+/// The space a mock Device has for Assets until a test sets another.
+pub const ASSET_CAPACITY: u64 = 4 * 1024 * 1024;
+/// The largest Asset the mock takes, one tdi1 icon, as the Firmware advertises.
+const ASSET_BYTES: usize = ICON_BYTES;
 
 /// Where a put lands once `xfer.end` accepts it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Target {
     Layout(Orientation),
     Icon(String),
+    Asset(String),
     Update,
 }
 
@@ -107,6 +113,11 @@ struct State {
     update_pending: Option<(String, String)>,
     update_mode: String,
     update_aborted: bool,
+    assets: BTreeMap<String, Vec<u8>>,
+    asset_capacity: u64,
+    chunk_bytes: usize,
+    /// The xfer of the last Asset transfer that closed and what `v2.asset.end` answered for it.
+    asset_end: Option<(u8, Map<String, Value>)>,
 }
 
 impl State {
@@ -184,6 +195,10 @@ impl MockDeck {
                 update_pending: None,
                 update_mode: String::new(),
                 update_aborted: false,
+                assets: BTreeMap::new(),
+                asset_capacity: ASSET_CAPACITY,
+                chunk_bytes: 0,
+                asset_end: None,
             })),
         }
     }
@@ -382,6 +397,21 @@ impl MockDeck {
         self.state().reboots
     }
 
+    /// The Assets the Device stores, by id.
+    pub fn assets(&self) -> BTreeMap<String, Vec<u8>> {
+        self.state().assets.clone()
+    }
+
+    /// Sets the bytes the Device has for Assets, so a test can fill it.
+    pub fn set_asset_capacity(&self, bytes: u64) {
+        self.state().asset_capacity = bytes;
+    }
+
+    /// The data bytes of every chunk frame the Device has received.
+    pub fn chunk_bytes(&self) -> usize {
+        self.state().chunk_bytes
+    }
+
     /// Drops arriving chunks with these indices, one listed index per arrival.
     pub fn lose_chunks(&self, indices: impl IntoIterator<Item = u16>) {
         self.state().lose_in.extend(indices);
@@ -509,6 +539,7 @@ impl MockDeck {
         state.last_rx = Some(Instant::now());
         match (role, body) {
             (Role::Request(seq), Body::Chunk { xfer, idx, data }) => {
+                state.chunk_bytes += data.len();
                 let Some(inbound) = state
                     .inbound
                     .as_mut()
@@ -651,6 +682,18 @@ impl MockDeck {
             state.outbound = None;
             return Ok(Map::new());
         }
+        if let Some(Inbound {
+            target: Target::Asset(_),
+            xfer: open,
+            ..
+        }) = &state.inbound
+        {
+            return Err(if u64::from(*open) == xfer {
+                "end an Asset with v2.asset.end".into()
+            } else {
+                "no transfer with that xfer".into()
+            });
+        }
         let inbound = state
             .inbound
             .take()
@@ -675,6 +718,7 @@ impl MockDeck {
         let orientation = match inbound.target {
             Target::Layout(orientation) => orientation,
             Target::Update => return Err("firmware uses update.end".into()),
+            Target::Asset(_) => unreachable!("an Asset put returned above"),
             Target::Icon(id) => {
                 if !data.starts_with(b"TDI1") {
                     return Err("not a TDI1 icon".into());
@@ -898,19 +942,29 @@ impl MockDeck {
                         ));
                     }
                     state.selected_v2 = proto == 2;
+                    if matches!(
+                        &state.inbound,
+                        Some(Inbound {
+                            target: Target::Asset(_),
+                            ..
+                        })
+                    ) {
+                        state.inbound = None;
+                    }
                     reply.insert("protocols".into(), json!([1, 2]));
                     if proto == 2 {
                         reply.insert("proto".into(), json!(2));
                         reply.insert("id".into(), json!("020000000001"));
                         reply.insert("name".into(), json!(state.device_name));
                         reply.insert("caps".into(), json!({"screen":[1024,600],"grid":[8,8],"pages":8,"tiles":64,
-                            "layout_bytes":32768,"layout_schemas":[1],"free_bytes":4096,"tile_kinds":["static"],
+                            "layout_bytes":32768,"layout_schemas":[1],"free_bytes":asset_space(&state).3,"tile_kinds":["static"],
                             "asset_bytes":12300,"formats":["tdi1"],"image":[64,64],"gif_frames":0,"gif_pixels":0,
                             "photo_bytes":0,"live_hz":0,"live_total_hz":0,"series":0,"text_bytes":0,"streams":0}));
                     }
                 }
                 Ok(reply)
             }
+            m if m.starts_with("v2.asset.") && self.v2_selected() => Ok(self.asset(m, request)),
             m if m.starts_with("v2.") && self.state().v2 => {
                 let mut state = self.state();
                 let reason = if !state.selected_v2 || !state.online_since_hello {
@@ -1063,6 +1117,193 @@ impl MockDeck {
             "layout.get" => self.layout_get(request),
             "xfer.end" => self.xfer_end(request),
             _ => Err("unknown message".into()),
+        }
+    }
+}
+
+/// Total, used, reserved and free bytes for Assets. An open Asset upload reserves its size.
+fn asset_space(state: &State) -> (u64, u64, u64, u64) {
+    let used: u64 = state.assets.values().map(|data| data.len() as u64).sum();
+    let reserved = match &state.inbound {
+        Some(Inbound {
+            target: Target::Asset(_),
+            bytes,
+            ..
+        }) => *bytes as u64,
+        _ => 0,
+    };
+    let total = state.asset_capacity;
+    (total, used, reserved, total.saturating_sub(used + reserved))
+}
+
+impl MockDeck {
+    fn v2_selected(&self) -> bool {
+        let state = self.state();
+        state.v2 && state.selected_v2 && state.online_since_hello
+    }
+
+    /// The v2 Asset requests, once protocol 2 is selected. Refusals carry the protocol's reasons.
+    fn asset(&self, m: &str, request: &Map<String, Value>) -> Map<String, Value> {
+        let refused = |reason: &str| refusal(reason, "Request refused");
+        let only = |keys: &[&str]| {
+            request
+                .keys()
+                .all(|key| key == "m" || keys.contains(&key.as_str()))
+        };
+        let id_field = || {
+            request
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| valid_asset_id(id))
+                .map(str::to_owned)
+        };
+        let mut guard = self.state();
+        let state = &mut *guard;
+        match m {
+            "v2.asset.stat" => {
+                if !only(&[]) {
+                    return refused("args");
+                }
+                let (total, used, reserved, free) = asset_space(state);
+                Map::from_iter([
+                    ("total_bytes".to_owned(), json!(total)),
+                    ("used_bytes".to_owned(), json!(used)),
+                    ("reserved_bytes".to_owned(), json!(reserved)),
+                    ("free_bytes".to_owned(), json!(free)),
+                ])
+            }
+            "v2.asset.list" => {
+                let after = match request.get("after") {
+                    Some(Value::Null) => None,
+                    Some(Value::String(id)) if valid_asset_id(id) => Some(id.clone()),
+                    _ => return refused("args"),
+                };
+                if !only(&["after"]) {
+                    return refused("args");
+                }
+                let mut rest = state
+                    .assets
+                    .iter()
+                    .filter(|(id, _)| after.as_ref().is_none_or(|after| *id > after));
+                let items: Vec<Value> = rest
+                    .by_ref()
+                    .take(ASSET_PAGE)
+                    .map(|(id, data)| json!({"id": id, "bytes": data.len(), "format": "tdi1"}))
+                    .collect();
+                let next = match rest.next() {
+                    Some(_) => items.last().map(|item| item["id"].clone()),
+                    None => None,
+                };
+                Map::from_iter([
+                    ("items".to_owned(), json!(items)),
+                    ("next".to_owned(), next.unwrap_or(Value::Null)),
+                ])
+            }
+            "v2.asset.put" => {
+                let (Some(id), Some(bytes), Some(format)) = (
+                    id_field(),
+                    request
+                        .get("bytes")
+                        .and_then(Value::as_u64)
+                        .filter(|bytes| *bytes > 0),
+                    request.get("format").and_then(Value::as_str),
+                ) else {
+                    return refused("args");
+                };
+                if !only(&["id", "bytes", "format"]) {
+                    return refused("args");
+                }
+                if AssetFormat::parse(format) != Some(AssetFormat::Tdi1) {
+                    return refused("format");
+                }
+                if bytes > ASSET_BYTES as u64 {
+                    return refused("size");
+                }
+                if let Some(stored) = state.assets.get(&id) {
+                    if stored.len() as u64 != bytes {
+                        return refused("format");
+                    }
+                    return Map::from_iter([
+                        ("present".to_owned(), json!(true)),
+                        ("xfer".to_owned(), Value::Null),
+                    ]);
+                }
+                if state.inbound.is_some() {
+                    return refused("busy");
+                }
+                if bytes > asset_space(state).3 {
+                    return refused("full");
+                }
+                let xfer = MockDeck::next_xfer(state);
+                state.asset_end = None;
+                state.inbound = Some(Inbound {
+                    xfer,
+                    target: Target::Asset(id),
+                    bytes: bytes as usize,
+                    crc32: 0,
+                    data: Vec::with_capacity(bytes as usize),
+                    next: 0,
+                });
+                Map::from_iter([
+                    ("present".to_owned(), json!(false)),
+                    ("xfer".to_owned(), json!(xfer)),
+                ])
+            }
+            "v2.asset.end" => {
+                let Some(xfer) = request
+                    .get("xfer")
+                    .and_then(Value::as_u64)
+                    .filter(|xfer| (1..=255).contains(xfer))
+                    .filter(|_| only(&["xfer"]))
+                else {
+                    return refused("args");
+                };
+                let open = matches!(&state.inbound,
+                    Some(Inbound { target: Target::Asset(_), xfer: open, .. }) if u64::from(*open) == xfer);
+                if !open {
+                    return match &state.asset_end {
+                        Some((done, reply)) if u64::from(*done) == xfer => reply.clone(),
+                        _ => refused("state"),
+                    };
+                }
+                let inbound = state.inbound.take().expect("the Asset put is open");
+                if inbound.data.len() < inbound.bytes {
+                    state.inbound = Some(inbound);
+                    return refused("incomplete");
+                }
+                let Target::Asset(id) = inbound.target else {
+                    unreachable!("matched an Asset put")
+                };
+                let reply = if asset_id(&inbound.data) != id {
+                    refused("hash")
+                } else if AssetFormat::sniff(&inbound.data) != Some(AssetFormat::Tdi1)
+                    || inbound.data.len() != ICON_BYTES
+                {
+                    refused("format")
+                } else {
+                    let bytes = inbound.data.len();
+                    state.assets.insert(id.clone(), inbound.data);
+                    Map::from_iter([
+                        ("id".to_owned(), json!(id)),
+                        ("bytes".to_owned(), json!(bytes)),
+                    ])
+                };
+                state.asset_end = Some((inbound.xfer, reply.clone()));
+                reply
+            }
+            "v2.asset.delete" => {
+                let Some(id) = id_field().filter(|_| only(&["id"])) else {
+                    return refused("args");
+                };
+                if matches!(&state.inbound,
+                    Some(Inbound { target: Target::Asset(open), .. }) if *open == id)
+                {
+                    return refused("busy");
+                }
+                let deleted = state.assets.remove(&id).is_some();
+                Map::from_iter([("deleted".to_owned(), json!(deleted))])
+            }
+            _ => refused("unsupported"),
         }
     }
 }
