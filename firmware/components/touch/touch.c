@@ -8,6 +8,9 @@
 #include "board_pins.h"
 #include "ch422g.h"
 #include "display.h"
+#if CONFIG_TD_PERF_TOOLS
+#include "display_perf.h"
+#endif
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "esp_check.h"
@@ -202,6 +205,11 @@ static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         ESP_LOGI(TAG, "x=%u y=%u pressed=%d", held.x, held.y, held.pressed);
     }
 
+#if CONFIG_TD_PERF_TOOLS
+    if (queued) {
+        display_perf_input(out.pressed);
+    }
+#endif
     data->point.x = seen.x;
     data->point.y = seen.y;
     data->state = seen.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
@@ -336,6 +344,9 @@ esp_err_t touch_start(void)
     ESP_RETURN_ON_ERROR(register_pointer_device(), TAG, "pointer device");
     td_recovery_set_info_fn(recovery_info);
     atomic_store(&s.ready, true);
+#if CONFIG_TD_PERF_TOOLS
+    display_perf_set_tap(touch_perf_tap);
+#endif
     return ESP_OK;
 }
 

@@ -6,6 +6,7 @@
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "key_sink.h"
+#include "sdkconfig.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,6 +44,10 @@ typedef struct key_sink_log {
     bool recording;
     size_t count;
     uint32_t dropped;
+#if CONFIG_TD_LAZY_KEY_RECORD
+    /* key_sink_log_start's record waits for the first key_sink_log_record_start to allocate it. */
+    bool record_on_start;
+#endif
 } key_sink_log_t;
 
 /*
@@ -53,7 +58,8 @@ void key_sink_log_init(key_sink_log_t *l, key_log_entry_t *entries, size_t cap, 
                        void (*print)(const char *line));
 
 /* key_sink_log_init with a record of KEY_LOG_RECORD_CAP entries in PSRAM, and the board clock and log. With no
- * PSRAM to spare it keeps a record of 0 and returns ESP_ERR_NO_MEM, and the sink still logs. */
+ * PSRAM to spare it keeps a record of 0 and returns ESP_ERR_NO_MEM, and the sink still logs. With
+ * CONFIG_TD_LAZY_KEY_RECORD the record is allocated by the first key_sink_log_record_start instead, and kept. */
 esp_err_t key_sink_log_start(key_sink_log_t *l);
 
 key_sink_t key_sink_log_sink(key_sink_log_t *l);

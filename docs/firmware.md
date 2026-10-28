@@ -299,6 +299,134 @@ The display component hands its commands to `td_console_register`, so `help`
 lists them. Until the display has started, `screenshot` and `perf` answer
 `display not ready`.
 
+### Performance options
+
+Five Kconfig options make the firmware faster or lighter without changing what
+the screen shows. Each is on by default, and menuconfig can turn it off:
+
+- `CONFIG_TD_PAY_COPY_DEBT`, in `TouchDeck display`. In the adapter's
+  triple-partial mode a refresh that redraws most of the screen, such as a page
+  slide's frame, leaves the two other frame buffers behind, and each of the next
+  two refreshes copies most of the screen into one of them, about 60 ms each.
+  With this option LVGL redraws one unchanged pixel twice once it has been idle
+  for 120 ms, so those copies happen before the next touch. A tap half a
+  second after a slide then finishes its frame in about 7 to 24 ms instead of
+  62 to 66 ms.
+- `CONFIG_TD_LV_TICK_CB`, in `TouchDeck display`. LVGL reads its millisecond
+  clock from `esp_timer_get_time()`, so the adapter's 1 ms tick timer no longer
+  wakes the `esp_timer` task a thousand times a second. Core 0 is about a third
+  less busy on a static screen.
+- `CONFIG_TD_LAZY_SNAPSHOT_BUF`, in `TouchDeck display`. The 1.2 MB PSRAM buffer
+  that `screenshot` renders into exists only while a screenshot or
+  `perf fb check` runs.
+- `CONFIG_TD_LAZY_KEY_RECORD`, in `TouchDeck keys`. The 40 KB key record is
+  allocated by the first `keys record start` instead of at boot. Before that,
+  `keys record dump` answers with a count of 0.
+- `CONFIG_TD_UI_SKIP_NOOP_SETS`, in `TouchDeck UI`. A widget or dashboard update
+  sets a label's text or a widget's text opacity only when the label would
+  change, so an update that repeats the shown values draws no frame. A label
+  cut with dots is always set again, so a repeated value too long for its tile
+  still redraws.
+
+### Perf tools (test builds only)
+
+`CONFIG_TD_PERF_TOOLS`, in the menu `TouchDeck perf tools (test builds only)`,
+adds measurement commands for performance work. It stays off in `sdkconfig` and
+`sdkconfig.defaults`, and while it is off the firmware compiles to the same code
+as without it. A perf build goes to a directory of its own with a config of its
+own, on top of the shipped defaults. From `firmware/`:
+
+```sh
+idf.py -B <abs>/build-perf -D SDKCONFIG=<abs>/build-perf/sdkconfig \
+       -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;perf/tools.defaults" build
+```
+
+Flash it with the same `-B` and `-D` options and `-p <port> flash`.
+[tools.defaults](../firmware/perf/tools.defaults) turns the tools on, with
+FreeRTOS run-time stats on `esp_timer`. A build that also changes other options
+lists its own defaults file after it and names itself in
+`CONFIG_TD_PERF_VARIANT`. A perf build never formats a storage volume that will
+not mount. It logs an error and boots without storage, so the layout and
+settings on the deck stay as they are. `perf` then also takes:
+
+- `perf info` reports the build: PSRAM, flash, and CPU clocks, the panel clock,
+  bounce buffer lines, frame buffers, tear mode, rotation, LVGL draw units and
+  assembly, refresh period, cache sizes, the variant name, which performance
+  options are on (`lv_tick_cb`, `lazy_snapshot_buf`, `lazy_key_record`,
+  `pay_copy_debt`), `reset_reason`, and `boot_count`, the boots since power-on.
+  With `CONFIG_TD_PAY_COPY_DEBT` on, `copy_debt_steps` counts the idle redraws
+  it has asked for since boot.
+- `perf fps <seconds>` keeps its fields and adds `shown`, `shown_fps`,
+  `refreshes`, `render_us_avg`, `render_us_max`, `render_only_us_avg`,
+  `render_only_us_max`, `copy_us_avg`, `copy_us_max`, `flush_us_avg`,
+  `flush_us_max`, `px`, `cpu0_pct`, and `cpu1_pct`.
+- `perf window start` and `perf window stop` report the same over any stretch,
+  with `elapsed_ms` and `drawn`, and force no redraw.
+- `perf tap <x> <y>` taps like `touch tap` and replies with `press_to_flush_us`,
+  `press_to_shown_us`, `release_to_flush_us`, and `release_to_shown_us`, each null
+  when no redraw followed within 500 ms. `press_render_us`, `press_copy_us`,
+  `press_strips`, and `press_px`, and the same for `release`, describe the
+  refresh that flushed. The tap's press and release samples usually reach LVGL
+  in one input read, about 1.4 ms apart, so both name the same refresh. In the
+  adapter's triple-partial mode the first two partial refreshes after a
+  full-screen redraw, such as boot or `perf fb prep`, each copy the whole screen
+  into a lagging back buffer, about 60 ms, which `press_copy_us` shows, unless
+  `CONFIG_TD_PAY_COPY_DEBT` paid it while idle. `shown_chained` is true, because
+  the hook that takes `shown` calls the adapter's own frame-complete callback
+  after it.
+- `perf mem` reports free, minimum free, and largest block of internal, PSRAM, and
+  DMA heap, and each task's core, priority, stack size, and stack high-water mark.
+  Minimum free sizes count from the start of `app_main`, because ESP-IDF gives
+  the 32 KB internal pool it reserves after startup
+  (`CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL`) a minimum of 0, which would put the
+  internal minimum 32 KB below anything in use. `perf mem boot` lists free,
+  minimum free, and largest free internal RAM and free PSRAM after each boot
+  stage. `perf mem heaps` prints ESP-IDF's per-heap summary of internal RAM to
+  the log and replies with the totals. `perf mem last` reports what the previous
+  boot saved when it restarted: its latest sample, taken every two seconds, of
+  each heap's free and minimum free size and each task's stack high-water mark,
+  with `boot`, the boot that saved it, and `uptime_ms`, the sample's time. When
+  the previous boot saved nothing it replies `"saved":false`, with `stale_boot`
+  when an older boot's record is left. A panic, a watchdog, or a power cut saves
+  nothing.
+- `perf cpu <seconds>` replies when the time is up with each core's busy share and
+  each task's share of one core.
+- The task lists of `perf mem`, `perf mem last` and `perf cpu` read each name
+  from the running system without stopping the other core. A task that ends at
+  that moment is left out or shows a garbled name. The read stops at the name's
+  length limit, and the figures beside it are unaffected.
+- `perf fb prep` redraws the whole screen three times, so all three panel frame
+  buffers hold the same frame. `perf fb check` redraws nothing. It takes a
+  snapshot, copies each panel buffer to PSRAM with the LVGL lock held, and
+  compares it with the snapshot, turned the way the adapter turns it in portrait.
+  Per buffer it replies with `index`, `crc`, `exact`, `max_diff` (the largest
+  RGB565 channel step), and `diff_pixels`, plus `submits`, the frames handed to
+  the panel since the last prep, and `screen changed` when a frame flushed in
+  between. Each copy holds the lock for about 60 ms.
+- `perf invalidate <x> <y> <w> <h>` marks one area of the screen for redraw.
+- `perf stall <ms>` suspends the LVGL task for up to 10 s and replies at once,
+  so a `screenshot` sent next runs into its timeout.
+- `perf memtest <kb>` writes six patterns, among them each word's own address,
+  over a PSRAM block of its own, reads them back from PSRAM, and replies with
+  `errors`, `bytes`, and `us`. It touches no other memory. `kb` goes up to 4096
+  and to the largest free PSRAM block that `perf mem` reports.
+- `perf membw` replies with memcpy rates in MB/s, SRAM to PSRAM, PSRAM to SRAM,
+  and PSRAM to PSRAM, measured on core 1 with the panel running. Its 4 KB SRAM
+  buffer shows in the internal minimum free size afterward.
+- `perf temp` replies with the chip temperature in degrees Celsius as `temp_c`.
+  The first reading turns the sensor on, and it stays on until the next reset.
+
+`drawn` counts LVGL refreshes that flushed, `shown` the panel refreshes that
+scanned out a new frame, and `refreshes` every panel scan-out, about 24 a second.
+`render` runs from the start of an LVGL refresh to its last flush call, and
+`flush` from that call to flush ready. LVGL draws a refresh in strips and the
+adapter copies each strip into the frame buffer before the next is drawn, so
+`render` includes those copies. `render_only` leaves them out, and `copy` adds up
+every strip's flush, the last one's included. `px` counts the pixels flushed. A
+core's busy share is 100 % less its idle task's share of run time, and interrupt
+time counts toward the task it interrupted.
+`firmware/components/display/display_perf.c` says how each figure is taken.
+
 ## Layout format
 
 The versioned [layout format](../schema/README.md) describes pages, tiles, icons,

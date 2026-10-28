@@ -1,0 +1,11 @@
+menu "TouchDeck keys"
+
+    config TD_LAZY_KEY_RECORD
+        bool "Allocate the key record only when it first starts"
+        default y
+        help
+            The 2048-report key record, 40960 bytes of PSRAM, is allocated by the first `keys record start` and kept
+            until the next reboot, instead of at boot. Before that, `keys record dump` answers with a count of 0. Off,
+            the record is allocated at boot.
+
+endmenu

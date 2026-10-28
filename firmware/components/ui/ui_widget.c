@@ -83,15 +83,25 @@ static void draw_value(lv_obj_t *value, const char *text, int32_t tile_w)
     lv_text_get_size(&size, text, ui_theme.font_tile, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
     const int32_t max_w = tile_w - 2 * ui_theme.media.label_inset;
     lv_obj_set_width(value, size.x > max_w ? max_w : LV_SIZE_CONTENT);
+#if CONFIG_TD_UI_SKIP_NOOP_SETS
+    ui_set_text_if_changed(value, text);
+#else
     lv_label_set_text(value, text);
+#endif
 }
 
 static void draw_widget(const widget_objs_t *o, const ui_widget_state_t *st)
 {
     draw_value(o->value, st->value[0] != '\0' ? st->value : "--", o->w);
+#if CONFIG_TD_UI_SKIP_NOOP_SETS
+    ui_set_text_if_changed(o->caption, st->caption[0] != '\0' ? st->caption : o->label);
+    ui_set_text_opa_if_changed(o->value, st->stale ? ui_theme.stale_opa : LV_OPA_COVER);
+    ui_set_text_opa_if_changed(o->caption, st->stale ? ui_theme.stale_opa : LV_OPA_COVER);
+#else
     lv_label_set_text(o->caption, st->caption[0] != '\0' ? st->caption : o->label);
     lv_obj_set_style_text_opa(o->value, st->stale ? ui_theme.stale_opa : LV_OPA_COVER, 0);
     lv_obj_set_style_text_opa(o->caption, st->stale ? ui_theme.stale_opa : LV_OPA_COVER, 0);
+#endif
     const int32_t bar_w = st->bar < 0.0f ? 0 : (int32_t)(st->bar * (float)o->w + 0.5f);
     lv_obj_set_width(o->bar, bar_w);
     lv_obj_set_hidden(o->bar, bar_w == 0);

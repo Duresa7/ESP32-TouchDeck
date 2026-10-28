@@ -1,4 +1,6 @@
 #include <string.h>
+#include "esp_heap_caps.h"
+#include "sdkconfig.h"
 #include "unity.h"
 #include "key_sink_log.h"
 
@@ -161,6 +163,38 @@ TEST_CASE("record start empties the record and keeps counting seq since boot", "
     TEST_ASSERT_EQUAL_UINT32(1, key_sink_log_count(&s_log));
     TEST_ASSERT_EQUAL_UINT32(3, key_sink_log_entry(&s_log, 0)->seq);
 }
+
+#if CONFIG_TD_LAZY_KEY_RECORD
+TEST_CASE("a started sink allocates its record on the first record start, or drops reports with no PSRAM",
+          "[key_sink_log]")
+{
+    /* The record lives in PSRAM. The test app may run without it, and then the first start leaves a record of 0. */
+    const bool psram =
+        heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) >= KEY_LOG_RECORD_CAP * sizeof(key_log_entry_t);
+    key_sink_log_t log;
+    TEST_ASSERT_EQUAL(ESP_OK, key_sink_log_start(&log));
+    TEST_ASSERT_EQUAL_UINT32(0, key_sink_log_count(&log));
+
+    key_sink_log_record_start(&log);
+    const key_sink_t sink = key_sink_log_sink(&log);
+    const key_report_t r = key_report_kbd(0, 58);
+    sink.report(sink.ctx, &r);
+    if (!psram) {
+        TEST_ASSERT_EQUAL_UINT32(0, key_sink_log_count(&log));
+        TEST_ASSERT_EQUAL_UINT32(1, key_sink_log_dropped(&log));
+        return;
+    }
+    TEST_ASSERT_EQUAL_UINT32(1, key_sink_log_count(&log));
+    TEST_ASSERT_EQUAL_UINT32(0, key_sink_log_dropped(&log));
+    const key_log_entry_t *first = key_sink_log_entry(&log, 0);
+
+    key_sink_log_record_stop(&log);
+    key_sink_log_record_start(&log);
+    TEST_ASSERT_EQUAL_UINT32(0, key_sink_log_count(&log));
+    TEST_ASSERT_EQUAL_PTR(first, key_sink_log_entry(&log, 0));
+    heap_caps_free((void *)first);
+}
+#endif
 
 TEST_CASE("a sink with no record logs and counts every report as dropped while recording", "[key_sink_log]")
 {

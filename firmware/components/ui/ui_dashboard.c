@@ -90,8 +90,13 @@ void ui_dashboard_draw(int index, const ui_dash_state_t *state)
             continue;
         }
         const ui_dash_row_t *r = &state->rows[i];
+#if CONFIG_TD_UI_SKIP_NOOP_SETS
+        ui_set_text_if_changed(o->label, r->label);
+        ui_set_text_if_changed(o->value, r->value);
+#else
         lv_label_set_text(o->label, r->label);
         lv_label_set_text(o->value, r->value);
+#endif
         const int32_t bar_w = r->bar < 0.0f ? 0 : (int32_t)(r->bar * (float)o->bar_max + 0.5f);
         lv_obj_set_width(o->bar, bar_w);
         lv_obj_set_hidden(o->bar, bar_w == 0);

@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
+#include "sdkconfig.h"
 #include "touch_queue.h"
 
 typedef struct {
@@ -41,3 +42,8 @@ esp_err_t touch_inject(const td_touch_sample_t *samples, size_t n, uint32_t time
 void touch_get_stats(touch_stats_t *out);
 
 void touch_set_log(bool on);
+
+#if CONFIG_TD_PERF_TOOLS
+/* `perf tap`'s injector: one tap, queued and awaited the way `touch tap` does it. */
+esp_err_t touch_perf_tap(uint16_t x, uint16_t y, uint32_t *deliver_us);
+#endif

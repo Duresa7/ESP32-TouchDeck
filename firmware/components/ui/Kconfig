@@ -1,0 +1,12 @@
+menu "TouchDeck UI"
+
+    config TD_UI_SKIP_NOOP_SETS
+        bool "Skip unchanged label sets in widget and dashboard redraws"
+        default y
+        help
+            When an app sends a widget or dashboard value, the redraw sets every label's text, and a widget's text
+            opacity, even when nothing changed, and each such set redraws the label. With this on, a set runs only
+            when the label would change. The screen shows the same pixels either way, with fewer redrawn frames. Off,
+            every set runs.
+
+endmenu

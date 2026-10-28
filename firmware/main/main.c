@@ -25,6 +25,13 @@
 #include "td_recovery.h"
 #include "td_store.h"
 #include "td_update.h"
+#if CONFIG_TD_PERF_TOOLS
+#include "display_perf.h"
+/* The perf tools' boot checkpoints, for `perf mem boot`. */
+#define BOOT_MARK(stage) display_perf_boot_mark(stage)
+#else
+#define BOOT_MARK(stage) ((void)0)
+#endif
 
 static const char *TAG = "touchdeck";
 static const char *SETTINGS_TAG = "settings";
@@ -71,6 +78,7 @@ static void boot_crash_task(void *arg)
 
 void app_main(void)
 {
+    BOOT_MARK("app_main");
 #ifdef TD_TEST_BOOT_CRASH
     xTaskCreate(boot_crash_task, "td_boot_crash", 3072, NULL, 5, NULL);
 #endif
@@ -126,12 +134,14 @@ void app_main(void)
     size_t update_cmd_count;
     const esp_console_cmd_t *update_cmds = td_update_console_commands(&update_cmd_count);
     register_commands("Update", update_cmds, update_cmd_count);
+    BOOT_MARK("commands");
 
     /* The volume mounts before the console starts, and the settings load before the display does, which sizes its
      * frame buffers for the stored orientation. A change to it applies on the next boot. */
     td_settings_t settings;
     td_settings_defaults(&settings);
     esp_err_t store_err = td_store_mount(NULL);
+    BOOT_MARK("store");
     if (store_err == ESP_OK) {
         /* A boot that finds the recovery marker runs the default settings from RAM and leaves settings.json alone. */
         if (!td_recovery_boot()) {
@@ -145,6 +155,7 @@ void app_main(void)
     }
     ESP_LOGI(SETTINGS_TAG, "idle_timeout_s=%u orientation=%s", (unsigned)settings.idle_timeout_s,
              td_settings_orientation_name(settings.orientation));
+    BOOT_MARK("settings");
 
     /* The engine exists before the console can run a keys command. Every report goes to the console key log and to the
      * link, which mirrors it to the app. The USB HID sink takes the third slot in the post-product update. */
@@ -154,29 +165,35 @@ void app_main(void)
     if (keys_err != ESP_OK) {
         ESP_LOGE(TAG, "Keys failed to start: %s", esp_err_to_name(keys_err));
     }
+    BOOT_MARK("keys");
 
     esp_err_t link_err = td_link_start();
     if (link_err != ESP_OK) {
         ESP_LOGE(TAG, "Link failed to start: %s", esp_err_to_name(link_err));
     }
+    BOOT_MARK("link");
 
     esp_err_t console_err = td_console_start();
     if (console_err != ESP_OK) {
         ESP_LOGE(TAG, "Console failed to start: %s", esp_err_to_name(console_err));
     }
+    BOOT_MARK("console");
 
     /* A new image waits here for its first frame, a layout and ten seconds of uptime before it confirms itself. */
     esp_err_t update_err = td_update_start(first_frame_shown, layout_loaded);
     if (update_err != ESP_OK) {
         ESP_LOGE(TAG, "Update watch failed to start: %s", esp_err_to_name(update_err));
     }
+    BOOT_MARK("update");
 
     ui_set_press_hook(td_link_press);
     ui_layout_boot(td_settings_orientation_name(settings.orientation));
+    BOOT_MARK("layout");
     esp_err_t display_err = display_start(settings.orientation == TD_ORIENTATION_PORTRAIT, ui_build);
     if (display_err != ESP_OK) {
         ESP_LOGE(TAG, "Display failed to start: %s", esp_err_to_name(display_err));
     }
+    BOOT_MARK("display");
 
     /* The gate needs the CH422G that display_start brought up, and it must exist before touch reads start. */
     esp_err_t power_err = power_start(esp_timer_get_time());
@@ -185,16 +202,24 @@ void app_main(void)
     } else {
         power_set_idle_timeout_s(settings.idle_timeout_s, esp_timer_get_time());
     }
+    BOOT_MARK("power");
 
     esp_err_t touch_err = touch_start();
     if (touch_err != ESP_OK) {
         ESP_LOGE(TAG, "Touch failed to start: %s", esp_err_to_name(touch_err));
     }
+    BOOT_MARK("touch");
 
     int ticks = 0;
     while (true) {
+#if CONFIG_TD_PERF_TOOLS
+        display_perf_mem_sample();
+#endif
         ESP_LOGI(TAG, "alive %d, free heap %" PRIu32 " bytes",
                  ticks++, esp_get_free_heap_size());
         vTaskDelay(pdMS_TO_TICKS(2000));
+        if (ticks == 5) {
+            BOOT_MARK("alive_10s");
+        }
     }
 }

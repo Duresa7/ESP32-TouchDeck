@@ -3,11 +3,42 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "lvgl.h"
+#include "sdkconfig.h"
 #include "ui.h"
 #include "td_layout.h"
 #include "ui_pages.h"
 
 #define UI_PAGES_MAX 8
+
+#if CONFIG_TD_UI_SKIP_NOOP_SETS
+#include "ui_redraw.h"
+
+/*
+ * The widget and dashboard redraws set every label of an entry each time an app sends it, and an unchanged set still
+ * invalidates the label, which in TRIPLE_PARTIAL costs a whole frame. These skip a set only when the object already
+ * holds exactly what the set would store, so it ends as the set would leave it. Bar widths and hidden flags need no
+ * check: LVGL 9.6's lv_obj_set_width and lv_obj_set_hidden already return early when nothing changes.
+ */
+static inline void ui_set_text_if_changed(lv_obj_t *label, const char *text)
+{
+    /* A dots-mode label that was cut is always set again, as without this option. */
+    const char *shown = lv_label_get_text(label);
+    const bool cut = lv_label_get_long_mode(label) == LV_LABEL_LONG_MODE_DOTS && ui_text_cut_with_dots(shown);
+    if (cut || !ui_text_unchanged(shown, text)) {
+        lv_label_set_text(label, text);
+    }
+}
+
+/* Compares the label's own local style, which is all lv_obj_set_style_text_opa(obj, opa, 0) writes, rather than the
+ * resolved opacity, so a style or parent that someday sets text opacity cannot make a needed set look redundant. */
+static inline void ui_set_text_opa_if_changed(lv_obj_t *obj, lv_opa_t opa)
+{
+    lv_style_value_t v;
+    if (lv_obj_get_local_style_prop(obj, LV_STYLE_TEXT_OPA, &v, 0) != LV_STYLE_RES_FOUND || v.num != opa) {
+        lv_obj_set_style_text_opa(obj, opa, 0);
+    }
+}
+#endif
 
 /*
  * What the console reports about the deck. Totals count the page changes that ran their whole slide, so

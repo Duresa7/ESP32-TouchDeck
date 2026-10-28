@@ -35,5 +35,8 @@ esp_err_t panel_rgb_create(size_t num_fbs, esp_lcd_panel_handle_t *out)
         .data_gpio_nums = TD_LCD_DATA_PINS,
         .flags.fb_in_psram = 1,
     };
+#if CONFIG_TD_PERF_TOOLS
+    display_perf_note_panel(config.timings.pclk_hz, config.bounce_buffer_size_px / config.timings.h_res, num_fbs);
+#endif
     return esp_lcd_new_rgb_panel(&config, out);
 }

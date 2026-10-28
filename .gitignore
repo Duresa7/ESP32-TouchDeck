@@ -10,6 +10,7 @@ AGENTS.md
 .pio/
 build/
 build-crash/
+build-perf/
 out/
 dist/
 
@@ -20,6 +21,9 @@ node_modules/
 
 # Hardware verification evidence
 /.verify/
+
+# Local reports for the maintainer
+/human-folder/
 
 # ESP-IDF generated files
 sdkconfig.old

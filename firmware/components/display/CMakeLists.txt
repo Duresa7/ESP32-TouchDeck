@@ -1,8 +1,18 @@
-idf_component_register(SRCS "display.c" "display_cmds.c" "panel_rgb.c" "display_rotate.c"
+set(srcs "display.c" "display_cmds.c" "panel_rgb.c" "display_rotate.c")
+if(CONFIG_TD_PERF_TOOLS)
+    list(APPEND srcs "display_perf.c" "display_perf_cmds.c" "display_perf_fb.c" "display_perf_mem.c")
+endif()
+if(CONFIG_TD_PAY_COPY_DEBT)
+    list(APPEND srcs "display_copy_debt.c")
+endif()
+
+# esp_driver_tsens and esp_mm serve only the perf tools, but requirements are read before the configuration is, so
+# they cannot depend on it. Without the perf tools nothing links from them.
+idf_component_register(SRCS ${srcs}
                        INCLUDE_DIRS "include"
                        REQUIRES console
                        PRIV_REQUIRES board td_shot td_console td_rotate esp_lcd esp_timer
-                                     espressif__esp_lvgl_adapter lvgl__lvgl)
+                                     espressif__esp_lvgl_adapter lvgl__lvgl esp_driver_tsens esp_mm)
 
 # display_rotate.c replaces esp_lvgl_adapter's software rotation copy by wrapping the symbol at link time, so the
 # managed component stays as the registry ships it. The wrapper relies on that function's arguments and mapping in
@@ -16,3 +26,12 @@ if(NOT td_adapter_version_line MATCHES "^version: *['\"]?${td_adapter_version}['
 endif()
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=display_rotate_copy_region"
                                                  "-u __wrap_display_rotate_copy_region")
+
+# Test builds only: the perf tools count frame hand-overs and panel refreshes by wrapping the esp_lcd calls the adapter
+# makes, and leave the adapter's own callbacks in place (see display_perf.c).
+if(CONFIG_TD_PERF_TOOLS)
+    target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_lcd_rgb_panel_register_event_callbacks"
+                                                     "-u __wrap_esp_lcd_rgb_panel_register_event_callbacks"
+                                                     "-Wl,--wrap=esp_lcd_panel_draw_bitmap"
+                                                     "-u __wrap_esp_lcd_panel_draw_bitmap")
+endif()
