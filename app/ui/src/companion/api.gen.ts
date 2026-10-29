@@ -6,7 +6,7 @@ export type AssetRef = { id: string,
  * `tdi1`, the Device's icon format.
  */
 kind: string, width: number, height: number, bytes: number, };
-export type AssetSource = { "kind": "app", path: string, };
+export type AssetSource = { "kind": "app", path: string, } | { "kind": "upload", upload: string, };
 export type AssetSync = { 
 /**
  * Assets the Layout uses that the Device lacked and the Companion sent.
@@ -18,12 +18,13 @@ sent: Array<string>,
 unavailable: Array<string>, };
 export type AuthRevoked = Record<string, never>;
 export type Builtin = { name: string, label: string, tags: Array<string>, id: string, };
-export type Capabilities = { screen: [number, number], grid: [number, number], pages: number, tiles: number, layout_bytes: number, storage_free: number, tile_kinds: Array<string>, asset_bytes: number, formats: Array<string>, image: [number, number], };
+export type Capabilities = { screen: [number, number], grid: [number, number], pages: number, tiles: number, layout_bytes: number, layout_schemas: Array<number>, storage_free: number, tile_kinds: Array<string>, asset_bytes: number, formats: Array<string>, image: [number, number], };
 export type ClientInfo = { id: string, kind: SessionKind, };
 export type CompanionStopping = { reason: string, };
 export type ConsoleLine = { line: string, };
 export type CreateAsset = { source: AssetSource, fit?: Fit, };
 export type DeviceAdded = DeviceSummary;
+export type DeviceAssets = { ids: Array<string>, storage_free: number, };
 export type DeviceConsole = { device: DeviceId, line: string, };
 export type DeviceEvent = { device: DeviceId, event: JsonValue, };
 export type DeviceId = string;
@@ -127,16 +128,20 @@ export type SetupState = "needs-setup" | "ready";
 export type StartupSetting = { at_sign_in: boolean, };
 export type SuggestRequest = { action: TileAction, };
 export type SystemInfo = { version: string, build: string, api: string, mock: boolean, data_dir_override: boolean, };
-export type Tile = { id: string, label: string, row: number, col: number, rowSpan: number, colSpan: number, icon: string | null, action: TileAction, };
+export type Tile = { id: string, label: string, row: number, col: number, rowSpan: number, colSpan: number, icon: string | null, asset?: string | null, action: TileAction, };
 export type TileAction = { "type": "key", usage: number, mods: Array<Modifier>, } | { "type": "mod", mod: Modifier, } | { "type": "consumer", usage: number, } | { "type": "page", page: string, } | { "type": "none" } | { "type": "launch", path: string, args: Array<string>, cwd: string, } | { "type": "open", target: string, } | { "type": "command", program: string, args: Array<string>, cwd: string, shell: boolean, } | { "type": "widget", source: string, field: string, account: string, };
 export type Topic = "state" | "console" | "key-mirror" | "device-events";
+export type UploadBody = Blob;
+export type Uploaded = { id: string, media_type: string, bytes: number, };
 export type Versions = { api: Array<string>, };
 export const endpoints = {
   'assets.builtin': { method: 'GET', path: '/assets/builtin', access: 'session' },
   'assets.create': { method: 'POST', path: '/assets', access: 'session' },
   'assets.file': { method: 'GET', path: '/assets/{asset}', access: 'session' },
+  'assets.on_device': { method: 'GET', path: '/devices/{device}/assets', access: 'session' },
   'assets.prune': { method: 'POST', path: '/devices/{device}/assets/prune', access: 'session' },
   'assets.suggest': { method: 'POST', path: '/assets/builtin/suggest', access: 'session' },
+  'assets.upload': { method: 'POST', path: '/uploads', access: 'session' },
   'auth.pair': { method: 'POST', path: '/auth/pair', access: 'public' },
   'auth.pair_code': { method: 'POST', path: '/auth/pair-codes', access: 'session' },
   'auth.proof': { method: 'POST', path: '/auth/proof', access: 'public' },
@@ -167,7 +172,7 @@ export const endpoints = {
   'system.startup_get': { method: 'GET', path: '/system/startup', access: 'session' },
   'system.startup_put': { method: 'PUT', path: '/system/startup', access: 'session' },
 } as const;
-export type ErrorCode = 'asset.not_found' | 'asset.render_failed' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.changed' | 'layout.invalid' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin';
+export type ErrorCode = 'asset.not_found' | 'asset.render_failed' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.changed' | 'layout.invalid' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'upload.not_found';
 export type SyncData = {
   devices: Array<DeviceSummary>,
   jobs: Array<Job>,
@@ -203,7 +208,7 @@ export function createCompanion(base: string, token: () => string) {
     const url = new URL(`/api/v1${route}`, base);
     if (query) for (const [key, value] of Object.entries(query)) url.searchParams.set(key, String(value));
     const auth = bearer ?? (endpoint.access === 'session' ? token() : undefined);
-    const response = await fetch(url, { method: endpoint.method, headers: { ...headers, ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...(body == null ? {} : { 'Content-Type': 'application/json' }) }, ...(body == null ? {} : { body: JSON.stringify(body) }) });
+    const response = await fetch(url, { method: endpoint.method, headers: { ...headers, ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...(body == null ? {} : { 'Content-Type': body instanceof Blob ? body.type : 'application/json' }) }, ...(body == null ? {} : { body: body instanceof Blob ? body : JSON.stringify(body) }) });
     if (!response.ok) throw (await response.json()).error;
     if (response.status === 204) return undefined as T;
     // Asset files come back as raw bytes with their media type.
@@ -223,6 +228,7 @@ export function createCompanion(base: string, token: () => string) {
       builtin: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<Builtin>>('assets.builtin', path, query, body, bearer, headers),
       create: (path: Record<string, never> = {}, query: null = null, body: { source: AssetSource, fit?: Fit, }, bearer?: string, headers?: Record<string, string>) => call<Job>('assets.create', path, query, body, bearer, headers),
       file: (path: { asset: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<AssetBytes>('assets.file', path, query, body, bearer, headers),
+      on_device: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<DeviceAssets>('assets.on_device', path, query, body, bearer, headers),
       prune: (path: { device: DeviceId, }, query: null = null, body: { 
 /**
  * Assets to keep besides the ones the Device's stored Layouts use, such as those of a
@@ -230,6 +236,7 @@ export function createCompanion(base: string, token: () => string) {
  */
 also_keep: Array<string>, }, bearer?: string, headers?: Record<string, string>) => call<Job>('assets.prune', path, query, body, bearer, headers),
       suggest: (path: Record<string, never> = {}, query: null = null, body: { action: TileAction, }, bearer?: string, headers?: Record<string, string>) => call<Builtin | null>('assets.suggest', path, query, body, bearer, headers),
+      upload: (path: Record<string, never> = {}, query: null = null, body: Blob, bearer?: string, headers?: Record<string, string>) => call<Uploaded>('assets.upload', path, query, body, bearer, headers),
     },
     auth: {
       pair: (path: Record<string, never> = {}, query: null = null, body: { code: string, label: string | null, }, bearer?: string, headers?: Record<string, string>) => call<SessionCreated>('auth.pair', path, query, body, bearer, headers),

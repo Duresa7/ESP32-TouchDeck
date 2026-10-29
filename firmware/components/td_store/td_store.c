@@ -24,6 +24,34 @@ static const char *TAG = "store";
 static SemaphoreHandle_t s_lock;
 static atomic_bool s_mounted;
 static atomic_bool s_formatted;
+static uint32_t s_budget_total;
+static int64_t s_budget_used;
+
+uint32_t td_store_budget_cost(uint32_t bytes)
+{
+    return ((bytes + 4087u) / 4088u + 1u) * 4096u;
+}
+
+static int64_t budget_scan(const char *path)
+{
+    struct stat st;
+    if (stat(path, &st) != 0) return -1;
+    if (!S_ISDIR(st.st_mode)) return td_store_budget_cost((uint32_t)st.st_size);
+    DIR *dir = opendir(path);
+    if (dir == NULL) return -1;
+    int64_t used = 8192;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        char child[CHILD_PATH_MAX];
+        int n = snprintf(child, sizeof child, "%s/%s", path, entry->d_name);
+        int64_t cost = n > 0 && (size_t)n < sizeof child ? budget_scan(child) : -1;
+        if (cost < 0) { used = -1; break; }
+        used += cost;
+    }
+    closedir(dir);
+    return used;
+}
 
 /* Settings are read and written under the store lock, so one buffer serves both. */
 static char s_settings_buf[SETTINGS_FILE_MAX];
@@ -152,8 +180,10 @@ esp_err_t td_store_mount(bool *formatted)
     if (removed > 0) {
         ESP_LOGW(TAG, "removed %u stale temporary file(s)", removed);
     }
+    s_budget_used = budget_scan(TD_STORE_ROOT);
     td_store_info_t info;
     if (td_store_info(&info) == ESP_OK) {
+        s_budget_total = info.total_bytes;
         ESP_LOGI(TAG, "mounted, %u/%u bytes", (unsigned)info.used_bytes, (unsigned)info.total_bytes);
     } else {
         ESP_LOGW(TAG, "mounted, usage unknown");
@@ -197,6 +227,27 @@ esp_err_t td_store_info(td_store_info_t *out)
     out->total_bytes = (uint32_t)total;
     out->used_bytes = (uint32_t)used;
     return ESP_OK;
+}
+
+esp_err_t td_store_budget(td_store_info_t *out)
+{
+    if (!td_store_mounted()) return ESP_ERR_INVALID_STATE;
+    lock();
+    if (s_budget_total == 0 || s_budget_used < 0) {
+        unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
+    out->total_bytes = s_budget_total;
+    out->used_bytes = s_budget_used > UINT32_MAX ? UINT32_MAX : (uint32_t)s_budget_used;
+    unlock();
+    return ESP_OK;
+}
+
+void td_store_budget_adjust(int64_t delta)
+{
+    lock();
+    if (s_budget_used >= 0) s_budget_used += delta;
+    unlock();
 }
 
 esp_err_t td_store_stat(const char *path, td_store_stat_t *out)
@@ -340,7 +391,9 @@ static bool make_parents(const char *path)
             continue;
         }
         *p = '\0';
-        if (mkdir(dir, 0777) != 0 && errno != EEXIST) {
+        if (mkdir(dir, 0777) == 0) {
+            td_store_budget_adjust(8192);
+        } else if (errno != EEXIST) {
             return false;
         }
         *p = '/';
@@ -374,6 +427,8 @@ esp_err_t td_store_write_atomic(const char *path, const void *data, size_t len)
     snprintf(tmp, sizeof tmp, "%s%s", path, TMP_SUFFIX);
 
     lock();
+    struct stat previous;
+    int64_t old_cost = stat(path, &previous) == 0 ? td_store_budget_cost((uint32_t)previous.st_size) : 0;
     bool ok = make_parents(path);
     int fd = ok ? open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0666) : -1;
     if (fd >= 0) {
@@ -383,6 +438,7 @@ esp_err_t td_store_write_atomic(const char *path, const void *data, size_t len)
         ok = false;
     }
     ok = ok && rename(tmp, path) == 0;
+    if (ok) td_store_budget_adjust((int64_t)td_store_budget_cost((uint32_t)len) - old_cost);
     if (!ok) {
         ESP_LOGW(TAG, "write of %s failed, errno %d", path, errno);
         unlink(tmp);
@@ -404,6 +460,7 @@ esp_err_t td_store_remove(const char *path)
     int rc = stat(path, &st);
     if (rc == 0) {
         rc = S_ISDIR(st.st_mode) ? rmdir(path) : unlink(path);
+        if (rc == 0) td_store_budget_adjust(-(int64_t)(S_ISDIR(st.st_mode) ? 8192 : td_store_budget_cost((uint32_t)st.st_size)));
     }
     const int saved = errno;
     unlock();
