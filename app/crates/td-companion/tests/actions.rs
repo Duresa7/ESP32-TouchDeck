@@ -30,17 +30,26 @@ async fn get(td: &TestCompanion, path: &str) -> Value {
         .unwrap()
 }
 async fn wait_count(td: &TestCompanion, path: &str, count: usize) -> Value {
-    tokio::time::timeout(Duration::from_secs(10), async {
+    let mut last = Value::Null;
+    let found = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let value = get(td, path).await;
             if value.as_array().unwrap().len() == count {
                 return value;
             }
+            last = value;
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
-    .await
-    .expect("expected API state")
+    .await;
+    match found {
+        Ok(value) => value,
+        Err(_) => panic!(
+            "expected {count} in {path}, last saw {last}; approvals {}; log {}",
+            get(td, "approvals").await,
+            get(td, "actions/log").await
+        ),
+    }
 }
 async fn script(td: &TestCompanion, answer: &str) {
     td.raw()
@@ -70,11 +79,9 @@ impl Runs {
     }
     fn uncounted_three_second_action(&self) -> Value {
         if cfg!(windows) {
-            self.command(
-                "powershell.exe",
-                "-Command",
-                "Start-Sleep -Seconds 3; exit 0",
-            )
+            // ping waits a second between replies. Windows PowerShell's cold start alone can
+            // take seconds on a busy CI runner.
+            self.command("cmd", "/C", "ping -n 4 127.0.0.1 >nul& exit 0")
         } else {
             self.command("sh", "-c", "sleep 3; exit 0")
         }

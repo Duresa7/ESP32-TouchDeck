@@ -29,7 +29,7 @@ function startCompanion() {
     ? join(dirname(app.getPath('exe')), process.platform === 'win32' ? 'td-companion.exe' : 'td-companion')
     : process.env.TOUCHDECK_COMPANION_BIN;
   if (!binary) throw new Error('Set TOUCHDECK_COMPANION_BIN to the Companion binary');
-  const child = spawn(binary, [], { detached: true, stdio: 'ignore', windowsHide: true });
+  const child = spawn(binary, app.isPackaged ? ['--packaged'] : [], { detached: true, stdio: 'ignore', windowsHide: true });
   child.on('error', () => { /* The bounded runtime-file wait reports launch failure. */ });
   child.unref();
 }

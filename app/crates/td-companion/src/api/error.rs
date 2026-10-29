@@ -44,6 +44,10 @@ pub(crate) fn respond(error: &impl ApiError) -> Response {
 /// Errors the kernel and every feature can return.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum CommonError {
+    #[error("A Job or another install is active.")]
+    SystemBusy,
+    #[error("The Companion installer holds the lock.")]
+    Installing,
     #[error("The Host is not allowed.")]
     Host,
     #[error("The Origin or request site is not allowed.")]
@@ -52,6 +56,14 @@ pub enum CommonError {
     AuthMissing,
     #[error("The token is invalid.")]
     AuthInvalid,
+    #[error("The browser session expired.")]
+    AuthExpired,
+    #[error(
+        "This pairing code has expired or is wrong. Choose Open in browser from the tray icon again."
+    )]
+    CodeInvalid,
+    #[error("Pairing was blocked after wrong codes. Start pairing again.")]
+    CodeLocked,
     #[error("{0}")]
     AuthRevoked(&'static str),
     #[error("{0}")]
@@ -83,10 +95,15 @@ impl CommonError {
 }
 impl ApiError for CommonError {
     const CODES: &'static [&'static str] = &[
+        "system.busy",
+        "companion.installing",
         "security.host",
         "security.origin",
         "auth.missing",
         "auth.invalid",
+        "auth.expired",
+        "auth.code_invalid",
+        "auth.code_locked",
         "auth.revoked",
         "auth.forbidden",
         "request.invalid",
@@ -100,8 +117,12 @@ impl ApiError for CommonError {
     ];
     fn status(&self) -> StatusCode {
         let status = match self {
+            Self::SystemBusy => 409,
+            Self::Installing => 503,
             Self::Host => 421,
             Self::Origin | Self::Forbidden(_) => 403,
+            Self::AuthExpired | Self::CodeInvalid => 401,
+            Self::CodeLocked => 429,
             Self::AuthMissing | Self::AuthInvalid | Self::AuthRevoked(_) => 401,
             Self::Invalid { .. } => 400,
             Self::TooLarge => 413,
@@ -116,10 +137,15 @@ impl ApiError for CommonError {
     }
     fn code(&self) -> &'static str {
         match self {
+            Self::SystemBusy => "system.busy",
+            Self::Installing => "companion.installing",
             Self::Host => "security.host",
             Self::Origin => "security.origin",
             Self::AuthMissing => "auth.missing",
             Self::AuthInvalid => "auth.invalid",
+            Self::AuthExpired => "auth.expired",
+            Self::CodeInvalid => "auth.code_invalid",
+            Self::CodeLocked => "auth.code_locked",
             Self::AuthRevoked(_) => "auth.revoked",
             Self::Forbidden(_) => "auth.forbidden",
             Self::Invalid { .. } => "request.invalid",
