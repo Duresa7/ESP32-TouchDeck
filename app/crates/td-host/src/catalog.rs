@@ -541,14 +541,15 @@ mod tests {
                 } else {
                     (screen_w - 56, screen_h - 136)
                 };
-                let edges = |length| {
+                let edges = |length: u32| {
                     let mut lengths = std::collections::BTreeSet::new();
                     for cells in 1..=8 {
                         for start in 0..cells {
                             for span in 1..=cells - start {
                                 lengths.insert(
                                     (start + span) * (length + 16) / cells
-                                        - start * (length + 16) / cells - 16,
+                                        - start * (length + 16) / cells
+                                        - 16,
                                 );
                             }
                         }
@@ -566,8 +567,13 @@ mod tests {
             let image = fit(
                 SVG,
                 true,
-                Options { width, height, ..Default::default() },
-            ).unwrap();
+                Options {
+                    width,
+                    height,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
             assert_eq!(image.dimensions(), (width, height));
         }
     }

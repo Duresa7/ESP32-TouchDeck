@@ -162,9 +162,10 @@ async fn at_most_two_renders_run_at_once() {
     td.wait(&third).await;
 }
 
-struct CatalogFetch;
+struct CatalogFetch(std::sync::Arc<std::sync::atomic::AtomicUsize>);
 impl td_host::catalog::Fetcher for CatalogFetch {
     fn fetch(&self, url: &str) -> Result<Vec<u8>, td_host::catalog::Error> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         assert!(url.contains("simple-icons@16.36.0/icons/github.svg"));
         Ok(br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><path d="M0 0h10v10H0z"/></svg>"#.to_vec())
     }
@@ -172,7 +173,12 @@ impl td_host::catalog::Fetcher for CatalogFetch {
 #[tokio::test]
 async fn catalog_search_and_render_jobs() {
     use td_companion::features::assets::{CatalogQuery, CatalogSearch};
-    let td = TestCompanion::start_with_catalog(Default::default(), Box::new(CatalogFetch)).await;
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let td = TestCompanion::start_with_catalog(
+        Default::default(),
+        Box::new(CatalogFetch(calls.clone())),
+    )
+    .await;
     let hits = td
         .call::<CatalogSearch>(
             (),
@@ -208,9 +214,16 @@ async fn catalog_search_and_render_jobs() {
         .send()
         .await
         .unwrap();
-    assert!(td_host::icon_pack::is_icon(
-        &response.bytes().await.unwrap()
-    ));
+    let bytes = response.bytes().await.unwrap();
+    assert!(td_host::icon_pack::is_icon(&bytes));
+    // TDI1 contains RGB565 followed by alpha: the center is red, padding transparent.
+    let center = 32 * 64 + 32;
+    assert_eq!(&bytes[12 + center * 2..14 + center * 2], &[0, 248]);
+    assert_eq!(bytes[12 + 64 * 64 * 2], 0);
+    assert_eq!(bytes[12 + 64 * 64 * 2 + center], 255);
+    let again = td.call::<Create>((), NoQuery, create()).await.unwrap();
+    assert_eq!(td.wait(&again).await.state, JobState::Succeeded);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     let td = TestCompanion::start().await;
     let job = td.call::<Create>((), NoQuery, create()).await.unwrap();
     let done = td.wait(&job).await;
