@@ -376,6 +376,43 @@ impl Endpoint for Sessions {
         Ok(list)
     }
 }
+#[derive(Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum BrowserKind {
+    #[default]
+    Browser,
+}
+#[derive(Default, Serialize, Deserialize, TS)]
+pub struct SessionsDeleteQuery {
+    pub kind: BrowserKind,
+}
+pub struct SessionsDelete;
+impl Endpoint for SessionsDelete {
+    const NAME: &'static str = "auth.sessions_delete";
+    const METHOD: Method = Method::DELETE;
+    const PATH: &'static str = "/auth/sessions";
+    const STATUS: StatusCode = StatusCode::NO_CONTENT;
+    type Path = ();
+    type Query = SessionsDeleteQuery;
+    type Body = ();
+    type Ok = ();
+    type Error = CommonError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<(), CommonError> {
+        if req.client().kind != SessionKind::Window {
+            return Err(CommonError::Forbidden("A window session is required."));
+        }
+        {
+            let mut auth = ctx.auth.lock();
+            for session in auth.sessions.values_mut() {
+                if session.info.kind == SessionKind::Browser {
+                    session.revoked = true;
+                }
+            }
+        }
+        ctx.events.notify();
+        Ok(())
+    }
+}
 pub struct SessionDelete;
 impl Endpoint for SessionDelete {
     const NAME: &'static str = "auth.session_delete";
@@ -446,6 +483,7 @@ fn auth_feature() -> Feature {
         .endpoint::<PairCode>()
         .endpoint::<Sessions>()
         .endpoint::<SessionDelete>()
+        .endpoint::<SessionsDelete>()
         .endpoint::<Reset>()
 }
 inventory::submit! { Registration(auth_feature) }
