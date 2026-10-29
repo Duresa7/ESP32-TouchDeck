@@ -438,7 +438,6 @@ pub struct CatalogQuery {
     pub q: String,
     pub catalog: Option<String>,
 }
-/// License and provenance travel with each hit for the picker and third-party notices.
 #[derive(Serialize, Deserialize, TS)]
 pub struct CatalogHit {
     pub source: String,

@@ -216,7 +216,6 @@ async fn catalog_search_and_render_jobs() {
         .unwrap();
     let bytes = response.bytes().await.unwrap();
     assert!(td_host::icon_pack::is_icon(&bytes));
-    // TDI1 contains RGB565 followed by alpha: the center is red, padding transparent.
     let center = 32 * 64 + 32;
     assert_eq!(&bytes[12 + center * 2..14 + center * 2], &[0, 248]);
     assert_eq!(bytes[12 + 64 * 64 * 2], 0);
