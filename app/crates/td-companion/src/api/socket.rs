@@ -226,12 +226,6 @@ async fn serve(socket: WebSocket, ctx: Ctx, client: ClientInfo) {
     let subscriber = ctx.events.subscribe();
     let (mut sink, mut stream) = socket.split();
     let mut seq = 0u64;
-    let mut snapshot = serde_json::Map::new();
-    for feature in super::registry() {
-        for entry in feature.snapshots {
-            snapshot.insert(entry.key.into(), (entry.read)(&ctx));
-        }
-    }
     let mut hello = serde_json::to_value(Hello {
         api: "v1".into(),
         build: env!("TD_BUILD").into(),
@@ -239,9 +233,17 @@ async fn serve(socket: WebSocket, ctx: Ctx, client: ClientInfo) {
     })
     .unwrap();
     hello["type"] = Hello::NAME.into();
-    let sync = frame(&Sync(snapshot));
-    for value in [hello, sync] {
-        if !send(&mut sink, numbered(value, &mut seq)).await {
+    if !send(&mut sink, numbered(hello, &mut seq)).await {
+        return;
+    }
+    if ctx.auth.lock().active(&client.id, ctx.clock.now()) {
+        let mut snapshot = serde_json::Map::new();
+        for feature in super::registry() {
+            for entry in feature.snapshots {
+                snapshot.insert(entry.key.into(), (entry.read)(&ctx));
+            }
+        }
+        if !send(&mut sink, numbered(frame(&Sync(snapshot)), &mut seq)).await {
             return;
         }
     }
