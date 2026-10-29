@@ -1,5 +1,6 @@
 import type { DeviceSummary, Layout, SystemInfo } from './api.ts';
 import { CLOSE_SESSION, type EventSocket } from './events.ts';
+import { createFakeActions } from './fake-actions.ts';
 import { createFakeLayouts } from './fake-layouts.ts';
 import type { OpenTouchDeckBridge } from './session.ts';
 
@@ -20,19 +21,35 @@ export interface FakeCompanionOptions {
 
 type Frame = Record<string, unknown> & { type: string };
 
+const topicKey = (topic: string, device: string) => `${topic}/${device}`;
+
 class FakeSocket implements EventSocket {
   onmessage: ((event: { data: unknown }) => void) | null = null;
   onclose: ((event: { code: number }) => void) | null = null;
   private seq = 0;
   private closing = false;
   private readonly sockets: Set<FakeSocket>;
+  readonly topics = new Set<string>();
 
   constructor(sockets: Set<FakeSocket>) {
     this.sockets = sockets;
   }
 
+  send(data: string) {
+    let op: { op?: unknown; topic?: unknown; device?: unknown };
+    try {
+      op = JSON.parse(data);
+    } catch {
+      return;
+    }
+    if (op.topic === 'state' || typeof op.topic !== 'string' || typeof op.device !== 'string') return;
+    const key = topicKey(op.topic, op.device);
+    if (op.op === 'subscribe') this.topics.add(key);
+    else if (op.op === 'unsubscribe') this.topics.delete(key);
+  }
+
   // Frames arrive on a later task, in order, and frames sent before a close still arrive.
-  send(frame: Frame) {
+  deliver(frame: Frame) {
     if (this.closing) return;
     const data = JSON.stringify({ ...frame, seq: this.seq++ });
     setTimeout(() => this.onmessage?.({ data }), 0);
@@ -64,6 +81,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   let minted = 0;
   let requests = 0;
   const layouts = createFakeLayouts({ devices, publish, seed: options.layouts, delayMs: options.jobMs });
+  const actions = createFakeActions({ devices, publish, publishTopic, stored: layouts.stored });
 
   function mint() {
     minted += 1;
@@ -73,7 +91,11 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   }
 
   function publish(frame: Frame) {
-    for (const socket of sockets) socket.send(frame);
+    for (const socket of sockets) socket.deliver(frame);
+  }
+
+  function publishTopic(topic: string, device: string, frame: Frame) {
+    for (const socket of sockets) if (socket.topics.has(topicKey(topic, device))) socket.deliver(frame);
   }
 
   // What Electron's preload would hand the window: a fresh session on every ask.
@@ -93,7 +115,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     const get = request.method === 'GET';
 
     if (path === '/system/ping') return get ? json(200, { api: ['v1'] }) : failure(405, 'route.method_not_allowed', 'Use GET.');
-    if (path.startsWith('/test/')) return layouts.test(request, path);
+    if (path.startsWith('/test/')) return (await actions.test(request, path)) ?? layouts.test(request, path);
 
     const auth = request.headers.get('Authorization') ?? '';
     const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
@@ -112,7 +134,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
       const found = devices.get(decodeURIComponent(device![1]));
       return found ? json(200, found) : failure(404, 'device.not_found', 'No Device with that id.');
     }
-    return (await layouts.handle(request, path)) ?? failure(404, 'route.not_found', 'No route with that path.');
+    return (await layouts.handle(request, path)) ?? actions.handle(request, path) ?? failure(404, 'route.not_found', 'No route with that path.');
   }
 
   function openSocket(url: string, protocols: string[]): EventSocket {
@@ -124,8 +146,8 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
       return socket;
     }
     sockets.add(socket);
-    socket.send({ type: 'hello', api: 'v1', build: system.build, session: { id: 'fake-session', kind: 'window' } });
-    socket.send({ type: 'sync', data: { devices: [...devices.values()], jobs: layouts.jobs() } });
+    socket.deliver({ type: 'hello', api: 'v1', build: system.build, session: { id: 'fake-session', kind: 'window' } });
+    socket.deliver({ type: 'sync', data: { devices: [...devices.values()], jobs: layouts.jobs(), approvals: actions.pending() } });
     return socket;
   }
 
@@ -134,6 +156,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     openSocket,
     bridge,
     layouts,
+    actions,
     /** Sessions minted so far through the bridge. */
     get minted() {
       return minted;

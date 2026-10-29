@@ -1,8 +1,13 @@
 import { createCompanion } from './api.ts';
+import { createActionsApi } from './actions-api.ts';
 import { ApiError, isSessionError, toApiError } from './errors.ts';
 import type { Session } from './session.ts';
 
-export type Companion = ReturnType<typeof createCompanion>;
+function createRoutes(base: string, token: () => string) {
+  return { ...createCompanion(base, token), ...createActionsApi(base, token) };
+}
+
+export type Companion = ReturnType<typeof createRoutes>;
 
 /**
  * Sends one Companion call with the session loaded. Every failure becomes an
@@ -45,7 +50,7 @@ function guard<T extends object>(api: T, session: Session): T {
 /** The typed Companion client: `companion.devices.list()`, `companion.system.get()`. */
 export function createClient(base: string, session: Session): Companion {
   return guard(
-    createCompanion(base, () => session.current() ?? ''),
+    createRoutes(base, () => session.current() ?? ''),
     session,
   );
 }

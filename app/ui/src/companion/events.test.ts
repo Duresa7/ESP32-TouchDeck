@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { createActionsStore, type ActionsStore } from './actions.ts';
+import type { ApprovalRequest } from './actions-api.ts';
 import type { Job } from './api.ts';
 import { createDevicesStore, type DevicesStore } from './devices.ts';
 import { CLOSE_TOO_SLOW, openEvents, type Events } from './events.ts';
@@ -167,6 +169,39 @@ describe('the event stream', () => {
     fake.publish({ type: 'hello', api: 'v1', build: 'two' });
     await settle();
     expect(onNewBuild).toHaveBeenCalledOnce();
+  });
+
+  test('approvals, the Action log and the key mirror reach the actions store', async () => {
+    const actions: ActionsStore = createActionsStore();
+    follow({ actions });
+    await settle();
+    const request: ApprovalRequest = {
+      id: 'apr_1', device: 'mock0001', page: 'p', tile: 't', hash: 'h', kind: 'command', program: 'robocopy', args: [], cwd: '', shell: false, created_ms: 0,
+    };
+    fake.publish({ type: 'approval.requested', data: request });
+    fake.publish({ type: 'approval.requested', data: { id: 'apr_2' } });
+    await settle();
+    expect(actions.getState().approvals).toEqual([request]);
+
+    fake.publish({ type: 'approval.resolved', data: { id: 'apr_1', answer: 'always' } });
+    fake.publish({ type: 'action.logged', data: { id: 'log_1', device: 'mock0001', at_ms: 1, page: 'p', tile: 't', kind: 'command', status: 'started', detail: '', pid: 4101, exit_code: null } });
+    await settle();
+    expect(actions.getState()).toMatchObject({ approvals: [], allowedRev: 1, log: { mock0001: [{ id: 'log_1', status: 'started' }] } });
+
+    const emit = () => fake.fetch('http://127.0.0.1:51234/api/v1/test/devices/mock0001/emit', { method: 'POST', body: JSON.stringify({ events: [{ m: 'key.report', type: 'kbd', mods: 0, keys: [4] }] }) });
+    await emit();
+    await settle();
+    expect(actions.getState().mirror.mock0001).toBeUndefined();
+    const unwatch = actions.getState().watchKeys('mock0001');
+    await settle();
+    await emit();
+    await settle();
+    expect(actions.getState().mirror.mock0001).toMatchObject([{ report: 'kbd 0 [4]', outcome: 'typed' }]);
+    unwatch();
+    await settle();
+    await emit();
+    await settle();
+    expect(actions.getState().mirror.mock0001).toHaveLength(1);
   });
 
   test('closing stops the stream for good', async () => {

@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react';
+import { actionsStore, type ActionsStore } from './actions.ts';
 import { createClient, type Companion } from './client.ts';
 import { devicesStore, type DevicesStore } from './devices.ts';
 import { openEvents, openWebSocket, type Events, type OpenSocket } from './events.ts';
@@ -33,10 +34,11 @@ export function connect(
   store: DevicesStore = devicesStore,
   onNewBuild = () => window.location.reload(),
   jobs: JobsStore = jobsStore,
+  actions: ActionsStore = actionsStore,
 ): Connection {
   return {
     companion: createClient(env.base, env.session),
-    events: openEvents({ url: eventsUrl(env.base), session: env.session, store, jobs, open: env.open, onNewBuild }),
+    events: openEvents({ url: eventsUrl(env.base), session: env.session, store, jobs, actions, open: env.open, onNewBuild }),
   };
 }
 

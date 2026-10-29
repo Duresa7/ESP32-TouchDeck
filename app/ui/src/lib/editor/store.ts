@@ -7,6 +7,7 @@ import type { Job, JobMap } from '../../companion/api.ts';
 import type { Companion } from '../../companion/client.ts';
 import { toApiError, type ApiError } from '../../companion/errors.ts';
 import { isSent, readDraft, writeDraft, type Draft, type DraftStorage } from './drafts.ts';
+import { freshAction } from './actions.ts';
 import { describeLayout, friendlyFileError, friendlyRefusal, plural, PLUG_IN } from './messages.ts';
 import {
   addPage,
@@ -22,13 +23,14 @@ import {
   removePage,
   removeTile,
   resizeTile,
+  setAction,
   setFullScreen,
   setGridSize,
+  setLabel,
   setLayoutName,
   setPageTitle,
   starterLayout,
   type Action,
-  type ActionType,
   type Edit,
   type GridPage,
   type Layout,
@@ -60,6 +62,18 @@ export interface Conflict {
 
 export type SaveState = 'none' | 'saved' | 'unsent' | 'sending';
 
+/** A value the Layout rules refused, kept with the reason so the inspector shows both until it's fixed. */
+export interface Refused<T> {
+  value: T;
+  reason: string;
+}
+
+/** A Tile's refused edits. While it has one, the Tile is invalid and Send to Device is refused with the same reason. */
+export interface TileProblems {
+  label?: Refused<string>;
+  action?: Refused<Action>;
+}
+
 export interface EditorDevice {
   id: string;
   name: string;
@@ -76,11 +90,8 @@ export interface EditorState {
   status: Status | null;
   busy: 'push' | 'load' | 'prune' | null;
   conflict: Conflict | null;
-  /**
-   * The action kind picked in Add Tile for a Tile whose kind has no valid default yet, such as Open an app before it
-   * names one. The Tile holds `none` until the inspector's fields (#83) set it.
-   */
-  intents: Record<string, ActionType>;
+  /** Each orientation's invalid Tiles, by Tile id. */
+  invalid: Record<Orientation, Record<string, TileProblems>>;
 }
 
 /** The action kinds Add Tile offers, in the order its grid shows them. */
@@ -123,7 +134,7 @@ const initial = (): Omit<EditorState, 'device'> => ({
   status: null,
   busy: null,
   conflict: null,
-  intents: {},
+  invalid: { landscape: {}, portrait: {} },
 });
 
 const gridOf = (layout: Layout | undefined, page: string | null): GridPage | null => {
@@ -133,6 +144,25 @@ const gridOf = (layout: Layout | undefined, page: string | null): GridPage | nul
 
 const covers = (tile: Tile, row: number, col: number) =>
   row >= tile.row && row < tile.row + tile.rowSpan && col >= tile.col && col < tile.col + tile.colSpan;
+
+const tileIds = (layout: Layout) => new Set(layout.pages.flatMap((page) => (page.kind === 'grid' ? page.tiles.map((tile) => tile.id) : [])));
+
+/** A Tile's refused edits in the open orientation. */
+export const tileProblems = (state: EditorState, tile: string): TileProblems | undefined => state.invalid[state.orientation][tile];
+
+/** The first invalid Tile of the open draft in Page order, with the reason Send refuses. */
+export function firstProblem(state: EditorState): { page: string; tile: string; reason: string } | null {
+  const layout = state.drafts[state.orientation]?.layout;
+  for (const page of layout?.pages ?? []) {
+    if (page.kind !== 'grid') continue;
+    for (const tile of page.tiles) {
+      const problems = state.invalid[state.orientation][tile.id];
+      const reason = problems?.label?.reason ?? problems?.action?.reason;
+      if (reason) return { page: page.id, tile: tile.id, reason };
+    }
+  }
+  return null;
+}
 
 /** The Asset ids a Layout's Tiles name, as `file:` icons. */
 export function assetIds(layout: Layout): string[] {
@@ -155,13 +185,42 @@ export function createEditorStore(deps: EditorDeps) {
   /** Puts a draft in place for an orientation and saves it for the open Device. */
   function keep(orientation: Orientation, draft: Draft | null) {
     const device = state().device;
-    set((s) => ({ drafts: { ...s.drafts, [orientation]: draft } }));
+    set((s) => {
+      const ids = draft ? tileIds(draft.layout) : new Set<string>();
+      const problems = Object.entries(s.invalid[orientation]).filter(([id]) => ids.has(id));
+      return { drafts: { ...s.drafts, [orientation]: draft }, invalid: { ...s.invalid, [orientation]: Object.fromEntries(problems) } };
+    });
     if (device && deps.storage) writeDraft(deps.storage, device.id, orientation, draft);
+  }
+
+  function mark(tile: string, change: TileProblems) {
+    set((s) => {
+      const orientation = s.orientation;
+      const next = { ...s.invalid[orientation][tile], ...change };
+      const { [tile]: _was, ...others } = s.invalid[orientation];
+      const tiles = next.label || next.action ? { ...others, [tile]: next } : others;
+      return { invalid: { ...s.invalid, [orientation]: tiles } };
+    });
+  }
+
+  function editField(tile: string, edit: (layout: Layout, page: string) => Edit, refused: (reason: string) => TileProblems, field: keyof TileProblems): string | null {
+    const draft = current();
+    const page = state().page;
+    if (!draft || !page) return 'no layout is open';
+    const result = edit(draft.layout, page);
+    if (!result.ok) {
+      mark(tile, refused(result.reason));
+      return result.reason;
+    }
+    keep(state().orientation, { ...draft, layout: result.layout });
+    mark(tile, { [field]: undefined });
+    return null;
   }
 
   /** Starts editing a new Layout in its own orientation, keeping what the editor knows about the Device's copy. */
   function start(layout: Layout, status: Status, known?: { sent: string | null; revision: string | null }) {
     const before = state().drafts[layout.orientation];
+    set((s) => ({ invalid: { ...s.invalid, [layout.orientation]: {} } }));
     keep(layout.orientation, { layout, sent: known?.sent ?? before?.sent ?? null, revision: known?.revision ?? before?.revision ?? null });
     set({
       orientation: layout.orientation,
@@ -259,6 +318,16 @@ export function createEditorStore(deps: EditorDeps) {
         tiles: shown.tiles,
       },
     );
+  }
+
+  /** Sets a Tile's label. A refused one stays on the Tile with its reason until it's fixed. */
+  function editLabel(tile: string, label: string): string | null {
+    return editField(tile, (l, page) => setLabel(l, page, tile, label), (reason) => ({ label: { value: label, reason } }), 'label');
+  }
+
+  /** Sets what a Tile does when tapped. A refused action stays on the Tile with its reason until it's fixed. */
+  function editAction(tile: string, action: Action): string | null {
+    return editField(tile, (l, page) => setAction(l, page, tile, action), (reason) => ({ action: { value: action, reason } }), 'action');
   }
 
   return Object.assign(store, {
@@ -359,9 +428,14 @@ export function createEditorStore(deps: EditorDeps) {
       const id = freshId(layout, 'tile');
       const tile: Tile = { id, label: 'Tile', row: cell.row, col: cell.col, rowSpan: 1, colSpan: 1, icon: null, action: action ?? { type: 'none' } };
       const base = layout;
-      const placed = apply(() => addTile(base, page!, tile), { page, selected: id, adding: null });
-      if (placed === null && action === null) set((s) => ({ intents: { ...s.intents, [id]: kind } }));
+      const target = page;
+      if (!target) return;
+      const placed = apply(() => addTile(base, target, tile), { page: target, selected: id, adding: null });
+      if (placed === null && action === null) editAction(id, freshAction(kind, base.pages.map((p) => p.id), target));
     },
+
+    editLabel,
+    editAction,
 
     moveTile(tile: string, row: number, col: number) {
       const page = state().page;
@@ -396,9 +470,9 @@ export function createEditorStore(deps: EditorDeps) {
       }
       const id = freshId(draft.layout, 'tile');
       const copy: Tile = { ...structuredClone(source), id, row: spot[0], col: spot[1] };
+      const problems = tileProblems(state(), tile);
       const placed = apply((l) => addTile(l, grid.id, copy), { selected: id });
-      const intent = state().intents[tile];
-      if (placed === null && intent) set((s) => ({ intents: { ...s.intents, [id]: intent } }));
+      if (placed === null && problems) mark(id, structuredClone(problems));
     },
 
     /** Clear Tile: removes it from the Page. */
@@ -440,6 +514,12 @@ export function createEditorStore(deps: EditorDeps) {
       const draft = current();
       if (!draft || !state().device || state().busy) return;
       const layout = draft.layout;
+      const problem = firstProblem(state());
+      if (problem) {
+        set({ page: problem.page, selected: problem.tile, adding: null, mode: 'edit' });
+        say('error', friendlyRefusal(problem.reason, layout, name()), { detail: problem.reason, event: 'refused' });
+        return;
+      }
       set({ busy: 'push', status: { kind: 'info', text: 'Sending…', event: 'pushing' } });
       const started = performance.now();
       try {
