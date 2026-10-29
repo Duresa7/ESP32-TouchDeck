@@ -1,7 +1,6 @@
 import type { ReactElement, ReactNode } from 'react';
 import { Tooltip } from '@base-ui/react/tooltip';
 
-/** A control with its tooltip. The control is rendered as the trigger, so it keeps its own props. */
 export function Tip({ label, side = 'bottom', children }: { label: ReactNode; side?: 'top' | 'bottom' | 'left' | 'right'; children: ReactElement }) {
   return (
     <Tooltip.Root>

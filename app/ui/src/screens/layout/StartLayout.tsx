@@ -17,7 +17,6 @@ function Choice({ icon: Icon, name, line, disabled, onClick, testId }: { icon: C
   );
 }
 
-/** The empty state: no draft for this Device and orientation yet. */
 export function StartLayout({ store, device, connected, onImport }: { store: EditorStore; device: string; connected: boolean; onImport(): void }) {
   const busy = useEditorState(store, (s) => s.busy);
   return (

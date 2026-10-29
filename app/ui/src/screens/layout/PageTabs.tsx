@@ -4,7 +4,6 @@ import type { EditorStore } from '../../lib/editor/store.ts';
 import { PAGES_MAX, type Layout } from '../../lib/editor/validate.ts';
 import { Tip } from './Tip.tsx';
 
-/** One tab per Page under the Device, the current one marked with the Device's own pager pill, then Add Page. */
 export function PageTabs({ store, layout, page }: { store: EditorStore; layout: Layout; page: string | null }) {
   const full = layout.pages.length >= PAGES_MAX;
   const add = (

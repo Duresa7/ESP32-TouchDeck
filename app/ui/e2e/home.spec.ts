@@ -1,10 +1,17 @@
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 
-type Demo = { push(id: string, order: string[]): void; offline(id: string): void };
 const demo = (page: Page) => ({
-  push: (id: string, order: string[]) => page.evaluate(([id, order]) => (window as unknown as { touchdeckDemo: Demo }).touchdeckDemo.push(id, order), [id, order] as const),
-  offline: (id: string) => page.evaluate((id) => (window as unknown as { touchdeckDemo: Demo }).touchdeckDemo.offline(id), id),
+  push: (id: string, order: string[]) =>
+    page.evaluate(([id, order]) => {
+      if (!window.touchdeckDemo) throw new Error('The demo controls are missing.');
+      window.touchdeckDemo.push(id, [...order]);
+    }, [id, order] as const),
+  offline: (id: string) =>
+    page.evaluate((id) => {
+      if (!window.touchdeckDemo) throw new Error('The demo controls are missing.');
+      window.touchdeckDemo.offline(id);
+    }, id),
 });
 
 for (const count of [0, 1, 2, 3, 4, 5]) {
@@ -45,12 +52,12 @@ test('a pushed Layout reaches the miniature without reloading', async ({ page })
   await page.goto('/');
   const scenes = page.locator('.device-scene');
   await expect(scenes.first()).toHaveAttribute('data-page', 'media');
-  await page.evaluate(() => { (window as unknown as { notReloaded: boolean }).notReloaded = true; });
+  await page.evaluate(() => { document.documentElement.dataset.notReloaded = 'yes'; });
   await demo(page).push('mock0001', ['work', 'media']);
   await expect(scenes.first()).toHaveAttribute('data-page', 'work');
   await expect(scenes.first()).toContainText('Copy');
   await expect(scenes.nth(1)).toHaveAttribute('data-page', 'media');
-  expect(await page.evaluate(() => (window as unknown as { notReloaded?: boolean }).notReloaded)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.dataset.notReloaded)).toBe('yes');
 });
 
 for (const method of ['click', 'Enter', 'Space']) {
@@ -67,7 +74,6 @@ for (const method of ['click', 'Enter', 'Space']) {
 test('keyboard focus is visible; fine-pointer lift stops with reduced motion', async ({ page }) => {
   await page.goto('/');
   const device = page.getByRole('button', { name: 'Edit Desk' });
-  // Tab only once the cards are there, or focus lands on whatever rendered first.
   await expect(device).toBeVisible();
   await page.keyboard.press('Tab');
   await expect(device).toBeFocused();
@@ -87,7 +93,6 @@ for (const theme of ['light', 'dark'] as const) {
       await page.emulateMedia({ colorScheme: theme });
       await page.goto(`/?devices=${count}`);
       await expect(page.locator(count ? '.device-scene[data-page]' : '.device-ghost')).toHaveCount(count || 1);
-      // The reference shows the third Device unplugged.
       if (count === 3) {
         await demo(page).offline('mock0003');
         await expect(page.getByText('Not connected', { exact: true })).toBeVisible();
