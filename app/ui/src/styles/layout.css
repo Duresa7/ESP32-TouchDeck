@@ -1036,20 +1036,3 @@
   line-height: var(--leading-12);
   letter-spacing: var(--track-12);
 }
-
-/* ---------- Replace or Keep mine ---------- */
-
-.dialog-confirm {
-  width: 420px;
-}
-
-.dialog-text {
-  margin: var(--space-2) 0 var(--space-6);
-  color: var(--ink-2);
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-}
