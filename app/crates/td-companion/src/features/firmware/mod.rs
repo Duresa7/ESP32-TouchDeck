@@ -22,7 +22,6 @@ use td_link::{
 };
 use ts_rs::TS;
 
-/// How long a consent dialog waits for an answer, as an approval does.
 const CONSENT_WAIT: Duration = Duration::from_secs(300);
 #[derive(Clone, Debug)]
 pub struct Confirmation {

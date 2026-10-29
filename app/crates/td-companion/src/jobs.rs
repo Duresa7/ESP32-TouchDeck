@@ -450,7 +450,6 @@ impl<K: JobKind> JobHandle<K> {
     }
 }
 
-/// `prefix`, `_` and 16 random lowercase letters and digits.
 fn new_id(prefix: &str) -> String {
     const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
     let mut bytes = [0u8; 16];

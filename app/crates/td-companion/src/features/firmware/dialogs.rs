@@ -50,8 +50,7 @@ pub fn pick() -> Result<Option<PathBuf>, String> {
             .then(|| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim())))
     }
 }
-/// Waits for the dialog process to exit, or kills it once `closed` turns true and gives `None`.
-fn answered(mut child: Child, closed: &(dyn Fn() -> bool + Sync)) -> Option<Output> {
+fn wait_or_kill(mut child: Child, closed: &(dyn Fn() -> bool + Sync)) -> Option<Output> {
     loop {
         match child.try_wait() {
             Ok(Some(_)) => return child.wait_with_output().ok(),
@@ -85,7 +84,7 @@ pub fn confirm(c: &Confirmation, closed: &(dyn Fn() -> bool + Sync)) -> bool {
     else {
         return false;
     };
-    answered(child, closed).is_some_and(|output| {
+    wait_or_kill(child, closed).is_some_and(|output| {
         output.status.success()
             && (cfg!(not(windows)) || String::from_utf8_lossy(&output.stdout).trim() == "Yes")
     })
@@ -123,7 +122,7 @@ mod tests {
         let child = sleeper().spawn().unwrap();
         let started = Instant::now();
         let closed = || started.elapsed() > Duration::from_millis(300);
-        assert!(answered(child, &closed).is_none());
+        assert!(wait_or_kill(child, &closed).is_none());
         assert!(started.elapsed() < Duration::from_secs(5));
     }
 
@@ -138,7 +137,7 @@ mod tests {
             command
         };
         let child = command.stdout(Stdio::piped()).spawn().unwrap();
-        let output = answered(child, &|| false).unwrap();
+        let output = wait_or_kill(child, &|| false).unwrap();
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "Yes");
     }
 }

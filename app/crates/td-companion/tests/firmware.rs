@@ -1032,7 +1032,6 @@ async fn ended_quickly(
         .await
         .expect("the consent wait ends within 2 s")
 }
-/// Nothing was written, and the Device, the install lock and Device input are free again.
 async fn released_without_writes(td: &TestCompanion, id: &td_companion::devices::DeviceId) {
     use td_companion::features::system::{Lock, Unlock};
     let deck = td.deck("mocka");
@@ -1093,10 +1092,9 @@ async fn cancel_while_waiting_ends_the_job_and_closes_the_dialog() {
 #[tokio::test]
 async fn an_answer_after_cancel_writes_nothing() {
     use td_companion::features::jobs::{Cancel, JobPath};
-    /// Accepts at the moment the dialog is asked to close, as a click that races the close.
     #[derive(Default)]
-    struct LateAccept(Prompt);
-    impl Prompter for LateAccept {
+    struct AcceptOnClose(Prompt);
+    impl Prompter for AcceptOnClose {
         fn pick(&self) -> Result<Option<Vec<u8>>, String> {
             self.0.pick()
         }
@@ -1111,7 +1109,7 @@ async fn an_answer_after_cancel_writes_nothing() {
     }
     let td = TestCompanion::start().await;
     let _socket = td.events().await;
-    let (id, job) = waiting_repair(&td, Arc::new(LateAccept::default())).await;
+    let (id, job) = waiting_repair(&td, Arc::new(AcceptOnClose::default())).await;
     td.call::<Cancel>(
         JobPath {
             job: job.id.clone(),

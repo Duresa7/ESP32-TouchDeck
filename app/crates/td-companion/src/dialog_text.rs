@@ -23,8 +23,6 @@ const UNICODE_CATEGORY_CF: &[RangeInclusive<char>] = &[
     '\u{E0001}'..='\u{E0001}',
     '\u{E0020}'..='\u{E007F}',
 ];
-/// Quotes a value for a native dialog, escaping control, format and line or paragraph
-/// separator characters so the value can't fake or reorder the dialog's lines.
 pub(crate) fn shown(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');

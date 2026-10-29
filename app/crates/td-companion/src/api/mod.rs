@@ -116,7 +116,6 @@ impl Ctx {
     pub(crate) fn browser_token(&self) -> String {
         self.auth.lock().browser_token(self.clock.now())
     }
-    /// Forgets sessions that were revoked or have ended and hold no sockets.
     pub(crate) fn sweep_sessions(&self) {
         let now = self.clock.now();
         let mut auth = self.auth.lock();
@@ -498,8 +497,7 @@ type Guard = (Ctx, Arc<Routes>);
 async fn guard(State((ctx, access)): State<Guard>, request: Request, next: Next) -> Response {
     let port = ctx.port;
     let response = match admit(&ctx, &access, request) {
-        // The upgrade answers at once and the socket runs outside this request. Untimed routes
-        // wait for a person at a native dialog.
+        // The upgrade answers at once; the socket then runs outside this request.
         Ok(request) if request.uri().path() == "/api/v1/events" || untimed(&access, &request) => {
             error::normalize(next.run(request).await)
         }
