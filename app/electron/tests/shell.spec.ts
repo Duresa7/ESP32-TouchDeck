@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fakeCompanion } from './fake-companion.mjs';
+import type {} from '../../ui/src/companion/session';
 
 test('isolated shell, exact preload, navigation, renewal, single instance and close', async () => {
   const fake = await fakeCompanion();
@@ -17,7 +18,7 @@ test('isolated shell, exact preload, navigation, renewal, single instance and cl
     expect(await page.evaluate(() => ['require', 'process', 'Buffer', 'global'].map(k => typeof (window as any)[k]))).toEqual(['undefined', 'undefined', 'undefined', 'undefined']);
     expect(await page.evaluate(() => Object.keys((window as any).openTouchDeck).sort())).toEqual(['onSessionChanged', 'session', 'updates', 'version']);
     expect(await page.evaluate(() => Object.keys((window as any).openTouchDeck.updates).sort())).toEqual(['check', 'download', 'install']);
-    expect(await page.evaluate(() => (window as any).openTouchDeck.updates.check().catch((e: Error) => e.message))).toEqual({ state: 'disabled' });
+    expect(await page.evaluate(() => window.openTouchDeck?.updates?.check())).toEqual({ state: 'disabled' });
     expect(await app.evaluate(async ({ ipcMain, BrowserWindow }) => {
       const contents = BrowserWindow.getAllWindows()[0].webContents;
       const handlers: unknown = Reflect.get(ipcMain, '_invokeHandlers');

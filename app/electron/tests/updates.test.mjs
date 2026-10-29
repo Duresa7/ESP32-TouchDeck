@@ -193,3 +193,24 @@ test('signed fake installer executable receives passive restart flags', async t 
   assert.equal(f.state.quits, 1);
   assert.deepEqual(JSON.parse(await readFile(marker, 'utf8')), ['/P', '/UPDATE', '/R']);
 });
+
+
+test('missing Companion resolves and permits another attempt', async t => {
+  const f = await fixture(t);
+  let available = false;
+  const updater = new Updater({ ...f.options, system: () => {
+    if (!available) throw new Error('Companion unavailable');
+    return f.options.system();
+  } });
+  await updater.check(); await updater.download(() => {});
+  assert.deepEqual(await updater.install(), { state: 'failed', reason: 'installer' });
+  available = true; f.state.busy = true;
+  assert.deepEqual(await updater.install(), { state: 'failed', reason: 'busy', device: 'Studio' });
+});
+
+test('signed version binds build metadata as well as precedence', async t => {
+  const f = await fixture(t);
+  f.state.manifest.version = '1.0.0+other';
+  await f.updater.check();
+  assert.deepEqual(await f.updater.download(() => {}), { state: 'failed', reason: 'signature' });
+});

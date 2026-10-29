@@ -108,7 +108,7 @@ export class Updater {
     try {
       const comment = await verifyInstaller(path, release.signature, this.options.publicKey);
       const signed = comment.split('\t').find(field => field.startsWith('version:'))?.slice(8);
-      if (!signed || compareVersions(signed, release.version) !== 0) throw new Error('Signed version mismatch');
+      if (!signed || signed.replace(/^v/, '') !== release.version.replace(/^v/, '')) throw new Error('Signed version mismatch');
     } catch { throw new SignatureFailure(); }
   }
 
@@ -159,8 +159,9 @@ export class Updater {
     if (this.active || !this.ready) return { state: 'failed', reason: 'installer' };
     this.active = true;
     let lock: string | undefined;
-    const system = this.options.system();
+    let system: SystemCall | undefined;
     try {
+      system = this.options.system();
       const ready = this.ready;
       if ((await stat(ready.path)).size > MAX_DOWNLOAD) throw new Error('Oversized installer');
       await this.verify(ready.path, ready.release);
@@ -186,7 +187,7 @@ export class Updater {
       }
       return { state: 'failed', reason: 'installer' };
     } finally {
-      if (lock) await system('DELETE', `/system/lock/${encodeURIComponent(lock)}`).catch(() => {});
+      if (lock && system) await system('DELETE', `/system/lock/${encodeURIComponent(lock)}`).catch(() => {});
       this.active = false;
     }
   }

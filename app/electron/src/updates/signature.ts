@@ -37,7 +37,6 @@ export async function verifyInstaller(path: string, wrappedSignature: string, wr
   return comment;
 }
 
-// Strict SemVer 2.0 precedence, without coercion or precision loss for numeric identifiers.
 export function compareVersions(a: string, b: string): number {
   const parse = (s: string) => {
     const m = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.exec(s);
