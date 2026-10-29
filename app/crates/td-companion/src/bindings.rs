@@ -165,7 +165,7 @@ export function createCompanion(base: string, token: () => string) {
     const url = new URL(`/api/v1${route}`, base);
     if (query) for (const [key, value] of Object.entries(query)) url.searchParams.set(key, String(value));
     const auth = bearer ?? (endpoint.access === 'session' ? token() : undefined);
-    const response = await fetch(url, { method: endpoint.method, headers: { ...headers, ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...(body == null ? {} : { 'Content-Type': 'application/json' }) }, ...(body == null ? {} : { body: JSON.stringify(body) }) });
+    const response = await fetch(url, { method: endpoint.method, headers: { ...headers, ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...(body == null ? {} : { 'Content-Type': body instanceof Blob ? body.type : 'application/json' }) }, ...(body == null ? {} : { body: body instanceof Blob ? body : JSON.stringify(body) }) });
     if (!response.ok) throw (await response.json()).error;
     if (response.status === 204) return undefined as T;
     // Asset files come back as raw bytes with their media type.

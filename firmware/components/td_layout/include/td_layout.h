@@ -41,6 +41,7 @@ typedef struct {
 typedef struct td_layout {
     const char *name;
     const char *orientation;
+    uint8_t schema;
     bool full_screen;
     const ui_page_t *pages;
     uint8_t page_count;

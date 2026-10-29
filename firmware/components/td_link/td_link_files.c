@@ -306,8 +306,27 @@ static void finish_put(cJSON *reply)
         td_link_fail(reply, message);
         return;
     }
+    if (parsed->schema == 2 && !td_link_v2_selected()) {
+        td_layout_free(parsed);
+        td_link_fail(reply, "schema 2 requires v2 negotiation");
+        return;
+    }
+    td_store_lock();
+    for (uint8_t p = 0; p < parsed->page_count; p++) {
+        for (uint8_t t = 0; t < parsed->pages[p].tile_count; t++) {
+            const char *icon = parsed->pages[p].tiles[t].icon;
+            if (icon && strncmp(icon, "sha256:", 7) == 0 && !td_asset_present(icon + 7, NULL, NULL)) {
+                td_store_unlock();
+                td_layout_free(parsed);
+                td_link_fail(reply, "Layout references an absent or incompatible Asset");
+                return;
+            }
+        }
+    }
     td_layout_free(parsed);
-    if (td_store_write_atomic(s.path, s.buf, s.fill) != ESP_OK) {
+    const esp_err_t written = td_store_write_atomic(s.path, s.buf, s.fill);
+    td_store_unlock();
+    if (written != ESP_OK) {
         td_link_fail(reply, "write failed");
         return;
     }

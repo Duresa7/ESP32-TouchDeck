@@ -2,6 +2,7 @@
 #include "td_store.h"
 #include "td_update_state.h"
 #include "unity.h"
+#include "esp_timer.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -245,4 +246,34 @@ TEST_CASE("Asset listing pages four at a time in id order across shards, and del
         }
         TEST_ASSERT_EQUAL(shard_left, shard_exists(ids[i]));
     }
+}
+
+TEST_CASE("Asset admission cost stays bounded as the store grows", "[td_asset]")
+{
+    mount();
+    char ids[64][TD_ASSET_ID_LEN + 1];
+    int64_t empty = 0, populated = 0;
+    for (unsigned count = 0; count <= 64; count++) {
+        if (count == 0 || count == 64) {
+            int64_t start = esp_timer_get_time();
+            for (unsigned n = 0; n < 100; n++) {
+                td_asset_space_t space;
+                TEST_ASSERT_EQUAL(TD_ASSET_OK, td_asset_space(&space));
+            }
+            if (count == 0) empty = esp_timer_get_time() - start;
+            else populated = esp_timer_get_time() - start;
+        }
+        if (count < 64) {
+            uint8_t *file = icon(100 + count);
+            id_of(file, ICON_BYTES, ids[count]);
+            TEST_ASSERT_EQUAL(TD_ASSET_OK, put(ids[count], file, ICON_BYTES));
+            free(file);
+        }
+    }
+    for (unsigned n = 0; n < 64; n++) {
+        bool deleted;
+        TEST_ASSERT_EQUAL(TD_ASSET_OK, td_asset_delete(ids[n], &deleted));
+    }
+    printf("Asset space checks (100): empty=%lld us, 64 Assets=%lld us\n", (long long)empty, (long long)populated);
+    TEST_ASSERT_TRUE(populated < empty * 2 + 1000);
 }

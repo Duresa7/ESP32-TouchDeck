@@ -967,7 +967,7 @@ impl MockDeck {
                         reply.insert("id".into(), json!("020000000001"));
                         reply.insert("name".into(), json!(state.device_name));
                         reply.insert("caps".into(), json!({"screen":[1024,600],"grid":[8,8],"pages":8,"tiles":64,
-                            "layout_bytes":32768,"layout_schemas":[1],"free_bytes":asset_space(&state).3,"tile_kinds":["static"],
+                            "layout_bytes":32768,"layout_schemas":[1,2],"free_bytes":asset_space(&state).3,"tile_kinds":["static"],
                             "asset_bytes":12300,"formats":["tdi1"],"image":[64,64],"gif_frames":0,"gif_pixels":0,
                             "photo_bytes":0,"live_hz":0,"live_total_hz":0,"series":0,"text_bytes":0,"streams":0}));
                     }

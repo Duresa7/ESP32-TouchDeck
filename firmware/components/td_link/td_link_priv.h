@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include "td_link.h"
 
+bool td_link_v2_selected(void);
+
 /* Everything below runs on the td_link task only. */
 
 /* Encodes and writes one frame under the stdout lock. Counts it in frames_tx. */

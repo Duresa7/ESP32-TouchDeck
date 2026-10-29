@@ -219,7 +219,7 @@ function structuralErrors(root: unknown): LayoutError[] {
   };
 
   const tile = (value: unknown, pointer: string) => {
-    const tile = object(value, pointer, ['id', 'label', 'row', 'col', 'rowSpan', 'colSpan', 'icon', 'action']);
+    const tile = object(value, pointer, ['id', 'label', 'row', 'col', 'rowSpan', 'colSpan', 'icon', 'action'], isObject(root) && root.schema === 2 ? ['asset'] : []);
     if (!tile) return;
     if (Object.hasOwn(tile, 'id')) id(tile.id, `${pointer}/id`);
     if (Object.hasOwn(tile, 'label')) bounded(tile.label, `${pointer}/label`, LABEL);
@@ -235,6 +235,7 @@ function structuralErrors(root: unknown): LayoutError[] {
       if (typeof tile.icon !== 'string') wrongType(`${pointer}/icon`, 'string,null');
       else if (!ICON.test(tile.icon)) at('icon.format', `${pointer}/icon`, 'must be null, a built-in lv: name, or file: and 16 lowercase hex digits (pattern)');
     }
+    if (tile.asset != null && (typeof tile.asset !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(tile.asset) || tile.icon !== null)) at('icon.format', `${pointer}/asset`, 'Asset requires a SHA-256 reference and icon null');
     if (Object.hasOwn(tile, 'action')) action(tile.action, `${pointer}/action`);
   };
 
@@ -267,7 +268,7 @@ function structuralErrors(root: unknown): LayoutError[] {
   const layout = object(root, '', ['schema', 'name', 'orientation', 'pages'], ['fullScreen']);
   if (!layout) return errors;
   if (Object.hasOwn(layout, 'fullScreen') && typeof layout.fullScreen !== 'boolean') wrongType('/fullScreen', 'boolean');
-  if (Object.hasOwn(layout, 'schema') && layout.schema !== 1) at('layout.schema-version', '/schema', 'must be equal to constant (const)');
+  if (Object.hasOwn(layout, 'schema') && layout.schema !== 1 && layout.schema !== 2) at('layout.schema-version', '/schema', 'must be equal to constant (const)');
   if (Object.hasOwn(layout, 'name')) bounded(layout.name, '/name', NAME);
   if (Object.hasOwn(layout, 'orientation') && layout.orientation !== 'landscape' && layout.orientation !== 'portrait') {
     at('layout.orientation', '/orientation', 'must be equal to one of the allowed values (enum)');

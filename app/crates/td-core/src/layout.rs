@@ -148,6 +148,8 @@ pub struct Tile {
     pub row_span: u8,
     pub col_span: u8,
     pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset: Option<String>,
     pub action: Action,
 }
 
@@ -655,6 +657,7 @@ const MODIFIERS: [&str; 4] = ["ctrl", "shift", "alt", "win"];
 
 #[derive(Default)]
 struct Check {
+    v2: bool,
     errors: Vec<LayoutError>,
 }
 
@@ -913,7 +916,7 @@ impl Check {
             return;
         };
         if let Some(schema) = obj.get("schema")
-            && !matches!(schema, Json::Number { value, .. } if *value == 1.0)
+            && !matches!(schema, Json::Number { value, .. } if *value == 1.0 || *value == 2.0)
         {
             self.fail(
                 Rule::SchemaVersion,
@@ -921,6 +924,7 @@ impl Check {
                 "must be equal to constant (const)",
             );
         }
+        self.v2 = matches!(obj.get("schema"), Some(Json::Number { value, .. }) if *value == 2.0);
         if let Some(name) = obj.get("name") {
             self.bounded(name, "/name", &NAME);
         }
@@ -1015,7 +1019,12 @@ impl Check {
         let fields = [
             "id", "label", "row", "col", "rowSpan", "colSpan", "icon", "action",
         ];
-        let Some(obj) = self.object(value, pointer, &fields) else {
+        let Some(obj) = self.object_with(
+            value,
+            pointer,
+            &fields,
+            if self.v2 { &["asset"] } else { &[] },
+        ) else {
             return;
         };
         if let Some((id, at)) = self.field(obj, pointer, "id") {
@@ -1045,6 +1054,19 @@ impl Check {
                 }
             }
             Some((_, at)) => self.wrong_type(&at, "string,null"),
+        }
+        if let Some((asset, at)) = self.field(obj, pointer, "asset") {
+            let valid = matches!(asset, Json::Null)
+                || matches!(asset, Json::Str(s) if s.text.strip_prefix("sha256:").is_some_and(|id| id.len() == 64 && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))));
+            if !valid
+                || (!matches!(asset, Json::Null) && !matches!(obj.get("icon"), Some(Json::Null)))
+            {
+                self.fail(
+                    Rule::IconFormat,
+                    &at,
+                    "Asset must be sha256 followed by 64 lowercase hex digits, with icon null",
+                );
+            }
         }
         if let Some((action, at)) = self.field(obj, pointer, "action") {
             self.action(action, &at);

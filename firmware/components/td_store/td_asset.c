@@ -118,8 +118,7 @@ static void hex(const uint8_t digest[TD_SHA256_BYTES], char out[TD_ASSET_ID_LEN 
 
 uint32_t td_asset_cost(uint32_t bytes)
 {
-    const uint32_t blocks = (bytes + BLOCK_DATA - 1) / BLOCK_DATA + 1;
-    return blocks * BLOCK_BYTES;
+    return td_store_budget_cost(bytes);
 }
 
 /* What the open upload has yet to take of its reservation. Written bytes already count in the volume's used bytes. */
@@ -128,14 +127,13 @@ static uint32_t outstanding(void)
     if (!s_up.open) {
         return 0;
     }
-    const uint32_t taken = (s_up.written + BLOCK_BYTES - 1) / BLOCK_BYTES * BLOCK_BYTES;
-    return taken < s_up.cost ? s_up.cost - taken : 0;
+    return s_up.cost;
 }
 
 td_asset_result_t td_asset_space(td_asset_space_t *out)
 {
     td_store_info_t info;
-    if (td_store_info(&info) != ESP_OK) {
+    if (td_store_budget(&info) != ESP_OK) {
         *out = (td_asset_space_t){ 0 };
         return TD_ASSET_STORAGE;
     }
@@ -330,10 +328,13 @@ td_asset_result_t td_asset_delete(const char *id, bool *deleted)
     char shard[SHARD_PATH_MAX];
     shard_path(shard, id[0]);
     td_store_lock();
+    struct stat previous;
+    bool existed = stat(path, &previous) == 0;
     const int rc = unlink(path);
+    if (rc == 0 && existed) td_store_budget_adjust(-(int64_t)td_asset_cost((uint32_t)previous.st_size));
     const int saved = errno;
     /* An empty shard gives its metadata blocks back. A shard that still holds Assets refuses, which is fine. */
-    rmdir(shard);
+    if (rmdir(shard) == 0) td_store_budget_adjust(-8192);
     td_store_unlock();
     if (rc == 0) {
         *deleted = true;
@@ -381,7 +382,9 @@ td_asset_result_t td_asset_upload_begin(const char *id, uint32_t bytes, td_asset
         return TD_ASSET_FULL;
     }
     /* The shard is made at commit, so an upload that never commits leaves no empty shard behind. */
-    if (mkdir(TD_ASSET_DIR, 0777) != 0 && errno != EEXIST) {
+    int made = mkdir(TD_ASSET_DIR, 0777);
+    if (made == 0) td_store_budget_adjust(8192);
+    if (made != 0 && errno != EEXIST) {
         td_store_unlock();
         return TD_ASSET_STORAGE;
     }
@@ -454,11 +457,15 @@ td_asset_result_t td_asset_upload_finish(void)
     asset_path(path, s_up.id);
     shard_path(shard, s_up.id[0]);
     td_store_lock();
+    struct stat previous;
+    int64_t previous_cost = stat(path, &previous) == 0 ? td_asset_cost((uint32_t)previous.st_size) : 0;
     bool ok = fsync(s_up.fd) == 0;
     int saved = ok ? 0 : errno;
     ok = close(s_up.fd) == 0 && ok;
     s_up.fd = -1;
-    if (ok && mkdir(shard, 0777) != 0 && errno != EEXIST) {
+    int made = ok ? mkdir(shard, 0777) : -1;
+    if (made == 0) td_store_budget_adjust(8192);
+    if (ok && made != 0 && errno != EEXIST) {
         saved = errno;
         ok = false;
     }
@@ -466,9 +473,10 @@ td_asset_result_t td_asset_upload_finish(void)
         saved = errno;
         ok = false;
     }
+    if (ok) td_store_budget_adjust((int64_t)td_asset_cost(s_up.bytes) - previous_cost);
     if (!ok) {
         unlink(UPLOAD_TMP);
-        rmdir(shard);
+        if (rmdir(shard) == 0) td_store_budget_adjust(-8192);
     }
     td_store_unlock();
     s_up.open = false;

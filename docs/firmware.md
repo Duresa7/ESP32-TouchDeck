@@ -579,3 +579,18 @@ upload when the Device has the Asset. `asset ls`, `asset rm <id>`, and
 The Firmware test app links the link dispatcher to exercise maximum-size hello
 replies and NVS persistence. Its pinned UI dependencies and LVGL snapshot and
 font settings match the components linked by the production Firmware.
+
+### Asset admission accounting
+
+The Asset admission budget is rebuilt once at mount. Each file is charged its
+encoded size rounded up to 4,088-byte data blocks plus one 4,096-byte metadata
+block; each directory is charged 8,192 bytes. Commits, removals and directory
+changes update the running count under the store lock. `v2.asset.stat` reports
+this conservative allocation budget, not LittleFS's block-walk measurement.
+Open uploads reserve their full charge until commit or abort; headroom remains
+65,536 bytes. LittleFS can still refuse a write, which returns `full`.
+The console's `store` usage remains the actual LittleFS measurement.
+
+Static schema 2 Tiles can reference `asset: "sha256:<id>"` with `icon: null`.
+Firmware requires v2 negotiation and a validated tdi1 Asset before committing
+the Layout. The renderer reads Assets from the internal sixteen-shard store.

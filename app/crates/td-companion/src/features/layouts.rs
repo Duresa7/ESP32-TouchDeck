@@ -318,7 +318,44 @@ fn push(
         if let Some(expected) = &expected {
             expected.check(read(session, layout.orientation)?.map(|(_, r)| r))?;
         }
-        let assets = send_missing_assets(ctx, session, layout, job)?;
+        let mut assets = send_missing_assets(ctx, session, layout, job)?;
+        let wanted = td_host::icons::asset_ids(layout);
+        if layout.schema == 2 {
+            let (summary, _) = ctx.links.connected(device)?;
+            if !summary
+                .capabilities
+                .as_ref()
+                .is_some_and(|c| c.layout_schemas.contains(&2))
+            {
+                return Err(DeviceLinkError::Link(
+                    "The Device needs Firmware with schema 2 Asset support.".into(),
+                )
+                .into());
+            }
+            let stored: std::collections::BTreeSet<_> = td_link::asset::list_assets(session)
+                .map_err(super::assets::asset_link)?
+                .into_iter()
+                .map(|a| a.id)
+                .collect();
+            let missing: Vec<_> = wanted.difference(&stored).collect();
+            let mut progress = PushProgress {
+                assets_total: missing.len() as u32,
+                ..Default::default()
+            };
+            for id in missing {
+                job.check()?;
+                let file = ctx
+                    .assets
+                    .get(id)
+                    .ok_or(super::assets::AssetError::NotFound)?;
+                td_link::asset::put_asset(session, &file, td_link::asset::AssetFormat::Tdi1)
+                    .map_err(super::assets::asset_link)?;
+                assets.sent.push(id.clone());
+                progress.assets_sent += 1;
+                progress.bytes_sent += file.len() as u64;
+                job.progress(&progress);
+            }
+        }
         job.check()?;
         job.set_cancellable(false);
         let put = xfer::put_layout(session, layout.orientation, layout).map_err(link)?;

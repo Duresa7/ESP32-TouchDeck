@@ -203,8 +203,10 @@ impl Auth {
     }
     /// Drops sessions that were revoked or have ended once their last socket is gone, so a
     /// later use of the token reads as unknown. Returns how many rows remain.
-    pub(crate) fn active(&self, id: &str, now: Instant) -> bool {
-        self.sessions.values().any(|s| s.info.id == id && !s.revoked && !s.expired(now))
+    pub(crate) fn active_at(&self, id: &str, now: Instant) -> bool {
+        self.sessions
+            .values()
+            .any(|s| s.info.id == id && !s.revoked && !s.expired(now))
     }
     pub(crate) fn sweep(&mut self, now: Instant) -> usize {
         self.sessions

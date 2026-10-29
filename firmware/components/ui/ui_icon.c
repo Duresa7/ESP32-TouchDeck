@@ -14,7 +14,7 @@ static const char *TAG = "ui";
 #define ICON_FILE (ICON_HEADER + ICON_PIXELS)
 #define ICON_FORMAT_RGB565A8 1
 #define ICON_CACHE_MAX 128
-#define ICON_ID_LEN 16
+#define ICON_ID_LEN 64
 
 typedef struct {
     char id[ICON_ID_LEN + 1];
@@ -50,6 +50,7 @@ const char *ui_icon_symbol(const char *icon)
 /* The 16 hex digits of a `file:` icon, or NULL. */
 static const char *file_id(const char *icon)
 {
+    if (icon != NULL && strncmp(icon, "sha256:", 7) == 0) return icon + 7;
     return icon != NULL && strncmp(icon, "file:", 5) == 0 ? icon + 5 : NULL;
 }
 
@@ -77,8 +78,12 @@ static uint16_t le16(const uint8_t *p)
 
 static icon_t *load(const char *id)
 {
-    char path[48];
-    snprintf(path, sizeof path, "/storage/icons/%s.bin", id);
+    char path[96];
+    if (strlen(id) == 64) {
+        snprintf(path, sizeof path, "/storage/assets/%c/%s.bin", id[0], id);
+    } else {
+        snprintf(path, sizeof path, "/storage/icons/%s.bin", id);
+    }
     struct stat st;
     if (stat(path, &st) != 0) {
         return NULL;
@@ -103,7 +108,7 @@ static icon_t *load(const char *id)
         heap_caps_free(entry);
         return NULL;
     }
-    memcpy(entry->id, id, ICON_ID_LEN + 1);
+    strlcpy(entry->id, id, sizeof entry->id);
     entry->dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
     entry->dsc.header.cf = LV_COLOR_FORMAT_RGB565A8;
     entry->dsc.header.w = ICON_SIDE;

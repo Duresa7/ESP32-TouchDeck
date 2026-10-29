@@ -1,83 +1,162 @@
 //! Session-owned, bounded, single-use image uploads.
-use crate::api::{ClientInfo, CommonError, Ctx, Endpoint, Feature, NoQuery, Registration, Req};
-use axum::{body::{Body, to_bytes}, http::{HeaderMap, Method}};
+use crate::api::{ClientInfo, CommonError, Ctx, Endpoint, NoQuery, Req};
+use axum::{
+    body::{Body, to_bytes},
+    http::{HeaderMap, Method},
+};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc, time::{Duration, Instant}};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use ts_rs::TS;
 
 const MAX: usize = 16 << 20;
 const TOTAL: usize = 64 << 20;
-struct Entry { owner: String, expires: Instant, reserved: usize, bytes: Option<Vec<u8>> }
+struct Entry {
+    owner: String,
+    expires: Instant,
+    reserved: usize,
+    bytes: Option<Vec<u8>>,
+}
 #[derive(Clone, Default)]
 pub(crate) struct Uploads(Arc<Mutex<HashMap<String, Entry>>>);
-struct Reservation { uploads: Uploads, id: String, committed: bool }
+struct Reservation {
+    uploads: Uploads,
+    id: String,
+    committed: bool,
+}
 impl Drop for Reservation {
-    fn drop(&mut self) { if !self.committed { self.uploads.0.lock().remove(&self.id); } }
+    fn drop(&mut self) {
+        if !self.committed {
+            self.uploads.0.lock().remove(&self.id);
+        }
+    }
 }
 impl Uploads {
     pub(crate) fn sweep(&self, now: Instant, active: impl Fn(&str) -> bool) {
-        self.0.lock().retain(|_, e| e.expires > now && active(&e.owner));
+        self.0
+            .lock()
+            .retain(|_, e| e.expires > now && active(&e.owner));
     }
     fn reserve(&self, owner: &str, now: Instant) -> Result<Reservation, CommonError> {
         let mut entries = self.0.lock();
         entries.retain(|_, e| e.expires > now);
         if entries.values().filter(|e| e.owner == owner).count() >= 8
-            || entries.values().map(|e| e.reserved).sum::<usize>() + MAX > TOTAL {
+            || entries.values().map(|e| e.reserved).sum::<usize>() + MAX > TOTAL
+        {
             return Err(CommonError::Limits("Too many pending image uploads."));
         }
         let mut random = [0u8; 16];
         getrandom::fill(&mut random).map_err(|_| CommonError::Internal)?;
         let id: String = random.iter().map(|b| format!("{b:02x}")).collect();
-        entries.insert(id.clone(), Entry { owner: owner.into(), expires: now + Duration::from_secs(3600), reserved: MAX, bytes: None });
-        Ok(Reservation { uploads: self.clone(), id, committed: false })
+        entries.insert(
+            id.clone(),
+            Entry {
+                owner: owner.into(),
+                expires: now + Duration::from_secs(3600),
+                reserved: MAX,
+                bytes: None,
+            },
+        );
+        Ok(Reservation {
+            uploads: self.clone(),
+            id,
+            committed: false,
+        })
     }
     pub(crate) fn take(&self, owner: &str, id: &str, now: Instant) -> Option<Vec<u8>> {
         let mut entries = self.0.lock();
         let entry = entries.get(id)?;
-        if entry.owner != owner || entry.expires <= now || entry.bytes.is_none() { return None; }
+        if entry.owner != owner || entry.expires <= now || entry.bytes.is_none() {
+            return None;
+        }
         entries.remove(id)?.bytes
     }
 }
 #[derive(Serialize, Deserialize, TS)]
-pub struct Uploaded { pub id: String, pub media_type: String, pub bytes: u64 }
+pub struct Uploaded {
+    pub id: String,
+    pub media_type: String,
+    pub bytes: u64,
+}
+#[derive(Serialize, Deserialize, TS)]
+#[ts(type = "Blob")]
+pub struct UploadBody(pub Uploaded);
 pub struct Upload;
 impl Endpoint for Upload {
     const NAME: &'static str = "assets.upload";
     const METHOD: Method = Method::POST;
     const PATH: &'static str = "/uploads";
     const BODY_LIMIT: usize = MAX;
-    type Path = (); type Query = NoQuery; type Body = Uploaded; type Ok = Uploaded; type Error = CommonError;
-    async fn read_body(ctx: &Ctx, headers: &HeaderMap, client: Option<&ClientInfo>, body: Body) -> Result<Uploaded, CommonError> {
-        let media_type = headers.get("content-type").and_then(|v| v.to_str().ok()).filter(|v| v.starts_with("image/")).ok_or(CommonError::MediaType)?.to_owned();
+    type Path = ();
+    type Query = NoQuery;
+    type Body = UploadBody;
+    type Ok = Uploaded;
+    type Error = CommonError;
+    async fn read_body(
+        ctx: &Ctx,
+        headers: &HeaderMap,
+        client: Option<&ClientInfo>,
+        body: Body,
+    ) -> Result<UploadBody, CommonError> {
+        let media_type = headers
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .filter(|v| v.starts_with("image/"))
+            .ok_or(CommonError::MediaType)?
+            .to_owned();
         let client = client.ok_or(CommonError::AuthMissing)?;
         let mut reservation = ctx.uploads.reserve(&client.id, ctx.clock.now())?;
-        let bytes = tokio::time::timeout(ctx.limits.body_read, to_bytes(body, MAX)).await
-            .map_err(|_| CommonError::Timeout)?.map_err(|_| CommonError::TooLarge)?.to_vec();
+        let bytes = tokio::time::timeout(ctx.limits.body_read, to_bytes(body, MAX))
+            .await
+            .map_err(|_| CommonError::Timeout)?
+            .map_err(|_| CommonError::TooLarge)?
+            .to_vec();
         let len = bytes.len();
         let bytes = tokio::task::spawn_blocking(move || {
             decode(&bytes)?;
             Ok::<_, CommonError>(bytes)
-        }).await.map_err(|_| CommonError::Internal)??;
+        })
+        .await
+        .map_err(|_| CommonError::Internal)??;
         let mut entries = ctx.uploads.0.lock();
-        let entry = entries.get_mut(&reservation.id).ok_or(CommonError::AuthRevoked("The session ended."))?;
+        let entry = entries
+            .get_mut(&reservation.id)
+            .ok_or(CommonError::AuthRevoked("The session ended."))?;
         entry.reserved = len;
         entry.bytes = Some(bytes);
         reservation.committed = true;
-        Ok(Uploaded { id: reservation.id.clone(), media_type, bytes: len as u64 })
+        Ok(UploadBody(Uploaded {
+            id: reservation.id.clone(),
+            media_type,
+            bytes: len as u64,
+        }))
     }
-    async fn handle(_: Ctx, req: Req<Self>) -> Result<Uploaded, CommonError> { Ok(req.body) }
+    async fn handle(_: Ctx, req: Req<Self>) -> Result<Uploaded, CommonError> {
+        Ok(req.body.0)
+    }
 }
 pub(crate) fn decode(bytes: &[u8]) -> Result<image::RgbaImage, CommonError> {
     let invalid = |e| CommonError::invalid("image", e);
-    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().map_err(invalid)?;
-    if !matches!(reader.format(), Some(image::ImageFormat::Png | image::ImageFormat::Jpeg)) {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(invalid)?;
+    if !matches!(
+        reader.format(),
+        Some(image::ImageFormat::Png | image::ImageFormat::Jpeg)
+    ) {
         return Err(CommonError::invalid("image", "Upload a PNG or JPEG image."));
     }
     let mut limits = image::Limits::default();
-    limits.max_image_width = Some(4096); limits.max_image_height = Some(4096); limits.max_alloc = Some(64 << 20);
+    limits.max_image_width = Some(4096);
+    limits.max_image_height = Some(4096);
+    limits.max_alloc = Some(64 << 20);
     reader.limits(limits);
-    reader.decode().map(|i| i.to_rgba8()).map_err(|e| CommonError::invalid("image", e))
+    reader
+        .decode()
+        .map(|i| i.to_rgba8())
+        .map_err(|e| CommonError::invalid("image", e))
 }
-fn feature() -> Feature { Feature::new("assets").endpoint::<Upload>() }
-inventory::submit! { Registration(feature) }
