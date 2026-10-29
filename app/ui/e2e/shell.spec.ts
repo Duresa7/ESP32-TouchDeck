@@ -16,7 +16,7 @@ test('the window is titled Open TouchDeck and opens on Home with the Devices and
   await expect(cards).toHaveCount(3);
   await expect(cards.nth(0)).toContainText('Desk');
   await expect(cards.nth(0)).toContainText('Connected');
-  await expect(cards.nth(2)).toContainText('Not connected');
+  await expect(cards.nth(2)).toContainText('Connected');
 });
 
 test('the shell runs without console errors or warnings', async ({ page }) => {

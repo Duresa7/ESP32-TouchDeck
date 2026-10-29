@@ -617,7 +617,7 @@ export function newGridPage(id: string, title: string): GridPage {
 }
 
 export function newLayout(orientation: Orientation): Layout {
-  return { schema: 1, name: 'New layout', orientation, pages: [newGridPage('page1', 'Page 1')] };
+  return { schema: 1, name: 'New Layout', orientation, pages: [newGridPage('page1', 'Page 1')] };
 }
 
 const key = (id: string, label: string, row: number, col: number, letter: string, mods: Modifier[]): Tile => ({
@@ -646,7 +646,7 @@ const media = (id: string, label: string, col: number, row: number, usage: numbe
 export function starterLayout(orientation: Orientation): Layout {
   return {
     schema: 1,
-    name: 'My buttons',
+    name: 'Starter',
     orientation,
     pages: [
       {
