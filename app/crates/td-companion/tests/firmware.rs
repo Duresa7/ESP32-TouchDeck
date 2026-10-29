@@ -426,8 +426,24 @@ async fn ending_or_revoking_lock_owner_allows_new_jobs() {
                 .unwrap();
             assert_eq!(td.wait(&job).await.error.unwrap().code, "firmware.declined");
         } else {
-            let session: Value = td.raw().post("/api/v1/auth/sessions").bearer_auth(td.current_pairing_token()).json(&json!({"kind":"window"})).send().await.unwrap().json().await.unwrap();
-            let response = td.raw().post("/api/v1/system/lock").bearer_auth(session["token"].as_str().unwrap()).send().await.unwrap();
+            let session: Value = td
+                .raw()
+                .post("/api/v1/auth/sessions")
+                .bearer_auth(td.current_pairing_token())
+                .json(&json!({"kind":"window"}))
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let response = td
+                .raw()
+                .post("/api/v1/system/lock")
+                .bearer_auth(session["token"].as_str().unwrap())
+                .send()
+                .await
+                .unwrap();
             assert_eq!(response.status(), 200);
         }
     }
@@ -479,7 +495,16 @@ async fn overlapping_file_pickers_are_rejected() {
 #[tokio::test]
 async fn browser_cannot_take_install_lock() {
     let td = TestCompanion::start().await;
-    let response = td.raw().post("/api/v1/system/lock").bearer_auth(td.browser_token()).send().await.unwrap();
+    let response = td
+        .raw()
+        .post("/api/v1/system/lock")
+        .bearer_auth(td.browser_token())
+        .send()
+        .await
+        .unwrap();
     assert_eq!(response.status(), 403);
-    assert_eq!(response.json::<serde_json::Value>().await.unwrap()["error"]["code"], "auth.forbidden");
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "auth.forbidden"
+    );
 }
