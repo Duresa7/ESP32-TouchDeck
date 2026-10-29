@@ -5,7 +5,7 @@ import { defineConfig, devices } from '@playwright/test';
 // companion.spec.ts needs the real Companion: playwright.companion.config.ts runs it.
 export default defineConfig({
   testDir: './e2e',
-  testIgnore: 'companion.spec.ts',
+  testIgnore: '**/*companion.spec.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   reporter: [['list']],

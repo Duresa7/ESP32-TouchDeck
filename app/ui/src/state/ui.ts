@@ -3,14 +3,16 @@ import { createStore } from 'zustand/vanilla';
 import type { Appearance } from './theme.ts';
 
 export type Section = 'home' | 'layout' | 'integrations';
+export type SettingsSection = 'general' | 'troubleshooting';
 
 export interface UiState {
   section: Section;
   settingsOpen: boolean;
   deviceId: string | null;
-  settingsSection: 'general' | 'troubleshooting';
+  settingsSection: SettingsSection;
   openDevice(id: string): void;
   openTroubleshooting(): void;
+  showSettingsSection(section: SettingsSection): void;
   appearance: Appearance;
   go(section: Section): void;
   setSettingsOpen(open: boolean): void;
@@ -24,10 +26,11 @@ export function createUiStore() {
     settingsSection: 'general',
     openDevice: (deviceId) => set({ section: 'layout', deviceId }),
     openTroubleshooting: () => set({ settingsOpen: true, settingsSection: 'troubleshooting' }),
+    showSettingsSection: (settingsSection) => set({ settingsSection }),
     settingsOpen: false,
     appearance: 'system',
     go: (section) => set({ section }),
-    setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+    setSettingsOpen: (settingsOpen) => set(settingsOpen ? { settingsOpen, settingsSection: 'general' } : { settingsOpen }),
     setAppearance: (appearance) => set({ appearance }),
   }));
 }

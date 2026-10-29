@@ -9,7 +9,6 @@ type Scripted = Exclude<Answer, 'expired'> | 'fail' | 'never';
 export interface FakeActionsOptions {
   devices: Map<string, DeviceSummary>;
   publish(frame: Frame): void;
-  publishTopic(topic: string, device: string, frame: Frame): void;
   stored(device: string, orientation: Orientation): string | null;
 }
 
@@ -23,7 +22,7 @@ const PROMPT_FAILED = 'The approval prompt failed, so the action was denied: The
 const LOG_KEPT = 100;
 
 export function createFakeActions(options: FakeActionsOptions) {
-  const { devices, publish, publishTopic, stored } = options;
+  const { devices, publish, stored } = options;
   const pending: ApprovalRequest[] = [];
   const allowed = new Map<string, AllowedAction>();
   const log: ActionLog[] = [];
@@ -109,7 +108,7 @@ export function createFakeActions(options: FakeActionsOptions) {
     mirrorSeq.set(device, seq);
     const report = event.type === 'con' ? `con ${event.usage}` : `kbd ${event.mods ?? 0} [${Array.isArray(event.keys) ? event.keys.join(', ') : ''}]`;
     const outcome = pending.length ? 'suppressed' : 'typed';
-    publishTopic('key-mirror', device, {
+    publish({
       type: 'device.key-mirror',
       device,
       data: { device, seq, report, outcome, gap: null, errors: [], arrived_ms: Date.now() },

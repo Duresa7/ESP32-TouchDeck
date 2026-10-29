@@ -86,6 +86,7 @@ describe('the event stream', () => {
 
   const follow = (options: Partial<Parameters<typeof openEvents>[0]> = {}) => {
     events = openEvents({ url: URL, session: windowSession(fake.bridge), store, open: fake.openSocket, ...options });
+    return events;
   };
 
   test('sync fills the store, then deltas keep it current', async () => {
@@ -201,6 +202,57 @@ describe('the event stream', () => {
     await emit();
     await settle();
     expect(actions.getState().mirror.mock0001).toHaveLength(1);
+  });
+
+  test('the console topic is asked for after hello, again after a reconnect, and dropped with its last listener', async () => {
+    const stream = follow({ retryMs: [0] });
+    const desk: string[] = [];
+    const deskAgain: string[] = [];
+    const stopDesk = stream.console('mock0001', (line) => desk.push(line));
+    const stopDeskAgain = stream.console('mock0001', (line) => deskAgain.push(line));
+    await settle();
+    expect(fake.topics).toEqual([['console/mock0001']]);
+
+    fake.dropSockets(1001);
+    await settle();
+    await settle();
+    expect(fake.topics).toEqual([['console/mock0001']]);
+
+    fake.publish({ type: 'device.console', device: 'mock0001', data: { device: 'mock0001', line: '@td {"cmd":"version"}' } });
+    fake.publish({ type: 'device.console', device: 'mock0002', data: { device: 'mock0002', line: 'not for Desk' } });
+    await settle();
+    expect(desk).toEqual(['@td {"cmd":"version"}']);
+    expect(deskAgain).toEqual(['@td {"cmd":"version"}']);
+
+    stopDesk();
+    stopDesk();
+    expect(fake.topics).toEqual([['console/mock0001']]);
+    stopDeskAgain();
+    expect(fake.topics).toEqual([[]]);
+  });
+
+  test('the key-mirror topic follows the same rules, beside the console topic on one socket', async () => {
+    const actions = createActionsStore();
+    const first = actions.getState().watchKeys('mock0001');
+    const second = actions.getState().watchKeys('mock0001');
+    const stream = follow({ actions, retryMs: [0] });
+    const stopConsole = stream.console('mock0002', () => {});
+    await settle();
+    const asked = () => fake.topics.map((topics) => [...topics].sort());
+    expect(asked()).toEqual([['console/mock0002', 'key-mirror/mock0001']]);
+
+    fake.dropSockets(1001);
+    await settle();
+    await settle();
+    expect(asked()).toEqual([['console/mock0002', 'key-mirror/mock0001']]);
+
+    first();
+    first();
+    expect(asked()).toEqual([['console/mock0002', 'key-mirror/mock0001']]);
+    second();
+    expect(asked()).toEqual([['console/mock0002']]);
+    stopConsole();
+    expect(asked()).toEqual([[]]);
   });
 
   test('closing stops the stream for good', async () => {

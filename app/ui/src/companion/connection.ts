@@ -49,3 +49,11 @@ export function useCompanion(): Companion {
   if (!companion) throw new Error('useCompanion needs a CompanionContext provider');
   return companion;
 }
+
+export const EventsContext = createContext<Events | null>(null);
+
+export function useEvents(): Events {
+  const events = useContext(EventsContext);
+  if (!events) throw new Error('useEvents needs an EventsContext provider');
+  return events;
+}
