@@ -9,6 +9,7 @@ const caps = (tile_kinds: string[]): Capabilities => ({
   pages: 8,
   tiles: 48,
   layout_bytes: 65536,
+  layout_schemas: [1],
   storage_free: 1_000_000,
   tile_kinds,
   asset_bytes: 1_000_000,
