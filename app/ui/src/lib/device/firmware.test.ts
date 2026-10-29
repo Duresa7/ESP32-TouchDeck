@@ -255,7 +255,7 @@ describe('the update runner', () => {
     const update = createFirmwareUpdate({ companion, jobs, context: () => ({ id: 'mock0002', ...STUDIO }), pollMs: 60_000 });
     runners.push(update);
     update.attach(job({ state: 'waiting_for_confirmation' }));
-    expect(update.getState().view).toMatchObject({ step: 'running', text: 'Confirm on this PC to continue.' });
+    expect(update.getState().view).toMatchObject({ step: 'waiting', text: 'Confirm on this PC to continue.' });
     jobs.getState().upsert(job({ state: 'failed', error: { code: 'firmware.declined', message: 'Firmware confirmation was declined.', details: null }, finished_ms: 1, rev: 2 }));
     expect(update.getState().view).toMatchObject({ step: 'failed', code: 'firmware.declined', text: 'Declined on this PC. Studio still runs 1.4.0.' });
 

@@ -1,17 +1,16 @@
 import type { NewBoard } from '../../companion/api.ts';
 import type { Companion } from '../../companion/client.ts';
-import type { FirmwareProgress } from '../../companion/firmware-api.ts';
 import type { JobsStore } from '../../companion/jobs.ts';
-import { createFirmwareJob, type FirmwareWords, type UpdateView } from './firmware.ts';
+import { createFirmwareJob, type FirmwareWords, type PhaseProgress, type UpdateView } from './firmware.ts';
 
 export type BoardStep = 'detected' | 'waiting' | 'installing' | 'done' | 'declined' | 'failed';
 
 export const DECLINED = 'Declined on this PC. Nothing changed on the board.';
 export const INSTALL_FAILED = "Couldn't install Firmware. Unplug the board, plug it back in, then retry.";
 
-function installProgress(progress: FirmwareProgress | null): string {
+function installProgress(progress: PhaseProgress | null): string {
   const writing = progress?.phase === 'sending' || progress?.phase === 'recovering';
-  return writing && progress.pct !== undefined ? `Installing Firmware… ${Math.round(progress.pct)}%` : 'Installing Firmware…';
+  return writing && progress.pct !== null ? `Installing Firmware… ${Math.round(progress.pct)}%` : 'Installing Firmware…';
 }
 
 export const installWords: FirmwareWords = {
@@ -24,6 +23,7 @@ export const installWords: FirmwareWords = {
 export function boardStep(view: UpdateView): BoardStep {
   switch (view.step) {
     case 'idle':
+    case 'cancelled':
       return 'detected';
     case 'waiting':
       return 'waiting';

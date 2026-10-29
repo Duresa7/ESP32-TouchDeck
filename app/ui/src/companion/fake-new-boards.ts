@@ -1,5 +1,4 @@
-import type { DeviceSummary, ErrorBody, Job, NewBoard } from './api.ts';
-import type { FirmwareBuild, FirmwareProgress, FirmwareResult } from './firmware-api.ts';
+import type { DeviceSummary, ErrorBody, FirmwareBuild, FirmwareProgress, FirmwareResult, Job, NewBoard } from './api.ts';
 
 type Frame = Record<string, unknown> & { type: string };
 
@@ -22,6 +21,9 @@ const json = (status: number, body: unknown) =>
 const failure = (status: number, code: string, message: string, details: unknown = null) => json(status, { error: { code, message, details } });
 
 const WRITING = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+const IMAGE_BYTES = 1_572_864;
+const CHECKING: FirmwareProgress = { phase: 'checking', pct: null, bytes: 0 };
+const recovering = (pct: number): FirmwareProgress => ({ phase: 'recovering', pct, bytes: Math.round((IMAGE_BYTES * pct) / 100) });
 const BOARD_KINDS: readonly BoardKind[] = ['silent', 'busy', 'other-firmware'];
 
 export function newBoard({ id, port, kind = 'other-firmware' }: { id: string; port: string; kind?: BoardKind }): NewBoard {
@@ -93,7 +95,7 @@ export function createFakeNewBoards(options: FakeNewBoardsOptions) {
   }
 
   function write(jobId: string, board: NewBoard) {
-    const steps: FirmwareProgress[] = [{ phase: 'checking' }, ...WRITING.map((pct): FirmwareProgress => ({ phase: 'recovering', pct }))];
+    const steps: FirmwareProgress[] = [CHECKING, ...WRITING.map(recovering)];
     let at = 0;
     const tick = () => {
       const job = jobs.get(jobId);
@@ -101,7 +103,7 @@ export function createFakeNewBoards(options: FakeNewBoardsOptions) {
       if (at < steps.length) {
         const progress = steps[at++];
         update(job, { state: 'running', progress, cancellable: false });
-        if (progress.pct !== undefined && progress.pct === held.get(board.id)) {
+        if (progress.pct !== null && progress.pct === held.get(board.id)) {
           waiting.set(board.id, () => setTimeout(tick, stepMs));
           return;
         }
@@ -145,7 +147,7 @@ export function createFakeNewBoards(options: FakeNewBoardsOptions) {
       kind: 'firmware.install',
       scope: { kind: 'new-board', id },
       state: 'waiting_for_confirmation',
-      progress: { phase: 'checking' },
+      progress: CHECKING,
       result: null,
       error: null,
       cancellable: true,
@@ -181,7 +183,11 @@ export function createFakeNewBoards(options: FakeNewBoardsOptions) {
         const job = jobs.get(decodeURIComponent(match[1]));
         if (!job) return null;
         if (method === 'GET') return json(200, job);
-        return failure(405, 'route.method_not_allowed', 'Use GET.');
+        if (method !== 'DELETE') return failure(405, 'route.method_not_allowed', 'Use GET or DELETE.');
+        if (job.state !== 'waiting_for_confirmation') return failure(409, 'job.not_cancellable', "The Job's current phase can't be cancelled.");
+        if (job.scope.kind === 'new-board') confirming.delete(job.scope.id);
+        const error = { code: 'job.cancelled', message: 'The Job was cancelled.', details: null };
+        return json(200, update(job, { state: 'cancelled', error, cancellable: false, finished_ms: Date.now() }));
       }
       return null;
     },

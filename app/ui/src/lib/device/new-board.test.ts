@@ -1,16 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { Job } from '../../companion/api.ts';
+import type { FirmwareProgress, Job } from '../../companion/api.ts';
 import { createClient, type Companion } from '../../companion/client.ts';
 import { createFakeCompanion, type FakeCompanion } from '../../companion/fake.ts';
 import { newBoard } from '../../companion/fake-new-boards.ts';
-import type { FirmwareProgress } from '../../companion/firmware-api.ts';
 import { createJobsStore, type JobsStore } from '../../companion/jobs.ts';
 import { windowSession } from '../../companion/session.ts';
-import { viewOf } from './firmware.ts';
+import { viewOf, type PhaseProgress } from './firmware.ts';
 import { boardStep, createBoardInstall, DECLINED, INSTALL_FAILED, installWords, type BoardInstallStore } from './new-board.ts';
 
 const BASE = 'http://127.0.0.1:51234';
 const BOARD = { id: 'mock00ff', device: 'the board', version: '' };
+
+const CHECKING: FirmwareProgress = { phase: 'checking', pct: null, bytes: 0 };
 
 function job(change: Partial<Job>): Job {
   return {
@@ -18,7 +19,7 @@ function job(change: Partial<Job>): Job {
     kind: 'firmware.install',
     scope: { kind: 'new-board', id: 'mock00ff' },
     state: 'running',
-    progress: { phase: 'checking' },
+    progress: CHECKING,
     result: null,
     error: null,
     cancellable: true,
@@ -42,13 +43,13 @@ describe('the New board steps', () => {
     expect(boardStep(view(job({ state: 'waiting_for_confirmation' })))).toBe('waiting');
   });
 
-  test.each<[FirmwareProgress, string, number | null]>([
-    [{ phase: 'checking' }, 'Installing Firmware…', null],
+  test.each<[PhaseProgress, string, number | null]>([
+    [{ phase: 'checking', pct: null }, 'Installing Firmware…', null],
     [{ phase: 'recovering', pct: 60 }, 'Installing Firmware… 60%', 60],
     [{ phase: 'sending', pct: 33.6 }, 'Installing Firmware… 34%', 33.6],
-    [{ phase: 'rebooting' }, 'Installing Firmware…', null],
-  ])('installing %j reads %j', (progress, text, pct) => {
-    const running = view(job({ progress }));
+    [{ phase: 'rebooting', pct: null }, 'Installing Firmware…', null],
+  ])('installing %j reads %j', (phase, text, pct) => {
+    const running = view(job({ progress: { ...phase, bytes: 0 } }));
     expect(running).toMatchObject({ step: 'running', text, pct });
     expect(boardStep(running)).toBe('installing');
   });
@@ -65,7 +66,13 @@ describe('the New board steps', () => {
     expect(boardStep(declined)).toBe('declined');
   });
 
-  test.each(['firmware.failed', 'new_board.not_found', 'device.busy', 'job.cancelled', 'internal'])('%s reads as a failed install', (code) => {
+  test('a cancel while this PC asks puts the card back as found', () => {
+    const cancelled = view(job({ state: 'cancelled', error: { code: 'job.cancelled', message: 'The Job was cancelled.', details: null }, finished_ms: 1 }));
+    expect(cancelled).toMatchObject({ step: 'cancelled', raw: 'Cancelled' });
+    expect(boardStep(cancelled)).toBe('detected');
+  });
+
+  test.each(['firmware.failed', 'new_board.not_found', 'device.busy', 'internal'])('%s reads as a failed install', (code) => {
     const broken = view(failed(code));
     expect(broken).toMatchObject({ step: 'failed', text: INSTALL_FAILED, code });
     expect(boardStep(broken)).toBe('failed');
@@ -140,6 +147,20 @@ describe('installing on a New board', () => {
     expect(step(store)).toBe('waiting');
     fake.newBoards.answer('mock00ff', 'accept');
     await vi.waitFor(() => expect(step(store)).toBe('done'));
+  });
+
+  test('cancelling while this PC asks closes the question, writes nothing, and the board can install again', async () => {
+    const store = install();
+    await store.start('bundled');
+    const waiting = store.getState().job;
+    if (!waiting) throw new Error('The install never started.');
+    await companion.jobs.cancel({ job: waiting });
+    await vi.waitFor(() => expect(store.getState().view.step).toBe('cancelled'));
+    expect(step(store)).toBe('detected');
+    expect(fake.newBoards.confirming('mock00ff')).toBe(false);
+    expect(fake.newBoards.boards().map((b) => b.id)).toEqual(['mock00ff']);
+    await store.start('bundled');
+    expect(step(store)).toBe('waiting');
   });
 
   test('a board that was unplugged fails at once', async () => {

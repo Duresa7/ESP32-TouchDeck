@@ -266,6 +266,11 @@ function FirmwareStep({ firmware, device, offered, headingId }: { firmware: Firm
           Updated to {view.version}
         </p>
       )}
+      {view.step === 'cancelled' && (
+        <p className="onboarding-text" role="status" data-testid="onboarding-firmware-status">
+          {view.text}
+        </p>
+      )}
       {view.step === 'failed' && (
         <div className="onboarding-failure" role="alert" data-testid="onboarding-firmware-status" data-code={view.code}>
           <p className="onboarding-text is-error">
