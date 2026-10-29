@@ -41,10 +41,7 @@ pub fn pick() -> Result<Option<PathBuf>, String> {
     }
 }
 pub fn confirm(c: &Confirmation) -> bool {
-    let text = format!(
-        "{} Firmware?\nTarget: {} ({})\nPort: {}\nCurrent: {}\nBundle: {}\nBuild: {}",
-        c.operation, c.name, c.target, c.port, c.current, c.version, c.build
-    );
+    let text = c.text();
     #[cfg(windows)]
     {
         native(r#"Add-Type -AssemblyName System.Windows.Forms; [Console]::Write([System.Windows.Forms.MessageBox]::Show($env:TD_DIALOG_TEXT, 'Open TouchDeck Firmware', 'YesNo', 'Warning', 'Button2'))"#, &text).is_ok_and(|s| s == "Yes")

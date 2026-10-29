@@ -2,6 +2,7 @@ mod dialogs;
 use crate::{
     api::{ApiError, CommonError, Ctx, Endpoint, Feature, NoQuery, Registration, Req},
     devices::DeviceId,
+    dialog_text::shown,
     jobs::{Job, JobError, JobKind, JobScope},
 };
 use axum::http::{Method, StatusCode};
@@ -30,6 +31,20 @@ pub struct Confirmation {
     pub current: String,
     pub version: String,
     pub build: String,
+}
+impl Confirmation {
+    pub fn text(&self) -> String {
+        format!(
+            "{} Firmware?\nTarget: {} ({})\nPort: {}\nCurrent: {}\nBundle: {}\nBuild: {}",
+            self.operation,
+            shown(&self.name),
+            shown(&self.target),
+            shown(&self.port),
+            shown(&self.current),
+            shown(&self.version),
+            shown(&self.build)
+        )
+    }
 }
 pub trait Prompter: Send + Sync {
     fn pick(&self) -> Result<Option<Vec<u8>>, String>;

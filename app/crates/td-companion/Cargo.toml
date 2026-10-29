@@ -43,3 +43,4 @@ windows-sys = { version = "0.61", features = ["Win32_Devices_DeviceAndDriverInst
 
 [dev-dependencies]
 td-companion = { path = ".", features = ["test-hooks"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }

@@ -844,3 +844,94 @@ async fn repair_waits_then_flashes_only_after_acceptance() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn consent_dialog_escapes_a_renamed_device() {
+    use td_companion::features::devices::{DevicePath, DeviceSettingsPatch, SettingsPatch};
+    let td = TestCompanion::start().await;
+    let id = td.plug_device("mocka").await;
+    let name = "Desk\u{2028}Port: COM99\u{202E}kced";
+    td.call::<SettingsPatch>(
+        DevicePath { device: id.clone() },
+        NoQuery,
+        DeviceSettingsPatch {
+            name: Some(name.into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    td.until(|td| {
+        td.device(&id)
+            .is_some_and(|d| d.name.as_deref() == Some(name))
+    })
+    .await;
+    let prompt = Arc::new(Prompt::default());
+    td.firmware_prompter(prompt.clone());
+    let job = td
+        .call::<Repair>(FirmwareTarget { device: id }, NoQuery, request())
+        .await
+        .unwrap();
+    td.until(|_| !prompt.seen.lock().unwrap().is_empty()).await;
+    let text = prompt.seen.lock().unwrap()[0].text();
+    prompt.answer(false);
+    td.wait(&job).await;
+    assert!(text.contains(r"\u{2028}"), "{text}");
+    assert!(text.contains(r"\u{202E}"), "{text}");
+    assert!(!text.contains(['\u{2028}', '\u{202E}']), "{text}");
+    assert_eq!(
+        text.lines().filter(|l| l.starts_with("Port:")).count(),
+        1,
+        "{text}"
+    );
+}
+
+fn bundle_with_version(version: &str) -> Vec<u8> {
+    use std::io::{Cursor, Read, Write};
+    const FIXTURE: &[u8] = include_bytes!("../../td-link/tests/fixtures/touchdeck-test.tdfw");
+    let mut input = zip::ZipArchive::new(Cursor::new(FIXTURE)).unwrap();
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for index in 0..input.len() {
+        let mut file = input.by_index(index).unwrap();
+        let mut data = Vec::new();
+        file.read_to_end(&mut data).unwrap();
+        let name = file.name().unwrap().to_string();
+        if name == "manifest.json" {
+            let mut manifest: serde_json::Value = serde_json::from_slice(&data).unwrap();
+            manifest["version"] = version.into();
+            data = serde_json::to_vec(&manifest).unwrap();
+        }
+        out.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        out.write_all(&data).unwrap();
+    }
+    out.finish().unwrap().into_inner()
+}
+
+#[tokio::test]
+async fn pick_refuses_a_long_or_unprintable_version() {
+    struct Picker(Vec<u8>);
+    impl Prompter for Picker {
+        fn pick(&self) -> Result<Option<Vec<u8>>, String> {
+            Ok(Some(self.0.clone()))
+        }
+        fn confirm(&self, _: &Confirmation) -> bool {
+            false
+        }
+    }
+    let td = TestCompanion::start().await;
+    let id = td.plug_device("mocka").await;
+    for version in ["9".repeat(65), "1.0.0\u{2028}Port: COM99".into()] {
+        td.firmware_prompter(Arc::new(Picker(bundle_with_version(&version))));
+        let response = td
+            .request::<Pick>((), NoQuery, &FirmwareTarget { device: id.clone() })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 422, "{version:?}");
+        assert_eq!(
+            response.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+            "firmware.bundle_invalid"
+        );
+    }
+}

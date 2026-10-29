@@ -58,6 +58,12 @@ impl Bundle {
         if manifest.format != 1 || manifest.project != "touchdeck" || manifest.files.len() != 3 {
             return Err("unsupported TouchDeck bundle".into());
         }
+        // The version is shown in the consent dialog, so it can't carry layout characters.
+        if !(1..=64).contains(&manifest.version.len())
+            || !manifest.version.bytes().all(|b| b.is_ascii_graphic())
+        {
+            return Err("manifest version must be 1 to 64 printable ASCII characters".into());
+        }
         let mut images = Vec::new();
         for (name, offset, max) in [
             ("bootloader.bin", 0, 0x8000),
