@@ -11,9 +11,9 @@ function FileRow({ device }: { device: DeviceSummary }) {
   const { firmware } = useDeviceStores(device);
   const view = useStore(firmware, (s) => s.view);
   const log = useStore(firmware, (s) => s.log);
-  const picking = useStore(firmware, (s) => s.picking);
+  const fileDialogOpen = useStore(firmware, (s) => s.fileDialogOpen);
   const name = nameOf(device);
-  const ready = device.link.state === 'connected' && !picking && !inProgress(view);
+  const ready = device.link.state === 'connected' && !fileDialogOpen && !inProgress(view);
   return (
     <div className="row firmware-file" data-testid="firmware-file" data-device={device.id} data-step={view.step}>
       <span className="row-text">
@@ -25,8 +25,8 @@ function FileRow({ device }: { device: DeviceSummary }) {
           {view.step === 'idle' ? 'A .tdfw file from an Open TouchDeck release.' : view.text}
         </span>
         {view.step === 'running' && (
-          <span className="panel-progress" role="progressbar" aria-label={`Updating ${name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={view.pct ?? undefined}>
-            <span className="panel-progress-fill" style={{ transform: `scaleX(${(view.pct ?? 0) / 100})` }} />
+          <span className="firmware-progress" role="progressbar" aria-label={`Updating ${name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={view.pct ?? undefined}>
+            <span className="firmware-progress-fill" style={{ transform: `scaleX(${(view.pct ?? 0) / 100})` }} />
           </span>
         )}
         {(view.step === 'failed' || view.step === 'cancelled') && (

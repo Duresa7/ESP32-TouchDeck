@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { expect, test, type APIRequestContext, type Locator, type Page, type Response } from '@playwright/test';
-import type { ActionLog, AllowedAction, ApprovalRequest } from '../src/companion/api.ts';
+import type { ActionLog, AllowedAction, ApprovalRequest, NewBoard } from '../src/companion/api.ts';
 import type { Layout } from '../src/lib/editor/validate.ts';
 import { exportText, menu, openLayout, sorted, status, tile, waitEvent } from './layout-helpers.ts';
 
@@ -370,7 +370,8 @@ async function plugNewBoard(page: Page, api: Api, id: string) {
 async function reboots(api: Api, id: string): Promise<number> {
   const record = await api('GET', `/test/devices/${id}/record`);
   expect(record.status()).toBe(200);
-  return ((await record.json()) as { reboots: number }).reboots;
+  const { reboots }: MockRecord = await record.json();
+  return reboots;
 }
 
 test('a New board installs once this PC accepts, comes up needing setup, and setup makes it ready', async ({ page, request }) => {
@@ -419,7 +420,7 @@ test('a declined install writes nothing, keeps the New board card, and opens no 
   await expect(card).toHaveAttribute('data-step', 'declined');
   await expect(card.getByTestId('board-status')).toHaveText('Declined on this PC. Nothing changed on the board.');
   expect(await reboots(api, 'mock00fd')).toBe(0);
-  const boards = (await (await api('GET', '/new-boards')).json()) as { id: string }[];
+  const boards: NewBoard[] = await (await api('GET', '/new-boards')).json();
   expect(boards.map((b) => b.id)).toContain('mock00fd');
   expect((await api('GET', '/devices/mock00fd')).status()).toBe(404);
   await expect(page.getByTestId('onboarding')).toHaveCount(0);

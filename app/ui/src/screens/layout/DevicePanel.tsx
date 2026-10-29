@@ -215,8 +215,8 @@ function FirmwareRow({ device, name, settings, firmware }: PanelProps & { firmwa
         </span>
       </div>
       {view.step === 'running' && (
-        <div className="panel-progress" role="progressbar" aria-label={`Updating ${name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={view.pct ?? undefined}>
-          <span className="panel-progress-fill" style={progress} />
+        <div className="firmware-progress" role="progressbar" aria-label={`Updating ${name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={view.pct ?? undefined}>
+          <span className="firmware-progress-fill" style={progress} />
         </div>
       )}
       {view.step === 'running' && <p className="field-hint">Keep {name} plugged in. Takes about a minute. {name} restarts once.</p>}

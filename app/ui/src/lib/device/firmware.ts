@@ -140,8 +140,7 @@ export interface FirmwareUpdateState {
   view: UpdateView;
   job: string | null;
   log: string[];
-  /** The PC's file dialog is open. */
-  picking: boolean;
+  fileDialogOpen: boolean;
 }
 
 export interface FirmwareJobDeps {
@@ -161,7 +160,7 @@ const finished = (job: Job) => job.state === 'succeeded' || job.state === 'faile
 
 export function createFirmwareJob(deps: FirmwareJobDeps) {
   const { companion, jobs, words = updateWords, pollMs = 1000 } = deps;
-  const store = createStore<FirmwareUpdateState>()(() => ({ view: { step: 'idle' }, job: null, log: [], picking: false }));
+  const store = createStore<FirmwareUpdateState>()(() => ({ view: { step: 'idle' }, job: null, log: [], fileDialogOpen: false }));
   const { getState: state, setState: set } = store;
   let stop = () => {};
   let started: UpdateContext = { device: 'the Device', version: '' };
@@ -235,11 +234,10 @@ export function createFirmwareUpdate(deps: FirmwareUpdateDeps) {
   const update = createFirmwareJob({ ...deps, run: (id, bundle) => companion.firmware.update({ device: id }, null, { bundle }) });
   const { getState: state, setState: set } = update;
   return Object.assign(update, {
-    /** Has the Companion open a file dialog on this PC, then updates from the file chosen there. */
     async startFromFile(): Promise<void> {
-      if (state().picking || inProgress(state().view)) return;
+      if (state().fileDialogOpen || inProgress(state().view)) return;
       const { id, ...context } = deps.context();
-      set({ picking: true });
+      set({ fileDialogOpen: true });
       let picked: PickResult;
       try {
         picked = await companion.firmware.pick({}, null, { device: id });
@@ -249,7 +247,7 @@ export function createFirmwareUpdate(deps: FirmwareUpdateDeps) {
         set({ view: { step: 'failed', text: failureText(error, context), raw, code: error.code }, job: null, log: [raw] });
         return;
       } finally {
-        set({ picking: false });
+        set({ fileDialogOpen: false });
       }
       if (picked.bundle) await update.start(picked.bundle.id);
     },

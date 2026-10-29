@@ -218,7 +218,7 @@ test.describe('Troubleshooting', () => {
     await expect(status).toHaveText('Updated to 1.5.0');
     await expect(help(page).getByTestId('device-details').nth(1).locator('[data-fact="version"] dd')).toHaveText('1.5.0');
 
-    await page.evaluate(() => window.touchdeckDemo?.firmware.picks('invalid'));
+    await page.evaluate(() => window.touchdeckDemo?.firmware.picks('not-firmware'));
     await choose.click();
     await expect(studio).toHaveAttribute('data-step', 'failed');
     await expect(status).toHaveText("That file isn't a Firmware file for this Device.");

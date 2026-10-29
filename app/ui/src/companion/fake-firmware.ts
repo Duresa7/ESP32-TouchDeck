@@ -10,8 +10,7 @@ export interface FakeFirmwareOptions {
 }
 
 type Mode = 'normal-update' | 'rollback' | 'no-confirm';
-/** How the PC's file dialog answers a pick: a Firmware file, closed without one, a file that isn't Firmware, or a dialog already open. */
-export type FakePick = 'file' | 'cancel' | 'invalid' | 'open';
+export type FakePick = 'firmware-file' | 'closed' | 'not-firmware' | 'dialog-open';
 const MODES: readonly Mode[] = ['normal-update', 'rollback', 'no-confirm'];
 
 const json = (status: number, body: unknown) =>
@@ -151,10 +150,10 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
         const body: unknown = await request.json().catch(() => null);
         const device = typeof body === 'object' && body !== null && 'device' in body && typeof body.device === 'string' ? body.device : '';
         if (!devices.has(device)) return failure(404, 'device.not_found', 'No Device with that id.');
-        const answer = picks.shift() ?? 'file';
-        if (answer === 'cancel') return json(200, { bundle: null });
-        if (answer === 'invalid') return failure(422, 'firmware.bundle_invalid', 'The Firmware bundle is invalid or unavailable.');
-        if (answer === 'open') return failure(409, 'system.dialog_open', 'A native file dialog is already open.');
+        const answer = picks.shift() ?? 'firmware-file';
+        if (answer === 'closed') return json(200, { bundle: null });
+        if (answer === 'not-firmware') return failure(422, 'firmware.bundle_invalid', 'The Firmware bundle is invalid or unavailable.');
+        if (answer === 'dialog-open') return failure(409, 'system.dialog_open', 'A native file dialog is already open.');
         minted += 1;
         const info: BundleInfo = { id: `bundle_fake${String(minted).padStart(8, '0')}`, version: bundled.version, build: bundled.build, bytes: BUNDLE_BYTES };
         bundles.set(info.id, { ...info, device });
@@ -186,7 +185,6 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
     },
 
     jobs: () => [...jobs.values()],
-    /** Sets how the next picks answer, in order. Once they run out, each pick returns a Firmware file. */
     picks: (...answers: FakePick[]) => void picks.splice(0, picks.length, ...answers),
     hold: (device: string, pct = 40) => void held.set(device, pct),
     cancel(device: string) {

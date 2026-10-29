@@ -45,7 +45,6 @@ export function deviceStoresFor(companion: Companion, device: DeviceSummary): De
   return found;
 }
 
-/** The Device's stores, kept on its latest summary and following an update another view started. */
 export function useDeviceStores(device: DeviceSummary): DeviceStores {
   const stores = deviceStoresFor(useCompanion(), device);
   const job = device.link.state === 'updating' ? device.link.job : null;
