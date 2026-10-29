@@ -149,7 +149,6 @@ function More({ title, testId, children }: { title: string; testId: string; chil
 
 const KEYBOARD: ReadonlySet<string> = new Set(['key', 'mod', 'consumer']);
 
-/** The selected Tile's fields: label, icon, size, what it does when tapped, and the tools to try it on the Device. */
 export function TileFields({ store, page, tile }: TileFieldsProps) {
   const device = useEditorState(store, (s) => s.device);
   const layout = useEditorState(store, (s) => s.drafts[s.orientation]?.layout);

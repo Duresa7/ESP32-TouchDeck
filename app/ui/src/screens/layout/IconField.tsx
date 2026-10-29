@@ -12,7 +12,6 @@ const ICON_NAMES: Record<string, string> = {
 
 const iconName = (icon: string | null) => (icon === null ? 'No icon' : (ICON_NAMES[icon] ?? 'Custom icon'));
 
-/** The Tile's icon and its name. The icon picker (#90) fills this field with Change. */
 export function IconField({ tile, kind }: { tile: Tile; kind: ActionType }) {
   return (
     <div className="field">

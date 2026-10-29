@@ -54,13 +54,11 @@ export interface Conflict {
 
 export type SaveState = 'none' | 'saved' | 'unsent' | 'sending';
 
-/** A value the Layout rules refused, kept with the reason so the inspector shows both until it's fixed. */
 export interface Refused<T> {
   value: T;
   reason: string;
 }
 
-/** A Tile's refused edits. While it has one, the Tile is invalid and Send to Device is refused with the same reason. */
 export interface TileProblems {
   label?: Refused<string>;
   action?: Refused<Action>;
@@ -82,7 +80,6 @@ export interface EditorState {
   status: Status | null;
   busy: 'push' | 'load' | 'prune' | null;
   conflict: Conflict | null;
-  /** Each orientation's invalid Tiles, by Tile id. */
   invalid: Record<Orientation, Record<string, TileProblems>>;
 }
 
@@ -135,10 +132,8 @@ const covers = (tile: Tile, row: number, col: number) =>
 
 const tileIds = (layout: Layout) => new Set(layout.pages.flatMap((page) => (page.kind === 'grid' ? page.tiles.map((tile) => tile.id) : [])));
 
-/** A Tile's refused edits in the open orientation. */
 export const tileProblems = (state: EditorState, tile: string): TileProblems | undefined => state.invalid[state.orientation][tile];
 
-/** The first invalid Tile of the open draft in Page order, with the reason Send refuses. */
 export function firstProblem(state: EditorState): { page: string; tile: string; reason: string } | null {
   const layout = state.drafts[state.orientation]?.layout;
   for (const page of layout?.pages ?? []) {
@@ -311,12 +306,10 @@ export function createEditorStore(deps: EditorDeps) {
     );
   }
 
-  /** Sets a Tile's label. A refused one stays on the Tile with its reason until it's fixed. */
   function editLabel(tile: string, label: string): string | null {
     return editField(tile, (l, page) => setLabel(l, page, tile, label), (reason) => ({ label: { value: label, reason } }), 'label');
   }
 
-  /** Sets what a Tile does when tapped. A refused action stays on the Tile with its reason until it's fixed. */
   function editAction(tile: string, action: Action): string | null {
     return editField(tile, (l, page) => setAction(l, page, tile, action), (reason) => ({ action: { value: action, reason } }), 'action');
   }

@@ -292,7 +292,6 @@ function KindFields({ action, commit, error, pages }: { action: Action; commit(n
   }
 }
 
-/** When tapped, and the selected kind's fields. A refused value stays on screen with the rule's message under it. */
 export function ActionForm({ store, page, tile, layout, device }: { store: EditorStore; page: GridPage; tile: Tile; layout: Layout; device: string }) {
   const refused = useEditorState(store, (s) => tileProblems(s, tile.id)?.action);
   const ids = useFieldIds();
