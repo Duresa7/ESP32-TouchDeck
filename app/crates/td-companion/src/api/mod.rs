@@ -28,7 +28,10 @@ use ts_rs::TS;
 #[derive(Clone)]
 pub struct Ctx {
     pub actions: crate::actions::Actions,
+    pub integrations: crate::features::integrations::Service,
+    pub(crate) desktop: Arc<crate::tray::Desktop>,
     pub devices: crate::devices::DeviceManager,
+    pub firmware: crate::features::firmware::Firmware,
     pub events: Events,
     pub jobs: crate::jobs::Jobs,
     pub links: crate::link::Links,
@@ -69,9 +72,19 @@ impl Ctx {
             grants,
             mock,
         );
+        let auth = Arc::new(Mutex::new(Auth::new()));
+        let lease_auth = auth.clone();
+        let lease_clock = clock.clone();
         Self {
             actions,
-            jobs: crate::jobs::Jobs::new(events.clone(), clock.clone()),
+            integrations: crate::features::integrations::Service::new(mock, events.clone()),
+            firmware: crate::features::firmware::Firmware::new(mock),
+            desktop: Arc::new(crate::tray::Desktop::new(mock)),
+            jobs: crate::jobs::Jobs::new(
+                events.clone(),
+                clock.clone(),
+                Arc::new(move |id| lease_auth.lock().active(id, lease_clock.now())),
+            ),
             links,
             layouts: crate::store::LayoutStore::new(data.join("layouts")),
             assets: crate::store::AssetStore::new(data.join("assets")),
@@ -82,7 +95,7 @@ impl Ctx {
             uploads: Default::default(),
             devices,
             events,
-            auth: Arc::new(Mutex::new(Auth::new())),
+            auth,
             clock,
             shutdown: tokio::sync::watch::channel(false).0,
             port,
@@ -94,16 +107,31 @@ impl Ctx {
             handler_hits: Default::default(),
         }
     }
+    #[cfg(windows)]
+    pub(crate) async fn pair_browser(&self) -> Result<(), CommonError> {
+        auth::pair_code(self.clone()).await.map(|_| ())
+    }
+    #[cfg(windows)]
+    pub(crate) async fn reset_pairing(&self) -> Result<(), CommonError> {
+        auth::reset(self.clone()).await
+    }
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn pairing_token(&self) -> String {
         self.auth.lock().pairing().to_owned()
     }
-    /// Forgets sessions that were revoked or have ended and hold no sockets.
-    pub(crate) fn sweep_sessions(&self) -> usize {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn browser_token(&self) -> String {
+        self.auth.lock().browser_token(self.clock.now())
+    }
+    pub(crate) fn sweep_sessions(&self) {
         let now = self.clock.now();
         let mut auth = self.auth.lock();
-        self.uploads.sweep(now, |id| auth.active_at(id, now));
-        auth.sweep(now)
+        self.uploads.sweep(now, |id| auth.active(id, now));
+        let ended_with_sockets = auth.sweep(now);
+        drop(auth);
+        if ended_with_sockets {
+            self.events.notify();
+        }
     }
     pub(crate) fn runtime_value(&self) -> serde_json::Value {
         serde_json::json!({
@@ -131,6 +159,9 @@ pub trait Endpoint: Sized + Send + Sync + 'static {
     const PATH: &'static str;
     const STATUS: StatusCode = StatusCode::OK;
     const BODY_LIMIT: usize = 1 << 20;
+    /// Waits for a person at a native dialog, so the whole-request limit doesn't apply.
+    /// The header and body limits still do.
+    const UNTIMED: bool = false;
     fn read_body(
         ctx: &Ctx,
         headers: &HeaderMap,
@@ -215,6 +246,7 @@ pub struct EndpointInfo {
     pub method: Method,
     pub path: &'static str,
     pub access: Access,
+    pub untimed: bool,
     pub errors: &'static [&'static str],
     #[cfg(any(test, feature = "test-hooks"))]
     pub path_type: String,
@@ -336,6 +368,7 @@ impl Feature {
             method: E::METHOD,
             path: E::PATH,
             access,
+            untimed: E::UNTIMED,
             errors: E::Error::CODES,
             #[cfg(any(test, feature = "test-hooks"))]
             path_type: E::Path::inline(),
@@ -450,7 +483,10 @@ fn build_router(ctx: Ctx, features: Vec<Feature>) -> Router {
     let mut access = HashMap::new();
     for feature in features {
         for e in &feature.endpoints {
-            access.insert((e.method.clone(), format!("/api/v1{}", e.path)), e.access);
+            access.insert(
+                (e.method.clone(), format!("/api/v1{}", e.path)),
+                (e.access, e.untimed),
+            );
         }
         router = router.merge(feature.router);
     }
@@ -463,12 +499,13 @@ fn build_router(ctx: Ctx, features: Vec<Feature>) -> Router {
         .with_state(ctx)
 }
 
-type Guard = (Ctx, Arc<HashMap<(Method, String), Access>>);
+type Routes = HashMap<(Method, String), (Access, bool)>;
+type Guard = (Ctx, Arc<Routes>);
 async fn guard(State((ctx, access)): State<Guard>, request: Request, next: Next) -> Response {
     let port = ctx.port;
     let response = match admit(&ctx, &access, request) {
         // The upgrade answers at once; the socket then runs outside this request.
-        Ok(request) if request.uri().path() == "/api/v1/events" => {
+        Ok(request) if request.uri().path() == "/api/v1/events" || untimed(&access, &request) => {
             error::normalize(next.run(request).await)
         }
         Ok(request) => match tokio::time::timeout(ctx.limits.request, next.run(request)).await {
@@ -479,11 +516,14 @@ async fn guard(State((ctx, access)): State<Guard>, request: Request, next: Next)
     };
     with_security_headers(response, port)
 }
-fn admit(
-    ctx: &Ctx,
-    access: &HashMap<(Method, String), Access>,
-    mut request: Request,
-) -> Result<Request, CommonError> {
+fn untimed(access: &Routes, request: &Request) -> bool {
+    request
+        .extensions()
+        .get::<MatchedPath>()
+        .and_then(|p| access.get(&(request.method().clone(), p.as_str().to_owned())))
+        .is_some_and(|(_, untimed)| *untimed)
+}
+fn admit(ctx: &Ctx, access: &Routes, mut request: Request) -> Result<Request, CommonError> {
     let h = request.headers();
     let header = |name: &str| h.get(name).map(|v| v.to_str().unwrap_or(""));
     security::admit(
@@ -518,7 +558,7 @@ fn admit(
         .get::<MatchedPath>()
         .map(|p| p.as_str().to_owned());
     let level = route
-        .and_then(|r| access.get(&(request.method().clone(), r)).copied())
+        .and_then(|r| access.get(&(request.method().clone(), r)).map(|(a, _)| *a))
         .unwrap_or(Access::Session);
     let websocket = request.uri().path() == "/api/v1/events";
     let now = ctx.clock.now();

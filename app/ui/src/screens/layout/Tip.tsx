@@ -6,7 +6,7 @@ export function Tip({ label, side = 'bottom', children }: { label: ReactNode; si
     <Tooltip.Root>
       <Tooltip.Trigger render={children} />
       <Tooltip.Portal>
-        <Tooltip.Positioner side={side} sideOffset={8}>
+        <Tooltip.Positioner className="tooltip-positioner" side={side} sideOffset={8}>
           <Tooltip.Popup className="tooltip">{label}</Tooltip.Popup>
         </Tooltip.Positioner>
       </Tooltip.Portal>

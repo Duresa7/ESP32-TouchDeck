@@ -73,6 +73,10 @@
   --bezel-radius: 0.049; /* corner radius of the case */
   --bezel-screen-radius: 0.012; /* corner radius of the glass */
 
+  --layer-dock: 10;
+  --layer-dialog: 20;
+  --layer-popup: 30;
+
   /* Focus. One ring for every focusable thing in the app. */
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;

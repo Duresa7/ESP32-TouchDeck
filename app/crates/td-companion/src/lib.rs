@@ -3,13 +3,16 @@ pub mod api;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod bindings;
 pub mod devices;
+mod dialog_text;
 pub mod features;
 pub mod jobs;
 pub mod link;
 mod process;
 mod runtime;
 mod serve;
+pub mod startup;
 pub mod store;
+pub mod tray;
 pub use serve::Limits;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod testing;

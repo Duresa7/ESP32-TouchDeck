@@ -30,18 +30,19 @@ impl TestCompanion {
     }
     /// Starts with other connection and time limits, so limit tests run in milliseconds.
     pub async fn start_with(limits: crate::Limits) -> Self {
-        Self::start_router(limits, false, None, Box::new(NoCatalogNetwork)).await
+        Self::start_router(limits, false, None, None, Box::new(NoCatalogNetwork)).await
     }
     pub async fn start_with_catalog(
         limits: crate::Limits,
         fetcher: Box<dyn td_host::catalog::Fetcher>,
     ) -> Self {
-        Self::start_router(limits, false, None, fetcher).await
+        Self::start_router(limits, false, None, None, fetcher).await
     }
     pub async fn start_release_router() -> Self {
         Self::start_router(
             crate::Limits::default(),
             true,
+            None,
             None,
             Box::new(NoCatalogNetwork),
         )
@@ -53,6 +54,7 @@ impl TestCompanion {
             crate::Limits::default(),
             false,
             Some(grants),
+            None,
             Box::new(NoCatalogNetwork),
         )
         .await
@@ -61,6 +63,7 @@ impl TestCompanion {
         limits: crate::Limits,
         release: bool,
         grants: Option<Arc<dyn GrantStore>>,
+        desktop: Option<Arc<crate::tray::Desktop>>,
         fetcher: Box<dyn td_host::catalog::Fetcher>,
     ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -78,6 +81,9 @@ impl TestCompanion {
             data.path().join("cache/catalog"),
             fetcher,
         ));
+        if let Some(desktop) = desktop {
+            ctx.desktop = desktop;
+        }
         let config = Config::mock(Some(data.path().join("devices.json")));
         let (ports, input) = config.mock.clone().unwrap();
         ctx.devices.start(config);
@@ -89,7 +95,12 @@ impl TestCompanion {
         let stop = ctx.shutdown.subscribe();
         let task = tokio::spawn(crate::serve::serve(listener, router, limits, stop));
         let url = format!("http://127.0.0.1:{port}");
-        let client = reqwest::Client::new();
+        // Below the 5 s header-read limit, so a pooled connection is never reused as the
+        // Companion closes it.
+        let client = reqwest::Client::builder()
+            .pool_idle_timeout(Duration::from_secs(4))
+            .build()
+            .unwrap();
         let pairing_token = ctx.pairing_token();
         let session: serde_json::Value = client
             .post(format!("{url}/api/v1/auth/sessions"))
@@ -114,6 +125,22 @@ impl TestCompanion {
             url,
             client,
         }
+    }
+    pub async fn restart(&mut self) {
+        let desktop = self.ctx.desktop.clone();
+        assert!(self.stop(Duration::from_secs(5)).await);
+        *self = Self::start_router(
+            crate::Limits::default(),
+            false,
+            None,
+            Some(desktop),
+            Box::new(NoCatalogNetwork),
+        )
+        .await;
+    }
+    pub fn pairing_delivery(&self) -> (Option<String>, Option<String>) {
+        let (opener, notifier) = self.ctx.desktop.captures.as_ref().unwrap();
+        (opener.0.lock().take(), notifier.0.lock().take())
     }
     /// Plugs in a mock Device with v2 Firmware under this USB serial and waits until it's
     /// connected.
@@ -171,6 +198,12 @@ impl TestCompanion {
     pub fn device(&self, id: &DeviceId) -> Option<DeviceSummary> {
         self.ctx.devices.get(id)
     }
+    pub fn firmware_prompter(
+        &self,
+        prompter: std::sync::Arc<dyn crate::features::firmware::Prompter>,
+    ) {
+        self.ctx.firmware.set_prompter(prompter);
+    }
     /// The mock behind a USB serial, to drive it or read what it received.
     pub fn deck(&self, id: &str) -> td_link::MockDeck {
         self.ports.deck(id).expect("a plugged mock")
@@ -205,6 +238,12 @@ impl TestCompanion {
     /// Whether anything asked the Companion to stop.
     pub fn shutdown_requested(&self) -> bool {
         *self.ctx.shutdown.borrow()
+    }
+    pub fn browser_token(&self) -> String {
+        self.ctx.browser_token()
+    }
+    pub fn current_pairing_token(&self) -> String {
+        self.ctx.pairing_token()
     }
     pub fn clock(&self) -> TestClock {
         TestClock(self.ctx.clone())

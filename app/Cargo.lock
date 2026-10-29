@@ -5165,6 +5165,7 @@ dependencies = [
  "libc",
  "parking_lot",
  "reqwest 0.12.28",
+ "semver",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -5181,6 +5182,7 @@ dependencies = [
  "tokio-tungstenite",
  "ts-rs",
  "windows-sys 0.61.2",
+ "zip 9.1.1",
 ]
 
 [[package]]
@@ -5199,6 +5201,8 @@ version = "0.1.0"
 dependencies = [
  "freedesktop-icons",
  "image",
+ "inventory",
+ "keyring",
  "libc",
  "open",
  "resvg",
@@ -5207,6 +5211,7 @@ dependencies = [
  "sha2 0.10.9",
  "td-core",
  "time",
+ "ts-rs",
  "ureq",
  "url",
  "windows 0.62.2",
