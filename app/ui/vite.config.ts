@@ -27,7 +27,7 @@ export default defineConfig({
   preview: { host: '127.0.0.1', port: 5174, strictPort: true },
   build: { target: 'es2022' },
   test: {
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}'],
     environment: 'node',
   },
 });

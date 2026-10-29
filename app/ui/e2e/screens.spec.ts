@@ -31,7 +31,7 @@ for (const theme of ['light', 'dark'] as const) {
     });
 
     test('keyboard focus on the nav cluster', async ({ page }) => {
-      await page.keyboard.press('Tab');
+      await page.getByRole('button', { name: 'Home', exact: true }).focus();
       await page.keyboard.press('Tab');
       await expect(page.locator('.nav-button:focus-visible')).toHaveAttribute('aria-label', 'Layout');
       await page.screenshot({ path: join(folder!, `focus-nav-${theme}.png`) });
