@@ -104,6 +104,20 @@ test('a pressed command Tile waits for approval on this PC, and the wait clears 
   await expect(page.getByTestId('action-entry').first()).toHaveAttribute('data-status', 'denied');
 });
 
+test('the pending card writes an invisible character in an argument as an escape, and the Tile keeps the raw value', async ({ page }) => {
+  const id = await addTile(page, 'command');
+  await setCommand(page, 'robocopy', ['report‮gpj.exe']);
+  await send(page);
+  expect(await storedAction(page, 'shortcuts', id)).toMatchObject({ args: ['report‮gpj.exe'] });
+
+  await press(page, 'shortcuts', id, 'command');
+  const pending = page.getByTestId('approval-pending');
+  await expect(pending.getByTestId('approval-args').locator('li')).toHaveText(['report\\u{202E}gpj.exe']);
+  expect(await pending.textContent()).not.toContain('‮');
+  await script(page, ['deny']);
+  await expect(pending).toHaveCount(0);
+});
+
 test('lists an always-allowed command and removes it', async ({ page }) => {
   const id = await addTile(page, 'command');
   await setCommand(page, 'robocopy', ['C:\\Projects', 'D:\\Backup']);

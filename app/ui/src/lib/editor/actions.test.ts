@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { ACTION_GROUPS, commandLine, freshAction, needsApproval, processOf, sameProcess, spellShortcut, splitArgs, switchKind } from './actions.ts';
+import { ACTION_GROUPS, commandLine, escapeInvisible, freshAction, needsApproval, processOf, sameProcess, spellShortcut, splitArgs, switchKind } from './actions.ts';
 import { friendlyRefusal } from './messages.ts';
 import { setAction, starterLayout, type Action } from './validate.ts';
 
@@ -84,6 +84,16 @@ describe('what the form shows', () => {
   test('a command line quotes the parts that hold spaces or quotes', () => {
     expect(commandLine('robocopy', ['C:\\Projects', 'D:\\My Backup', '/MIR'])).toBe('robocopy C:\\Projects "D:\\My Backup" /MIR');
     expect(commandLine('C:\\Program Files\\Tool.exe', ['say "hi"', ''])).toBe('"C:\\Program Files\\Tool.exe" "say \\"hi\\"" ""');
+  });
+
+  test('display text escapes control, format and separator characters as the dialog on the PC does', () => {
+    expect(escapeInvisible('a\u202Eb')).toBe('a\\u{202E}b');
+    expect(escapeInvisible('\u200Bzero')).toBe('\\u{200B}zero');
+    expect(escapeInvisible('\uFEFF')).toBe('\\u{FEFF}');
+    expect(escapeInvisible('one\ntwo')).toBe('one\\u{000A}two');
+    expect(escapeInvisible('line\u2028end')).toBe('line\\u{2028}end');
+    expect(escapeInvisible('Backup to D: now')).toBe('Backup to D: now');
+    expect(escapeInvisible('C:\\Program Files\\App\\app.exe')).toBe('C:\\Program Files\\App\\app.exe');
   });
 });
 

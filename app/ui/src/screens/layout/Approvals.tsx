@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import clsx from 'clsx';
-import type { AllowedAction, ApprovalRequest } from '../../companion/actions-api.ts';
+import type { AllowedAction, ApprovalRequest } from '../../companion/api.ts';
 import { actionsStore, useActions } from '../../companion/actions.ts';
 import { useCompanion } from '../../companion/connection.ts';
 import { isApiError, toApiError } from '../../companion/errors.ts';
-import { commandLine, processOf, sameProcess, type Started } from '../../lib/editor/actions.ts';
+import { commandLine, escapeInvisible, processOf, sameProcess, type Started } from '../../lib/editor/actions.ts';
 import type { Action, Layout } from '../../lib/editor/validate.ts';
 import { button } from '../../shell/button.ts';
 
@@ -14,13 +14,13 @@ function CommandFacts({ program, args, cwd, shell }: Pick<Started, 'program' | '
   return (
     <dl className="command-facts">
       <dt>Program</dt>
-      <dd data-testid="approval-program">{program}</dd>
+      <dd data-testid="approval-program">{escapeInvisible(program)}</dd>
       <dt>Arguments</dt>
       <dd>
         {args.length ? (
           <ol className="command-args" data-testid="approval-args">
             {args.map((arg, i) => (
-              <li key={i}>{arg}</li>
+              <li key={i}>{escapeInvisible(arg)}</li>
             ))}
           </ol>
         ) : (
@@ -28,7 +28,7 @@ function CommandFacts({ program, args, cwd, shell }: Pick<Started, 'program' | '
         )}
       </dd>
       <dt>Folder</dt>
-      <dd className={clsx(!cwd && 'is-empty')}>{cwd || "Open TouchDeck's folder"}</dd>
+      <dd className={clsx(!cwd && 'is-empty')}>{cwd ? escapeInvisible(cwd) : "Open TouchDeck's folder"}</dd>
       <dt>System shell</dt>
       <dd>{shell ? 'Yes' : 'No'}</dd>
     </dl>
@@ -68,7 +68,6 @@ function Pending({ request, layout, device }: { request: ApprovalRequest; layout
   );
 }
 
-/** Every request the dialog on this PC is asking about for one Device. They clear when the dialog is answered. */
 export function PendingApprovals({ deviceId, device, layout }: { deviceId: string; device: string; layout: Layout }) {
   const companion = useCompanion();
   const approvals = useActions((s) => s.approvals);
@@ -88,7 +87,6 @@ export function PendingApprovals({ deviceId, device, layout }: { deviceId: strin
   );
 }
 
-/** Under a Tile that starts a program: the PC asks first, and this is exactly what it would run. */
 export function ApprovalNote({ action }: { action: Action }) {
   const started = processOf(action);
   if (!started) return null;
@@ -99,7 +97,7 @@ export function ApprovalNote({ action }: { action: Action }) {
       </p>
       {started.program.trim() !== '' && (
         <p className="command-line" data-testid="command-line">
-          {commandLine(started.program, started.args)}
+          {escapeInvisible(commandLine(started.program, started.args))}
         </p>
       )}
     </div>
@@ -109,7 +107,7 @@ export function ApprovalNote({ action }: { action: Action }) {
 function AllowedRow({ allowed, mine, onRemoved }: { allowed: AllowedAction; mine: boolean; onRemoved(): void }) {
   const companion = useCompanion();
   const [problem, setProblem] = useState<string | null>(null);
-  const notes = [mine ? 'This Tile' : '', allowed.cwd ? `in ${allowed.cwd}` : '', allowed.shell ? 'through the system shell' : ''].filter(Boolean);
+  const notes = [mine ? 'This Tile' : '', allowed.cwd ? `in ${escapeInvisible(allowed.cwd)}` : '', allowed.shell ? 'through the system shell' : ''].filter(Boolean);
   const remove = () => {
     setProblem(null);
     companion.actions.allowed_remove({ hash: allowed.hash }).then(onRemoved, (error: unknown) => {
@@ -120,7 +118,7 @@ function AllowedRow({ allowed, mine, onRemoved }: { allowed: AllowedAction; mine
   return (
     <li className="allowed-row" data-testid="allowed-action" data-hash={allowed.hash} data-mine={mine ? 'true' : undefined}>
       <span className="allowed-text">
-        <span className="command-line">{commandLine(allowed.program, allowed.args)}</span>
+        <span className="command-line">{escapeInvisible(commandLine(allowed.program, allowed.args))}</span>
         {notes.length > 0 && <span className="allowed-sub">{notes.join(', ')}</span>}
         {problem && <span className="field-error">{problem}</span>}
       </span>
@@ -131,7 +129,6 @@ function AllowedRow({ allowed, mine, onRemoved }: { allowed: AllowedAction; mine
   );
 }
 
-/** Actions someone chose Always allow for on this PC. Remove makes the next tap ask again. */
 export function AllowedActions({ action }: { action: Action }) {
   const companion = useCompanion();
   const allowed = useActions((s) => s.allowed);

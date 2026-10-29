@@ -5,7 +5,6 @@ export interface Choice {
   name: string;
 }
 
-/** HID keyboard usages: letters, digits, and F1 to F24. */
 export const KEYS: readonly Choice[] = [
   ...Array.from({ length: 26 }, (_, i) => ({ usage: 4 + i, name: String.fromCharCode(65 + i) })),
   ...Array.from({ length: 9 }, (_, i) => ({ usage: 30 + i, name: String(i + 1) })),
@@ -14,7 +13,6 @@ export const KEYS: readonly Choice[] = [
   ...Array.from({ length: 12 }, (_, i) => ({ usage: 104 + i, name: `F${i + 13}` })),
 ];
 
-/** HID consumer usages for the media keys. */
 export const MEDIA: readonly Choice[] = [
   { usage: 205, name: 'Play or pause' },
   { usage: 181, name: 'Next track' },
@@ -27,7 +25,6 @@ export const MEDIA: readonly Choice[] = [
 
 export const MOD_NAMES: Record<Modifier, string> = { ctrl: 'Ctrl', shift: 'Shift', alt: 'Alt', win: 'Windows key' };
 
-/** The kinds the When tapped list offers, grouped by where they happen. Live tiles come from Add to Layout instead. */
 export const ACTION_GROUPS: readonly { name: string; kinds: readonly { type: ActionType; name: string }[] }[] = [
   {
     name: 'Keyboard',
@@ -54,7 +51,6 @@ export const ACTION_GROUPS: readonly { name: string; kinds: readonly { type: Act
   },
 ];
 
-/** The values a CLIProxyAPI Live tile can show. */
 export const PROXY_FIELDS: Readonly<Record<string, string>> = {
   five_hour_pct: '5-hour limit used',
   seven_day_pct: '7-day limit used',
@@ -67,7 +63,6 @@ export const PROXY_FIELDS: Readonly<Record<string, string>> = {
   recent_10m: 'Requests in 10 min',
 };
 
-/** A kind's starting action. A Page jump goes to the first other Page. */
 export function freshAction(type: ActionType, pages: readonly string[], here?: string): Action {
   switch (type) {
     case 'key':
@@ -101,7 +96,6 @@ function started(action: Action): { program: string; args: string[]; cwd: string
   return null;
 }
 
-/** Changes an action's kind, keeping what the new kind shares: an app's path is a command's program, and both keep their arguments and folder. */
 export function switchKind(from: Action, to: ActionType, pages: readonly string[], here?: string): Action {
   if (from.type === to) return from;
   const fresh = freshAction(to, pages, here);
@@ -112,13 +106,11 @@ export function switchKind(from: Action, to: ActionType, pages: readonly string[
   return fresh;
 }
 
-/** "Ctrl + Shift + C" */
 export function spellShortcut(action: Extract<Action, { type: 'key' }>): string {
   const key = KEYS.find((k) => k.usage === action.usage)?.name ?? `Key code ${action.usage}`;
   return [...MODIFIERS.filter((m) => action.mods.includes(m)).map((m) => MOD_NAMES[m].replace(' key', '')), key].join(' + ');
 }
 
-/** Arguments typed one per line. An empty box is no arguments. */
 export const splitArgs = (text: string) => (text === '' ? [] : text.split('\n'));
 
 export const isWebAddress = (target: string) => /^(?:https?|mailto):/i.test(target.trim());
@@ -131,7 +123,6 @@ export interface Started {
   shell: boolean;
 }
 
-/** What a Tile starts on this PC, as the dialog on the PC shows it, or null when it starts no process. */
 export function processOf(action: Action): Started | null {
   switch (action.type) {
     case 'command':
@@ -145,20 +136,22 @@ export function processOf(action: Action): Started | null {
   }
 }
 
-/** Whether a press asks on this PC first (ADR 0006): commands, app launches, and opening anything but a web or mail address. */
 export function needsApproval(action: Action): boolean {
   return action.type === 'command' || action.type === 'launch' || (action.type === 'open' && !isWebAddress(action.target));
 }
 
 type Process = Pick<Started, 'program' | 'args' | 'cwd' | 'shell'> & { kind: string };
 
-/** Whether two descriptions of a started process name the same kind, program, arguments, folder and shell. */
 export function sameProcess(a: Process, b: Process): boolean {
   return a.kind === b.kind && a.program === b.program && a.cwd === b.cwd && a.shell === b.shell && a.args.length === b.args.length && a.args.every((arg, i) => arg === b.args[i]);
 }
 
-/** A command line for reading, with arguments that hold spaces or quotes in double quotes. */
 export function commandLine(program: string, args: readonly string[]): string {
   const quote = (part: string) => (part === '' || /[\s"]/.test(part) ? `"${part.replaceAll('"', '\\"')}"` : part);
   return [quote(program), ...args.map(quote)].join(' ');
 }
+
+const INVISIBLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+
+export const escapeInvisible = (text: string) =>
+  text.replace(INVISIBLE, (char) => `\\u{${(char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')}}`);
