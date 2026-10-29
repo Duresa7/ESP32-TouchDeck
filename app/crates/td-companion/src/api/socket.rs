@@ -12,15 +12,26 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, HashSet, VecDeque},
     sync::{Arc, Weak},
     time::Duration,
 };
 use ts_rs::TS;
 
-/// A frame on the `state` topic. The type is the frame's `data`.
+/// Which frames a socket receives. `state` is always on; the others are opt-in per Device.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum Topic {
+    State,
+    Console,
+    KeyMirror,
+    DeviceEvents,
+}
+/// A frame on the event stream. The type is the frame's `data`.
 pub trait Event: Serialize + TS + 'static {
     const NAME: &'static str;
+    /// An opt-in topic reaches only sockets that subscribed to it for the frame's Device.
+    const TOPIC: Topic = Topic::State;
     /// The Device the frame is about, sent as `device`.
     fn device(&self) -> Option<&str> {
         None
@@ -55,12 +66,26 @@ pub struct CompanionStopping {
 impl Event for CompanionStopping {
     const NAME: &'static str = "companion.stopping";
 }
+/// Frames of an opt-in topic that the socket's queue had no room for.
+#[derive(Serialize, Deserialize, TS)]
+pub struct Lagged {
+    pub topic: Topic,
+    pub device: String,
+    pub dropped: u64,
+}
+impl Event for Lagged {
+    const NAME: &'static str = "lagged";
+    fn device(&self) -> Option<&str> {
+        Some(&self.device)
+    }
+}
 pub(super) fn kernel_events() -> Vec<EventInfo> {
     let feature = super::Feature::new("kernel")
         .event::<Hello>()
         .event::<Sync>()
         .event::<AuthRevoked>()
-        .event::<CompanionStopping>();
+        .event::<CompanionStopping>()
+        .event::<Lagged>();
     feature.events
 }
 fn frame<E: Event>(event: &E) -> serde_json::Value {
@@ -76,10 +101,20 @@ struct Queue {
     frames: VecDeque<(serde_json::Value, usize)>,
     bytes: usize,
     overflow: bool,
+    /// Opt-in frames dropped for lack of room, sent as `lagged` once the queue drains.
+    lagged: BTreeMap<(Topic, String), u64>,
 }
 struct Subscriber {
     queue: Mutex<Queue>,
+    topics: Mutex<HashSet<(Topic, String)>>,
     notify: tokio::sync::Notify,
+}
+/// What a client may send: `{"op": "subscribe" | "unsubscribe", "topic", "device"}`.
+#[derive(Deserialize)]
+struct TopicRequest {
+    op: String,
+    topic: Topic,
+    device: crate::devices::DeviceId,
 }
 /// Fans `state` frames out to every open socket, each with its own bounded queue.
 #[derive(Default, Clone)]
@@ -88,17 +123,33 @@ pub struct Events {
 }
 impl Events {
     pub fn publish<E: Event>(&self, event: &E) {
-        self.publish_frame(frame(event));
+        let device = event.device().map(str::to_owned);
+        self.publish_frame(frame(event), E::TOPIC, device);
     }
-    pub(crate) fn publish_frame(&self, frame: serde_json::Value) {
+    pub(crate) fn publish_frame(
+        &self,
+        frame: serde_json::Value,
+        topic: Topic,
+        device: Option<String>,
+    ) {
+        let key = (topic != Topic::State).then(|| (topic, device.unwrap_or_default()));
         let size = frame.to_string().len();
         self.subscribers.lock().retain(|weak| {
             let Some(s) = weak.upgrade() else {
                 return false;
             };
+            if let Some(key) = &key
+                && !s.topics.lock().contains(key)
+            {
+                return true;
+            }
             let mut q = s.queue.lock();
             if q.frames.len() >= 1024 || q.bytes + size > 4 * 1024 * 1024 {
-                q.overflow = true;
+                match &key {
+                    // An opt-in topic drops the frame and reports it; `state` can't lose one.
+                    Some(key) => *q.lagged.entry(key.clone()).or_default() += 1,
+                    None => q.overflow = true,
+                }
             } else {
                 q.bytes += size;
                 q.frames.push_back((frame.clone(), size));
@@ -116,6 +167,7 @@ impl Events {
     fn subscribe(&self) -> Arc<Subscriber> {
         let s = Arc::new(Subscriber {
             queue: Mutex::new(Queue::default()),
+            topics: Mutex::new(HashSet::new()),
             notify: tokio::sync::Notify::new(),
         });
         self.subscribers.lock().push(Arc::downgrade(&s));
@@ -213,7 +265,17 @@ async fn serve(socket: WebSocket, ctx: Ctx, client: ClientInfo) {
             if let Some((_, size)) = &next {
                 queue.bytes -= size;
             }
-            next
+            match next {
+                None => queue.lagged.pop_first().map(|((topic, device), dropped)| {
+                    let lagged = Lagged {
+                        topic,
+                        device,
+                        dropped,
+                    };
+                    (frame(&lagged), 0)
+                }),
+                next => next,
+            }
         };
         if let Some((value, _)) = next {
             if !send(&mut sink, numbered(value, &mut seq)).await {
@@ -238,6 +300,7 @@ async fn serve(socket: WebSocket, ctx: Ctx, client: ClientInfo) {
             }
             message = stream.next() => match message {
                 Some(Ok(Message::Pong(_))) => missed = 0,
+                Some(Ok(Message::Text(text))) => subscribe(&subscriber, &text),
                 Some(Ok(Message::Close(_))) => break Some(1000),
                 // A protocol error, such as a frame over the size limit, or a closed stream.
                 None | Some(Err(_)) => break None,
@@ -251,5 +314,27 @@ async fn serve(socket: WebSocket, ctx: Ctx, client: ClientInfo) {
             reason: "".into(),
         };
         send(&mut sink, Message::Close(Some(frame))).await;
+    }
+}
+
+/// Applies a `subscribe` or `unsubscribe` request. Anything else is ignored and the socket
+/// stays open. `state` is always on, so a request for it changes nothing.
+fn subscribe(subscriber: &Subscriber, text: &str) {
+    let Ok(request) = serde_json::from_str::<TopicRequest>(text) else {
+        return;
+    };
+    if request.topic == Topic::State {
+        return;
+    }
+    let key = (request.topic, request.device.as_str().to_owned());
+    let mut topics = subscriber.topics.lock();
+    match request.op.as_str() {
+        "subscribe" => {
+            topics.insert(key);
+        }
+        "unsubscribe" => {
+            topics.remove(&key);
+        }
+        _ => {}
     }
 }

@@ -1,0 +1,118 @@
+//! Link sessions for Layout and Asset work, one user per Device at a time.
+//!
+//! The work runs on the session the Device manager keeps for the Device, since the port can
+//! only be open once. The actor's own requests (settings, console) can interleave with it: a
+//! session matches replies to requests by sequence number.
+use crate::{
+    api::{ApiError, CommonError},
+    devices::{DeviceManager, DeviceSummary, LinkState, Reach},
+};
+use axum::http::StatusCode;
+use parking_lot::Mutex;
+use std::{collections::HashMap, sync::Arc};
+use td_link::{LinkError, Session, xfer::XferError};
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum DeviceLinkError {
+    #[error("The Device does not exist.")]
+    NotFound,
+    #[error("The Device is not connected.")]
+    NotConnected(Box<LinkState>),
+    #[error("The Device didn't reply in time.")]
+    Timeout,
+    #[error("The link to the Device failed: {0}")]
+    Link(String),
+    #[error(transparent)]
+    Common(#[from] CommonError),
+}
+impl DeviceLinkError {
+    pub fn from_xfer(error: XferError) -> Self {
+        match error {
+            XferError::Link(LinkError::Timeout(_)) => Self::Timeout,
+            other => Self::Link(other.to_string()),
+        }
+    }
+}
+impl ApiError for DeviceLinkError {
+    const CODES: &'static [&'static str] = &[
+        "device.not_found",
+        "device.not_connected",
+        "device.timeout",
+        "device.link",
+    ];
+    fn status(&self) -> StatusCode {
+        match self {
+            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::NotConnected(_) => StatusCode::CONFLICT,
+            Self::Timeout => StatusCode::GATEWAY_TIMEOUT,
+            Self::Link(_) => StatusCode::BAD_GATEWAY,
+            Self::Common(e) => e.status(),
+        }
+    }
+    fn code(&self) -> &'static str {
+        match self {
+            Self::NotFound => "device.not_found",
+            Self::NotConnected(_) => "device.not_connected",
+            Self::Timeout => "device.timeout",
+            Self::Link(_) => "device.link",
+            Self::Common(e) => e.code(),
+        }
+    }
+    fn details(&self) -> Option<serde_json::Value> {
+        match self {
+            Self::NotConnected(link) => Some(serde_json::json!({ "link": link })),
+            Self::Link(reason) => Some(serde_json::json!({ "reason": reason })),
+            Self::Common(e) => e.details(),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Links {
+    devices: DeviceManager,
+    locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+}
+impl Links {
+    pub(crate) fn new(devices: DeviceManager) -> Self {
+        Self {
+            devices,
+            locks: Default::default(),
+        }
+    }
+    /// The Device's summary and port, when it's connected.
+    pub fn connected(&self, id: &str) -> Result<(DeviceSummary, String), DeviceLinkError> {
+        let device = self
+            .devices
+            .summaries()
+            .into_iter()
+            .find(|d| d.id == id)
+            .ok_or(DeviceLinkError::NotFound)?;
+        match &device.link {
+            LinkState::Connected { port, .. } => {
+                let port = port.clone();
+                Ok((device, port))
+            }
+            other => Err(DeviceLinkError::NotConnected(Box::new(other.clone()))),
+        }
+    }
+    /// Runs `work` with the Device's session. Blocking: call it off the async runtime.
+    /// Work on one Device waits for the work before it; other Devices don't wait.
+    pub fn with<R>(
+        &self,
+        id: &str,
+        work: impl FnOnce(&Session) -> R,
+    ) -> Result<R, DeviceLinkError> {
+        let lock = self.locks.lock().entry(id.into()).or_default().clone();
+        let _held = lock.lock();
+        let (device, _) = self.connected(id)?;
+        let session = self
+            .devices
+            .session(&device.id)
+            .map_err(|reach| match reach {
+                Reach::NotFound => DeviceLinkError::NotFound,
+                Reach::NotConnected(link) => DeviceLinkError::NotConnected(Box::new(link)),
+            })?;
+        Ok(work(&session))
+    }
+}

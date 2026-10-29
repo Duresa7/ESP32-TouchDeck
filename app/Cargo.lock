@@ -5160,6 +5160,7 @@ dependencies = [
  "getrandom 0.3.4",
  "hmac 0.12.1",
  "hyper-util",
+ "image",
  "inventory",
  "libc",
  "parking_lot",
@@ -5172,6 +5173,7 @@ dependencies = [
  "subtle",
  "td-companion",
  "td-core",
+ "td-host",
  "td-link",
  "tempfile",
  "thiserror 2.0.21",
@@ -5188,6 +5190,7 @@ dependencies = [
  "dirs 6.0.0",
  "serde",
  "serde_json",
+ "ts-rs",
 ]
 
 [[package]]

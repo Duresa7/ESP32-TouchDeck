@@ -5,6 +5,7 @@ mod error;
 pub mod security;
 mod socket;
 
+pub use crate::jobs::{JobKind, Jobs};
 pub(crate) use auth::{Auth, Clock};
 pub use auth::{ClientInfo, SessionInfo, SessionKind};
 use axum::{
@@ -19,7 +20,7 @@ use axum::{
 pub use error::{ApiError, CommonError, ErrorBody};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-pub use socket::{Event, Events};
+pub use socket::{Event, Events, Topic};
 use std::{collections::HashMap, future::Future, sync::Arc};
 use ts_rs::TS;
 
@@ -27,6 +28,10 @@ use ts_rs::TS;
 pub struct Ctx {
     pub devices: crate::devices::DeviceManager,
     pub events: Events,
+    pub jobs: crate::jobs::Jobs,
+    pub links: crate::link::Links,
+    pub layouts: crate::store::LayoutStore,
+    pub assets: crate::store::AssetStore,
     auth: Arc<Mutex<Auth>>,
     pub(crate) clock: Clock,
     pub(crate) shutdown: tokio::sync::watch::Sender<bool>,
@@ -45,13 +50,20 @@ impl Ctx {
         mock: bool,
         runtime: Option<Arc<crate::runtime::Runtime>>,
         limits: crate::Limits,
+        data: &std::path::Path,
     ) -> Self {
         let events = Events::default();
+        let clock = Clock::default();
+        let devices = crate::devices::DeviceManager::new(events.clone());
         Self {
-            devices: crate::devices::DeviceManager::new(events.clone()),
+            jobs: crate::jobs::Jobs::new(events.clone(), clock.clone()),
+            links: crate::link::Links::new(devices.clone()),
+            layouts: crate::store::LayoutStore::new(data.join("layouts")),
+            assets: crate::store::AssetStore::new(data.join("assets")),
+            devices,
             events,
             auth: Arc::new(Mutex::new(Auth::new())),
-            clock: Clock::default(),
+            clock,
             shutdown: tokio::sync::watch::channel(false).0,
             port,
             runtime,
@@ -105,11 +117,22 @@ pub trait Endpoint: Sized + Send + Sync + 'static {
         ctx: Ctx,
         req: Req<Self>,
     ) -> impl Future<Output = Result<Self::Ok, Self::Error>> + Send;
+    /// Turns a success into the response: `STATUS` with the JSON value, or no body for `204`.
+    /// Routes that send headers or raw bytes override it.
+    fn respond(value: Self::Ok) -> Response {
+        if Self::STATUS == StatusCode::NO_CONTENT {
+            Self::STATUS.into_response()
+        } else {
+            (Self::STATUS, axum::Json(value)).into_response()
+        }
+    }
 }
 pub struct Req<E: Endpoint> {
     pub path: E::Path,
     pub query: E::Query,
     pub body: E::Body,
+    /// The request headers, for routes that read one such as `If-Match`.
+    pub headers: HeaderMap,
     client: Option<ClientInfo>,
 }
 impl<E: Endpoint> Req<E> {
@@ -162,6 +185,15 @@ pub struct EndpointInfo {
     #[cfg(any(test, feature = "test-hooks"))]
     pub types: CollectTypes,
 }
+pub struct JobKindInfo {
+    pub name: &'static str,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub progress_type: String,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub result_type: String,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub types: CollectTypes,
+}
 pub struct EventInfo {
     pub name: &'static str,
     #[cfg(any(test, feature = "test-hooks"))]
@@ -183,6 +215,7 @@ pub struct Feature {
     pub endpoints: Vec<EndpointInfo>,
     pub events: Vec<EventInfo>,
     pub snapshots: Vec<Snapshot>,
+    pub jobs: Vec<JobKindInfo>,
     router: Router<Ctx>,
 }
 #[cfg(any(test, feature = "test-hooks"))]
@@ -196,6 +229,7 @@ impl Feature {
             endpoints: vec![],
             events: vec![],
             snapshots: vec![],
+            jobs: vec![],
             router: Router::new(),
         }
     }
@@ -206,6 +240,24 @@ impl Feature {
             data_type: E::name(),
             #[cfg(any(test, feature = "test-hooks"))]
             types: collect::<E>,
+        });
+        self
+    }
+    /// A Job kind, so the generated `JobMap` types its progress and result.
+    pub fn job<K: JobKind>(mut self) -> Self {
+        #[cfg(any(test, feature = "test-hooks"))]
+        fn types<K: JobKind>(decls: &mut crate::bindings::Decls) {
+            decls.add::<K::Progress>();
+            decls.add::<K::Result>();
+        }
+        self.jobs.push(JobKindInfo {
+            name: K::NAME,
+            #[cfg(any(test, feature = "test-hooks"))]
+            progress_type: K::Progress::name(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            result_type: K::Result::name(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            types: types::<K>,
         });
         self
     }
@@ -279,6 +331,7 @@ pub fn registry() -> Vec<Feature> {
                 last.endpoints.extend(feature.endpoints);
                 last.events.extend(feature.events);
                 last.snapshots.extend(feature.snapshots);
+                last.jobs.extend(feature.jobs);
                 let router = std::mem::take(&mut last.router);
                 last.router = router.merge(feature.router);
             }
@@ -329,6 +382,7 @@ async fn dispatch<E: Endpoint>(State(ctx): State<Ctx>, request: Request) -> Resp
                 path,
                 query,
                 body,
+                headers: parts.headers,
                 client,
             },
         ))
@@ -338,8 +392,7 @@ async fn dispatch<E: Endpoint>(State(ctx): State<Ctx>, request: Request) -> Resp
         Err(e) => e.into_response(),
         Ok(handled) => match handled.await {
             Err(e) => error::respond(&e),
-            Ok(_) if E::STATUS == StatusCode::NO_CONTENT => E::STATUS.into_response(),
-            Ok(value) => (E::STATUS, axum::Json(value)).into_response(),
+            Ok(value) => E::respond(value),
         },
     }
 }
