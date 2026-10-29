@@ -21,7 +21,11 @@ fn main() {
     let bytes = match env::var_os("TOUCHDECK_FIRMWARE_BUNDLE") {
         Some(path) => {
             println!("cargo:rerun-if-changed={}", Path::new(&path).display());
-            fs::read(path).expect("read bundled Firmware")
+            let bytes = fs::read(path).expect("read bundled Firmware");
+            if let Err(reason) = td_link::bundle::Bundle::parse(&bytes) {
+                panic!("TOUCHDECK_FIRMWARE_BUNDLE is not a valid Firmware bundle: {reason}");
+            }
+            bytes
         }
         None => Vec::new(),
     };

@@ -246,7 +246,7 @@ A session can install only two kinds of Firmware bundle: the one bundled with th
 
 Implementation decisions for #77:
 
-- `TOUCHDECK_FIRMWARE_BUNDLE` selects the `.tdfw` embedded at build time. Source builds without it report `firmware.bundle_invalid` for the bundled selection; they never substitute mock Firmware on real ports.
+- `TOUCHDECK_FIRMWARE_BUNDLE` selects the `.tdfw` embedded at build time. Source builds without it report `firmware.bundle_invalid` for the bundled selection; they never substitute mock Firmware on real ports. When it is set, `build.rs` runs `Bundle::parse` on the file and fails the build if the bundle is malformed.
 - Versions that cannot be ordered as semantic versions require confirmation unless the version strings match.
 - The Device manager reserves the target, lends its existing session for OTA, closes the session before ROM recovery or reconnect, and resumes discovery on every exit path.
 - A newly installed board uses `needs-setup`, overriding the ordinary discovery default of `ready`.

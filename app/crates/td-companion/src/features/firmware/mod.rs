@@ -102,7 +102,9 @@ impl Firmware {
             picked: Default::default(),
             dialog: Default::default(),
             prompter: Arc::new(Mutex::new(Arc::new(Native))),
-            bundled: Bundle::parse(bytes).ok().map(Arc::new),
+            bundled: (!bytes.is_empty()).then(|| {
+                Arc::new(Bundle::parse(bytes).expect("build.rs checked the bundled Firmware"))
+            }),
         }
     }
     #[cfg(any(test, feature = "test-hooks"))]
