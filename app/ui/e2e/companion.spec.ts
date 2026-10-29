@@ -192,3 +192,18 @@ test('a board on a mock port shows a New board card that waits for a click, and 
   expect(unplugged.status()).toBe(204);
   await expect(card).toHaveCount(0, { timeout: 15_000 });
 });
+
+test('a name saved through settings_patch ends setup, and a ready Device never opens it', async ({ page, request }) => {
+  const api = await companion(request);
+  const named = await api('PATCH', '/devices/mock0003/settings', { idle_timeout_s: null, orientation: null, name: 'Shelf', brightness: null });
+  expect(named.status()).toBe(200);
+  const device: { name: string | null; setup: string } = await (await api('GET', '/devices/mock0003')).json();
+  expect(device).toMatchObject({ name: 'Shelf', setup: 'ready' });
+
+  await page.goto('/');
+  await expect(page.getByRole('list', { name: 'Devices' }).getByRole('listitem').nth(2)).toContainText('Shelf');
+  await expect(page.getByTestId('onboarding')).toHaveCount(0);
+
+  const restored = await api('PATCH', '/devices/mock0003/settings', { idle_timeout_s: null, orientation: null, name: 'Mock Device mock0003', brightness: null });
+  expect(restored.status()).toBe(200);
+});
