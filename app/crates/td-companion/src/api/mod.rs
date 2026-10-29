@@ -32,6 +32,7 @@ pub struct Ctx {
     pub links: crate::link::Links,
     pub layouts: crate::store::LayoutStore,
     pub assets: crate::store::AssetStore,
+    pub(crate) uploads: crate::features::uploads::Uploads,
     auth: Arc<Mutex<Auth>>,
     pub(crate) clock: Clock,
     pub(crate) shutdown: tokio::sync::watch::Sender<bool>,
@@ -60,6 +61,7 @@ impl Ctx {
             links: crate::link::Links::new(devices.clone()),
             layouts: crate::store::LayoutStore::new(data.join("layouts")),
             assets: crate::store::AssetStore::new(data.join("assets")),
+            uploads: Default::default(),
             devices,
             events,
             auth: Arc::new(Mutex::new(Auth::new())),
@@ -80,7 +82,10 @@ impl Ctx {
     }
     /// Forgets sessions that were revoked or have ended and hold no sockets.
     pub(crate) fn sweep_sessions(&self) -> usize {
-        self.auth.lock().sweep(self.clock.now())
+        let now = self.clock.now();
+        let mut auth = self.auth.lock();
+        self.uploads.sweep(now, |id| auth.active(id, now));
+        auth.sweep(now)
     }
     pub(crate) fn runtime_value(&self) -> serde_json::Value {
         serde_json::json!({
@@ -108,6 +113,17 @@ pub trait Endpoint: Sized + Send + Sync + 'static {
     const PATH: &'static str;
     const STATUS: StatusCode = StatusCode::OK;
     const BODY_LIMIT: usize = 1 << 20;
+    fn read_body(
+        ctx: &Ctx, headers: &HeaderMap, _client: Option<&ClientInfo>, body: axum::body::Body,
+    ) -> impl Future<Output = Result<Self::Body, CommonError>> + Send {
+        async move {
+            let bytes = tokio::time::timeout(ctx.limits.body_read, to_bytes(body, Self::BODY_LIMIT))
+                .await.map_err(|_| CommonError::Timeout)?.map_err(|_| CommonError::TooLarge)?;
+            if !bytes.is_empty() && !is_json(headers) { return Err(CommonError::MediaType); }
+            serde_json::from_slice(if bytes.is_empty() { b"null" } else { &bytes })
+                .map_err(|e| CommonError::invalid("body", e))
+        }
+    }
     type Path: DeserializeOwned + Serialize + TS + Send + 'static;
     type Query: DeserializeOwned + Serialize + TS + Send + Default + 'static;
     type Body: RequestBody;
@@ -364,15 +380,7 @@ async fn dispatch<E: Endpoint>(State(ctx): State<Ctx>, request: Request) -> Resp
         };
         let query = serde_urlencoded::from_str(parts.uri.query().unwrap_or(""))
             .map_err(|e| CommonError::invalid("query", e))?;
-        let bytes = tokio::time::timeout(ctx.limits.body_read, to_bytes(body, E::BODY_LIMIT))
-            .await
-            .map_err(|_| CommonError::Timeout)?
-            .map_err(|_| CommonError::TooLarge)?;
-        if !bytes.is_empty() && !is_json(&parts.headers) {
-            return Err(CommonError::MediaType);
-        }
-        let body = serde_json::from_slice(if bytes.is_empty() { b"null" } else { &bytes })
-            .map_err(|e| CommonError::invalid("body", e))?;
+        let body = E::read_body(&ctx, &parts.headers, client.as_ref(), body).await?;
         #[cfg(any(test, feature = "test-hooks"))]
         ctx.handler_hits
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -455,6 +463,8 @@ fn admit(
         Method::POST | Method::PUT | Method::PATCH
     ) && h.contains_key("content-type")
         && !is_json(h)
+        && !(request.method() == Method::POST && request.uri().path() == "/api/v1/uploads"
+            && header("content-type").is_some_and(|v| v.starts_with("image/")))
     {
         return Err(CommonError::MediaType);
     }

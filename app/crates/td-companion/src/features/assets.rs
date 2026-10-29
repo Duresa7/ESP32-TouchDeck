@@ -40,6 +40,8 @@ impl From<&icons::Builtin> for Builtin {
 pub enum AssetError {
     #[error("The Asset does not exist.")]
     NotFound,
+    #[error("The upload expired or never existed.")]
+    UploadNotFound,
     #[error("The image or icon couldn't be rendered: {0}")]
     RenderFailed(String),
     #[error(transparent)]
@@ -52,6 +54,7 @@ pub enum AssetError {
 impl ApiError for AssetError {
     const CODES: &'static [&'static str] = &[
         "asset.not_found",
+        "upload.not_found",
         "asset.render_failed",
         "device.not_found",
         "device.not_connected",
@@ -61,7 +64,7 @@ impl ApiError for AssetError {
     ];
     fn status(&self) -> StatusCode {
         match self {
-            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::NotFound | Self::UploadNotFound => StatusCode::NOT_FOUND,
             Self::RenderFailed(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Device(e) => e.status(),
             Self::Job(e) => e.status(),
@@ -71,6 +74,7 @@ impl ApiError for AssetError {
     fn code(&self) -> &'static str {
         match self {
             Self::NotFound => "asset.not_found",
+            Self::UploadNotFound => "upload.not_found",
             Self::RenderFailed(_) => "asset.render_failed",
             Self::Device(e) => e.code(),
             Self::Job(e) => e.code(),
@@ -192,6 +196,7 @@ impl Endpoint for File {
 pub enum AssetSource {
     /// The icon of the program at `path`. Only its icon resource is read.
     App { path: String },
+    Upload { upload: String },
 }
 /// How an image that isn't square fills the Tile: whole inside it, or cropped to fill it.
 #[derive(Clone, Copy, Default, Serialize, Deserialize, TS)]
@@ -242,17 +247,19 @@ impl Endpoint for Create {
     type Ok = Job;
     type Error = AssetError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
+        let owner = req.client().id.clone();
         let CreateAsset { source, fit } = req.body;
         let work = ctx.clone();
         Ok(ctx
             .jobs
             .start::<RenderJob>(JobScope::Companion, true, move |job| {
-                render(&work, source, fit.unwrap_or_default(), job)
+                render(&work, &owner, source, fit.unwrap_or_default(), job)
             })?)
     }
 }
 fn render(
     ctx: &Ctx,
+    owner: &str,
     source: AssetSource,
     fit: Fit,
     job: &JobHandle<RenderJob>,
@@ -262,8 +269,13 @@ fn render(
         frames_total: 1,
     };
     job.progress(&progress(0));
-    let AssetSource::App { path } = source;
-    let image = icons::app_icon(std::path::Path::new(&path)).map_err(AssetError::RenderFailed)?;
+    let image = match source {
+        AssetSource::App { path } => icons::app_icon(std::path::Path::new(&path)).map_err(AssetError::RenderFailed)?,
+        AssetSource::Upload { upload } => {
+            let bytes = ctx.uploads.take(owner, &upload, ctx.clock.now()).ok_or(AssetError::UploadNotFound)?;
+            super::uploads::decode(&bytes)?
+        }
+    };
     job.check()?;
     let image = match fit {
         Fit::Contain => image,
@@ -374,6 +386,7 @@ fn prune(
 
 fn feature() -> Feature {
     Feature::new("assets")
+        .endpoint::<OnDevice>()
         .endpoint::<BuiltinList>()
         .endpoint::<Suggest>()
         .endpoint::<File>()
@@ -383,3 +396,23 @@ fn feature() -> Feature {
         .job::<PruneJob>()
 }
 inventory::submit! { Registration(feature) }
+
+#[derive(Serialize, Deserialize, TS)]
+pub struct DeviceAssets { pub ids: Vec<String>, pub storage_free: u64 }
+pub struct OnDevice;
+impl Endpoint for OnDevice {
+    const NAME: &'static str = "assets.on_device";
+    const METHOD: Method = Method::GET;
+    const PATH: &'static str = "/devices/{device}/assets";
+    type Path = DevicePath; type Query = NoQuery; type Body = (); type Ok = DeviceAssets; type Error = AssetError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<DeviceAssets, AssetError> {
+        blocking(move || ctx.links.with(req.path.device.as_str(), |session| {
+            let ids = td_link::asset::list_assets(session).map_err(asset_link)?.into_iter().map(|a| a.id).collect();
+            let storage_free = td_link::asset::asset_space(session).map_err(asset_link)?.free_bytes;
+            Ok::<_, AssetError>(DeviceAssets { ids, storage_free })
+        })).await??
+    }
+}
+fn asset_link(error: td_link::asset::AssetError) -> AssetError {
+    DeviceLinkError::Link(error.to_string()).into()
+}
