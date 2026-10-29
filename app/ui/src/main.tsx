@@ -5,7 +5,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Pair, takePairingCode } from './screens/Pair.tsx';
 import { App } from './App.tsx';
-import { CompanionContext, connect, pageEnvironment, type Environment } from './companion/connection.ts';
+import { CompanionContext, connect, EventsContext, pageEnvironment, type Environment } from './companion/connection.ts';
 import { createUpdatesStore, UpdatesContext, watchForUpdates } from './state/updates.ts';
 
 const isPair = window.location.pathname === '/pair';
@@ -19,16 +19,20 @@ const env: Environment =
       ? (await import('./companion/dev.ts')).devEnvironment(window)
       : pageEnvironment(window);
 
-const companion = isPair ? null : connect(env).companion;
+const connection = isPair ? null : connect(env);
+const companion = connection?.companion ?? null;
+const events = connection?.events ?? null;
 const updates = createUpdatesStore(env.updates);
 watchForUpdates(updates);
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <CompanionContext value={companion}>
-      <UpdatesContext value={updates}>
-        {isPair ? <Pair initialCode={initialCode} /> : <App />}
-      </UpdatesContext>
+      <EventsContext value={events}>
+        <UpdatesContext value={updates}>
+          {isPair ? <Pair initialCode={initialCode} /> : <App />}
+        </UpdatesContext>
+      </EventsContext>
     </CompanionContext>
   </StrictMode>,
 );
