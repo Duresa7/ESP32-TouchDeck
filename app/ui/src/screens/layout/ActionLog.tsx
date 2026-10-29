@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import type { ActionLog } from '../../companion/actions-api.ts';
+import type { ActionLog } from '../../companion/api.ts';
 import { actionsStore, useActions } from '../../companion/actions.ts';
 import { useCompanion } from '../../companion/connection.ts';
 import { useDevices } from '../../companion/devices.ts';

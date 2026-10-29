@@ -1,6 +1,5 @@
-import type { DeviceRemoved, DeviceSummary, Job, SyncData } from './api.ts';
-import { isActionLog, isApprovalRequest, isApprovalResolved, isKeyMirror, syncedApprovals } from './actions-api.ts';
 import type { ActionsStore } from './actions.ts';
+import type { ActionLog, Answer, ApprovalRequest, ApprovalResolved, DeviceKeyMirror, DeviceRemoved, DeviceSummary, Job, SyncData } from './api.ts';
 import type { DevicesStore } from './devices.ts';
 import type { JobsStore } from './jobs.ts';
 import type { Session } from './session.ts';
@@ -8,7 +7,6 @@ import type { Session } from './session.ts';
 export interface EventSocket {
   onmessage: ((event: { data: unknown }) => void) | null;
   onclose: ((event: { code: number }) => void) | null;
-  /** Sends a `subscribe` or `unsubscribe` op. */
   send(data: string): void;
   close(code?: number): void;
 }
@@ -40,7 +38,6 @@ export interface EventsOptions {
   session: Session;
   store: DevicesStore;
   jobs?: JobsStore;
-  /** Where approvals, the Action log and the key mirror go, and which Devices' key mirror to ask for. */
   actions?: ActionsStore;
   open?: OpenSocket;
   onNewBuild?: () => void;
@@ -71,6 +68,65 @@ const HANDLED: ReadonlySet<unknown> = new Set<Frame['type']>([
   'action.logged',
   'device.key-mirror',
 ]);
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+const isStrings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === 'string');
+const isNumberOrNull = (value: unknown): value is number | null => value === null || typeof value === 'number';
+
+function isApprovalRequest(value: unknown): value is ApprovalRequest {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.device === 'string' &&
+    typeof value.page === 'string' &&
+    typeof value.tile === 'string' &&
+    typeof value.hash === 'string' &&
+    typeof value.created_ms === 'number' &&
+    typeof value.kind === 'string' &&
+    typeof value.program === 'string' &&
+    isStrings(value.args) &&
+    typeof value.cwd === 'string' &&
+    typeof value.shell === 'boolean'
+  );
+}
+
+const ANSWERS = { once: true, always: true, deny: true, expired: true } satisfies Record<Answer, true>;
+
+function isApprovalResolved(value: unknown): value is ApprovalResolved {
+  return isRecord(value) && typeof value.id === 'string' && typeof value.answer === 'string' && Object.hasOwn(ANSWERS, value.answer);
+}
+
+function isActionLog(value: unknown): value is ActionLog {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.device === 'string' &&
+    typeof value.at_ms === 'number' &&
+    typeof value.page === 'string' &&
+    typeof value.tile === 'string' &&
+    typeof value.kind === 'string' &&
+    typeof value.status === 'string' &&
+    typeof value.detail === 'string' &&
+    isNumberOrNull(value.pid) &&
+    isNumberOrNull(value.exit_code)
+  );
+}
+
+function isKeyMirror(value: unknown): value is DeviceKeyMirror {
+  if (!isRecord(value)) return false;
+  const gap = value.gap;
+  return (
+    typeof value.device === 'string' &&
+    typeof value.seq === 'number' &&
+    typeof value.report === 'string' &&
+    typeof value.outcome === 'string' &&
+    (gap === null || (Array.isArray(gap) && gap.length === 2 && gap.every((n) => typeof n === 'number'))) &&
+    isStrings(value.errors) &&
+    typeof value.arrived_ms === 'number'
+  );
+}
+
+const syncedApprovals = (approvals: unknown): ApprovalRequest[] => (Array.isArray(approvals) ? approvals.filter(isApprovalRequest) : []);
 
 function parse(data: unknown): Frame | null {
   if (typeof data !== 'string') return null;
@@ -104,7 +160,7 @@ export function openEvents(options: EventsOptions): Events {
         failures = 0;
         store.getState().sync(frame.data.devices ?? [], frame.data.jobs ?? []);
         jobs?.getState().sync(frame.data.jobs ?? []);
-        actions?.getState().syncApprovals(syncedApprovals(frame.data));
+        actions?.getState().syncApprovals(syncedApprovals(frame.data.approvals));
         mirrorTopics(socket, watched(), []);
         break;
       case 'device.added':

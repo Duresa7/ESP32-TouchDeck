@@ -1,18 +1,15 @@
 import { isWebAddress, processOf } from '../lib/editor/actions.ts';
 import { parseLayout, type Orientation } from '../lib/editor/validate.ts';
-import type { ActionLog, AllowedAction, ApprovalAnswer, ApprovalRequest } from './actions-api.ts';
-import type { DeviceSummary } from './api.ts';
+import type { ActionLog, AllowedAction, Answer, ApprovalRequest, DeviceSummary } from './api.ts';
 import { revisionOf } from './fake-layouts.ts';
 
 type Frame = Record<string, unknown> & { type: string };
-type Scripted = Exclude<ApprovalAnswer, 'expired'> | 'never';
+type Scripted = Exclude<Answer, 'expired'> | 'fail' | 'never';
 
 export interface FakeActionsOptions {
   devices: Map<string, DeviceSummary>;
   publish(frame: Frame): void;
-  /** Sends a frame only to sockets subscribed to `topic` for `device`. */
   publishTopic(topic: string, device: string, frame: Frame): void;
-  /** The Layout a Device stores, in canonical form. */
   stored(device: string, orientation: Orientation): string | null;
 }
 
@@ -21,7 +18,8 @@ const json = (status: number, body: unknown) =>
 
 const failure = (status: number, code: string, message: string) => json(status, { error: { code, message, details: null } });
 
-const SCRIPTED: readonly string[] = ['once', 'always', 'deny', 'never'];
+const SCRIPTED: readonly string[] = ['once', 'always', 'deny', 'fail', 'never'];
+const PROMPT_FAILED = 'The approval prompt failed, so the action was denied: The scripted prompt failed.';
 const LOG_KEPT = 100;
 
 export function createFakeActions(options: FakeActionsOptions) {
@@ -50,14 +48,14 @@ export function createFakeActions(options: FakeActionsOptions) {
     if (started.kind !== 'open') setTimeout(() => record({ ...base, status: 'exited', detail: '', pid, exit_code: 0 }), 20);
   }
 
-  function resolve(request: ApprovalRequest, answer: Exclude<ApprovalAnswer, 'expired'>) {
+  function resolve(request: ApprovalRequest, answer: Exclude<Answer, 'expired'>, detail = '') {
     const at = pending.indexOf(request);
     if (at < 0) return;
     pending.splice(at, 1);
     publish({ type: 'approval.resolved', data: { id: request.id, answer } });
     answerNext();
     if (answer === 'deny') {
-      record({ device: request.device, page: request.page, tile: request.tile, kind: request.kind, status: 'denied', detail: '', pid: null, exit_code: null });
+      record({ device: request.device, page: request.page, tile: request.tile, kind: request.kind, status: 'denied', detail, pid: null, exit_code: null });
       return;
     }
     if (answer === 'always') {
@@ -72,7 +70,8 @@ export function createFakeActions(options: FakeActionsOptions) {
     const answer = script[0];
     if (!request || answer === undefined) return;
     script.shift();
-    if (answer !== 'never') setTimeout(() => resolve(request, answer), 0);
+    if (answer === 'fail') setTimeout(() => resolve(request, 'deny', PROMPT_FAILED), 0);
+    else if (answer !== 'never') setTimeout(() => resolve(request, answer), 0);
   }
 
   function press(device: string, page: string, tile: string, kind: string) {
@@ -118,14 +117,14 @@ export function createFakeActions(options: FakeActionsOptions) {
   }
 
   return {
-    /** Answers a session-checked request, or returns null when it isn't one of these routes. */
     handle(request: Request, path: string): Response | null {
       const method = request.method;
       let match: RegExpExecArray | null;
       if (path === '/approvals') return method === 'GET' ? json(200, pending) : failure(405, 'route.method_not_allowed', 'Use GET.');
       if ((match = /^\/approvals\/([^/]+)\/show$/.exec(path))) {
         if (method !== 'POST') return failure(405, 'route.method_not_allowed', 'Use POST.');
-        if (!pending.some((r) => r.id === decodeURIComponent(match![1]))) return failure(404, 'approval.not_found', 'The request was answered or expired.');
+        const id = decodeURIComponent(match[1]);
+        if (!pending.some((r) => r.id === id)) return failure(404, 'approval.not_found', 'The request was answered or expired.');
         shown += 1;
         return json(204, null);
       }
@@ -142,7 +141,6 @@ export function createFakeActions(options: FakeActionsOptions) {
       return null;
     },
 
-    /** The test routes, which need no session. Null when it isn't one of them. */
     async test(request: Request, path: string): Promise<Response | null> {
       let match: RegExpExecArray | null;
       if (request.method !== 'POST') return null;
@@ -155,7 +153,7 @@ export function createFakeActions(options: FakeActionsOptions) {
         const body: { answers?: unknown } = await request.json();
         const answers = Array.isArray(body.answers) ? body.answers : [];
         if (!answers.every((answer): answer is Scripted => typeof answer === 'string' && SCRIPTED.includes(answer))) {
-          return failure(400, 'request.invalid', 'Answers are once, always, deny or never.');
+          return failure(400, 'request.invalid', 'Answers are once, always, deny, fail or never.');
         }
         script.splice(0, script.length, ...answers);
         answerNext();
@@ -172,9 +170,7 @@ export function createFakeActions(options: FakeActionsOptions) {
       return null;
     },
 
-    /** Pending requests for the `approvals` key of `sync`. */
     pending: () => [...pending],
-    /** How many times a session asked to show the dialog again. */
     get shown() {
       return shown;
     },

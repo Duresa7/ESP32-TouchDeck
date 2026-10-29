@@ -1,10 +1,10 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
-import type { KeyMirror } from '../../companion/actions-api.ts';
+import type { DeviceKeyMirror } from '../../companion/api.ts';
 import { actionsStore, useActions } from '../../companion/actions.ts';
 import { button } from '../../shell/button.ts';
 
 const EVENTS_KEPT = 2000;
-const NONE: KeyMirror[] = [];
+const NONE: DeviceKeyMirror[] = [];
 
 interface Typed {
   type: 'down' | 'up';
@@ -12,13 +12,12 @@ interface Typed {
   at: number;
 }
 
-function reportLine(report: KeyMirror) {
+function reportLine(report: DeviceKeyMirror) {
   const gap = report.gap ? ` (missed ${report.gap[0]} to ${report.gap[1]}, released all keys)` : '';
   const outcome = report.outcome === 'typed' ? '' : ` (${report.outcome})`;
   return `${report.report}${gap}${outcome}`;
 }
 
-/** Click the box, then tap Tiles on the Device: each key it sends shows beside the keys this PC typed. */
 export function KeyTest({ deviceId, device }: { deviceId: string; device: string }) {
   const reports = useActions((s) => s.mirror[deviceId]) ?? NONE;
   const [typed, setTyped] = useState<Typed[]>([]);

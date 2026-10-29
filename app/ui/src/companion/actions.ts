@@ -1,39 +1,27 @@
 import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
-import type { ActionLog, AllowedAction, ApprovalRequest, ApprovalResolved, KeyMirror } from './actions-api.ts';
+import type { ActionLog, AllowedAction, ApprovalRequest, ApprovalResolved, DeviceKeyMirror } from './api.ts';
 
 const LOG_KEPT = 100;
 const MIRROR_KEPT = 50;
 
-/** What the event stream has said about actions: pending approvals, the Action log and the key mirror. */
 export interface ActionsState {
-  /** Requests the dialog on the PC is asking about, oldest first. */
   approvals: ApprovalRequest[];
-  /** Ids already answered or expired, so a late `approvals.list` can't bring one back. */
   resolved: string[];
-  /** Each Device's last presses, oldest first. */
   log: Record<string, ActionLog[]>;
-  /** Always-allowed actions, or null before the first read. */
   allowed: AllowedAction[] | null;
-  /** Counts `always` answers, so a view of the allowed list knows to read it again. */
   allowedRev: number;
-  /** Each Device's last mirrored key reports, oldest first. */
-  mirror: Record<string, KeyMirror[]>;
-  /** How many views want each Device's `key-mirror` topic. */
+  mirror: Record<string, DeviceKeyMirror[]>;
   watching: Record<string, number>;
-  /** `sync`: the snapshot replaces the pending list. */
   syncApprovals(approvals: ApprovalRequest[]): void;
-  /** `approvals.list`: adds what the stream hasn't reported, unless it was resolved since. */
   listed(approvals: ApprovalRequest[]): void;
   requested(request: ApprovalRequest): void;
   answered(resolved: ApprovalResolved): void;
-  /** `actions.log`: a Device's last presses, merged with any the stream already sent. */
   loadLog(device: string, entries: ActionLog[]): void;
   logged(entry: ActionLog): void;
   setAllowed(allowed: AllowedAction[]): void;
-  mirrored(report: KeyMirror): void;
+  mirrored(report: DeviceKeyMirror): void;
   clearMirror(device: string): void;
-  /** Asks the stream for a Device's key mirror until the returned function is called. */
   watchKeys(device: string): () => void;
 }
 

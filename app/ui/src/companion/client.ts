@@ -1,13 +1,8 @@
 import { createCompanion } from './api.ts';
-import { createActionsApi } from './actions-api.ts';
 import { ApiError, isSessionError, toApiError } from './errors.ts';
 import type { Session } from './session.ts';
 
-function createRoutes(base: string, token: () => string) {
-  return { ...createCompanion(base, token), ...createActionsApi(base, token) };
-}
-
-export type Companion = ReturnType<typeof createRoutes>;
+export type Companion = ReturnType<typeof createCompanion>;
 
 export async function request<T>(session: Session, send: () => Promise<T>): Promise<T> {
   let token: string | null;
@@ -44,7 +39,7 @@ function guard<T extends object>(api: T, session: Session): T {
 
 export function createClient(base: string, session: Session): Companion {
   return guard(
-    createRoutes(base, () => session.current() ?? ''),
+    createCompanion(base, () => session.current() ?? ''),
     session,
   );
 }

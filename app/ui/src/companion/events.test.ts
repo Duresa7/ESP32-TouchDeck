@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { createActionsStore, type ActionsStore } from './actions.ts';
-import type { ApprovalRequest } from './actions-api.ts';
-import type { Job } from './api.ts';
+import type { ApprovalRequest, Job } from './api.ts';
 import { createDevicesStore, type DevicesStore } from './devices.ts';
 import { CLOSE_TOO_SLOW, openEvents, type Events } from './events.ts';
 import { createFakeCompanion, type FakeCompanion } from './fake.ts';
