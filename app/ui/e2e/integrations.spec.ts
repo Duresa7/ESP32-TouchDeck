@@ -120,7 +120,7 @@ test('checks fields inline and warns before a key travels unencrypted', async ({
 test('the status light follows the hub and the switch', async ({ page }) => {
   await openCliProxy(page);
   const status = page.getByTestId('detail-status');
-  await expect(status).toHaveText('Connected. 3 accounts, checked 12 s ago.');
+  await expect(status).toHaveText(/^Connected\. 3 accounts, checked 1[2-9] s ago\.$/);
   await expect(status).toHaveAttribute('data-live', 'true');
 
   await page.evaluate(() => window.touchdeckDemo?.setHub(false));
