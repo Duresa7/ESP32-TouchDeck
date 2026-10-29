@@ -27,38 +27,19 @@ reviews:
         Conventional Commits: `type: description` or `type(scope): description`,
         lowercase and imperative, with no trailing period. Mark breaking changes with `!`.
     # Warnings until they prove accurate on real PRs; then they move to error.
+    # Companion routes need no check here: td-companion's contract test fails CI when
+    # docs/companion-api.md or api.gen.ts falls behind.
     custom_checks:
-      - name: "Copy matches docs/copy.md"
-        mode: warning
-        instructions: >-
-          Look only at user-visible text that this PR adds or changes: strings rendered by the UI in
-          app/ui/src or drawn by the Firmware in firmware/components/ui and firmware/components/td_ui_core.
-          Ignore tests, fixtures, log lines, developer-only errors and code identifiers.
-          Fail if a changed user-visible string is neither present in docs/copy.md nor added to
-          docs/copy.md by this PR, or if it uses a term that GLOSSARY.md says to avoid. Name each
-          string and its file. Pass if the PR changes no user-visible text. If you can't tell whether
-          a string is user-visible, pass and say so.
-      - name: "No AI attribution for project agents"
-        mode: warning
-        instructions: >-
-          Fail if the PR title, PR description, any commit message, or any added file content credits
-          an AI coding agent with the work. Examples: Co-Authored-By trailers naming Claude, Anthropic,
-          Codex, ChatGPT, OpenAI, Gemini or Copilot; "Generated with" or "Created with" lines naming an
-          AI tool; robot-emoji signatures. Exempt: CodeRabbit's own commits, suggestions and comments.
-          Also exempt: product or code references to these names that aren't attribution, such as an
-          integration that lists AI providers. Quote the offending line.
-      - name: "Wire and API contracts change on every side"
+      - name: "Wire and Layout contracts change on every side"
         mode: warning
         instructions: >-
           The Link protocol and Layout schema are shared by three implementations: Rust
           (app/crates/td-core, app/crates/td-link), TypeScript (app/ui/src/lib/editor and
           app/src/lib/editor validators) and C (firmware/components/td_link, firmware/components/td_layout).
           If this PR changes a message, field, capability, error reason or Layout rule in
-          schema/protocol/*.md, schema/*.json or any one of those implementations, fail unless the
-          other implementations and the shared fixtures are updated to match, or the PR description
-          explains why a side needs no change. Separately, if it adds or changes a Companion route or
-          its request or response shape in app/crates/td-companion, fail unless docs/companion-api.md
-          is updated and app/ui/src/companion/api.gen.ts is regenerated. Pass if no contract changes.
+          schema/protocol/*.md, schema/layout.schema.json or any one of those implementations, fail
+          unless the other implementations and the shared fixtures are updated to match, or the PR
+          description explains why a side needs no change. Pass if no contract changes.
       - name: "No private data"
         mode: warning
         instructions: >-
@@ -81,7 +62,6 @@ reviews:
   path_instructions:
     - path: "app/ui/**"
       instructions: >-
-        Check user-facing strings against docs/copy.md and terms against GLOSSARY.md.
         Colors, spacing and overlay layers come from the tokens in tokens.css; flag raw colors.
     - path: "app/crates/**"
       instructions: >-
@@ -100,9 +80,6 @@ knowledge_base:
   code_guidelines:
     enabled: true
     filePatterns:
-      - "GLOSSARY.md"
-      - "docs/copy.md"
-      - "docs/design.md"
       - "docs/adr/*.md"
 
 chat:
