@@ -239,6 +239,13 @@ A session can install only two kinds of Firmware bundle: the one bundled with th
 - `firmware.install` on a New board, every `firmware.repair`, and a `firmware.update` to an older version wait for a native PC confirmation dialog owned by the Companion. It names the exact target, its port, what it runs now if known, and the bundle version. Consent is bound to that target and bundle; no API request can grant it. Until consent, no write starts and the Job state is `waiting_for_confirmation`. Declining fails the Job with `firmware.declined`.
 - Updating to the bundled build when it is the same or newer needs no confirmation and stays one click.
 
+Implementation decisions for #77:
+
+- `TOUCHDECK_FIRMWARE_BUNDLE` selects the `.tdfw` embedded at build time. Source builds without it report `firmware.bundle_invalid` for the bundled selection; they never substitute mock Firmware on real ports.
+- Versions that cannot be ordered as semantic versions require confirmation unless the version strings match.
+- The Device manager reserves the target, lends its existing session for OTA, closes the session before ROM recovery or reconnect, and resumes discovery on every exit path.
+- A newly installed board uses `needs-setup`, overriding the ordinary discovery default of `ready`.
+
 Image uploads for Assets stay on the API (`POST /uploads`). The Companion decodes and re-renders every image to the Device's Tile size, and nothing it uploads is ever run.
 
 ## Devices and New boards

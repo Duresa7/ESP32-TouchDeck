@@ -10,6 +10,19 @@ fn git(args: &[&str]) -> Option<String> {
 
 fn main() {
     embed_ui();
+    println!("cargo:rerun-if-env-changed=TOUCHDECK_FIRMWARE_BUNDLE");
+    let bytes = match env::var_os("TOUCHDECK_FIRMWARE_BUNDLE") {
+        Some(path) => {
+            println!("cargo:rerun-if-changed={}", Path::new(&path).display());
+            fs::read(path).expect("read bundled Firmware")
+        }
+        None => Vec::new(),
+    };
+    fs::write(
+        Path::new(&env::var_os("OUT_DIR").unwrap()).join("bundled.tdfw"),
+        bytes,
+    )
+    .unwrap();
     for name in ["HEAD", "index"] {
         if let Some(path) = git(&["rev-parse", "--git-path", name]) {
             println!("cargo:rerun-if-changed={path}");

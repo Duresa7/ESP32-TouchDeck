@@ -28,6 +28,7 @@ use ts_rs::TS;
 #[derive(Clone)]
 pub struct Ctx {
     pub devices: crate::devices::DeviceManager,
+    pub firmware: crate::features::firmware::Firmware,
     pub events: Events,
     pub jobs: crate::jobs::Jobs,
     pub links: crate::link::Links,
@@ -60,7 +61,12 @@ impl Ctx {
         let lease_auth = auth.clone();
         let lease_clock = clock.clone();
         Self {
-            jobs: crate::jobs::Jobs::new(events.clone(), clock.clone(), Arc::new(move |id| lease_auth.lock().live(id, lease_clock.now()))),
+            firmware: crate::features::firmware::Firmware::new(mock),
+            jobs: crate::jobs::Jobs::new(
+                events.clone(),
+                clock.clone(),
+                Arc::new(move |id| lease_auth.lock().live(id, lease_clock.now())),
+            ),
             links: crate::link::Links::new(devices.clone()),
             layouts: crate::store::LayoutStore::new(data.join("layouts")),
             assets: crate::store::AssetStore::new(data.join("assets")),

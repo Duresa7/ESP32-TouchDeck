@@ -194,21 +194,32 @@ fn confirm(
 
 /// Sends through the Device actor's existing session, then releases it before reconnecting.
 pub fn run_session(
-    session: &Session, connector: &mut dyn Connector, bundle: &Bundle,
-    limits: Deadlines, emit: &mut dyn FnMut(UpdateState),
+    session: &Session,
+    connector: &mut dyn Connector,
+    bundle: &Bundle,
+    limits: Deadlines,
+    emit: &mut dyn FnMut(UpdateState),
 ) -> Result<(), String> {
     emit(UpdateState::Checking);
-    let hello = session.hello(Duration::from_secs(10)).map_err(|e| e.to_string())?;
-    if !hello.is_deck() { return Err("port is not a TouchDeck".into()); }
+    let hello = session
+        .hello(Duration::from_secs(10))
+        .map_err(|e| e.to_string())?;
+    if !hello.is_deck() {
+        return Err("port is not a TouchDeck".into());
+    }
     if hello.elf_sha256 == bundle.manifest.elf_sha256 {
-        emit(UpdateState::Done { message: "Already on this build".into() });
+        emit(UpdateState::Done {
+            message: "Already on this build".into(),
+        });
         return Ok(());
     }
     let slot = send(session, bundle, emit)?;
     session.close();
     emit(UpdateState::Rebooting);
     confirm(connector, bundle, Some(&slot), limits, emit)?;
-    emit(UpdateState::Done { message: "Firmware updated".into() });
+    emit(UpdateState::Done {
+        message: "Firmware updated".into(),
+    });
     Ok(())
 }
 

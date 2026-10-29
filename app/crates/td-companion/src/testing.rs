@@ -120,6 +120,12 @@ impl TestCompanion {
         self.ctx.devices.get(id)
     }
     /// The mock behind a USB serial, to drive it or read what it received.
+    pub fn firmware_prompter(
+        &self,
+        prompter: std::sync::Arc<dyn crate::features::firmware::Prompter>,
+    ) {
+        self.ctx.firmware.set_prompter(prompter);
+    }
     pub fn deck(&self, id: &str) -> td_link::MockDeck {
         self.ports.deck(id).expect("a plugged mock")
     }
