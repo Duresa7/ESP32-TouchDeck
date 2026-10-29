@@ -6,9 +6,10 @@ import type { DeviceSummary } from '../companion/api.ts';
 import { useCompanion } from '../companion/connection.ts';
 import { useDevices } from '../companion/devices.ts';
 import type { EditorStore } from '../lib/editor/store.ts';
+import { statusOf } from './home-model.ts';
 import { DeviceCanvas, deviceAspect } from './layout/DeviceCanvas.tsx';
 import { editorFor, useEditorState } from './layout/editor.ts';
-import { EditorHeader, statusOf } from './layout/EditorHeader.tsx';
+import { EditorHeader } from './layout/EditorHeader.tsx';
 import { exportLayout, importLayout } from './layout/files.ts';
 import { Inspector } from './layout/Inspector.tsx';
 import { PageTabs } from './layout/PageTabs.tsx';
@@ -18,13 +19,11 @@ import { StatusLine } from './layout/StatusLine.tsx';
 import { useUi } from '../state/ui.ts';
 import '../styles/layout.css';
 
-/** The Device's long side fits the canvas between these, as docs/design.md asks. */
 const LONG_MIN = 420;
 const LONG_MAX = 680;
 
 const editable = 'input, textarea, select, [contenteditable], [role="dialog"], [role="alertdialog"], [role="menu"]';
 
-/** Keys for the whole screen: P for Preview, ← and → change Pages in Preview, Escape and Delete in Edit. */
 function useEditorKeys(store: EditorStore) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -55,7 +54,6 @@ function useEditorKeys(store: EditorStore) {
   }, [store]);
 }
 
-/** The Device's long side for the room the canvas leaves beside its foot (the Page tabs and status line). */
 function useDeviceLong(canvas: RefObject<HTMLDivElement | null>, foot: RefObject<HTMLDivElement | null>, portrait: boolean, drawn: boolean) {
   const [long, setLong] = useState(LONG_MAX);
   useLayoutEffect(() => {
@@ -81,7 +79,7 @@ function useDeviceLong(canvas: RefObject<HTMLDivElement | null>, foot: RefObject
 
 function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }) {
   const name = device.name ?? 'Unnamed Device';
-  const connected = statusOf(device).live;
+  const connected = statusOf(device.link.state).live;
   const layout = useEditorState(store, (s) => s.drafts[s.orientation]?.layout ?? null);
   const page = useEditorState(store, (s) => s.page);
   const mode = useEditorState(store, (s) => s.mode);
@@ -163,11 +161,9 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
   );
 }
 
-/** The Layout screen: one Device's Layout on its canvas, with its Pages, the inspector and Send to Device. */
 export function Layout() {
   const companion = useCompanion();
   const store = editorFor(companion);
-  // The Device Home opened, or the first named one.
   const deviceId = useUi((s) => s.deviceId);
   const device = useDevices((s) => (deviceId ? s.devices.find((d) => d.id === deviceId) : s.devices.find((d) => d.name !== null)));
   const id = device?.id;

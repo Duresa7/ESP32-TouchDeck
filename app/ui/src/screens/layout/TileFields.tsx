@@ -7,7 +7,6 @@ export interface TileFieldsProps {
   tile: Tile;
 }
 
-/** The selected Tile's fields: label, icon, background, size and its action. #83 fills this slot; until then it shows nothing. */
 export function TileFields(_props: TileFieldsProps) {
   return null;
 }
