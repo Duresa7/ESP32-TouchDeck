@@ -9,27 +9,39 @@
 #include "esp_timer.h"
 #include "td_recovery.h"
 #include "td_device.h"
-#include "td_store.h"
+#include "td_asset.h"
 #include "esp_mac.h"
 
 static bool s_v2;
+bool td_link_v2_selected(void) { return s_v2 && td_link_state().online; }
 
-static void v2_fail(cJSON *reply, const char *reason, const char *error)
+void td_link_v2_fail(cJSON *reply, const char *reason, const char *error)
 {
     td_link_fail(reply, error);
     cJSON_AddStringToObject(reply, "reason", reason);
 }
 
-static bool fields(const cJSON *request, const char *extra)
+#define v2_fail td_link_v2_fail
+
+bool td_link_v2_fields(const cJSON *request, const char *const *allowed, size_t count)
 {
     const cJSON *a;
     cJSON_ArrayForEach(a, request) {
-        if (strcmp(a->string, "m") && (!extra || strcmp(a->string, extra))) return false;
+        bool known = !strcmp(a->string, "m");
+        for (size_t i = 0; i < count && !known; i++) {
+            known = !strcmp(a->string, allowed[i]);
+        }
+        if (!known) return false;
         for (const cJSON *b = a->next; b; b = b->next) {
             if (!strcmp(a->string, b->string)) return false;
         }
     }
     return true;
+}
+
+static bool fields(const cJSON *request, const char *extra)
+{
+    return td_link_v2_fields(request, &extra, extra ? 1 : 0);
 }
 
 
@@ -55,6 +67,7 @@ static void hello(const cJSON *request, cJSON *reply)
         v2_fail(reply, "storage", "Device name unavailable");
         return;
     }
+    td_link_files_select();
     s_v2 = v2;
     const esp_app_desc_t *app = esp_app_get_description();
     const esp_partition_t *running = esp_ota_get_running_partition();
@@ -86,16 +99,14 @@ static void hello(const cJSON *request, cJSON *reply)
         snprintf(id, sizeof id, "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
         cJSON_AddStringToObject(reply, "id", id);
         cJSON_AddStringToObject(reply, "name", name);
-        cJSON *caps = cJSON_Parse("{\"screen\":[1024,600],\"grid\":[8,8],\"pages\":8,\"tiles\":64,\"layout_bytes\":32768,\"layout_schemas\":[1],\"tile_kinds\":[\"static\"],\"asset_bytes\":12300,\"formats\":[\"tdi1\"],\"image\":[64,64],\"gif_frames\":0,\"gif_pixels\":0,\"photo_bytes\":0,\"live_hz\":0,\"live_total_hz\":0,\"series\":0,\"text_bytes\":0,\"streams\":0}");
+        cJSON *caps = cJSON_Parse("{\"screen\":[1024,600],\"grid\":[8,8],\"pages\":8,\"tiles\":64,\"layout_bytes\":32768,\"layout_schemas\":[1,2],\"tile_kinds\":[\"static\"],\"asset_bytes\":12300,\"formats\":[\"tdi1\"],\"image\":[64,64],\"gif_frames\":0,\"gif_pixels\":0,\"photo_bytes\":0,\"live_hz\":0,\"live_total_hz\":0,\"series\":0,\"text_bytes\":0,\"streams\":0}");
         if (strcmp(ui_layout_slot(), "portrait") == 0) {
             const int screen[] = {600, 1024};
             cJSON_ReplaceItemInObjectCaseSensitive(caps, "screen", cJSON_CreateIntArray(screen, 2));
         }
-        td_store_info_t info = {0};
-        td_store_info(&info);
-        /* Keep one LittleFS block available for metadata. No v2 uploads exist yet. */
-        uint32_t free = info.total_bytes > info.used_bytes + 4096 ? info.total_bytes - info.used_bytes - 4096 : 0;
-        cJSON_AddNumberToObject(caps, "free_bytes", free);
+        td_asset_space_t space;
+        td_asset_space(&space);
+        cJSON_AddNumberToObject(caps, "free_bytes", space.free_bytes);
         cJSON_AddItemToObject(reply, "caps", caps);
     }
 }
@@ -250,6 +261,17 @@ static const struct {
     { "dashboard.set", dashboard_set },
 };
 
+static const struct {
+    const char *name;
+    void (*handler)(const cJSON *request, cJSON *reply);
+} s_v2_messages[] = {
+    { "v2.asset.stat", td_link_asset_stat },
+    { "v2.asset.list", td_link_asset_list },
+    { "v2.asset.put", td_link_asset_put },
+    { "v2.asset.end", td_link_asset_end },
+    { "v2.asset.delete", td_link_asset_delete },
+};
+
 #define ECHO_CHARS_MAX 64
 
 static void echo_name(const char *name, char out[4 * ECHO_CHARS_MAX + 1])
@@ -296,7 +318,16 @@ cJSON *td_link_dispatch(const cJSON *request)
                 cJSON_AddStringToObject(reply, "name", stored);
             }
         } else {
-            v2_fail(reply, "unsupported", "Unsupported request");
+            bool found = false;
+            for (size_t i = 0; i < sizeof s_v2_messages / sizeof s_v2_messages[0] && !found; i++) {
+                found = !strcmp(name, s_v2_messages[i].name);
+                if (found) {
+                    s_v2_messages[i].handler(request, reply);
+                }
+            }
+            if (!found) {
+                v2_fail(reply, "unsupported", "Unsupported request");
+            }
         }
         return reply;
     }
