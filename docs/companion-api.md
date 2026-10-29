@@ -221,8 +221,11 @@ A refused `Host` or `Origin` never reaches a socket: the upgrade gets HTTP 421 o
 [ADR 0006](adr/0006-command-approval-on-the-pc.md) records the decision. The contract:
 
 - **What needs approval.** Every action that starts a process: a command, a program launch, and opening anything other than an `http`, `https` or `mailto` URL. The custom command Integration (#101) follows the same rule. An approval is keyed by a hash of the action kind, program, arguments, working folder and shell.
-- **The dialog.** The Companion's `ApprovalPrompter` shows a native task dialog it owns. It names the Device, the Page and the Tile, and shows the full program, arguments, working folder and shell. The buttons are **Run once**, **Always allow** and **Deny**. Deny is the default. One dialog shows at a time. Others wait in order.
+- **The dialog.** The Companion's `ApprovalPrompter` shows a native task dialog it owns. It names the Device, the Page and the Tile, and shows the full program, arguments, working folder and shell. It quotes every value from the Device or its Layout and writes control, format, line separator and paragraph separator characters (such as U+202E) as visible `\u{202E}` escapes, so no value can hide or reorder text. The action that runs and its hash keep the raw values. The buttons are **Run once**, **Always allow** and **Deny**. Deny is the default. One dialog shows at a time. Others wait in order.
+- **Failures deny.** A dialog that can't be shown, or an **Always allow** that can't be saved, denies the request and logs why.
+- **Taps and transfers.** A tap reads the Device's Layout in the same per-Device queue as Layout and Asset Jobs, so a tap during a push waits for it. A tap that waits more than 10 seconds is logged as `failed` and dropped, never replayed.
 - **Device input.** While any approval or Firmware confirmation dialog is showing, the Companion injects no key input from any Device. It drops that input rather than replaying it later, and the key mirror reports `outcome: "suppressed"` so Device input cannot answer the dialog.
+- **Type-text decision (#76).** Keep physical key Tiles compatible: the current link carries keyboard reports, not a complete text intent that can be hashed and approved. A length threshold on reports is bypassable, so it is not an approval boundary. All mirrored input is dropped during dialogs. A future Firmware contract must carry text intent before long-text approval can be enforced.
 - **Repeats.** Pressing the same Tile again while its request is pending adds no second request.
 - **Expiry.** A request nobody answers expires after 5 minutes and is logged as `expired`.
 - **Foreground.** Windows may keep a tray program's dialog from taking focus, so the tray also shows a notification. `POST /approvals/{id}/show` shows the dialog again.
@@ -527,7 +530,7 @@ Feature module `assets`. Assets reach a Device only through `layouts.push`, whic
 
 As built in #75:
 
-- `assets.create` takes the `app` source only; #93 adds `upload` and `catalog`. `fit` is `"contain"` (the default: the whole image inside the Tile) or `"cover"` (cropped to a centered square first). The result's `kind` is `tdi1`, 64 by 64. A third render while two run gets 429 `limits.exceeded`.
+- `assets.create` takes `app` and `upload` sources; #89 owns `catalog`. Uploads accept PNG and JPEG images. An expired, consumed or foreign upload returns `upload.not_found`. `fit` is `"contain"` (the default: the whole image inside the Tile) or `"cover"` (cropped to a centered square first). The result's `kind` is `tdi1`, 64 by 64, identified by the full SHA-256 of its encoded bytes. A third render while two run gets 429 `limits.exceeded`.
 - `assets.prune` keeps the Assets that `also_keep` names, that the Companion's stored Layouts for the Device use, and that the Device's own stored Layouts use, as today's `remove_unused_icons` does.
 - `assets.file` reads built-in icons and the Companion's Asset files, kept as `assets/<id>.bin` under its data folder. The generated client returns a `Blob` for it.
 
@@ -606,7 +609,7 @@ Feature module `test_hooks`, compiled only with the `test-hooks` Cargo feature a
 | `test.emit` | `POST /test/devices/{device}/emit` | `{events, repeat?, every_ms?}` → `()` |
 | `test.input_log` | `GET /test/input-log` | → `string[]` |
 | `test.ports` | `POST /test/ports` | `{plug: {id, kind: "device" \| "device-v1" \| "silent" \| "other-firmware" \| "busy"}}` or `{unplug: id}` → `()` |
-| `test.approvals_script` | `POST /test/approvals/script` | `{answers: ("once" \| "always" \| "deny" \| "never")[]}` → `()`. Sets what the `FakePrompter` answers next |
+| `test.approvals_script` | `POST /test/approvals/script` | `{answers: ("once" \| "always" \| "deny" \| "fail" \| "never")[]}` → `()`. Sets what the `FakePrompter` answers next. `fail` acts as a dialog that can't be shown |
 | `test.clock` | `POST /test/clock` | `{advance_ms}` → `()`. Moves the Companion's clock for expiry tests |
 
 ## Mapping from today's Tauri commands and events

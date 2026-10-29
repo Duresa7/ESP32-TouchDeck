@@ -9,6 +9,13 @@ fn git(args: &[&str]) -> Option<String> {
 }
 
 fn main() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        let manifest = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap())
+            .join("app.manifest");
+        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
+        println!("cargo:rerun-if-changed=app.manifest");
+    }
     embed_ui();
     println!("cargo:rerun-if-env-changed=TOUCHDECK_FIRMWARE_BUNDLE");
     let bytes = match env::var_os("TOUCHDECK_FIRMWARE_BUNDLE") {

@@ -366,6 +366,16 @@ impl Session {
         self.shared.call(name, bytes, timeout)
     }
 
+    /// Sends a message request that is already JSON, so its fields keep their order on the wire.
+    pub fn call_payload(
+        &self,
+        name: &str,
+        payload: Vec<u8>,
+        timeout: Duration,
+    ) -> Result<Reply, LinkError> {
+        self.shared.call(name, payload, timeout)
+    }
+
     /// Starts the session's one transfer. A second one is refused until the first drops.
     pub fn transfer(&self) -> Result<Transfer<'_>, LinkError> {
         let mut slot = self.shared.xfer.lock().unwrap();

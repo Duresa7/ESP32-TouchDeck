@@ -5219,11 +5219,13 @@ name = "td-link"
 version = "0.1.0"
 dependencies = [
  "espflash",
+ "image",
  "serde",
  "serde_json",
  "serialport",
  "sha2 0.10.9",
  "td-core",
+ "td-host",
  "zip 9.1.1",
 ]
 

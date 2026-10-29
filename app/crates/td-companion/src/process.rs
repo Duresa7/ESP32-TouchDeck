@@ -91,13 +91,20 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Arc::new(Runtime::open(&dir)?);
     let listener = bind(&root).await?;
     assert!(listener.local_addr()?.ip().is_loopback());
-    let ctx = Ctx::new(
-        listener.local_addr()?.port(),
-        mock_devices.is_some(),
-        Some(runtime.clone()),
-        crate::Limits::default(),
-        &root,
-    );
+    let port = listener.local_addr()?.port();
+    let (data, open) = (root.clone(), runtime.clone());
+    let ctx = tokio::task::spawn_blocking(move || {
+        let grants = crate::actions::FileGrants::new(data.join("allowed-actions.json"));
+        Ctx::new(
+            port,
+            mock_devices.is_some(),
+            Some(open),
+            crate::Limits::default(),
+            &data,
+            Arc::new(grants),
+        )
+    })
+    .await?;
     let initial = ctx.clone();
     let written = tokio::task::spawn_blocking(move || {
         let value = initial.runtime_value();

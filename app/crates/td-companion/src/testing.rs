@@ -1,11 +1,15 @@
 use crate::{
+    actions::{FileGrants, GrantStore},
     api::{Ctx, Endpoint},
     devices::{
         BoardKind, Config, DeviceId, DeviceSummary, InputSuppressed, LinkState, MockPorts, NewBoard,
     },
 };
 use futures_util::StreamExt;
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::client::IntoClientRequest};
 /// How long a `plug` or `unplug` helper waits for the Companion to notice.
 const SETTLE: Duration = Duration::from_secs(5);
@@ -26,14 +30,39 @@ impl TestCompanion {
     }
     /// Starts with other connection and time limits, so limit tests run in milliseconds.
     pub async fn start_with(limits: crate::Limits) -> Self {
+        Self::start_router(limits, false, None).await
+    }
+    pub async fn start_release_router() -> Self {
+        Self::start_router(crate::Limits::default(), true, None).await
+    }
+    /// Starts with grants kept in `grants` instead of a file.
+    pub async fn start_with_grants(grants: Arc<dyn GrantStore>) -> Self {
+        Self::start_router(crate::Limits::default(), false, Some(grants)).await
+    }
+    async fn start_router(
+        limits: crate::Limits,
+        release: bool,
+        grants: Option<Arc<dyn GrantStore>>,
+    ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let data = tempfile::tempdir().unwrap();
-        let ctx = Ctx::new(port, true, None, limits, data.path());
+        let path = data.path().to_owned();
+        let ctx = tokio::task::spawn_blocking(move || {
+            let grants = grants
+                .unwrap_or_else(|| Arc::new(FileGrants::new(path.join("allowed-actions.json"))));
+            Ctx::new(port, true, None, limits, &path, grants)
+        })
+        .await
+        .unwrap();
         let config = Config::mock(Some(data.path().join("devices.json")));
         let (ports, input) = config.mock.clone().unwrap();
         ctx.devices.start(config);
-        let router = crate::api::router(ctx.clone());
+        let router = if release {
+            crate::api::release_router(ctx.clone())
+        } else {
+            crate::api::router(ctx.clone())
+        };
         let stop = ctx.shutdown.subscribe();
         let task = tokio::spawn(crate::serve::serve(listener, router, limits, stop));
         let url = format!("http://127.0.0.1:{port}");
@@ -132,6 +161,10 @@ impl TestCompanion {
     /// What the fake input sink typed, as `down <key>` and `up <key>`.
     pub fn input_log(&self) -> Vec<String> {
         crate::features::test_hooks::input_log(&self.input)
+    }
+    /// The text of every approval dialog the fake prompter showed, oldest first.
+    pub fn prompted(&self) -> Vec<String> {
+        self.ctx.actions.prompted()
     }
     /// Holds input suppressed, as an approval or Firmware dialog does.
     pub fn dialog(&self) -> InputSuppressed {
