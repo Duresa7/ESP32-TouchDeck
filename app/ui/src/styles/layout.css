@@ -145,7 +145,7 @@
 /* ---------- Layout menu ---------- */
 
 .menu-positioner {
-  z-index: 20;
+  z-index: var(--layer-popup);
   outline: none;
 }
 

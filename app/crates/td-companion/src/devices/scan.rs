@@ -183,7 +183,7 @@ impl Inner {
         let gone: Vec<String> = reg
             .ports
             .values()
-            .filter(|r| !listed.contains(&r.info))
+            .filter(|r| !listed.contains(&r.info) && !reg.updating.contains(&r.id))
             .map(|r| r.info.port.clone())
             .collect();
         for port in gone {
@@ -234,6 +234,9 @@ impl Inner {
     }
     /// A port left. A New board goes; a Device stays known.
     fn unplugged(&self, reg: &mut Registry, id: &DeviceId) {
+        if reg.updating.contains(id) {
+            return;
+        }
         if reg.boards.remove(id).is_some() {
             self.events.publish(&NewBoardRemoved { id: id.clone() });
         }
@@ -372,7 +375,11 @@ impl Inner {
                     id: id.clone(),
                     rev: 1,
                     name: identity.name.clone(),
-                    setup: SetupState::Ready,
+                    setup: if reg.installed.remove(id) {
+                        SetupState::NeedsSetup
+                    } else {
+                        SetupState::Ready
+                    },
                     link,
                     firmware: Some(firmware),
                     capabilities,
@@ -427,6 +434,9 @@ impl Inner {
     /// The actor's session closed on its own.
     pub(super) fn closed(&self, id: &DeviceId, generation: u64, reason: &str) {
         let mut reg = self.reg.lock();
+        if reg.updating.contains(id) {
+            return;
+        }
         let Some(entry) = reg.devices.get_mut(id) else {
             return;
         };
@@ -454,6 +464,9 @@ impl Inner {
     }
 }
 fn wants_probe(reg: &Registry, id: &DeviceId) -> bool {
+    if reg.updating.contains(id) {
+        return false;
+    }
     reg.devices
         .get(id)
         .is_none_or(|e| e.auto && e.actor.is_none())

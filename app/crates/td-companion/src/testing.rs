@@ -166,6 +166,12 @@ impl TestCompanion {
     pub fn device(&self, id: &DeviceId) -> Option<DeviceSummary> {
         self.ctx.devices.get(id)
     }
+    pub fn firmware_prompter(
+        &self,
+        prompter: std::sync::Arc<dyn crate::features::firmware::Prompter>,
+    ) {
+        self.ctx.firmware.set_prompter(prompter);
+    }
     /// The mock behind a USB serial, to drive it or read what it received.
     pub fn deck(&self, id: &str) -> td_link::MockDeck {
         self.ports.deck(id).expect("a plugged mock")
@@ -200,6 +206,12 @@ impl TestCompanion {
     /// Whether anything asked the Companion to stop.
     pub fn shutdown_requested(&self) -> bool {
         *self.ctx.shutdown.borrow()
+    }
+    pub fn browser_token(&self) -> String {
+        self.ctx.browser_token()
+    }
+    pub fn current_pairing_token(&self) -> String {
+        self.ctx.pairing_token()
     }
     pub fn clock(&self) -> TestClock {
         TestClock(self.ctx.clone())

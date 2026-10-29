@@ -26,6 +26,7 @@ sent: Array<string>,
 unavailable: Array<string>, };
 export type AuthRevoked = Record<string, never>;
 export type Builtin = { name: string, label: string, tags: Array<string>, id: string, };
+export type BundleInfo = { id: string, version: string, build: string, bytes: number, };
 export type Capabilities = { screen: [number, number], grid: [number, number], pages: number, tiles: number, layout_bytes: number, layout_schemas: Array<number>, storage_free: number, tile_kinds: Array<string>, asset_bytes: number, formats: Array<string>, image: [number, number], };
 export type ClientInfo = { id: string, kind: SessionKind, };
 export type CompanionStopping = { reason: string, };
@@ -60,9 +61,15 @@ export type DeviceSettingsPatch = { idle_timeout_s: number | null, orientation: 
 export type DeviceSummary = { id: DeviceId, rev: number, name: string | null, setup: SetupState, link: LinkState, firmware: FirmwareInfo | null, capabilities: Capabilities | null, orientation: string | null, layout: JsonValue | null, key_mirror: KeyMirrorState, stable_id: boolean, };
 export type DeviceUpdated = DeviceSummary;
 export type ErrorBody = { code: string, message: string, details: JsonValue | null, };
+export type FirmwareBuild = { version: string, build: string, };
 export type FirmwareInfo = { version: string, protocol: number, build: string, recovery: boolean, update_available: string | null, };
+export type FirmwareProgress = { phase: string, pct: number | null, bytes: number, };
+export type FirmwareRequest = { bundle: string, };
+export type FirmwareResult = { message: string, version: string, };
+export type FirmwareTarget = { device: DeviceId, };
 export type Fit = "contain" | "cover";
 export type Hello = { api: string, build: string, session: ClientInfo, };
+export type InstallLock = { lock: string, };
 export type IntegrationPath = { integration: string, };
 export type IntegrationStatus = { state: string, message: string | null, delivery: Array<Delivery>, };
 export type IntegrationStatusEvent = IntegrationSummary;
@@ -112,6 +119,7 @@ export type Orientation = "landscape" | "portrait";
 export type Page = { "kind": "grid", id: string, title: string, rows: number, cols: number, tiles: Array<Tile>, } | { "kind": "dashboard", id: string, title: string, source: string, };
 export type PairExpires = { expires_ms: number, };
 export type PairRequest = { code: string, label: string | null, };
+export type PickResult = { bundle: BundleInfo | null, };
 export type PortProbe = { port: string, usb_serial: string | null, id: DeviceId, probed_ms: number | null, } & ({ "status": "pending" } | { "status": "device", protocol: number, version: string, } | { "status": "silent" } | { "status": "busy", detail: string, } | { "status": "other-firmware", product: string, detail: string, });
 export type PresetTile = { id: string, name: string, action: JsonValue, };
 export type Proof = { proof: string, };
@@ -184,6 +192,11 @@ export const endpoints = {
   'devices.restart': { method: 'POST', path: '/devices/{device}/restart', access: 'session' },
   'devices.settings_get': { method: 'GET', path: '/devices/{device}/settings', access: 'session' },
   'devices.settings_patch': { method: 'PATCH', path: '/devices/{device}/settings', access: 'session' },
+  'firmware.bundled': { method: 'GET', path: '/firmware/bundled', access: 'session' },
+  'firmware.install': { method: 'POST', path: '/new-boards/{device}/install', access: 'session' },
+  'firmware.pick': { method: 'POST', path: '/firmware/bundles/pick', access: 'session' },
+  'firmware.repair': { method: 'POST', path: '/devices/{device}/firmware/repair', access: 'session' },
+  'firmware.update': { method: 'POST', path: '/devices/{device}/firmware/update', access: 'session' },
   'integrations.config_put': { method: 'PUT', path: '/integrations/{integration}/config', access: 'session' },
   'integrations.get': { method: 'GET', path: '/integrations/{integration}', access: 'session' },
   'integrations.list': { method: 'GET', path: '/integrations', access: 'session' },
@@ -199,12 +212,15 @@ export const endpoints = {
   'ports.list': { method: 'GET', path: '/ports', access: 'session' },
   'ports.rescan': { method: 'POST', path: '/ports/rescan', access: 'session' },
   'system.get': { method: 'GET', path: '/system', access: 'session' },
+  'system.lock': { method: 'POST', path: '/system/lock', access: 'session' },
+  'system.lock_renew': { method: 'PUT', path: '/system/lock/{lock}', access: 'session' },
   'system.ping': { method: 'GET', path: '/system/ping', access: 'public' },
   'system.shutdown': { method: 'POST', path: '/system/shutdown', access: 'session' },
   'system.startup_get': { method: 'GET', path: '/system/startup', access: 'session' },
   'system.startup_put': { method: 'PUT', path: '/system/startup', access: 'session' },
+  'system.unlock': { method: 'DELETE', path: '/system/lock/{lock}', access: 'session' },
 } as const;
-export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.render_failed' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.changed' | 'layout.invalid' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'upload.not_found';
+export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.render_failed' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'companion.installing' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'firmware.bundle_invalid' | 'firmware.bundle_not_found' | 'firmware.confirm_timeout' | 'firmware.declined' | 'firmware.failed' | 'firmware.rolled_back' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.changed' | 'layout.invalid' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'new_board.not_found' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'system.busy' | 'system.dialog_open' | 'upload.not_found';
 export type SyncData = {
   approvals: Array<ApprovalRequest>,
   devices: Array<DeviceSummary>,
@@ -215,6 +231,9 @@ export type SyncData = {
 export type JobMap = {
   'assets.prune': { progress: PruneProgress; result: PruneResult };
   'assets.render': { progress: RenderProgress; result: AssetRef };
+  'firmware.install': { progress: FirmwareProgress; result: FirmwareResult };
+  'firmware.repair': { progress: FirmwareProgress; result: FirmwareResult };
+  'firmware.update': { progress: FirmwareProgress; result: FirmwareResult };
   'layouts.push': { progress: PushProgress; result: PushReport };
 };
 export type EventMap = {
@@ -307,6 +326,13 @@ also_keep: Array<string>, }, bearer?: string, headers?: Record<string, string>) 
       settings_get: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<DeviceSettings>('devices.settings_get', path, query, body, bearer, headers),
       settings_patch: (path: { device: DeviceId, }, query: null = null, body: { idle_timeout_s: number | null, orientation: string | null, name: string | null, brightness: number | null, }, bearer?: string, headers?: Record<string, string>) => call<SettingsPatched>('devices.settings_patch', path, query, body, bearer, headers),
     },
+    firmware: {
+      bundled: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<FirmwareBuild>('firmware.bundled', path, query, body, bearer, headers),
+      install: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, }, bearer?: string, headers?: Record<string, string>) => call<Job>('firmware.install', path, query, body, bearer, headers),
+      pick: (path: Record<string, never> = {}, query: null = null, body: { device: DeviceId, }, bearer?: string, headers?: Record<string, string>) => call<PickResult>('firmware.pick', path, query, body, bearer, headers),
+      repair: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, }, bearer?: string, headers?: Record<string, string>) => call<Job>('firmware.repair', path, query, body, bearer, headers),
+      update: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, }, bearer?: string, headers?: Record<string, string>) => call<Job>('firmware.update', path, query, body, bearer, headers),
+    },
     integrations: {
       config_put: (path: { integration: string, }, query: null = null, body: number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null, bearer?: string, headers?: Record<string, string>) => call<IntegrationView>('integrations.config_put', path, query, body, bearer, headers),
       get: (path: { integration: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<IntegrationView>('integrations.get', path, query, body, bearer, headers),
@@ -334,10 +360,13 @@ also_keep: Array<string>, }, bearer?: string, headers?: Record<string, string>) 
     },
     system: {
       get: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<SystemInfo>('system.get', path, query, body, bearer, headers),
+      lock: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<InstallLock>('system.lock', path, query, body, bearer, headers),
+      lock_renew: (path: { lock: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('system.lock_renew', path, query, body, bearer, headers),
       ping: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Versions>('system.ping', path, query, body, bearer, headers),
       shutdown: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('system.shutdown', path, query, body, bearer, headers),
       startup_get: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<StartupSetting>('system.startup_get', path, query, body, bearer, headers),
       startup_put: (path: Record<string, never> = {}, query: null = null, body: { at_sign_in: boolean, }, bearer?: string, headers?: Record<string, string>) => call<StartupSetting>('system.startup_put', path, query, body, bearer, headers),
+      unlock: (path: { lock: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('system.unlock', path, query, body, bearer, headers),
     },
   };
 }
