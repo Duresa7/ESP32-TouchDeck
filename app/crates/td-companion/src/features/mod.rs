@@ -1,3 +1,4 @@
+pub mod actions;
 pub mod assets;
 pub mod devices;
 pub mod jobs;

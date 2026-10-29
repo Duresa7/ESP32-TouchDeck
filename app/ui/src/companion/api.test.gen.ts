@@ -1,4 +1,5 @@
 // Generated from td-companion's test hooks. Do not edit.
+export type ApprovalScript = { answers: Array<ScriptAnswer>, };
 export type BoardKind = "device" | "device-v1" | "silent" | "other-firmware" | "busy";
 export type ClockAdvance = { advance_ms: number, };
 export type ConsoleLine = { line: string, };
@@ -16,7 +17,9 @@ export type MockPress = { page: string, tile: string, kind: string, };
 export type MockRecord = { received: Array<JsonValue>, lines: Array<string>, settings: JsonValue, reboots: number, assets: Array<string>, layouts: JsonValue, };
 export type NoQuery = null;
 export type PlugBoard = { id: DeviceId, kind: BoardKind, };
+export type ScriptAnswer = "once" | "always" | "deny" | "never";
 export const testEndpoints = {
+  'test.approvals_script': { method: 'POST', path: '/test/approvals/script', access: 'session' },
   'test.clock': { method: 'POST', path: '/test/clock', access: 'session' },
   'test.console': { method: 'POST', path: '/test/devices/{device}/console', access: 'session' },
   'test.emit': { method: 'POST', path: '/test/devices/{device}/emit', access: 'session' },

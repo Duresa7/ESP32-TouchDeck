@@ -313,6 +313,7 @@ impl Event for DeviceEvent {
 }
 
 /// Makes the sink a Device's key mirror types into.
+pub(crate) type ActionHandler = Arc<dyn Fn(&DeviceId, &Session, &serde_json::Value) + Send + Sync>;
 pub type InputFactory = Arc<dyn Fn() -> Result<Box<dyn td_host::InputSink>, String> + Send + Sync>;
 /// How the manager reaches ports, PC input and storage. Tests swap in mocks.
 pub struct Config {
@@ -409,7 +410,9 @@ struct Inner {
     wake: Wake,
     stop: AtomicBool,
     dialogs: AtomicUsize,
+    input_gate: Mutex<()>,
     config: OnceLock<Config>,
+    actions: OnceLock<ActionHandler>,
 }
 impl Inner {
     fn config(&self) -> &Config {
@@ -461,6 +464,9 @@ pub struct DeviceManager {
     inner: Arc<Inner>,
 }
 impl DeviceManager {
+    pub(crate) fn action_handler(&self, handler: ActionHandler) {
+        let _ = self.inner.actions.set(handler);
+    }
     pub fn new(events: Events) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -469,7 +475,9 @@ impl DeviceManager {
                 wake: Wake::default(),
                 stop: AtomicBool::new(false),
                 dialogs: AtomicUsize::new(0),
+                input_gate: Mutex::new(()),
                 config: OnceLock::new(),
+                actions: OnceLock::new(),
             }),
         }
     }
@@ -678,6 +686,7 @@ impl DeviceManager {
     /// Suppresses key input from every Device while the guard lives. Approval and Firmware
     /// dialogs hold one, so Device input can't answer them.
     pub fn suppress_input(&self) -> InputSuppressed {
+        let _gate = self.inner.input_gate.lock();
         self.inner.dialogs.fetch_add(1, Ordering::SeqCst);
         InputSuppressed(self.inner.clone())
     }

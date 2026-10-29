@@ -26,6 +26,7 @@ use ts_rs::TS;
 
 #[derive(Clone)]
 pub struct Ctx {
+    pub actions: crate::actions::Actions,
     pub devices: crate::devices::DeviceManager,
     pub events: Events,
     pub jobs: crate::jobs::Jobs,
@@ -55,7 +56,15 @@ impl Ctx {
         let events = Events::default();
         let clock = Clock::default();
         let devices = crate::devices::DeviceManager::new(events.clone());
+        let actions = crate::actions::Actions::new(
+            events.clone(),
+            clock.clone(),
+            devices.clone(),
+            data.join("allowed-actions.json"),
+            mock,
+        );
         Self {
+            actions,
             jobs: crate::jobs::Jobs::new(events.clone(), clock.clone()),
             links: crate::link::Links::new(devices.clone()),
             layouts: crate::store::LayoutStore::new(data.join("layouts")),
@@ -399,9 +408,22 @@ async fn dispatch<E: Endpoint>(State(ctx): State<Ctx>, request: Request) -> Resp
 
 /// Builds the router from the registry. Every request, routed or not, passes `guard` first.
 pub fn router(ctx: Ctx) -> Router {
+    build_router(ctx, registry())
+}
+/// The production route set, also exercised by tests built with test hooks.
+pub fn release_router(ctx: Ctx) -> Router {
+    build_router(
+        ctx,
+        registry()
+            .into_iter()
+            .filter(|f| f.name != "test")
+            .collect(),
+    )
+}
+fn build_router(ctx: Ctx, features: Vec<Feature>) -> Router {
     let mut router = Router::new();
     let mut access = HashMap::new();
-    for feature in registry() {
+    for feature in features {
         for e in &feature.endpoints {
             access.insert((e.method.clone(), format!("/api/v1{}", e.path)), e.access);
         }

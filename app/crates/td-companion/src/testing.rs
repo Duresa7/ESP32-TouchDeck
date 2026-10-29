@@ -26,6 +26,12 @@ impl TestCompanion {
     }
     /// Starts with other connection and time limits, so limit tests run in milliseconds.
     pub async fn start_with(limits: crate::Limits) -> Self {
+        Self::start_router(limits, false).await
+    }
+    pub async fn start_release_router() -> Self {
+        Self::start_router(crate::Limits::default(), true).await
+    }
+    async fn start_router(limits: crate::Limits, release: bool) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let data = tempfile::tempdir().unwrap();
@@ -33,7 +39,11 @@ impl TestCompanion {
         let config = Config::mock(Some(data.path().join("devices.json")));
         let (ports, input) = config.mock.clone().unwrap();
         ctx.devices.start(config);
-        let router = crate::api::router(ctx.clone());
+        let router = if release {
+            crate::api::release_router(ctx.clone())
+        } else {
+            crate::api::router(ctx.clone())
+        };
         let stop = ctx.shutdown.subscribe();
         let task = tokio::spawn(crate::serve::serve(listener, router, limits, stop));
         let url = format!("http://127.0.0.1:{port}");
