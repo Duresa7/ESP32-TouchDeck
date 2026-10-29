@@ -104,7 +104,9 @@ impl SourcesState {
         let mut saved = self.config.lock().unwrap();
         let next_origin = td_host::integrations::secrets::origin(&config.cliproxy_url)?;
         if saved.configured
-            && td_host::integrations::secrets::origin(&saved.value.cliproxy_url).ok().as_ref()
+            && td_host::integrations::secrets::origin(&saved.value.cliproxy_url)
+                .ok()
+                .as_ref()
                 != Some(&next_origin)
         {
             saved.pending_key = None;
@@ -341,24 +343,45 @@ mod tests {
         fail: Mutex<bool>,
     }
     impl SecretStore for FailingVault {
-        fn get(&self, i: &str, f: &str) -> Result<Option<td_host::integrations::secrets::Secret>, String> {
+        fn get(
+            &self,
+            i: &str,
+            f: &str,
+        ) -> Result<Option<td_host::integrations::secrets::Secret>, String> {
             self.store.get(i, f)
         }
-        fn put(&self, i: &str, f: &str, s: td_host::integrations::secrets::Secret) -> Result<(), String> {
-            if *self.fail.lock().unwrap() { Err("vault unavailable".into()) } else { self.store.put(i, f, s) }
+        fn put(
+            &self,
+            i: &str,
+            f: &str,
+            s: td_host::integrations::secrets::Secret,
+        ) -> Result<(), String> {
+            if *self.fail.lock().unwrap() {
+                Err("vault unavailable".into())
+            } else {
+                self.store.put(i, f, s)
+            }
         }
-        fn delete(&self, i: &str, f: &str) -> Result<(), String> { self.store.delete(i, f) }
+        fn delete(&self, i: &str, f: &str) -> Result<(), String> {
+            self.store.delete(i, f)
+        }
     }
     #[test]
     fn failed_promotion_binds_draft_to_the_first_saved_origin() {
         for retry in ["https://a.example/path", "https://b.example"] {
             let mut state = state();
             let vault = Arc::new(FailingVault::default());
-            state.keys = Arc::new(BoundKeys::from_config(vault.clone(), &Config::default().cliproxy_url));
+            state.keys = Arc::new(BoundKeys::from_config(
+                vault.clone(),
+                &Config::default().cliproxy_url,
+            ));
             state.set_key("fixture-key").unwrap();
             *vault.fail.lock().unwrap() = true;
             assert!(state.save_config(config("https://a.example")).is_err());
-            assert_eq!(Config::load(&state.config_file).cliproxy_url, "https://a.example");
+            assert_eq!(
+                Config::load(&state.config_file).cliproxy_url,
+                "https://a.example"
+            );
             *vault.fail.lock().unwrap() = false;
             state.save_config(config(retry)).unwrap();
             let same = retry == "https://a.example/path";
@@ -374,7 +397,10 @@ mod tests {
     fn replacing_a_failed_draft_does_not_restore_the_old_key() {
         let mut state = state();
         let vault = Arc::new(FailingVault::default());
-        state.keys = Arc::new(BoundKeys::from_config(vault.clone(), &Config::default().cliproxy_url));
+        state.keys = Arc::new(BoundKeys::from_config(
+            vault.clone(),
+            &Config::default().cliproxy_url,
+        ));
         state.set_key("old-fixture").unwrap();
         *vault.fail.lock().unwrap() = true;
         assert!(state.save_config(config("https://a.example")).is_err());
@@ -384,5 +410,4 @@ mod tests {
         assert_eq!(state.keys.get().unwrap().as_deref(), Some("new-fixture"));
         std::fs::remove_file(&state.config_file).unwrap();
     }
-
 }

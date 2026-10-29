@@ -304,7 +304,6 @@ fn repeated_configure_and_tick_preserve_the_poll_deadline() {
     assert_eq!(calls.0.lock().unwrap().len(), 1);
     i.refresh();
     assert_eq!(calls.0.lock().unwrap().len(), 2);
-
 }
 #[test]
 fn secret_writes_ticks_and_refresh_share_request_spacing() {
@@ -325,7 +324,18 @@ fn secret_stores_reject_ambiguous_target_components() {
     for store in [&MemorySecrets::default() as &dyn SecretStore, &OsSecrets] {
         for (i, f) in [("a:b", "c"), ("a", "b:c"), ("", "c"), ("a", "bad field")] {
             assert!(store.get(i, f).is_err());
-            assert!(store.put(i, f, Secret { origin: "https://hub.example".into(), value: "fixture".into() }).is_err());
+            assert!(
+                store
+                    .put(
+                        i,
+                        f,
+                        Secret {
+                            origin: "https://hub.example".into(),
+                            value: "fixture".into()
+                        }
+                    )
+                    .is_err()
+            );
             assert!(store.delete(i, f).is_err());
         }
     }

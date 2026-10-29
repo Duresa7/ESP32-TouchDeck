@@ -208,7 +208,9 @@ impl Integration for CliProxyIntegration {
         let now = Instant::now();
         if self.settings.enabled
             && self.next.is_some_and(|next| now >= next)
-            && self.last_request.is_none_or(|last| now.duration_since(last) >= crate::sources::PROXY_REFRESH_FLOOR)
+            && self
+                .last_request
+                .is_none_or(|last| now.duration_since(last) >= crate::sources::PROXY_REFRESH_FLOOR)
         {
             self.last_request = Some(now);
             self.readings = self.source.poll();

@@ -91,7 +91,10 @@ impl Registry {
     pub fn new(env: Environment) -> Result<Self, Error> {
         Self::from_registrations(env, inventory::iter::<Registration>)
     }
-    fn from_registrations<'a>(env: Environment, registrations: impl IntoIterator<Item = &'a Registration>) -> Result<Self, Error> {
+    fn from_registrations<'a>(
+        env: Environment,
+        registrations: impl IntoIterator<Item = &'a Registration>,
+    ) -> Result<Self, Error> {
         let mut entries = BTreeMap::new();
         for r in registrations {
             let i = (r.0)(&env)?;

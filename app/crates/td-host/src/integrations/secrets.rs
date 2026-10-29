@@ -8,7 +8,11 @@ use std::{
 use url::{Host, Url};
 
 pub(super) fn validate_id(id: &str) -> Result<(), String> {
-    if !id.is_empty() && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-') {
+    if !id.is_empty()
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+    {
         Ok(())
     } else {
         Err("Invalid Integration or field id".into())
