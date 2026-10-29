@@ -299,20 +299,8 @@
   color: var(--ink-2);
 }
 
-.input[aria-invalid='true'] {
-  border-color: var(--danger-ink);
-}
-
 .input::placeholder {
   color: var(--ink-2);
-}
-
-.field-error {
-  margin: 0;
-  color: var(--danger-ink);
-  font-size: var(--text-12);
-  line-height: var(--leading-12);
-  letter-spacing: var(--track-12);
 }
 
 .notice-signal {

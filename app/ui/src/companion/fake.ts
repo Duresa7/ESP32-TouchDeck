@@ -1,14 +1,19 @@
 import type { DeviceSummary, Layout, SystemInfo } from './api.ts';
 import { CLOSE_SESSION, type EventSocket } from './events.ts';
+import { createFakeActions } from './fake-actions.ts';
+import { createFakeConsole } from './fake-console.ts';
 import { createFakeIntegrations, type FakeIntegrationsOptions } from './fake-integrations.ts';
 import { createFakeLayouts } from './fake-layouts.ts';
+import { createFakeSessions, type FakeBrowser } from './fake-sessions.ts';
+import { createFakeStartup } from './fake-startup.ts';
 import type { OpenTouchDeckBridge } from './session.ts';
 
 // An in-memory Companion for tests and the demo mode of `pnpm dev:ui`. It answers
 // `system.ping`, `system.get`, `devices.list`, `devices.get` and `layouts.get` the way
 // docs/companion-api.md says, checks session tokens, and runs the event stream:
 // `hello`, `sync`, then `device.added`, `device.updated`, `device.removed` and `job.updated`. fake-layouts.ts
-// answers the Layouts, Jobs and Assets prune routes and sends `job.updated`.
+// answers the Layouts, Jobs and Assets prune routes and sends `job.updated`. fake-sessions.ts,
+// fake-startup.ts and fake-console.ts answer the session, start at sign-in and console routes.
 
 export interface FakeCompanionOptions {
   devices?: DeviceSummary[];
@@ -17,11 +22,21 @@ export interface FakeCompanionOptions {
   system?: Partial<SystemInfo>;
   /** How long a fake Job runs. */
   jobMs?: number;
+  /** Browsers paired before the start. */
+  browsers?: readonly FakeBrowser[];
+  startAtSignIn?: boolean;
   /** How CLIProxyAPI starts: not set up unless `configured`. */
   integrations?: Omit<FakeIntegrationsOptions, 'publish'>;
 }
 
 type Frame = Record<string, unknown> & { type: string };
+
+const topicKey = (topic: unknown, device: unknown) => `${String(topic)}/${String(device)}`;
+
+const TOPIC_OF_FRAME: ReadonlyMap<string, string> = new Map([
+  ['device.console', 'console'],
+  ['device.key-mirror', 'key-mirror'],
+]);
 
 class FakeSocket implements EventSocket {
   onmessage: ((event: { data: unknown }) => void) | null = null;
@@ -29,16 +44,35 @@ class FakeSocket implements EventSocket {
   private seq = 0;
   private closing = false;
   private readonly sockets: Set<FakeSocket>;
+  readonly token: string;
+  readonly topics = new Set<string>();
 
-  constructor(sockets: Set<FakeSocket>) {
+  constructor(sockets: Set<FakeSocket>, token: string) {
     this.sockets = sockets;
+    this.token = token;
   }
 
-  // Frames arrive on a later task, in order, and frames sent before a close still arrive.
-  send(frame: Frame) {
+  // Frames arrive on a later task, in order, and frames pushed before a close still arrive.
+  push(frame: Frame) {
     if (this.closing) return;
+    const topic = TOPIC_OF_FRAME.get(frame.type);
+    if (topic !== undefined && !this.topics.has(topicKey(topic, frame.device))) return;
     const data = JSON.stringify({ ...frame, seq: this.seq++ });
     setTimeout(() => this.onmessage?.({ data }), 0);
+  }
+
+  send(text: string) {
+    let request: unknown;
+    try {
+      request = JSON.parse(text);
+    } catch {
+      return;
+    }
+    if (typeof request !== 'object' || request === null || !('op' in request) || !('topic' in request) || !('device' in request)) return;
+    if (request.topic === 'state') return;
+    const key = topicKey(request.topic, request.device);
+    if (request.op === 'subscribe') this.topics.add(key);
+    if (request.op === 'unsubscribe') this.topics.delete(key);
   }
 
   close(code = 1000) {
@@ -61,23 +95,30 @@ const failure = (status: number, code: string, message: string, details: unknown
 export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   const devices = new Map((options.devices ?? []).map((d) => [d.id, structuredClone(d)]));
   const system: SystemInfo = { version: '0.2.0', build: 'fake', api: 'v1', mock: true, data_dir_override: false, ...options.system };
-  const sessions = new Set<string>();
-  const revoked = new Set<string>();
   const sockets = new Set<FakeSocket>();
   let minted = 0;
   let requests = 0;
   const layouts = createFakeLayouts({ devices, publish, seed: options.layouts, delayMs: options.jobMs });
+  const actions = createFakeActions({ devices, publish, stored: layouts.stored });
+  const sessions = createFakeSessions({ browsers: options.browsers, onRevoke: signOut });
+  const startup = createFakeStartup(options.startAtSignIn);
+  const consoles = createFakeConsole({ devices, publish });
   const integrations = createFakeIntegrations({ publish, ...options.integrations });
 
   function mint() {
     minted += 1;
-    const token = `tds_fake${String(minted).padStart(4, '0')}`;
-    sessions.add(token);
-    return token;
+    return sessions.mint({ kind: 'window', label: 'Window' });
   }
 
   function publish(frame: Frame) {
-    for (const socket of sockets) socket.send(frame);
+    for (const socket of sockets) socket.push(frame);
+  }
+
+  function signOut(tokens: ReadonlySet<string>) {
+    for (const socket of [...sockets].filter((s) => tokens.has(s.token))) {
+      socket.push({ type: 'auth.revoked', data: {} });
+      socket.close(CLOSE_SESSION);
+    }
   }
 
   // What Electron's preload would hand the window: a fresh session on every ask.
@@ -98,17 +139,17 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
 
     if (path === '/system/ping') return get ? json(200, { api: ['v1'] }) : failure(405, 'route.method_not_allowed', 'Use GET.');
     if (path.startsWith('/test/integrations/')) return integrations.test(request, path);
-    if (path.startsWith('/test/')) return layouts.test(request, path);
+    if (path.startsWith('/test/')) return (await actions.test(request, path)) ?? layouts.test(request, path);
 
     const auth = request.headers.get('Authorization') ?? '';
     const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
     if (!token) return failure(401, 'auth.missing', 'No session token.');
-    if (!sessions.has(token)) {
-      return revoked.has(token)
-        ? failure(401, 'auth.revoked', 'The session was revoked.')
-        : failure(401, 'auth.invalid', 'The session token is unknown.');
-    }
+    const status = sessions.status(token);
+    if (status === 'revoked') return failure(401, 'auth.revoked', 'The session was revoked.');
+    if (status === 'unknown') return failure(401, 'auth.invalid', 'The session token is unknown.');
 
+    const routed = sessions.handle(request, path, token) ?? (await startup.handle(request, path)) ?? (await consoles.handle(request, path));
+    if (routed) return routed;
     const device = /^\/devices\/([^/]+)$/.exec(path);
     if (path === '/system' || path === '/devices' || device) {
       if (!get) return failure(405, 'route.method_not_allowed', 'Use GET.');
@@ -117,20 +158,20 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
       const found = devices.get(decodeURIComponent(device![1]));
       return found ? json(200, found) : failure(404, 'device.not_found', 'No Device with that id.');
     }
-    return (await layouts.handle(request, path)) ?? (await integrations.handle(request, path)) ?? failure(404, 'route.not_found', 'No route with that path.');
+    return (await layouts.handle(request, path)) ?? actions.handle(request, path) ?? (await integrations.handle(request, path)) ?? failure(404, 'route.not_found', 'No route with that path.');
   }
 
   function openSocket(url: string, protocols: string[]): EventSocket {
     const bearer = protocols.find((p) => p.startsWith('touchdeck.bearer.'));
     const token = bearer?.slice('touchdeck.bearer.'.length) ?? '';
-    const socket = new FakeSocket(sockets);
-    if (!new URL(url).pathname.endsWith('/api/v1/events') || !protocols.includes('touchdeck.v1') || !sessions.has(token)) {
+    const socket = new FakeSocket(sockets, token);
+    if (!new URL(url).pathname.endsWith('/api/v1/events') || !protocols.includes('touchdeck.v1') || sessions.status(token) !== 'live') {
       socket.close(CLOSE_SESSION);
       return socket;
     }
     sockets.add(socket);
-    socket.send({ type: 'hello', api: 'v1', build: system.build, session: { id: 'fake-session', kind: 'window' } });
-    socket.send({ type: 'sync', data: { devices: [...devices.values()], jobs: layouts.jobs(), integrations: integrations.list() } });
+    socket.push({ type: 'hello', api: 'v1', build: system.build, session: { id: 'fake-session', kind: 'window' } });
+    socket.push({ type: 'sync', data: { devices: [...devices.values()], jobs: layouts.jobs(), approvals: actions.pending(), integrations: integrations.list() } });
     return socket;
   }
 
@@ -139,6 +180,10 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     openSocket,
     bridge,
     layouts,
+    actions,
+    sessions,
+    startup,
+    consoles,
     integrations,
     /** Sessions minted so far through the bridge. */
     get minted() {
@@ -150,6 +195,10 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     },
     get openSockets() {
       return sockets.size;
+    },
+    /** Each open socket's opt-in topics, as `topic/device`. */
+    get topics() {
+      return [...sockets].map((socket) => [...socket.topics]);
     },
     /** A Device appears: `device.added`. */
     add(device: DeviceSummary) {
@@ -176,10 +225,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     },
     /** Reset pairing: every session ends, sockets get `auth.revoked` and close 4401. */
     revokeSessions() {
-      for (const token of sessions) revoked.add(token);
-      sessions.clear();
-      publish({ type: 'auth.revoked', data: {} });
-      for (const socket of [...sockets]) socket.close(CLOSE_SESSION);
+      sessions.revokeAll();
     },
     /** Drops every socket with `code`, as a restart (1001) or a slow client (4008) would. */
     dropSockets(code: number) {

@@ -7,6 +7,18 @@ use std::{
 };
 use url::{Host, Url};
 
+pub(super) fn validate_id(id: &str) -> Result<(), String> {
+    if !id.is_empty()
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+    {
+        Ok(())
+    } else {
+        Err("Invalid Integration or field id".into())
+    }
+}
+
 pub fn origin(base: &str) -> Result<String, String> {
     let url = Url::parse(base.trim()).map_err(|_| "Invalid Integration URL")?;
     if !matches!(url.scheme(), "http" | "https")
@@ -46,7 +58,6 @@ pub fn credential_transport(base: &str) -> Result<(), String> {
     }
 }
 
-// Deliberately no Debug: even an error path must not format the value.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Secret {
     pub origin: String,
@@ -67,19 +78,27 @@ pub trait SecretStore: Send + Sync {
 pub struct MemorySecrets(Mutex<BTreeMap<(String, String), Secret>>);
 impl SecretStore for MemorySecrets {
     fn get(&self, i: &str, f: &str) -> Result<Option<Secret>, String> {
+        validate_id(i)?;
+        validate_id(f)?;
         Ok(self.0.lock().unwrap().get(&(i.into(), f.into())).cloned())
     }
     fn put(&self, i: &str, f: &str, s: Secret) -> Result<(), String> {
+        validate_id(i)?;
+        validate_id(f)?;
         self.0.lock().unwrap().insert((i.into(), f.into()), s);
         Ok(())
     }
     fn delete(&self, i: &str, f: &str) -> Result<(), String> {
+        validate_id(i)?;
+        validate_id(f)?;
         self.0.lock().unwrap().remove(&(i.into(), f.into()));
         Ok(())
     }
 }
 pub struct OsSecrets;
 fn entry(i: &str, f: &str) -> Result<keyring::Entry, String> {
+    validate_id(i)?;
+    validate_id(f)?;
     keyring::Entry::new("touchdeck", &format!("integration:{i}:{f}"))
         .map_err(|_| "Credential store unavailable".into())
 }

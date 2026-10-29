@@ -123,17 +123,17 @@ test('the status light follows the hub and the switch', async ({ page }) => {
   await expect(status).toHaveText('Connected. 3 accounts, checked 12 s ago.');
   await expect(status).toHaveAttribute('data-live', 'true');
 
-  await page.evaluate(() => (window as unknown as { touchdeckDemo: { hub(up: boolean): void } }).touchdeckDemo.hub(false));
+  await page.evaluate(() => window.touchdeckDemo?.setHub(false));
   await expect(status).toHaveText("Can't connect");
   await expect(status).toHaveAttribute('data-live', 'false');
   await page.getByText('Details', { exact: true }).first().click();
   await expect(page.getByTestId('detail-status-detail')).toHaveText('connection refused');
 
-  await page.evaluate(() => (window as unknown as { touchdeckDemo: { deliver(device: string, sent: number, error: string | null): void } }).touchdeckDemo.deliver('mock0002', 0, 'Device is busy'));
+  await page.evaluate(() => window.touchdeckDemo?.deliver({ device: 'mock0002', sent: 0, error: 'Device is busy' }));
   await expect(page.getByTestId('delivery-error')).toHaveAttribute('data-device', 'mock0002');
   await expect(page.getByTestId('delivery-error')).toContainText("Couldn't send values to");
 
-  await page.evaluate(() => (window as unknown as { touchdeckDemo: { hub(up: boolean): void } }).touchdeckDemo.hub(true));
+  await page.evaluate(() => window.touchdeckDemo?.setHub(true));
   await expect(status).toHaveAttribute('data-live', 'true');
   await page.getByTestId('config-switch').click();
   await page.getByTestId('config-save').click();

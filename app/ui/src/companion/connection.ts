@@ -1,20 +1,22 @@
 import { createContext, useContext } from 'react';
+import { actionsStore, type ActionsStore } from './actions.ts';
 import { createClient, type Companion } from './client.ts';
 import { devicesStore, type DevicesStore } from './devices.ts';
 import { openEvents, openWebSocket, type Events, type OpenSocket } from './events.ts';
 import { integrationsStore, type IntegrationsStore } from './integrations.ts';
 import { jobsStore, type JobsStore } from './jobs.ts';
 import { pickSession, type Session } from './session.ts';
+import type { UpdatesBridge } from '../state/updates.ts';
 
-/** Where the UI finds its Companion: the page's own origin, unless the demo fakes one. */
 export interface Environment {
   base: string;
   session: Session;
   open: OpenSocket;
+  updates?: UpdatesBridge;
 }
 
 export function pageEnvironment(target: Window): Environment {
-  return { base: target.location.origin, session: pickSession(target), open: openWebSocket };
+  return { base: target.location.origin, session: pickSession(target), open: openWebSocket, updates: target.openTouchDeck?.updates };
 }
 
 export function eventsUrl(base: string): string {
@@ -28,17 +30,17 @@ export interface Connection {
   events: Events;
 }
 
-/** Starts the client and the event stream that feeds the Devices store. */
 export function connect(
   env: Environment,
   store: DevicesStore = devicesStore,
   onNewBuild = () => window.location.reload(),
   jobs: JobsStore = jobsStore,
+  actions: ActionsStore = actionsStore,
   integrations: IntegrationsStore = integrationsStore,
 ): Connection {
   return {
     companion: createClient(env.base, env.session),
-    events: openEvents({ url: eventsUrl(env.base), session: env.session, store, jobs, integrations, open: env.open, onNewBuild }),
+    events: openEvents({ url: eventsUrl(env.base), session: env.session, store, jobs, actions, integrations, open: env.open, onNewBuild }),
   };
 }
 
@@ -48,4 +50,12 @@ export function useCompanion(): Companion {
   const companion = useContext(CompanionContext);
   if (!companion) throw new Error('useCompanion needs a CompanionContext provider');
   return companion;
+}
+
+export const EventsContext = createContext<Events | null>(null);
+
+export function useEvents(): Events {
+  const events = useContext(EventsContext);
+  if (!events) throw new Error('useEvents needs an EventsContext provider');
+  return events;
 }

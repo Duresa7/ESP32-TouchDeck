@@ -6,10 +6,6 @@ import { IntegrationDetail } from './integrations/IntegrationDetail.tsx';
 import { IntegrationList } from './integrations/IntegrationList.tsx';
 import '../styles/integrations.css';
 
-/**
- * The Integrations screen: the list of every Integration with its state and Preset tiles, and one Integration's own
- * view. Opening one never animates, and going back puts focus on the row it came from.
- */
 export function Integrations() {
   const integrations = useIntegrations((s) => s.integrations);
   const [open, setOpen] = useState<{ id: string; setUp: boolean } | null>(null);

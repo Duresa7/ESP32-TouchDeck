@@ -63,7 +63,6 @@ async fn routes_preserve_same_origin_and_clear_changed_origins_and_emit_safe_sta
                 .unwrap()
                 .contains("fixture-private-value")
         );
-        // Racing refresh and config changes are serialized by the Integration service.
         let (refresh, changed) = tokio::join!(
             td.call::<Refresh>(path(), NoQuery, ()),
             td.call::<ConfigPut>(path(), NoQuery, config(next))

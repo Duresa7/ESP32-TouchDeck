@@ -2,12 +2,14 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Dialog } from '@base-ui/react/dialog';
 import { Toggle } from '@base-ui/react/toggle';
 import { ToggleGroup } from '@base-ui/react/toggle-group';
-import { X } from 'lucide-react';
-import type { SystemInfo } from '../companion/api.ts';
-import { useCompanion } from '../companion/connection.ts';
+import { ChevronRight, X } from 'lucide-react';
 import type { Appearance } from '../state/theme.ts';
-import { useUi } from '../state/ui.ts';
+import { useUi, type SettingsSection } from '../state/ui.ts';
 import { button } from './button.ts';
+import { About } from './settings/About.tsx';
+import { PairedBrowsers } from './settings/PairedBrowsers.tsx';
+import { StartAtSignIn } from './settings/StartAtSignIn.tsx';
+import { TroubleshootingView } from './settings/Troubleshooting.tsx';
 
 const appearances: { value: Appearance; label: string }[] = [
   { value: 'system', label: 'Match Windows' },
@@ -15,46 +17,93 @@ const appearances: { value: Appearance; label: string }[] = [
   { value: 'dark', label: 'Dark' },
 ];
 
-function useSystemInfo() {
-  const companion = useCompanion();
-  const [info, setInfo] = useState<SystemInfo | 'unknown' | null>(null);
+function GeneralView({ onTroubleshooting, focusEntry }: { onTroubleshooting(): void; focusEntry: boolean }) {
+  const appearance = useUi((s) => s.appearance);
+  const setAppearance = useUi((s) => s.setAppearance);
+  const entry = useRef<HTMLButtonElement>(null);
+  const ids = useId();
   useEffect(() => {
-    let live = true;
-    companion.system.get().then(
-      (system) => live && setInfo(system),
-      () => live && setInfo('unknown'),
-    );
-    return () => {
-      live = false;
-    };
-  }, [companion]);
-  return info;
-}
+    if (focusEntry) entry.current?.focus();
+  }, [focusEntry]);
 
-function About() {
-  const info = useSystemInfo();
-  const version = info === null ? '' : info === 'unknown' ? ' Unknown' : ` ${info.version}`;
   return (
-    <div className="row">
-      <span className="row-text">
-        <span className="row-title">Open TouchDeck{version}</span>
-        {info !== null && info !== 'unknown' && <span className="row-sub tabular">Build {info.build}</span>}
-      </span>
-    </div>
+    <>
+      <div className="dialog-head">
+        <Dialog.Title className="dialog-title">Settings</Dialog.Title>
+        <Dialog.Close className={button({ kind: 'icon' })} aria-label="Close">
+          <X size={18} strokeWidth={1.9} aria-hidden />
+        </Dialog.Close>
+      </div>
+
+      <section className="settings-section">
+        <div className="group">
+          <StartAtSignIn />
+          <div className="row">
+            <span className="row-text">
+              <span className="row-title" id={`${ids}-appearance`}>
+                Appearance
+              </span>
+            </span>
+            <ToggleGroup
+              value={[appearance]}
+              onValueChange={(value) => {
+                const next = appearances.find((a) => a.value === value[0]);
+                if (next) setAppearance(next.value);
+              }}
+              aria-labelledby={`${ids}-appearance`}
+              className="segmented"
+            >
+              {appearances.map((a) => (
+                <Toggle key={a.value} value={a.value} className="segment">
+                  {a.label}
+                </Toggle>
+              ))}
+            </ToggleGroup>
+          </div>
+        </div>
+      </section>
+
+      <PairedBrowsers />
+
+      <section className="settings-section">
+        <div className="group">
+          <button ref={entry} type="button" className="row row-button" onClick={onTroubleshooting}>
+            <span className="row-text">
+              <span className="row-title">Troubleshooting</span>
+              <span className="row-sub">Device details, and tools to check that taps reach this PC.</span>
+            </span>
+            <ChevronRight className="row-chevron" size={18} strokeWidth={1.9} aria-hidden />
+          </button>
+        </div>
+      </section>
+
+      <section className="settings-section" aria-labelledby={`${ids}-about`}>
+        <h3 id={`${ids}-about`}>About</h3>
+        <div className="group">
+          <About />
+        </div>
+      </section>
+    </>
   );
 }
 
-/**
- * Settings, a dialog over whatever screen is open. Escape closes it. What it
- * changes lives in the UI store, so it's still there when Settings opens again.
- * The sections are placeholders until #88 fills them.
- */
+function SettingsViews() {
+  const section = useUi((s) => s.settingsSection);
+  const show = useUi((s) => s.showSettingsSection);
+  const [moved, setMoved] = useState(false);
+  const go = (next: SettingsSection) => {
+    setMoved(true);
+    show(next);
+  };
+  return section === 'troubleshooting' ? (
+    <TroubleshootingView onBack={() => go('general')} focusBack={moved} />
+  ) : (
+    <GeneralView onTroubleshooting={() => go('troubleshooting')} focusEntry={moved} />
+  );
+}
+
 export function SettingsDialog() {
   const popup = useRef<HTMLDivElement>(null);
-  const appearance = useUi((s) => s.appearance);
-  const setAppearance = useUi((s) => s.setAppearance);
-  const ids = useId();
-  const section = useUi((s) => s.settingsSection);
 
   return (
     <Dialog.Portal>
@@ -65,56 +114,7 @@ export function SettingsDialog() {
         // Keyboard users land on the first control; pointer users get no stray focus ring.
         initialFocus={(type) => (type === 'keyboard' ? true : popup.current)}
       >
-        <div className="dialog-head">
-          <Dialog.Title className="dialog-title">Settings</Dialog.Title>
-          <Dialog.Close className={button({ kind: 'icon' })} aria-label="Close">
-            <X size={18} strokeWidth={1.9} aria-hidden />
-          </Dialog.Close>
-        </div>
-
-        <section className="settings-section">
-          <div className="group">
-            <div className="row">
-              <span className="row-text">
-                <span className="row-title" id={`${ids}-appearance`}>
-                  Appearance
-                </span>
-              </span>
-              <ToggleGroup
-                value={[appearance]}
-                onValueChange={(value) => value[0] && setAppearance(value[0] as Appearance)}
-                aria-labelledby={`${ids}-appearance`}
-                className="segmented"
-              >
-                {appearances.map((a) => (
-                  <Toggle key={a.value} value={a.value} className="segment">
-                    {a.label}
-                  </Toggle>
-                ))}
-              </ToggleGroup>
-            </div>
-          </div>
-        </section>
-
-        <section className="settings-section" aria-labelledby={`${ids}-browsers`}>
-          <h3 id={`${ids}-browsers`}>Paired browsers</h3>
-          <div className="group">
-            <div className="row">
-              <span className="row-note">No browsers paired. Choose Open in browser in the tray to pair one.</span>
-            </div>
-          </div>
-        </section>
-
-        {section === 'troubleshooting' && <section className="settings-section" aria-labelledby={`${ids}-troubleshooting`}>
-          <h3 id={`${ids}-troubleshooting`}>Troubleshooting</h3>
-          <div className="group"><div className="row"><span className="row-note">Device details, and tools to check that taps reach this PC.</span></div></div>
-        </section>}
-        <section className="settings-section" aria-labelledby={`${ids}-about`}>
-          <h3 id={`${ids}-about`}>About</h3>
-          <div className="group">
-            <About />
-          </div>
-        </section>
+        <SettingsViews />
       </Dialog.Popup>
     </Dialog.Portal>
   );

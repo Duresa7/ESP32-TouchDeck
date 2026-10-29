@@ -1,17 +1,17 @@
-// The inspector rail: the selected Tile, Add Tile, or the Page and Layout details when nothing is selected.
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import clsx from 'clsx';
 import { Switch } from '@base-ui/react/switch';
 import { Plus } from 'lucide-react';
 import { useIntegrations } from '../../companion/integrations.ts';
 import { missingGlyphs } from '../../lib/deck/scene.ts';
-import { ADD_KINDS, type EditorStore, type Target } from '../../lib/editor/store.ts';
+import { ADD_KINDS, tileProblems, type EditorStore, type Target } from '../../lib/editor/store.ts';
 import { plural } from '../../lib/editor/messages.ts';
 import type { GridPage, Layout, Page } from '../../lib/editor/validate.ts';
 import { offersPresets } from '../../lib/integrations/model.ts';
 import { button } from '../../shell/button.ts';
 import { useUi } from '../../state/ui.ts';
 import { PresetButton } from '../integrations/PresetPreview.tsx';
+import { PendingApprovals } from './Approvals.tsx';
 import { useEditorState } from './editor.ts';
 import { KINDS, TileGlyph } from './glyphs.tsx';
 import { TileFields } from './TileFields.tsx';
@@ -27,7 +27,6 @@ function GlyphWarning({ value, device }: { value: string; device: string }) {
   );
 }
 
-/** A name field that applies on Enter or when it loses focus. A refused name goes back to the saved one. */
 function NameField({ label, value, hint, device, onCommit, testId }: { label: string; value: string; hint?: string; device: string; onCommit(next: string): string | null; testId: string }) {
   const id = useId();
   const [draft, setDraft] = useState(value);
@@ -189,9 +188,9 @@ function Details({ store, layout, page, device }: { store: EditorStore; layout: 
 
 function TileInspector({ store, page, tileId }: { store: EditorStore; page: GridPage; tileId: string }) {
   const tile = page.tiles.find((t) => t.id === tileId);
-  const intent = useEditorState(store, (s) => s.intents[tileId]);
+  const refused = useEditorState(store, (s) => tileProblems(s, tileId)?.action);
   if (!tile) return null;
-  const kind = intent ?? tile.action.type;
+  const kind = refused?.value.type ?? tile.action.type;
   return (
     <>
       <div className="inspector-head" data-testid="tile-head">
@@ -302,16 +301,17 @@ function AddTile({ store, page, target }: { store: EditorStore; page: Page; targ
   );
 }
 
-/** The rail beside the canvas. Its content follows the selection: a Tile, Add Tile, or the Page and Layout. */
 export function Inspector({ store, layout, device }: { store: EditorStore; layout: Layout; device: string }) {
   const pageId = useEditorState(store, (s) => s.page);
   const selected = useEditorState(store, (s) => s.selected);
   const adding = useEditorState(store, (s) => s.adding);
   const mode = useEditorState(store, (s) => s.mode);
+  const deviceId = useEditorState(store, (s) => s.device?.id);
   const page = layout.pages.find((p) => p.id === pageId) ?? layout.pages[0];
   const tileOpen = mode === 'edit' && selected !== null && page.kind === 'grid' && page.tiles.some((t) => t.id === selected);
   return (
     <aside className={clsx('inspector', adding !== null && 'is-adding')} aria-label="Details" data-testid="inspector">
+      {deviceId && <PendingApprovals deviceId={deviceId} device={device} layout={layout} />}
       {adding !== null ? (
         <AddTile store={store} page={page} target={adding} />
       ) : tileOpen && page.kind === 'grid' ? (

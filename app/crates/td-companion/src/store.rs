@@ -57,19 +57,31 @@ pub fn name(orientation: Orientation) -> &'static str {
 #[derive(Clone)]
 pub struct AssetStore {
     cache: td_host::icons::IconCache,
+    dir: PathBuf,
 }
 impl AssetStore {
     pub(crate) fn new(dir: PathBuf) -> Self {
         Self {
-            cache: td_host::icons::IconCache::new(dir),
+            cache: td_host::icons::IconCache::new(dir.clone()),
+            dir,
         }
     }
     /// Blocking. The file for an id, from the built-in set or the store.
     pub fn get(&self, id: &str) -> Option<Vec<u8>> {
+        if td_link::asset::valid_asset_id(id) {
+            let bytes = std::fs::read(self.dir.join(format!("{id}.bin"))).ok()?;
+            return (td_link::asset::asset_id(&bytes) == id).then_some(bytes);
+        }
         self.cache.get(id)
     }
     /// Blocking. Stores a `TDI1` file and returns its id.
     pub fn put(&self, file: &[u8]) -> Result<String, String> {
-        self.cache.put(file)
+        if !td_host::icon_pack::is_icon(file) {
+            return Err("Invalid tdi1 Asset".into());
+        }
+        let id = td_link::asset::asset_id(file);
+        td_core::app_dirs::write_atomic(&self.dir.join(format!("{id}.bin")), file)
+            .map_err(|e| e.to_string())?;
+        Ok(id)
     }
 }

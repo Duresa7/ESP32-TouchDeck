@@ -1,13 +1,10 @@
-// The Layout editor's state, ported from app/src/lib/editor/layoutStore.ts. It keeps one draft per orientation of the
-// open Device, saved per Device id, and every Layout it holds passes the Layout rules: each edit goes through
-// validate.ts and a refused one leaves the draft as it was. Sending and loading go through the Companion's
-// `layouts.push` Job and `layouts.get`, with `If-Match` set to the last revision the editor saw.
 import { createStore } from 'zustand/vanilla';
 import type { Job, JobMap, PresetTile } from '../../companion/api.ts';
 import type { Companion } from '../../companion/client.ts';
 import { toApiError, type ApiError } from '../../companion/errors.ts';
 import { parseAction, presetLabel } from '../integrations/model.ts';
 import { isSent, readDraft, writeDraft, type Draft, type DraftStorage } from './drafts.ts';
+import { freshAction } from './actions.ts';
 import { describeLayout, friendlyFileError, friendlyRefusal, plural, PLUG_IN } from './messages.ts';
 import {
   addPage,
@@ -23,13 +20,14 @@ import {
   removePage,
   removeTile,
   resizeTile,
+  setAction,
   setFullScreen,
   setGridSize,
+  setLabel,
   setLayoutName,
   setPageTitle,
   starterLayout,
   type Action,
-  type ActionType,
   type Edit,
   type GridPage,
   type Layout,
@@ -37,7 +35,6 @@ import {
   type Tile,
 } from './validate.ts';
 
-/** What the editor last did, in plain words. `detail` keeps the technical reason and `event` names the outcome. */
 export interface Status {
   kind: 'info' | 'ok' | 'error';
   text: string;
@@ -47,12 +44,9 @@ export interface Status {
   tiles?: number;
 }
 
-/** Where Add Tile puts the new Tile: a free cell on the current Page, or the first cell of a new Page. */
 export type Target = { row: number; col: number } | 'new-page';
 
-/** A Layout read from the Device that waits for Replace or Keep mine. */
 export interface Conflict {
-  /** `load`: Load from {device}. `changed`: a send found the Device's Layout had changed (412). */
   reason: 'load' | 'changed';
   orientation: Orientation;
   layout: Layout;
@@ -60,6 +54,16 @@ export interface Conflict {
 }
 
 export type SaveState = 'none' | 'saved' | 'unsent' | 'sending';
+
+export interface Refused<T> {
+  value: T;
+  reason: string;
+}
+
+export interface TileProblems {
+  label?: Refused<string>;
+  action?: Refused<Action>;
+}
 
 export interface EditorDevice {
   id: string;
@@ -77,18 +81,12 @@ export interface EditorState {
   status: Status | null;
   busy: 'push' | 'load' | 'prune' | null;
   conflict: Conflict | null;
-  /**
-   * The action kind picked in Add Tile for a Tile whose kind has no valid default yet, such as Open an app before it
-   * names one. The Tile holds `none` until the inspector's fields (#83) set it.
-   */
-  intents: Record<string, ActionType>;
+  invalid: Record<Orientation, Record<string, TileProblems>>;
 }
 
-/** The action kinds Add Tile offers, in the order its grid shows them. */
 export const ADD_KINDS = ['key', 'launch', 'consumer', 'page', 'mod', 'open', 'command', 'none'] as const;
 export type AddKind = (typeof ADD_KINDS)[number];
 
-/** A kind's default action, or null when the kind needs a value first and its Tile starts as `none`. */
 export function defaultAction(kind: AddKind, pages: string[]): Action | null {
   switch (kind) {
     case 'key':
@@ -108,9 +106,7 @@ export function defaultAction(kind: AddKind, pages: string[]): Action | null {
 
 export interface EditorDeps {
   companion: Pick<Companion, 'layouts' | 'assets'>;
-  /** Resolves with a Job's result once it succeeds, and throws its error otherwise. */
   wait<K extends keyof JobMap>(job: Job): Promise<JobMap[K]['result']>;
-  /** Where drafts are kept. Null keeps them in memory only. */
   storage: DraftStorage | null;
 }
 
@@ -124,7 +120,7 @@ const initial = (): Omit<EditorState, 'device'> => ({
   status: null,
   busy: null,
   conflict: null,
-  intents: {},
+  invalid: { landscape: {}, portrait: {} },
 });
 
 const gridOf = (layout: Layout | undefined, page: string | null): GridPage | null => {
@@ -135,7 +131,23 @@ const gridOf = (layout: Layout | undefined, page: string | null): GridPage | nul
 const covers = (tile: Tile, row: number, col: number) =>
   row >= tile.row && row < tile.row + tile.rowSpan && col >= tile.col && col < tile.col + tile.colSpan;
 
-/** The Asset ids a Layout's Tiles name, as `file:` icons. */
+const tileIds = (layout: Layout) => new Set(layout.pages.flatMap((page) => (page.kind === 'grid' ? page.tiles.map((tile) => tile.id) : [])));
+
+export const tileProblems = (state: EditorState, tile: string): TileProblems | undefined => state.invalid[state.orientation][tile];
+
+export function firstProblem(state: EditorState): { page: string; tile: string; reason: string } | null {
+  const layout = state.drafts[state.orientation]?.layout;
+  for (const page of layout?.pages ?? []) {
+    if (page.kind !== 'grid') continue;
+    for (const tile of page.tiles) {
+      const problems = state.invalid[state.orientation][tile.id];
+      const reason = problems?.label?.reason ?? problems?.action?.reason;
+      if (reason) return { page: page.id, tile: tile.id, reason };
+    }
+  }
+  return null;
+}
+
 export function assetIds(layout: Layout): string[] {
   const ids = new Set<string>();
   for (const page of layout.pages) {
@@ -153,17 +165,44 @@ export function createEditorStore(deps: EditorDeps) {
   const current = () => state().drafts[state().orientation];
   const say = (kind: Status['kind'], text: string, extra: Omit<Status, 'kind' | 'text'>) => set({ status: { kind, text, ...extra } });
 
-  /** Puts a draft in place for an orientation and saves it for the open Device. */
   function keep(orientation: Orientation, draft: Draft | null) {
     const device = state().device;
-    set((s) => ({ drafts: { ...s.drafts, [orientation]: draft } }));
+    set((s) => {
+      const ids = draft ? tileIds(draft.layout) : new Set<string>();
+      const problems = Object.entries(s.invalid[orientation]).filter(([id]) => ids.has(id));
+      return { drafts: { ...s.drafts, [orientation]: draft }, invalid: { ...s.invalid, [orientation]: Object.fromEntries(problems) } };
+    });
     if (device && deps.storage) writeDraft(deps.storage, device.id, orientation, draft);
   }
 
-  /** Starts editing a new Layout in its own orientation, keeping what the editor knows about the Device's copy. */
-  function start(layout: Layout, status: Status, known?: { sent: string | null; revision: string | null }) {
+  function mark(tile: string, change: TileProblems) {
+    set((s) => {
+      const orientation = s.orientation;
+      const next = { ...s.invalid[orientation][tile], ...change };
+      const { [tile]: _was, ...others } = s.invalid[orientation];
+      const tiles = next.label || next.action ? { ...others, [tile]: next } : others;
+      return { invalid: { ...s.invalid, [orientation]: tiles } };
+    });
+  }
+
+  function editField(tile: string, edit: (layout: Layout, page: string) => Edit, refused: (reason: string) => TileProblems, field: keyof TileProblems): string | null {
+    const draft = current();
+    const page = state().page;
+    if (!draft || !page) return 'no layout is open';
+    const result = edit(draft.layout, page);
+    if (!result.ok) {
+      mark(tile, refused(result.reason));
+      return result.reason;
+    }
+    keep(state().orientation, { ...draft, layout: result.layout });
+    mark(tile, { [field]: undefined });
+    return null;
+  }
+
+  function start(layout: Layout, status: Status, known?: { onDevice: string | null; revision: string | null }) {
     const before = state().drafts[layout.orientation];
-    keep(layout.orientation, { layout, sent: known?.sent ?? before?.sent ?? null, revision: known?.revision ?? before?.revision ?? null });
+    set((s) => ({ invalid: { ...s.invalid, [layout.orientation]: {} } }));
+    keep(layout.orientation, { layout, onDevice: known?.onDevice ?? before?.onDevice ?? null, revision: known?.revision ?? before?.revision ?? null });
     set({
       orientation: layout.orientation,
       page: layout.pages[0]?.id ?? null,
@@ -174,7 +213,6 @@ export function createEditorStore(deps: EditorDeps) {
     });
   }
 
-  /** Applies one edit to the current draft, or says why it was refused and keeps the draft. */
   function apply(edit: (layout: Layout) => Edit, next: Partial<Pick<EditorState, 'page' | 'selected' | 'adding'>> = {}): string | null {
     const draft = current();
     if (!draft) return 'no layout is open';
@@ -196,7 +234,6 @@ export function createEditorStore(deps: EditorDeps) {
     return null;
   }
 
-  /** The cell Add Tile should target on the current Page: the first free one, or a new Page when it's full. */
   function target(): Target {
     const draft = current();
     const page = state().page;
@@ -216,12 +253,20 @@ export function createEditorStore(deps: EditorDeps) {
     return { layout: parsed.layout, revision: read.revision };
   }
 
+  function refusals(details: unknown): string[] {
+    if (typeof details !== 'object' || details === null || !('issues' in details) || !Array.isArray(details.issues)) return [];
+    return details.issues.map((issue: unknown) => {
+      const known = typeof issue === 'object' && issue !== null ? issue : {};
+      const rule = 'rule' in known && typeof known.rule === 'string' ? known.rule : 'layout.invalid';
+      const message = 'message' in known && typeof known.message === 'string' ? known.message : '';
+      return `${rule}: ${message}`;
+    });
+  }
+
   function sendFailed(error: ApiError, layout: Layout) {
     const device = name();
     if (error.code === 'layout.invalid') {
-      const issues = ((error.details as { issues?: { rule?: string; path?: string; message?: string }[] } | null)?.issues ?? []).map(
-        (issue) => `${issue.rule ?? 'layout.invalid'}: ${issue.message ?? ''}`,
-      );
+      const issues = refusals(error.details);
       const text = issues.length ? friendlyRefusal(issues[0], layout, device) : 'That change breaks a Layout rule. See Details.';
       say('error', text, { detail: issues.join('\n') || error.message, event: 'push-failed' });
     } else if (error.code === 'device.busy') {
@@ -244,7 +289,7 @@ export function createEditorStore(deps: EditorDeps) {
     );
     const report = await deps.wait<'layouts.push'>(job);
     const sentDraft = state().drafts[orientation];
-    if (sentDraft) keep(orientation, { ...sentDraft, sent: canonical(layout), revision: report.revision });
+    if (sentDraft) keep(orientation, { ...sentDraft, onDevice: canonical(layout), revision: report.revision });
     const { sent, unavailable } = report.assets;
     const shown = report.state;
     const missing = unavailable.length ? `, ${plural(unavailable.length, 'icon')} not cached` : '';
@@ -262,7 +307,15 @@ export function createEditorStore(deps: EditorDeps) {
     );
   }
 
-  function placeAtTarget(action: Action, label: string): string | null {
+  function editLabel(tile: string, label: string): string | null {
+    return editField(tile, (l, page) => setLabel(l, page, tile, label), (reason) => ({ label: { value: label, reason } }), 'label');
+  }
+
+  function editAction(tile: string, action: Action): string | null {
+    return editField(tile, (l, page) => setAction(l, page, tile, action), (reason) => ({ action: { value: action, reason } }), 'action');
+  }
+
+  function placeAtTarget(action: Action, label: string): { id: string; page: string; pages: string[] } | null {
     const draft = current();
     const where = state().adding;
     if (!draft || !where) return null;
@@ -280,14 +333,16 @@ export function createEditorStore(deps: EditorDeps) {
       page = id;
       cell = { row: 0, col: 0 };
     }
+    const target = page;
+    if (!target) return null;
     const id = freshId(layout, 'tile');
     const tile: Tile = { id, label, row: cell.row, col: cell.col, rowSpan: 1, colSpan: 1, icon: null, action };
     const base = layout;
-    return apply(() => addTile(base, page!, tile), { page, selected: id, adding: null }) === null ? id : null;
+    if (apply(() => addTile(base, target, tile), { page: target, selected: id, adding: null }) !== null) return null;
+    return { id, page: target, pages: base.pages.map((p) => p.id) };
   }
 
   const api = Object.assign(store, {
-    /** Opens a Device's drafts. Opening the same Device again only updates its name. */
     open(device: EditorDevice, orientation: Orientation = 'landscape') {
       if (state().device?.id === device.id) {
         if (state().device!.name !== device.name) set({ device });
@@ -331,7 +386,6 @@ export function createEditorStore(deps: EditorDeps) {
       start(starterLayout(state().orientation), { kind: 'ok', text: 'Started the Starter Layout.', event: 'starter' });
     },
 
-    /** Reads a Layout file. A file that breaks a rule leaves the editor as it was. */
     importText(text: string, file = 'file'): boolean {
       const parsed = parseLayout(text);
       if (!parsed.ok) {
@@ -351,7 +405,6 @@ export function createEditorStore(deps: EditorDeps) {
 
     say,
 
-    /** Opens Add Tile for a cell, or for the first free one. */
     openAdd(cell?: { row: number; col: number }) {
       if (!current()) return;
       set({ adding: cell ?? target(), selected: null, mode: 'edit' });
@@ -361,26 +414,20 @@ export function createEditorStore(deps: EditorDeps) {
       set({ adding: null });
     },
 
-    /** Places a Tile of a kind where Add Tile points, then selects it. */
     place(kind: AddKind) {
       const draft = current();
       if (!draft) return;
       const action = defaultAction(kind, draft.layout.pages.map((p) => p.id));
-      const id = placeAtTarget(action ?? { type: 'none' }, 'Tile');
-      if (id !== null && action === null) set((s) => ({ intents: { ...s.intents, [id]: kind } }));
+      const placed = placeAtTarget(action ?? { type: 'none' }, 'Tile');
+      if (placed && action === null) editAction(placed.id, freshAction(kind, placed.pages, placed.page));
     },
 
-    /** Places a Preset tile where Add Tile points, then selects it. */
     placePreset(preset: PresetTile) {
       const action = parseAction(preset.action);
       if (action) placeAtTarget(action, presetLabel(preset.name));
       else say('error', friendlyRefusal('action.type'), { detail: JSON.stringify(preset.action), event: 'refused' });
     },
 
-    /**
-     * Add to Layout: puts a Preset tile in the first free cell of the current Page and selects it. With no draft yet,
-     * it loads the Device's Layout first. The status line says what happened either way.
-     */
     async addPreset(preset: PresetTile): Promise<Status | null> {
       if (!state().device) return null;
       if (state().busy) {
@@ -410,6 +457,9 @@ export function createEditorStore(deps: EditorDeps) {
       return state().status;
     },
 
+    editLabel,
+    editAction,
+
     moveTile(tile: string, row: number, col: number) {
       const page = state().page;
       return page ? apply((l) => moveTile(l, page, tile, row, col)) : 'no page';
@@ -420,7 +470,6 @@ export function createEditorStore(deps: EditorDeps) {
       return page ? apply((l) => resizeTile(l, page, tile, rowSpan, colSpan)) : 'no page';
     },
 
-    /** Copies a Tile into the next free cell after it on the same Page, and selects the copy. */
     duplicate(tile: string) {
       const draft = current();
       const page = state().page;
@@ -443,12 +492,11 @@ export function createEditorStore(deps: EditorDeps) {
       }
       const id = freshId(draft.layout, 'tile');
       const copy: Tile = { ...structuredClone(source), id, row: spot[0], col: spot[1] };
+      const problems = tileProblems(state(), tile);
       const placed = apply((l) => addTile(l, grid.id, copy), { selected: id });
-      const intent = state().intents[tile];
-      if (placed === null && intent) set((s) => ({ intents: { ...s.intents, [id]: intent } }));
+      if (placed === null && problems) mark(id, structuredClone(problems));
     },
 
-    /** Clear Tile: removes it from the Page. */
     clearTile(tile: string) {
       const page = state().page;
       if (page) apply((l) => removeTile(l, page, tile), { selected: null });
@@ -482,11 +530,16 @@ export function createEditorStore(deps: EditorDeps) {
       return apply((l) => setFullScreen(l, on));
     },
 
-    /** Send to Device: `layouts.push` with `If-Match` set to the last revision seen, then waits for its Job. */
     async push(): Promise<void> {
       const draft = current();
       if (!draft || !state().device || state().busy) return;
       const layout = draft.layout;
+      const problem = firstProblem(state());
+      if (problem) {
+        set({ page: problem.page, selected: problem.tile, adding: null, mode: 'edit' });
+        say('error', friendlyRefusal(problem.reason, layout, name()), { detail: problem.reason, event: 'refused' });
+        return;
+      }
       set({ busy: 'push', status: { kind: 'info', text: 'Sending…', event: 'pushing' } });
       const started = performance.now();
       try {
@@ -499,7 +552,6 @@ export function createEditorStore(deps: EditorDeps) {
           try {
             read = await readLayout();
           } catch (second) {
-            // The slot is empty now, so sending loses nothing.
             if (toApiError(second).code !== 'layout.not_found') throw error;
             await send(layout, null);
             return;
@@ -517,7 +569,6 @@ export function createEditorStore(deps: EditorDeps) {
       }
     },
 
-    /** Load from {device}: reads its Layout, and asks before it replaces a draft that differs. */
     async load(): Promise<void> {
       if (!state().device || state().busy) return;
       set({ busy: 'load', status: { kind: 'info', text: 'Loading…', event: 'pulling' } });
@@ -529,7 +580,7 @@ export function createEditorStore(deps: EditorDeps) {
         }
         const draft = current();
         if (!draft || canonical(draft.layout) === canonical(read.layout)) {
-          start(read.layout, { kind: 'ok', text: `Loaded “${read.layout.name}” from ${name()}`, event: 'pulled', ...counts(read.layout) }, { sent: canonical(read.layout), revision: read.revision });
+          start(read.layout, { kind: 'ok', text: `Loaded “${read.layout.name}” from ${name()}`, event: 'pulled', ...counts(read.layout) }, { onDevice: canonical(read.layout), revision: read.revision });
           return;
         }
         set({ conflict: { reason: 'load', orientation: state().orientation, ...read } });
@@ -551,26 +602,23 @@ export function createEditorStore(deps: EditorDeps) {
       }
     },
 
-    /** Replace: the Device's Layout becomes the draft. */
     replace() {
       const conflict = state().conflict;
       if (!conflict) return;
       const { layout, revision } = conflict;
       set({ orientation: conflict.orientation });
-      start(layout, { kind: 'ok', text: `Loaded “${layout.name}” from ${name()}`, event: 'pulled', ...counts(layout) }, { sent: canonical(layout), revision });
+      start(layout, { kind: 'ok', text: `Loaded “${layout.name}” from ${name()}`, event: 'pulled', ...counts(layout) }, { onDevice: canonical(layout), revision });
     },
 
-    /** Keep mine: the draft stays, and the next send replaces what the Device has now. */
     keepMine() {
       const conflict = state().conflict;
       if (!conflict) return;
       const draft = state().drafts[conflict.orientation];
-      if (draft) keep(conflict.orientation, { ...draft, sent: canonical(conflict.layout), revision: conflict.revision });
+      if (draft) keep(conflict.orientation, { ...draft, onDevice: canonical(conflict.layout), revision: conflict.revision });
       set({ conflict: null });
       say('info', 'Kept your Layout', { event: 'pull-cancelled' });
     },
 
-    /** Remove unused Assets: `assets.prune`, keeping every Asset the drafts use. */
     async pruneAssets(): Promise<void> {
       const { device, drafts, busy } = state();
       if (!device || busy) return;
@@ -592,7 +640,6 @@ export function createEditorStore(deps: EditorDeps) {
 
 export type EditorStore = ReturnType<typeof createEditorStore>;
 
-/** The open draft's save state, for the header. */
 export function saveState(state: EditorState): SaveState {
   if (state.busy === 'push') return 'sending';
   const draft = state.drafts[state.orientation];

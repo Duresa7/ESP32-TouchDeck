@@ -86,6 +86,7 @@ pub struct Capabilities {
     pub pages: u32,
     pub tiles: u32,
     pub layout_bytes: u32,
+    pub layout_schemas: Vec<u32>,
     pub storage_free: u32,
     pub tile_kinds: Vec<String>,
     pub asset_bytes: u32,
@@ -100,6 +101,7 @@ impl From<&td_link::Capabilities> for Capabilities {
             pages: c.pages,
             tiles: c.tiles,
             layout_bytes: c.layout_bytes,
+            layout_schemas: c.layout_schemas.clone(),
             storage_free: c.free_bytes,
             tile_kinds: c.tile_kinds.clone(),
             asset_bytes: c.asset_bytes,
@@ -312,6 +314,7 @@ impl Event for DeviceEvent {
     }
 }
 
+pub(crate) type ActionHandler = Arc<dyn Fn(&DeviceId, &serde_json::Value) + Send + Sync>;
 /// Makes the sink a Device's key mirror types into.
 pub type InputFactory = Arc<dyn Fn() -> Result<Box<dyn td_host::InputSink>, String> + Send + Sync>;
 /// How the manager reaches ports, PC input and storage. Tests swap in mocks.
@@ -383,6 +386,8 @@ struct Registry {
     boards: BTreeMap<DeviceId, NewBoard>,
     ports: BTreeMap<String, PortRecord>,
     generation: u64,
+    updating: std::collections::BTreeSet<DeviceId>,
+    installed: std::collections::BTreeSet<DeviceId>,
 }
 /// Wakes the scan thread early: a USB change, a rescan, a Connect or a lost link.
 #[derive(Default)]
@@ -409,7 +414,9 @@ struct Inner {
     wake: Wake,
     stop: AtomicBool,
     dialogs: AtomicUsize,
+    input_gate: Mutex<()>,
     config: OnceLock<Config>,
+    actions: OnceLock<ActionHandler>,
 }
 impl Inner {
     fn config(&self) -> &Config {
@@ -461,6 +468,9 @@ pub struct DeviceManager {
     inner: Arc<Inner>,
 }
 impl DeviceManager {
+    pub(crate) fn action_handler(&self, handler: ActionHandler) {
+        let _ = self.inner.actions.set(handler);
+    }
     pub fn new(events: Events) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -469,7 +479,9 @@ impl DeviceManager {
                 wake: Wake::default(),
                 stop: AtomicBool::new(false),
                 dialogs: AtomicUsize::new(0),
+                input_gate: Mutex::new(()),
                 config: OnceLock::new(),
+                actions: OnceLock::new(),
             }),
         }
     }
@@ -557,6 +569,9 @@ impl DeviceManager {
     /// Turns auto-connect back on after a Disconnect.
     pub fn connect(&self, id: &DeviceId) -> Option<DeviceSummary> {
         let mut reg = self.inner.reg.lock();
+        if reg.updating.contains(id) {
+            return reg.devices.get(id).map(|e| e.summary.clone());
+        }
         let entry = reg.devices.get_mut(id)?;
         entry.auto = true;
         let linked = entry.actor.is_some();
@@ -582,6 +597,9 @@ impl DeviceManager {
     /// Closes the link and keeps the Device down until replug or Connect.
     pub fn disconnect(&self, id: &DeviceId) -> Option<DeviceSummary> {
         let mut reg = self.inner.reg.lock();
+        if reg.updating.contains(id) {
+            return reg.devices.get(id).map(|e| e.summary.clone());
+        }
         let entry = reg.devices.get_mut(id)?;
         entry.auto = false;
         // Dropping the handle ends the actor thread, which closes the session and the port.
@@ -595,6 +613,9 @@ impl DeviceManager {
     /// Forgets a Device that isn't connected. Blocking: it writes `devices.json`.
     pub fn forget(&self, id: &DeviceId) -> Result<(), Forget> {
         let mut reg = self.inner.reg.lock();
+        if reg.updating.contains(id) {
+            return Err(Forget::Connected);
+        }
         let entry = reg.devices.get(id).ok_or(Forget::NotFound)?;
         if entry.actor.is_some() {
             return Err(Forget::Connected);
@@ -617,6 +638,9 @@ impl DeviceManager {
         let sender = {
             let reg = self.inner.reg.lock();
             let entry = reg.devices.get(id).ok_or(Reach::NotFound)?;
+            if reg.updating.contains(id) {
+                return Err(Reach::NotConnected(entry.summary.link.clone()));
+            }
             match &entry.actor {
                 Some(actor) => actor.sender(),
                 None => return Err(Reach::NotConnected(entry.summary.link.clone())),
@@ -675,9 +699,37 @@ impl DeviceManager {
         });
         self.inner.save(&reg);
     }
+    /// Reserves a target against scanning and actor requests until Firmware work ends.
+    pub fn firmware_hold(&self, id: &DeviceId, job: &str) -> Result<FirmwareHold, Reach> {
+        let mut reg = self.inner.reg.lock();
+        if !reg.devices.contains_key(id) && !reg.boards.contains_key(id) {
+            return Err(Reach::NotFound);
+        }
+        let session = reg
+            .devices
+            .get(id)
+            .and_then(|e| e.actor.as_ref())
+            .map(|a| a.session());
+        let port = reg
+            .ports
+            .values()
+            .find(|r| &r.id == id)
+            .map(|r| r.info.port.clone())
+            .ok_or(Reach::NotFound)?;
+        reg.updating.insert(id.clone());
+        self.inner
+            .set_link(&mut reg, id, LinkState::Updating { job: job.into() });
+        Ok(FirmwareHold {
+            manager: self.clone(),
+            id: id.clone(),
+            port,
+            session,
+        })
+    }
     /// Suppresses key input from every Device while the guard lives. Approval and Firmware
     /// dialogs hold one, so Device input can't answer them.
     pub fn suppress_input(&self) -> InputSuppressed {
+        let _gate = self.inner.input_gate.lock();
         self.inner.dialogs.fetch_add(1, Ordering::SeqCst);
         InputSuppressed(self.inner.clone())
     }
@@ -691,5 +743,63 @@ pub struct InputSuppressed(Arc<Inner>);
 impl Drop for InputSuppressed {
     fn drop(&mut self) {
         self.0.dialogs.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// The Device manager owns the handoff and resumes discovery on every exit path.
+pub struct FirmwareHold {
+    manager: DeviceManager,
+    id: DeviceId,
+    pub port: String,
+    pub session: Option<Arc<Session>>,
+}
+struct FirmwareConnector {
+    source: Arc<dyn PortSource>,
+    port: String,
+}
+impl td_link::update::Connector for FirmwareConnector {
+    fn connect(
+        &mut self,
+    ) -> Result<(Session, std::sync::mpsc::Receiver<td_link::Incoming>), String> {
+        Session::open(
+            self.source.open(&self.port).map_err(|e| e.to_string())?,
+            td_link::SessionConfig {
+                ping_every: None,
+                ..Default::default()
+            },
+        )
+        .map_err(|e| e.to_string())
+    }
+}
+impl FirmwareHold {
+    pub fn connector(&self) -> Box<dyn td_link::update::Connector> {
+        Box::new(FirmwareConnector {
+            source: self.manager.inner.config().source.clone(),
+            port: self.port.clone(),
+        })
+    }
+
+    pub fn installed(&self) {
+        self.manager
+            .inner
+            .reg
+            .lock()
+            .installed
+            .insert(self.id.clone());
+    }
+}
+impl Drop for FirmwareHold {
+    fn drop(&mut self) {
+        if let Some(session) = self.session.take() {
+            session.close();
+        }
+        let mut reg = self.manager.inner.reg.lock();
+        if let Some(entry) = reg.devices.get_mut(&self.id) {
+            entry.actor.take();
+            entry.auto = true;
+        }
+        reg.updating.remove(&self.id);
+        drop(reg);
+        self.manager.rescan();
     }
 }

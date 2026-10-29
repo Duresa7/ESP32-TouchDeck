@@ -41,7 +41,7 @@ function NavButton({
         <Icon size={18} strokeWidth={1.9} aria-hidden />
       </Tooltip.Trigger>
       <Tooltip.Portal>
-        <Tooltip.Positioner side="top" sideOffset={8}>
+        <Tooltip.Positioner className="tooltip-positioner" side="top" sideOffset={8}>
           <Tooltip.Popup className="tooltip">{label}</Tooltip.Popup>
         </Tooltip.Positioner>
       </Tooltip.Portal>

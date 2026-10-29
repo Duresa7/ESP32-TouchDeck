@@ -44,6 +44,16 @@ pub(super) fn spawn(
     let (work, jobs) = mpsc::channel::<Work>();
     let session = Arc::new(session);
     let shared = session.clone();
+    let (presses, taps) = mpsc::sync_channel(16);
+    let action_inner = inner.clone();
+    let action_id = id.clone();
+    thread::spawn(move || {
+        for event in taps {
+            if let Some(handler) = action_inner.actions.get() {
+                handler(&action_id, &event);
+            }
+        }
+    });
     thread::Builder::new()
         .name(format!("td-device-{id}"))
         .spawn(move || {
@@ -55,7 +65,7 @@ pub(super) fn spawn(
         .expect("the Device thread starts");
     thread::Builder::new()
         .name(format!("td-device-{id}-in"))
-        .spawn(move || forward(&inner, &id, generation, incoming, mirror))
+        .spawn(move || forward(&inner, &id, generation, incoming, mirror, presses))
         .expect("the Device forwarder starts");
     Handle {
         generation,
@@ -101,6 +111,7 @@ fn forward(
     generation: u64,
     incoming: Receiver<Incoming>,
     mut mirror: Option<Mirror>,
+    presses: mpsc::SyncSender<serde_json::Value>,
 ) {
     for item in incoming {
         match item {
@@ -109,6 +120,9 @@ fn forward(
                 line,
             }),
             Incoming::Event(event) => {
+                if event["m"] == "press" {
+                    let _ = presses.try_send(event.clone());
+                }
                 if let Some(report) = Mirrored::parse(&event) {
                     key_report(inner, id, mirror.as_mut(), &report);
                 }
@@ -131,6 +145,7 @@ fn forward(
 /// Types one key report on the PC. While a dialog suppresses input, the report is dropped,
 /// not replayed: the gap it leaves releases every held key when typing resumes.
 fn key_report(inner: &Inner, id: &DeviceId, mirror: Option<&mut Mirror>, report: &Mirrored) {
+    let _gate = inner.input_gate.lock();
     let arrived_ms = crate::now_ms();
     let (outcome, gap, errors) = match mirror {
         _ if inner.input_suppressed() => ("suppressed", None, Vec::new()),

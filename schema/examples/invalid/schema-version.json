@@ -1,6 +1,6 @@
 expected: layout.schema-version
 {
-  "schema": 2,
+  "schema": 3,
   "name": "Invalid example",
   "orientation": "landscape",
   "pages": [
