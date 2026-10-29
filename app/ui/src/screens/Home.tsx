@@ -5,7 +5,8 @@ import { useDevices } from '../companion/devices.ts';
 import { button } from '../shell/button.ts';
 import { useUi } from '../state/ui.ts';
 import { DevicePreview } from './DevicePreview.tsx';
-import { deviceWidth, firmwareUpdate, lastSeen, previewOf, statusOf } from './home-model.ts';
+import { useDeviceLayout } from './home-layouts.ts';
+import { deviceWidth, firmwareUpdate, lastSeen, orientationOf, previewOf, statusOf } from './home-model.ts';
 import './home.css';
 
 function DeviceCard({ device, width }: { device: DeviceSummary; width: number }) {
@@ -13,9 +14,10 @@ function DeviceCard({ device, width }: { device: DeviceSummary; width: number })
   const status = statusOf(device.link.state);
   const name = device.name ?? 'Unnamed Device';
   const seen = !status.live && lastSeen(device);
+  const layout = useDeviceLayout(device);
   return <li className="device-figure" style={{ width }}>
     <button type="button" className="device-hit" title="Edit Layout" aria-label={`Edit ${name}`} onClick={() => openDevice(device.id)}>
-      <DevicePreview preview={previewOf(device.layout)} live={status.live} />
+      <DevicePreview preview={previewOf(layout)} live={status.live} orientation={orientationOf(device)} />
     </button>
     <div className="device-caption">
       <span className="device-name" title={name}>{name}</span>

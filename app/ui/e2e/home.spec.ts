@@ -1,5 +1,11 @@
 import { join } from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+
+type Demo = { push(id: string, order: string[]): void; offline(id: string): void };
+const demo = (page: Page) => ({
+  push: (id: string, order: string[]) => page.evaluate(([id, order]) => (window as unknown as { touchdeckDemo: Demo }).touchdeckDemo.push(id, order), [id, order] as const),
+  offline: (id: string) => page.evaluate((id) => (window as unknown as { touchdeckDemo: Demo }).touchdeckDemo.offline(id), id),
+});
 
 for (const count of [0, 1, 2, 3, 4, 5]) {
   test(`${count} Devices keep their size and wrap with the design gap`, async ({ page }) => {
@@ -20,17 +26,31 @@ for (const count of [0, 1, 2, 3, 4, 5]) {
   });
 }
 
-test('offline keeps its Page and last seen; a live Page event updates without reloading', async ({ page }) => {
+test('an unplugged Device keeps its Page and shows last seen', async ({ page }) => {
   await page.goto('/');
-  const offline = page.locator('.device-figure').nth(2);
-  await expect(offline).toContainText('Last seen');
-  await expect(offline.locator('.device-scene')).toHaveAttribute('data-page', 'media');
-  await expect(offline.locator('.device-spill')).toHaveCount(0);
-  await expect(offline.locator('.device-scene')).toHaveCSS('filter', 'grayscale(1)');
+  const device = page.locator('.device-figure').nth(2);
+  await expect(device.locator('.device-scene')).toHaveAttribute('data-page', 'media');
+  await expect(device.locator('.device-spill')).toHaveCount(1);
+  await demo(page).offline('mock0003');
+  await expect(device).toContainText('Not connected');
+  await expect(device).toContainText('Last seen');
+  await expect(device.locator('.device-scene')).toHaveAttribute('data-page', 'media');
+  await expect(device.locator('.device-scene')).toContainText('Play/Pause');
+  await expect(device.locator('.device-spill')).toHaveCount(0);
+  await expect(device.locator('.device-scene')).toHaveCSS('filter', 'grayscale(1)');
   await expect(page.getByText('Firmware update', { exact: true })).toHaveCount(1);
-  await page.evaluate(() => (window as unknown as { touchdeckDemo: { page(id: string, page: string): void } }).touchdeckDemo.page('mock0001', 'work'));
-  await expect(page.locator('.device-scene').first()).toHaveAttribute('data-page', 'work');
-  await expect(page.locator('.device-scene').first()).toContainText('Copy');
+});
+
+test('a pushed Layout reaches the miniature without reloading', async ({ page }) => {
+  await page.goto('/');
+  const scenes = page.locator('.device-scene');
+  await expect(scenes.first()).toHaveAttribute('data-page', 'media');
+  await page.evaluate(() => { (window as unknown as { notReloaded: boolean }).notReloaded = true; });
+  await demo(page).push('mock0001', ['work', 'media']);
+  await expect(scenes.first()).toHaveAttribute('data-page', 'work');
+  await expect(scenes.first()).toContainText('Copy');
+  await expect(scenes.nth(1)).toHaveAttribute('data-page', 'media');
+  expect(await page.evaluate(() => (window as unknown as { notReloaded?: boolean }).notReloaded)).toBe(true);
 });
 
 for (const method of ['click', 'Enter', 'Space']) {
@@ -64,11 +84,16 @@ for (const theme of ['light', 'dark'] as const) {
       test.skip(!process.env.TD_SHOTS, 'set TD_SHOTS for visual evidence');
       await page.emulateMedia({ colorScheme: theme });
       await page.goto(`/?devices=${count}`);
-      await expect(page.locator(count ? '.device-figure' : '.device-ghost').first()).toBeVisible();
+      await expect(page.locator(count ? '.device-scene[data-page]' : '.device-ghost')).toHaveCount(count || 1);
+      // The reference shows the third Device unplugged.
+      if (count === 3) {
+        await demo(page).offline('mock0003');
+        await expect(page.getByText('Not connected', { exact: true })).toBeVisible();
+      }
       await page.evaluate(() => document.fonts.ready);
       await page.screenshot({ path: join(process.env.TD_SHOTS!, `home-${count}-${theme}.png`) });
       if (count === 1) {
-        await page.evaluate(() => (window as unknown as { touchdeckDemo: { offline(id: string): void } }).touchdeckDemo.offline('mock0001'));
+        await demo(page).offline('mock0001');
         await expect(page.getByText('Not connected', { exact: true })).toBeVisible();
         await page.screenshot({ path: join(process.env.TD_SHOTS!, `home-offline-${theme}.png`) });
       }

@@ -1,5 +1,4 @@
-import type { DeviceSummary } from '../companion/api.ts';
-import { parseLayout } from '../lib/editor/validate.ts';
+import type { DeviceSummary, Layout, Orientation } from '../companion/api.ts';
 
 export function statusOf(state: string) {
   switch (state) {
@@ -14,16 +13,16 @@ export function statusOf(state: string) {
 
 export const deviceWidth = (count: number) => count === 1 ? 560 : 312;
 export const firmwareUpdate = (device: DeviceSummary) => Boolean(device.firmware?.update_available);
+export const orientationOf = (device: DeviceSummary): Orientation => device.orientation === 'portrait' ? 'portrait' : 'landscape';
 
-// Phase A envelope: the merged API leaves LayoutSummary as JSON. Keep this
-// adapter separate until #74 provides the typed current Page and Layout route.
-export function previewOf(value: DeviceSummary['layout']) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const parsed = parseLayout(JSON.stringify(value.document));
-  if (!parsed.ok) return null;
-  const index = parsed.layout.pages.findIndex((page) => page.id === value.current_page);
-  if (index < 0) return null;
-  return { layout: parsed.layout, index };
+export interface Preview {
+  layout: Layout;
+  index: number;
+}
+
+// The contract has no field for the Page a Device shows, so the miniature shows Page 1.
+export function previewOf(layout: Layout | null | undefined): Preview | null {
+  return layout?.pages.length ? { layout, index: 0 } : null;
 }
 
 export function lastSeen(device: DeviceSummary) {

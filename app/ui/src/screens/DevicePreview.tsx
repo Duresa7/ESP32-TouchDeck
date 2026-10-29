@@ -1,7 +1,8 @@
 import clsx from 'clsx';
+import type { Orientation } from '../companion/api.ts';
 import { geometry, screenSize } from '../lib/deck/geometry.ts';
 import { buildDots, buildPage, buildTitle, type TextView } from '../lib/deck/scene.ts';
-import type { previewOf } from './home-model.ts';
+import type { Preview } from './home-model.ts';
 
 function SceneText({ view }: { view: TextView }) {
   return <g transform={`translate(${view.x} ${view.y})`} opacity={view.opacity / 255}>
@@ -12,8 +13,8 @@ function SceneText({ view }: { view: TextView }) {
 }
 
 /** Scene geometry is shared with the editor; the miniature has no interactive Tiles. */
-export function DevicePreview({ preview, live }: { preview: ReturnType<typeof previewOf>; live: boolean }) {
-  const g = geometry(screenSize(preview?.layout.orientation ?? 'landscape'), preview?.layout.fullScreen);
+export function DevicePreview({ preview, live, orientation = 'landscape' }: { preview: Preview | null; live: boolean; orientation?: Orientation }) {
+  const g = geometry(screenSize(preview?.layout.orientation ?? orientation), preview?.layout.fullScreen);
   const page = preview && buildPage(preview.layout.pages[preview.index], g);
   const title = page && buildTitle(page.title, g);
   return <span className={clsx('device-object', !live && 'is-off')} aria-hidden="true">
