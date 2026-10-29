@@ -20,8 +20,7 @@ export interface Preview {
   index: number;
 }
 
-// The contract has no field for the Page a Device shows, so the miniature shows Page 1.
-export function previewOf(layout: Layout | null | undefined): Preview | null {
+export function previewOf(layout: Layout | null): Preview | null {
   return layout?.pages.length ? { layout, index: 0 } : null;
 }
 

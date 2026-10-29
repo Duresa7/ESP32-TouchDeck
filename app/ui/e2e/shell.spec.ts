@@ -60,8 +60,7 @@ test('Settings opens over the current screen, Escape closes it, and a change is 
   await navButton(page, 'Settings').click();
   await expect(settings(page)).toBeVisible();
   await expect(page.getByRole('heading', { level: 1, name: 'Integrations', includeHidden: true })).toBeAttached();
-  // The modal hides the nav from the accessibility tree, so this finds the button by its label.
-  await expect(page.locator('.nav-button[aria-label="Settings"]')).toHaveClass(/is-current/);
+  await expect(page.getByRole('button', { name: 'Settings', exact: true, includeHidden: true })).toHaveClass(/is-current/);
 
   const dark = settings(page).getByRole('button', { name: 'Dark' });
   await dark.click();
@@ -114,7 +113,6 @@ test('forcing a theme with Appearance sets data-theme over the Windows setting',
   await expect.poll(() => background(page)).toBe(DARK_MAT);
 });
 
-// Opens Settings and records the dialog's scale on every frame of its entrance.
 async function dialogScales(page: Page) {
   await navButton(page, 'Settings').click();
   return page.evaluate(
@@ -151,7 +149,7 @@ test('Tab reaches every nav button with the visible focus ring', async ({ page }
   for (let i = 0; i < 12 && reached.size < 4; i++) {
     await page.keyboard.press('Tab');
     const focused = await page.evaluate(() => {
-      const el = document.activeElement as HTMLElement | null;
+      const el = document.activeElement;
       if (!el?.classList.contains('nav-button')) return null;
       const style = getComputedStyle(el);
       return {

@@ -7,26 +7,9 @@ import type { DeviceSummary } from '../../companion/api.ts';
 import { saveState, type EditorStore } from '../../lib/editor/store.ts';
 import type { Orientation } from '../../lib/editor/validate.ts';
 import { button } from '../../shell/button.ts';
+import { statusOf } from '../home-model.ts';
 import { useEditorState } from './editor.ts';
 import { Tip } from './Tip.tsx';
-
-// The status words from docs/copy.md, Home, compared as a string so a link state the Companion adds later reads as
-// "Not connected".
-export function statusOf(device: DeviceSummary): { words: string; live: boolean } {
-  const state: string = device.link.state;
-  switch (state) {
-    case 'connected':
-      return { words: 'Connected', live: true };
-    case 'connecting':
-      return { words: 'Connecting…', live: false };
-    case 'busy':
-      return { words: 'In use by another program', live: false };
-    case 'updating':
-      return { words: 'Updating…', live: false };
-    default:
-      return { words: 'Not connected', live: false };
-  }
-}
 
 const SAVE_WORDS = { saved: 'Saved on Device', unsent: 'Unsent changes', sending: 'Sending…' } as const;
 
@@ -96,16 +79,14 @@ function LayoutMenu({ store, device, connected, onImport, onExport }: { store: E
 export interface EditorHeaderProps {
   store: EditorStore;
   device: DeviceSummary;
-  /** Opens the Device panel (#84). */
   onOpenDevice?: () => void;
   onImport(): void;
   onExport(): void;
 }
 
-/** The Layout screen's header: the Device, its connection, the save state and the editor's controls. */
 export function EditorHeader({ store, device, onOpenDevice, onImport, onExport }: EditorHeaderProps) {
   const name = device.name ?? 'Unnamed Device';
-  const status = statusOf(device);
+  const status = statusOf(device.link.state);
   const orientation = useEditorState(store, (s) => s.orientation);
   const mode = useEditorState(store, (s) => s.mode);
   const busy = useEditorState(store, (s) => s.busy);
@@ -128,7 +109,7 @@ export function EditorHeader({ store, device, onOpenDevice, onImport, onExport }
       <SaveState store={store} />
       <ToggleGroup
         value={[orientation]}
-        onValueChange={(value) => value[0] && store.setOrientation(value[0] as Orientation)}
+        onValueChange={(value) => value[0] && store.setOrientation(value[0])}
         aria-label="Orientation"
         className="segmented segmented-icons"
       >
