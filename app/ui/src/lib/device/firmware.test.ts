@@ -156,7 +156,11 @@ describe('the update runner', () => {
     const log = update.getState().log;
     expect(log[0]).toBe('Checking');
     expect(log.at(-1)).toBe('Firmware updated');
-    for (const step of ['Sending 0%', 'Sending 100%', 'Rebooting', 'Confirming']) expect(log).toContain(step);
+    const at = (step: string) => log.findIndex((line) => line.startsWith(step));
+    expect(at('Sending')).toBeGreaterThan(0);
+    expect(at('Sending 100%')).toBeGreaterThanOrEqual(at('Sending'));
+    expect(at('Rebooting')).toBeGreaterThan(at('Sending 100%'));
+    expect(at('Confirming')).toBeGreaterThan(at('Rebooting'));
     expect((await companion.devices.get({ device: 'mock0002' })).firmware?.version).toBe('1.5.0');
   });
 
