@@ -27,19 +27,22 @@ reviews:
         Conventional Commits: `type: description` or `type(scope): description`,
         lowercase and imperative, with no trailing period. Mark breaking changes with `!`.
     # Warnings until they prove accurate on real PRs; then they move to error.
-    # Companion routes need no check here: td-companion's contract test fails CI when
-    # docs/companion-api.md or api.gen.ts falls behind.
+    # Companion routes have no check here. td-companion's contract test fails CI when api.gen.ts
+    # is stale or docs/companion-api.md misses an endpoint, event or error code, and the
+    # app/crates path instruction below flags other drift from that doc.
     custom_checks:
       - name: "Wire and Layout contracts change on every side"
         mode: warning
         instructions: >-
-          The Link protocol and Layout schema are shared by three implementations: Rust
-          (app/crates/td-core, app/crates/td-link), TypeScript (app/ui/src/lib/editor and
-          app/src/lib/editor validators) and C (firmware/components/td_link, firmware/components/td_layout).
-          If this PR changes a message, field, capability, error reason or Layout rule in
-          schema/protocol/*.md, schema/layout.schema.json or any one of those implementations, fail
-          unless the other implementations and the shared fixtures are updated to match, or the PR
-          description explains why a side needs no change. Pass if no contract changes.
+          The Link protocol is specified in schema/protocol/*.md. The Layout format is specified in
+          schema/layout.schema.json and schema/README.md, and schema/check-layouts.mjs is its
+          reference validator. Both are implemented in Rust (app/crates/td-core, app/crates/td-link),
+          TypeScript (app/ui/src/lib/editor and app/src/lib/editor validators) and C
+          (firmware/components/td_link, firmware/components/td_layout). If this PR changes a message,
+          field, capability, error reason or Layout rule in any of these files, fail unless every
+          other file above that covers the same contract, and the shared fixtures in schema/examples
+          and schema/protocol/*.json, are updated to match, or the PR description explains why one
+          needs no change. Pass if no contract changes.
       - name: "No private data"
         mode: warning
         instructions: >-
