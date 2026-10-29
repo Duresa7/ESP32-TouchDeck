@@ -1,4 +1,12 @@
 // Generated from td-companion. Do not edit.
+export type ActionLog = { id: string, device: DeviceId, at_ms: number, page: string, tile: string, kind: string, status: string, detail: string, pid: number | null, exit_code: number | null, };
+export type ActionQuery = { device: DeviceId | null, };
+export type AllowedAction = { hash: string, granted_ms: number, kind: string, program: string, args: Array<string>, cwd: string, shell: boolean, };
+export type AllowedPath = { hash: string, };
+export type Answer = "once" | "always" | "deny" | "expired";
+export type ApprovalPath = { id: string, };
+export type ApprovalRequest = { id: string, device: DeviceId, page: string, tile: string, hash: string, created_ms: number, kind: string, program: string, args: Array<string>, cwd: string, shell: boolean, };
+export type ApprovalResolved = { id: string, answer: Answer, };
 export type AssetBytes = Blob;
 export type AssetPath = { asset: string, };
 export type AssetRef = { id: string, 
@@ -145,6 +153,11 @@ export type UploadBody = Blob;
 export type Uploaded = { id: string, media_type: string, bytes: number, };
 export type Versions = { api: Array<string>, };
 export const endpoints = {
+  'actions.allowed': { method: 'GET', path: '/actions/allowed', access: 'session' },
+  'actions.allowed_remove': { method: 'DELETE', path: '/actions/allowed/{hash}', access: 'session' },
+  'actions.log': { method: 'GET', path: '/actions/log', access: 'session' },
+  'approvals.list': { method: 'GET', path: '/approvals', access: 'session' },
+  'approvals.show': { method: 'POST', path: '/approvals/{id}/show', access: 'session' },
   'assets.builtin': { method: 'GET', path: '/assets/builtin', access: 'session' },
   'assets.create': { method: 'POST', path: '/assets', access: 'session' },
   'assets.file': { method: 'GET', path: '/assets/{asset}', access: 'session' },
@@ -184,8 +197,9 @@ export const endpoints = {
   'system.ping': { method: 'GET', path: '/system/ping', access: 'public' },
   'system.shutdown': { method: 'POST', path: '/system/shutdown', access: 'session' },
 } as const;
-export type ErrorCode = 'asset.not_found' | 'asset.render_failed' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.changed' | 'layout.invalid' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'upload.not_found';
+export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.render_failed' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.changed' | 'layout.invalid' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'upload.not_found';
 export type SyncData = {
+  approvals: Array<ApprovalRequest>,
   devices: Array<DeviceSummary>,
   integrations: Array<IntegrationSummary>,
   jobs: Array<Job>,
@@ -202,6 +216,9 @@ export type EventMap = {
   'auth.revoked': AuthRevoked;
   'companion.stopping': CompanionStopping;
   'lagged': Lagged;
+  'action.logged': ActionLog;
+  'approval.requested': ApprovalRequest;
+  'approval.resolved': ApprovalResolved;
   'device.console': DeviceConsole;
   'device.added': DeviceAdded;
   'device.updated': DeviceUpdated;
@@ -238,6 +255,15 @@ export function createCompanion(base: string, token: () => string) {
     }
   }
   return {
+    actions: {
+      allowed: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<AllowedAction>>('actions.allowed', path, query, body, bearer, headers),
+      allowed_remove: (path: { hash: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('actions.allowed_remove', path, query, body, bearer, headers),
+      log: (path: Record<string, never> = {}, query: { device: DeviceId | null, }, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<ActionLog>>('actions.log', path, query, body, bearer, headers),
+    },
+    approvals: {
+      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<ApprovalRequest>>('approvals.list', path, query, body, bearer, headers),
+      show: (path: { id: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('approvals.show', path, query, body, bearer, headers),
+    },
     assets: {
       builtin: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<Builtin>>('assets.builtin', path, query, body, bearer, headers),
       create: (path: Record<string, never> = {}, query: null = null, body: { source: AssetSource, fit?: Fit, }, bearer?: string, headers?: Record<string, string>) => call<Job>('assets.create', path, query, body, bearer, headers),
