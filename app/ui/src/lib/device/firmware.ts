@@ -254,5 +254,4 @@ export function createFirmwareUpdate(deps: FirmwareUpdateDeps) {
   });
 }
 
-export type FirmwareJobStore = ReturnType<typeof createFirmwareJob>;
 export type FirmwareUpdateStore = ReturnType<typeof createFirmwareUpdate>;
