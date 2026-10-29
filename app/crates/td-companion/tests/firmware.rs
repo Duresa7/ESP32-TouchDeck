@@ -1140,3 +1140,85 @@ async fn installing_on_an_unknown_new_board_is_new_board_not_found() {
         "new_board.not_found"
     );
 }
+
+async fn script_consent(td: &TestCompanion, answers: serde_json::Value) {
+    let response = td
+        .raw()
+        .post("/api/v1/test/firmware/script")
+        .bearer_auth(&td.token)
+        .json(&serde_json::json!({ "answers": answers }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 204);
+}
+async fn install(
+    td: &TestCompanion,
+    id: &td_companion::devices::DeviceId,
+) -> td_companion::jobs::Job {
+    td.call::<Install>(FirmwareTarget { device: id.clone() }, NoQuery, request())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn scripted_consent_answers_new_board_installs_over_http() {
+    use td_companion::devices::{BoardKind, SetupState};
+    let td = TestCompanion::start().await;
+    script_consent(&td, serde_json::json!([])).await;
+
+    let declined = td.plug_board("declined", BoardKind::OtherFirmware).await;
+    let job = install(&td, &declined.id).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(job_state(&td, &job).await, "waiting_for_confirmation");
+    script_consent(&td, serde_json::json!(["decline"])).await;
+    let done = ended_quickly(&td, &job).await;
+    assert_eq!(done.state, JobState::Failed);
+    assert_eq!(done.error.unwrap().code, "firmware.declined");
+    assert_eq!(td.deck("declined").reboots(), 0);
+    assert!(td.device(&declined.id).is_none());
+
+    script_consent(&td, serde_json::json!(["accept"])).await;
+    let accepted = td.plug_board("accepted", BoardKind::OtherFirmware).await;
+    let job = install(&td, &accepted.id).await;
+    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    td.until(|td| {
+        td.device(&accepted.id)
+            .is_some_and(|d| d.setup == SetupState::NeedsSetup)
+    })
+    .await;
+
+    use td_companion::features::devices::{DevicePath, DeviceSettingsPatch, SettingsPatch};
+    let patch = DeviceSettingsPatch {
+        idle_timeout_s: None,
+        orientation: None,
+        name: Some("Workbench".into()),
+        brightness: None,
+    };
+    td.call::<SettingsPatch>(
+        DevicePath {
+            device: accepted.id.clone(),
+        },
+        NoQuery,
+        patch,
+    )
+    .await
+    .unwrap();
+    let named = td.device(&accepted.id).unwrap();
+    assert_eq!(named.name.as_deref(), Some("Workbench"));
+    assert_eq!(named.setup, SetupState::Ready);
+}
+
+#[tokio::test]
+async fn an_unknown_consent_answer_is_request_invalid() {
+    let td = TestCompanion::start().await;
+    let response = td
+        .raw()
+        .post("/api/v1/test/firmware/script")
+        .bearer_auth(&td.token)
+        .json(&serde_json::json!({ "answers": ["maybe"] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+}
