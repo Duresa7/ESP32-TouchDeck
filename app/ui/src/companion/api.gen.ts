@@ -110,6 +110,8 @@ export type NewBoardRemoved = { id: DeviceId, };
 export type NoQuery = null;
 export type Orientation = "landscape" | "portrait";
 export type Page = { "kind": "grid", id: string, title: string, rows: number, cols: number, tiles: Array<Tile>, } | { "kind": "dashboard", id: string, title: string, source: string, };
+export type PairExpires = { expires_ms: number, };
+export type PairRequest = { code: string, label: string | null, };
 export type PortProbe = { port: string, usb_serial: string | null, id: DeviceId, probed_ms: number | null, } & ({ "status": "pending" } | { "status": "device", protocol: number, version: string, } | { "status": "silent" } | { "status": "busy", detail: string, } | { "status": "other-firmware", product: string, detail: string, });
 export type PresetTile = { id: string, name: string, action: JsonValue, };
 export type Proof = { proof: string, };
@@ -144,6 +146,7 @@ export type SettingsPatched = { settings: DeviceSettings,
  */
 restart_required: boolean, };
 export type SetupState = "needs-setup" | "ready";
+export type StartupSetting = { at_sign_in: boolean, };
 export type SuggestRequest = { action: TileAction, };
 export type SystemInfo = { version: string, build: string, api: string, mock: boolean, data_dir_override: boolean, };
 export type Tile = { id: string, label: string, row: number, col: number, rowSpan: number, colSpan: number, icon: string | null, asset?: string | null, action: TileAction, };
@@ -165,6 +168,8 @@ export const endpoints = {
   'assets.prune': { method: 'POST', path: '/devices/{device}/assets/prune', access: 'session' },
   'assets.suggest': { method: 'POST', path: '/assets/builtin/suggest', access: 'session' },
   'assets.upload': { method: 'POST', path: '/uploads', access: 'session' },
+  'auth.pair': { method: 'POST', path: '/auth/pair', access: 'public' },
+  'auth.pair_code': { method: 'POST', path: '/auth/pair-codes', access: 'session' },
   'auth.proof': { method: 'POST', path: '/auth/proof', access: 'public' },
   'auth.reset': { method: 'POST', path: '/auth/reset', access: 'session' },
   'auth.session_create': { method: 'POST', path: '/auth/sessions', access: 'pairing' },
@@ -196,8 +201,10 @@ export const endpoints = {
   'system.get': { method: 'GET', path: '/system', access: 'session' },
   'system.ping': { method: 'GET', path: '/system/ping', access: 'public' },
   'system.shutdown': { method: 'POST', path: '/system/shutdown', access: 'session' },
+  'system.startup_get': { method: 'GET', path: '/system/startup', access: 'session' },
+  'system.startup_put': { method: 'PUT', path: '/system/startup', access: 'session' },
 } as const;
-export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.render_failed' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.changed' | 'layout.invalid' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'upload.not_found';
+export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.render_failed' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.changed' | 'layout.invalid' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'upload.not_found';
 export type SyncData = {
   approvals: Array<ApprovalRequest>,
   devices: Array<DeviceSummary>,
@@ -279,6 +286,8 @@ also_keep: Array<string>, }, bearer?: string, headers?: Record<string, string>) 
       upload: (path: Record<string, never> = {}, query: null = null, body: Blob, bearer?: string, headers?: Record<string, string>) => call<Uploaded>('assets.upload', path, query, body, bearer, headers),
     },
     auth: {
+      pair: (path: Record<string, never> = {}, query: null = null, body: { code: string, label: string | null, }, bearer?: string, headers?: Record<string, string>) => call<SessionCreated>('auth.pair', path, query, body, bearer, headers),
+      pair_code: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<PairExpires>('auth.pair_code', path, query, body, bearer, headers),
       proof: (path: Record<string, never> = {}, query: null = null, body: { nonce: string, }, bearer?: string, headers?: Record<string, string>) => call<Proof>('auth.proof', path, query, body, bearer, headers),
       reset: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('auth.reset', path, query, body, bearer, headers),
       session_create: (path: Record<string, never> = {}, query: null = null, body: { kind: SessionKind, label: string | null, }, bearer?: string, headers?: Record<string, string>) => call<SessionCreated>('auth.session_create', path, query, body, bearer, headers),
@@ -327,6 +336,8 @@ also_keep: Array<string>, }, bearer?: string, headers?: Record<string, string>) 
       get: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<SystemInfo>('system.get', path, query, body, bearer, headers),
       ping: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Versions>('system.ping', path, query, body, bearer, headers),
       shutdown: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('system.shutdown', path, query, body, bearer, headers),
+      startup_get: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<StartupSetting>('system.startup_get', path, query, body, bearer, headers),
+      startup_put: (path: Record<string, never> = {}, query: null = null, body: { at_sign_in: boolean, }, bearer?: string, headers?: Record<string, string>) => call<StartupSetting>('system.startup_put', path, query, body, bearer, headers),
     },
   };
 }
