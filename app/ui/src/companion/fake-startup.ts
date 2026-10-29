@@ -1,4 +1,4 @@
-import type { StartupSetting } from './startup.ts';
+import type { StartupSetting } from './api.gen.ts';
 
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 

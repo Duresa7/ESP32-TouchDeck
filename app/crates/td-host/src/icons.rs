@@ -129,6 +129,21 @@ pub fn file_ids(layout: &Layout) -> BTreeSet<String> {
         .collect()
 }
 
+/// Every schema 2 Asset the Layout names.
+pub fn asset_ids(layout: &Layout) -> BTreeSet<String> {
+    layout
+        .pages
+        .iter()
+        .filter_map(|p| match p {
+            Page::Grid { tiles, .. } => Some(tiles),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|t| t.asset.as_deref()?.strip_prefix("sha256:"))
+        .map(str::to_owned)
+        .collect()
+}
+
 /// The app's icon files, kept as `<dir>/<id>.bin`. Built-in icons need no file there.
 #[derive(Debug, Clone)]
 pub struct IconCache {

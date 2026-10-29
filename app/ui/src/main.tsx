@@ -3,9 +3,13 @@ import './styles/tokens.css';
 import './styles/app.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { Pair, takePairingCode } from './screens/Pair.tsx';
 import { App } from './App.tsx';
 import { CompanionContext, connect, EventsContext, pageEnvironment, type Environment } from './companion/connection.ts';
 import { createUpdatesStore, UpdatesContext, watchForUpdates } from './state/updates.ts';
+
+const isPair = window.location.pathname === '/pair';
+const initialCode = isPair ? takePairingCode(window.location, window.history) : '';
 
 // The demo and dev branches are dropped from production builds, fake Companion and all.
 const env: Environment =
@@ -15,7 +19,9 @@ const env: Environment =
       ? (await import('./companion/dev.ts')).devEnvironment(window)
       : pageEnvironment(window);
 
-const { companion, events } = connect(env);
+const connection = isPair ? null : connect(env);
+const companion = connection?.companion ?? null;
+const events = connection?.events ?? null;
 const updates = createUpdatesStore(env.updates);
 watchForUpdates(updates);
 
@@ -24,7 +30,7 @@ createRoot(document.getElementById('root')!).render(
     <CompanionContext value={companion}>
       <EventsContext value={events}>
         <UpdatesContext value={updates}>
-          <App />
+          {isPair ? <Pair initialCode={initialCode} /> : <App />}
         </UpdatesContext>
       </EventsContext>
     </CompanionContext>

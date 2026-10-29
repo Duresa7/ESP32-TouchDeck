@@ -134,7 +134,7 @@ stored text is ignored. A normal Firmware update preserves the name.
 ## Assets and bulk transfers
 
 An Asset id is the full SHA-256 of the exact encoded file, 64 lowercase hex
-characters. LittleFS stores it at `/storage/assets/<id>.bin`. The format is
+characters. The on-Device file layout is internal to Firmware. The format is
 detected from the validated bytes, so no mutable sidecar is needed. Existing
 16-digit `file:` icons and `/storage/icons` remain separate.
 
