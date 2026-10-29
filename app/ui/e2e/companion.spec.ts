@@ -356,3 +356,77 @@ test('a name saved through settings_patch ends setup, and a ready Device never o
   const restored = await api('PATCH', '/devices/mock0003/settings', { idle_timeout_s: null, orientation: null, name: 'Mock Device mock0003', brightness: null });
   expect(restored.status()).toBe(200);
 });
+
+const consent = (api: Api, answers: ('accept' | 'decline')[]) => call(api, 'POST', '/test/firmware/script', { answers });
+
+async function plugNewBoard(page: Page, api: Api, id: string) {
+  await call(api, 'POST', '/test/ports', { plug: { id, kind: 'other-firmware' } });
+  const card = page.getByTestId('new-board');
+  await expect(card).toHaveAttribute('data-id', id, { timeout: 15_000 });
+  await expect(card).toHaveAttribute('data-step', 'detected');
+  return card;
+}
+
+async function reboots(api: Api, id: string): Promise<number> {
+  const record = await api('GET', `/test/devices/${id}/record`);
+  expect(record.status()).toBe(200);
+  return ((await record.json()) as { reboots: number }).reboots;
+}
+
+test('a New board installs once this PC accepts, comes up needing setup, and setup makes it ready', async ({ page, request }) => {
+  const api = await companion(request);
+  await consent(api, []);
+  await page.goto('/');
+  await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
+  const card = await plugNewBoard(page, api, 'mock00fe');
+
+  await card.getByTestId('board-install').click();
+  await expect(card).toHaveAttribute('data-step', 'waiting');
+  await expect(card.getByTestId('board-status')).toHaveText('Confirm on this PC to continue.');
+  expect(await reboots(api, 'mock00fe')).toBe(0);
+
+  await consent(api, ['accept']);
+  const dialog = page.getByTestId('onboarding');
+  await expect(dialog).toHaveAttribute('data-device-id', 'mock00fe', { timeout: 30_000 });
+  expect(await (await api('GET', '/devices/mock00fe')).json()).toMatchObject({ setup: 'needs-setup' });
+
+  await expect(dialog).toHaveAttribute('data-step', 'name');
+  await page.getByTestId('onboarding-name').fill('Workbench');
+  await page.getByTestId('onboarding-next').click();
+  await expect(dialog).toHaveAttribute('data-step', 'orientation');
+  await page.getByTestId('onboarding-next').click();
+  await expect(dialog).toHaveAttribute('data-step', 'layout');
+  await page.getByTestId('onboarding-next').click();
+  await expect(dialog).toHaveAttribute('data-step', 'done');
+  await page.getByTestId('onboarding-done').click();
+  await expect(dialog).toHaveCount(0);
+  expect(await (await api('GET', '/devices/mock00fe')).json()).toMatchObject({ name: 'Workbench', setup: 'ready' });
+
+  await call(api, 'POST', '/test/ports', { unplug: 'mock00fe' });
+  await expect.poll(async () => (await api('DELETE', '/devices/mock00fe')).status(), { timeout: 15_000 }).toBe(204);
+});
+
+test('a declined install writes nothing, keeps the New board card, and opens no setup', async ({ page, request }) => {
+  const api = await companion(request);
+  await consent(api, []);
+  await page.goto('/');
+  await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
+  const card = await plugNewBoard(page, api, 'mock00fd');
+
+  await card.getByTestId('board-install').click();
+  await expect(card).toHaveAttribute('data-step', 'waiting');
+  await consent(api, ['decline']);
+  await expect(card).toHaveAttribute('data-step', 'declined');
+  await expect(card.getByTestId('board-status')).toHaveText('Declined on this PC. Nothing changed on the board.');
+  expect(await reboots(api, 'mock00fd')).toBe(0);
+  const boards = (await (await api('GET', '/new-boards')).json()) as { id: string }[];
+  expect(boards.map((b) => b.id)).toContain('mock00fd');
+  expect((await api('GET', '/devices/mock00fd')).status()).toBe(404);
+  await expect(page.getByTestId('onboarding')).toHaveCount(0);
+
+  await card.getByTestId('board-cancel').click();
+  await expect(card).toHaveAttribute('data-step', 'detected');
+  await expect(card.getByTestId('board-install')).toBeVisible();
+  await call(api, 'POST', '/test/ports', { unplug: 'mock00fd' });
+  await expect(card).toHaveCount(0, { timeout: 15_000 });
+});
