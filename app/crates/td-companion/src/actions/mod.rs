@@ -1,4 +1,3 @@
-//! PC actions and a single, native approval queue. No API can grant permission.
 mod prompt;
 use crate::{
     api::{Clock, Event, Events},
@@ -288,8 +287,7 @@ impl Actions {
     fn press(&self, device: &DeviceId, session: &td_link::Session, event: &serde_json::Value) {
         let page = event["page"].as_str().unwrap_or_default();
         let tile = event["tile"].as_str().unwrap_or_default();
-        // Resolve fresh from the Device, not the editor's saved or unpushed Layout.
-        let resolve = || -> Option<(Plan, String)> {
+        let resolve_device_layout_action = || -> Option<(Plan, String)> {
             let shown = session.layout_state(Duration::from_secs(2)).ok()?;
             let layout = match shown.source.as_str() {
                 "builtin" => Layout::parse(include_bytes!(
@@ -324,7 +322,7 @@ impl Actions {
                 format!("Device: {name}\nPage: {title}\nTile: {}", tile.label),
             ))
         };
-        let resolved = resolve();
+        let resolved = resolve_device_layout_action();
         let mut request = ApprovalRequest {
             id: String::new(),
             device: device.clone(),

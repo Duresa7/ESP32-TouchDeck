@@ -131,7 +131,6 @@ mod windows {
         ) -> Answer {
             let title = wide("Open TouchDeck - approve action");
             let heading = wide("Allow this action on this PC?");
-            // JSON escaping keeps argument boundaries and control characters unambiguous.
             let content = wide(&format!(
                 "{context}\nKind: {}\nProgram: {}\nArguments: {}\nWorking folder: {}\nShell: {}",
                 request.spec.kind,

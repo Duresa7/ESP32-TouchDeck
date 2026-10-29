@@ -285,3 +285,79 @@ async fn a_slow_action_does_not_block_another_device() {
         "mock0001"
     );
 }
+
+#[tokio::test]
+async fn launches_and_file_opens_require_native_consent() {
+    let td = TestCompanion::start().await;
+    td.plug_device("mock0001").await;
+    for action in [
+        json!({"type":"launch", "path":"must-not-run", "args":[], "cwd":""}),
+        json!({"type":"open", "target":"file:///must-not-open"}),
+        json!({"type":"open", "target":"custom:must-not-open"}),
+    ] {
+        let value: Layout = serde_json::from_value(json!({"schema":1,"name":"Consent","orientation":"landscape","pages":[{"id":"main","title":"Main","kind":"grid","rows":3,"cols":6,"tiles":[{"id":"t0","label":"Consent","row":0,"col":0,"rowSpan":1,"colSpan":1,"action":action}]}]})).unwrap();
+        let job = td
+            .call::<Push>(
+                LayoutPath {
+                    device: "mock0001".into(),
+                    orientation: Orientation::Landscape,
+                },
+                NoQuery,
+                LayoutBody::new(&value),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            td.wait(&job).await.state,
+            td_companion::jobs::JobState::Succeeded
+        );
+        press(&td, "mock0001", 0);
+        let pending = wait_count(&td, "approvals", 1).await;
+        assert!(
+            get(&td, "actions/log")
+                .await
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|l| l["status"] == "denied")
+        );
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let mut request = format!("{}/api/v1/events", td.url.replace("http:", "ws:"))
+            .into_client_request()
+            .unwrap();
+        request.headers_mut().insert(
+            "sec-websocket-protocol",
+            format!("touchdeck.v1, touchdeck.bearer.{}", td.token)
+                .parse()
+                .unwrap(),
+        );
+        let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+        assert_eq!(
+            frame(&mut socket, "sync").await["data"]["approvals"],
+            pending
+        );
+        let id = pending[0]["id"].as_str().unwrap();
+        for status in [204, 429] {
+            assert_eq!(
+                td.raw()
+                    .post(&format!("/api/v1/approvals/{id}/show"))
+                    .bearer_auth(&td.token)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status()
+                    .as_u16(),
+                status
+            );
+        }
+        script(&td, "deny").await;
+        wait_count(&td, "approvals", 0).await;
+    }
+    let logs = wait_count(&td, "actions/log", 3).await;
+    assert!(
+        logs.as_array()
+            .unwrap()
+            .iter()
+            .all(|l| l["status"] == "denied")
+    );
+}
