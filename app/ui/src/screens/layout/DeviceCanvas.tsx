@@ -1,23 +1,17 @@
-// The Device on the editor canvas, ported from app/src/lib/deck/DeckScreen.svelte. The screen is laid out at its
-// real size by the scene modules in lib/deck and scaled to fit. In Edit, Tiles are selected, dragged by the body and
-// resized by the corner dot. In Preview, Pages slide and Tiles react as on the Device, through the ported pager.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import clsx from 'clsx';
 import { Lock, Plus } from 'lucide-react';
 import { cellAt, geometry, PANEL_H, PANEL_W, screenSize, tileFits, tileRect, type Geometry, type Rect, type Span } from '../../lib/deck/geometry.ts';
-import { easeOut, goTo, move, nearestPage, pager, press, release, restX } from '../../lib/deck/pager.ts';
+import { easeOut, goTo, move, nearestPage, pager, press, release, restX, type Bounce } from '../../lib/deck/pager.ts';
 import { buildDots, buildPage, buildTitle, FONTS, sampleRows, sampleWidget, type FontSize, type PageView, type TextView } from '../../lib/deck/scene.ts';
 import type { Line } from '../../lib/deck/text.ts';
-import { SYMBOLS, THEME } from '../../lib/deck/theme.ts';
+import { THEME } from '../../lib/deck/theme.ts';
 import type { EditorStore, Target } from '../../lib/editor/store.ts';
 import type { GridPage, Layout, Tile } from '../../lib/editor/validate.ts';
 import { BuiltinIcon } from './glyphs.tsx';
 
 const SIZE: Record<FontSize, string> = { 48: 'var(--screen-text-legend)', 28: 'var(--screen-text-label)', 14: 'var(--screen-text-sub)' };
-/** The built-in `lv:` icon a label's letters spell, as the scene lays it out in the tile font. */
-const ICON_OF = new Map(Object.entries(SYMBOLS).map(([id, glyph]) => [glyph, id]));
 
-/** A line's letters as text runs, with the empty box the Device draws for a letter its font lacks. */
 function runs(line: Line): ReactNode[] {
   const out: ReactNode[] = [];
   let text = '';
@@ -34,15 +28,12 @@ function runs(line: Line): ReactNode[] {
   return out;
 }
 
-/** One label where the scene puts it. Lines keep the Device's breaks and centres; the face is the screen font. */
 function SceneText({ view, title }: { view: TextView; title?: boolean }) {
-  const letters = view.label.lines.flatMap((line) => line.letters);
   const box: CSSProperties = { left: view.x, top: view.y, width: view.label.width, height: view.label.height };
-  const icon = ICON_OF.get(String.fromCodePoint(...letters.map((l) => l.letter)));
-  if (icon) {
+  if (view.icon) {
     return (
       <span className="scene-icon" style={box}>
-        <BuiltinIcon icon={icon} size={52} />
+        <BuiltinIcon icon={view.icon} size={52} />
       </span>
     );
   }
@@ -72,13 +63,29 @@ const SAMPLES = { widget: sampleWidget, rows: sampleRows, hasImage: () => true }
 
 type ModLook = 'one-shot' | 'locked';
 
+const ARROW_STEPS = new Map<string, readonly [number, number]>([
+  ['ArrowUp', [-1, 0]],
+  ['ArrowDown', [1, 0]],
+  ['ArrowLeft', [0, -1]],
+  ['ArrowRight', [0, 1]],
+]);
+
+function useStateRef<T>(initial: T): [T, { readonly current: T }, (next: T) => void] {
+  const [value, setValue] = useState(initial);
+  const ref = useRef(initial);
+  const set = (next: T) => {
+    ref.current = next;
+    setValue(next);
+  };
+  return [value, ref, set];
+}
+
 interface Drag {
   tile: string;
   mode: 'move' | 'resize';
   pointer: number;
-  /** Where the pointer went down, in client pixels. */
-  x0: number;
-  y0: number;
+  clientX0: number;
+  clientY0: number;
   offsetRow: number;
   offsetCol: number;
   span: Span;
@@ -92,9 +99,7 @@ export interface DeviceCanvasProps {
   mode: 'edit' | 'preview';
   selected: string | null;
   adding: Target | null;
-  /** The long side of the Device, bezel included, in app pixels. */
   long: number;
-  /** One Device pixel per screen pixel. */
   actualSize: boolean;
 }
 
@@ -104,7 +109,6 @@ function readRatio(name: string, fallback: number) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
-/** The Device's short side over its long side, bezel included. */
 export function deviceAspect(): number {
   const pad = readRatio('--bezel-pad', 0.034);
   return (1 - 2 * pad) * (PANEL_H / PANEL_W) + 2 * pad;
@@ -119,21 +123,18 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
     () => (editing ? [buildPage(current, g, SAMPLES)] : layout.pages.map((p) => buildPage(p, g, SAMPLES))),
     [editing, current, layout.pages, g],
   );
-  // How long a Page takes from building its scene to the DOM, as `page-render` for the e2e timings.
   const built = useRef(0);
   built.current = performance.now();
   useLayoutEffect(() => {
     performance.measure?.('page-render', { start: built.current });
   }, [views]);
 
-  // Size: the long side fits the space; the bezel and corners scale with it, as the design tokens say.
   const ratios = useMemo(() => ({ pad: readRatio('--bezel-pad', 0.034), radius: readRatio('--bezel-radius', 0.049), glass: readRatio('--bezel-screen-radius', 0.012) }), []);
   const screenLong = Math.max(g.screen.w, g.screen.h);
   const pad = Math.round(long * ratios.pad);
   const scale = actualSize ? 1 / (globalThis.devicePixelRatio || 1) : (long - 2 * pad) / screenLong;
   const deviceLong = actualSize ? screenLong * scale + 2 * pad : long;
 
-  // ---------- Preview: the pager, as ui_deck.c drives it ----------
   const screenRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const deckPager = useRef(pager({ pageW: g.screen.w, slop: g.slop, swipe: g.swipe }, layout.pages.length, index));
@@ -154,7 +155,6 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
   };
 
   const stageRef = useRef<HTMLDivElement>(null);
-  /** Marks the canvas while Pages slide, so a test can wait for them to settle. */
   const sliding = (on: boolean) => {
     animating.current = on;
     stageRef.current?.toggleAttribute('data-sliding', on);
@@ -188,9 +188,9 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
 
   const slide = (from: number, to: number, instant = false) => (instant || from === to ? (stop(), paint(to)) : run(from, to, THEME.anim.settleMs, easeOut));
 
-  function bounce(direction: -1 | 1) {
+  function bounce(direction: Bounce) {
     const rest = restX(deckPager.current);
-    const out = rest + direction * g.bouncePx;
+    const out = rest + (direction === 'left' ? -1 : 1) * g.bouncePx;
     run(rest, out, THEME.anim.bounceOutMs, easeOut, () => run(out, rest, THEME.anim.bounceBackMs, (t) => 1 - easeOut(1 - t)));
   }
 
@@ -205,7 +205,6 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
     if (id && id !== pageId) store.selectPage(id);
   }
 
-  // The pager follows the Layout and the current Page. A Page picked outside the canvas, such as from a tab, shows at once.
   useLayoutEffect(() => {
     const p = deckPager.current;
     Object.assign(p, { pageW: g.screen.w, slop: g.slop, swipe: g.swipe, count: Math.max(1, layout.pages.length) });
@@ -219,7 +218,6 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
       return;
     }
     if (p.index !== index) {
-      // Picked outside the canvas, by a tab or a key: no slide, and any slide under way stops.
       goTo(p, index);
       setShown(index);
       stop();
@@ -227,7 +225,6 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
     } else if (!animating.current && trackX.current !== restX(p)) {
       paint(restX(p));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing, index, g, layout.pages.length]);
 
   useEffect(() => stop, []);
@@ -237,15 +234,13 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
     return { x: (event.clientX - box.left) / scale, y: (event.clientY - box.top) / scale };
   };
 
-  // A press on a moving Page stops it and never taps; a sideways swipe changes Page before the lift; only a tap that
-  // stayed inside the slop runs the Tile.
   function previewDown(event: ReactPointerEvent) {
     if (editing || event.button !== 0) return;
     const caught = animating.current;
     if (caught) slide(trackX.current, restX(deckPager.current), true);
     const point = toScreen(event);
     press(deckPager.current, Math.trunc(point.x), Math.trunc(point.y));
-    const box = (event.target as HTMLElement).closest<HTMLElement>('[data-testid="tile"]');
+    const box = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-testid="tile"]') : null;
     const tapped = caught ? null : (box?.dataset.id ?? null);
     setPressed(tapped);
     const onMove = (e: PointerEvent) => {
@@ -254,13 +249,13 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
       const m = move(deckPager.current, at.x, at.y);
       if (before === 'tap' && m.press !== 'tap') setPressed(null);
       if (m.changed) showPage(m.to);
-      else if (m.blocked !== 0) bounce(m.blocked);
+      else if (m.bounce) bounce(m.bounce);
     };
     const onUp = (e: PointerEvent) => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
-      const tap = release(deckPager.current);
+      const tap = release(deckPager.current) === 'tap';
       setPressed(null);
       if (tap && tapped && e.type === 'pointerup') tapTile(tapped);
     };
@@ -269,7 +264,6 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
     window.addEventListener('pointercancel', onUp);
   }
 
-  /** What a tap shows on the Device: a Page jump, or a modifier's one-shot and locked looks. */
   function tapTile(id: string) {
     const source = layout.pages[deckPager.current.index];
     if (source?.kind !== 'grid') return;
@@ -294,20 +288,8 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
     }
   }
 
-  // ---------- Edit: drag to move, the corner dot to resize ----------
-  // The drag lives in refs so every pointer event sees the latest one; the state copies only redraw.
-  const [drag, setDragState] = useState<Drag | null>(null);
-  const [target, setTargetState] = useState<Span | null>(null);
-  const dragRef = useRef<Drag | null>(null);
-  const targetRef = useRef<Span | null>(null);
-  const setDrag = (next: Drag | null) => {
-    dragRef.current = next;
-    setDragState(next);
-  };
-  const setTarget = (next: Span | null) => {
-    targetRef.current = next;
-    setTargetState(next);
-  };
+  const [drag, dragRef, setDrag] = useStateRef<Drag | null>(null);
+  const [target, targetRef, setTarget] = useStateRef<Span | null>(null);
   const tileEls = useRef(new Map<string, HTMLElement>());
   const settle = useRef<{ id: string; x: number; y: number } | null>(null);
   const grid = current.kind === 'grid' ? current : null;
@@ -320,7 +302,7 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
     const [row, col] = cellAt(grid, g.grid, g.gap, point.x, point.y);
     event.currentTarget.setPointerCapture?.(event.pointerId);
     store.select(tile.id);
-    setDrag({ tile: tile.id, mode: how, pointer: event.pointerId, x0: event.clientX, y0: event.clientY, offsetRow: row - tile.row, offsetCol: col - tile.col, span: tile, moved: false });
+    setDrag({ tile: tile.id, mode: how, pointer: event.pointerId, clientX0: event.clientX, clientY0: event.clientY, offsetRow: row - tile.row, offsetCol: col - tile.col, span: tile, moved: false });
     setTarget(null);
   }
 
@@ -328,8 +310,8 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
     const now = dragRef.current;
     if (!now || event.pointerId !== now.pointer || !grid) return;
     event.stopPropagation();
-    const dx = event.clientX - now.x0;
-    const dy = event.clientY - now.y0;
+    const dx = event.clientX - now.clientX0;
+    const dy = event.clientY - now.clientY0;
     if (!now.moved && Math.hypot(dx, dy) < 4) return;
     if (!now.moved) setDrag({ ...now, moved: true });
     const point = toScreen(event);
@@ -339,7 +321,6 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
     let next: Span;
     if (now.mode === 'move') {
       next = { row: row - now.offsetRow, col: col - now.offsetCol, rowSpan: tile.rowSpan, colSpan: tile.colSpan };
-      // The Tile stays under the pointer, offset from where it was grabbed.
       const el = tileEls.current.get(tile.id);
       if (el) el.style.transform = `translate(${dx / scale}px, ${dy / scale}px)`;
     } else {
@@ -363,14 +344,13 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
     }
     if (done.mode === 'move') {
       const origin = rectOf(done.span);
-      settle.current = { id: done.tile, x: origin.x + (event.clientX - done.x0) / scale, y: origin.y + (event.clientY - done.y0) / scale };
+      settle.current = { id: done.tile, x: origin.x + (event.clientX - done.clientX0) / scale, y: origin.y + (event.clientY - done.clientY0) / scale };
       if (to.row !== done.span.row || to.col !== done.span.col) store.moveTile(done.tile, to.row, to.col);
     } else if (to.rowSpan !== done.span.rowSpan || to.colSpan !== done.span.colSpan) {
       store.resizeTile(done.tile, to.rowSpan, to.colSpan);
     }
   }
 
-  // After a drop the Tile eases from where the pointer left it into its cell, or back to where it was when refused.
   useLayoutEffect(() => {
     const pending = settle.current;
     if (!pending || drag) return;
@@ -410,7 +390,7 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
       store.clearTile(tile.id);
       return;
     }
-    const step = ({ ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] } as Record<string, [number, number]>)[event.key];
+    const step = ARROW_STEPS.get(event.key);
     if (!step) return;
     event.preventDefault();
     event.stopPropagation();
@@ -444,7 +424,7 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
   const dots = buildDots(g, layout.pages.length, editing ? index : shown);
   const visible = layout.pages[editing ? index : shown];
   const landscape = g.screen.w >= g.screen.h;
-  const screenStyle = { width: g.screen.w, height: g.screen.h, scale: String(scale), '--s': scale } as CSSProperties;
+  const screenStyle: CSSProperties = { width: g.screen.w, height: g.screen.h, scale: String(scale), '--s': scale };
 
   function renderPage(view: PageView, i: number) {
     const source = editing ? current : layout.pages[i];
@@ -573,11 +553,11 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
     );
   }
 
-  const bezelStyle = {
+  const bezelStyle: CSSProperties = {
     '--device-long': `${deviceLong}px`,
     padding: pad,
     borderRadius: Math.round(deviceLong * ratios.radius),
-  } as CSSProperties;
+  };
 
   return (
     <div
@@ -591,7 +571,6 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
     >
       <div className={clsx('device', landscape ? 'is-landscape' : 'is-portrait')} style={bezelStyle}>
         <div className="device-screen" style={{ width: g.screen.w * scale, height: g.screen.h * scale, borderRadius: Math.round(deviceLong * ratios.glass) }}>
-          {/* The scaled screen, drawn at the Device's own pixels. */}
           <div
             ref={screenRef}
             className={clsx('screen', editing ? 'is-editing' : 'is-preview')}

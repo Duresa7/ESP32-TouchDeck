@@ -12,7 +12,6 @@ function SceneText({ view }: { view: TextView }) {
   </g>;
 }
 
-/** Scene geometry is shared with the editor; the miniature has no interactive Tiles. */
 export function DevicePreview({ preview, live, orientation = 'landscape' }: { preview: Preview | null; live: boolean; orientation?: Orientation }) {
   const g = geometry(screenSize(preview?.layout.orientation ?? orientation), preview?.layout.fullScreen);
   const page = preview && buildPage(preview.layout.pages[preview.index], g);
