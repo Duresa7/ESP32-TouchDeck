@@ -6,6 +6,15 @@ use std::{
     time::Duration,
 };
 
+/// Drops pooled connections before the Companion's 5 s header-read limit closes them, so a
+/// request never goes out on a connection the server is closing at that moment.
+fn client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .pool_idle_timeout(Duration::from_secs(4))
+        .build()
+        .unwrap()
+}
+
 struct Process(Child);
 impl Drop for Process {
     fn drop(&mut self) {
@@ -127,7 +136,7 @@ fn owner_only(path: &Path) -> bool {
 async fn one_companion_per_runtime_folder() {
     let root = tempfile::tempdir().unwrap();
     let other = tempfile::tempdir().unwrap();
-    let client = reqwest::Client::new();
+    let client = client();
     let mut first = launch(root.path());
     let info = runtime(root.path()).await;
     let (status, stderr) = refused(launch(root.path())).await;
@@ -150,7 +159,7 @@ async fn one_companion_per_runtime_folder() {
 #[tokio::test]
 async fn runtime_file_lifecycle_and_restart() {
     let root = tempfile::tempdir().unwrap();
-    let client = reqwest::Client::new();
+    let client = client();
     let mut first = launch(root.path());
     let info = runtime(root.path()).await;
     let token = session(&client, &info).await;
@@ -217,7 +226,7 @@ async fn a_folder_with_only_modify_access_works() {
         "$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; icacls $env:TD_DIR /inheritance:r /grant:r \"*$($sid):(OI)(CI)M\" | Out-Null; exit $LASTEXITCODE",
         &[("TD_DIR", restricted.path())],
     ));
-    let client = reqwest::Client::new();
+    let client = client();
     let mut companion = launch(restricted.path());
     let info = runtime(restricted.path()).await;
     assert!(owner_only(&restricted.path().join("runtime")));
@@ -335,7 +344,7 @@ async fn pairing_codes_reach_only_the_delivery_capture() {
     let stdout = drain(child.0.stdout.take().unwrap());
     let stderr = drain(child.0.stderr.take().unwrap());
     let info = runtime(root.path()).await;
-    let client = reqwest::Client::new();
+    let client = client();
     let mut p = Pairing {
         window: session(&client, &info).await,
         client: client.clone(),

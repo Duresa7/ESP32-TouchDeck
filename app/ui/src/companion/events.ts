@@ -1,4 +1,4 @@
-import type { DeviceRemoved, DeviceSummary, Job, SyncData } from './api.ts';
+import type { DeviceConsole, DeviceRemoved, DeviceSummary, Job, SyncData } from './api.ts';
 import type { DevicesStore } from './devices.ts';
 import type { JobsStore } from './jobs.ts';
 import type { Session } from './session.ts';
@@ -6,6 +6,7 @@ import type { Session } from './session.ts';
 export interface EventSocket {
   onmessage: ((event: { data: unknown }) => void) | null;
   onclose: ((event: { code: number }) => void) | null;
+  send(data: string): void;
   close(code?: number): void;
 }
 
@@ -13,7 +14,14 @@ export type OpenSocket = (url: string, protocols: string[]) => EventSocket;
 
 export const openWebSocket: OpenSocket = (url, protocols) => {
   const ws = new WebSocket(url, protocols);
-  const socket: EventSocket = { onmessage: null, onclose: null, close: (code) => ws.close(code) };
+  const socket: EventSocket = {
+    onmessage: null,
+    onclose: null,
+    send: (data) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(data);
+    },
+    close: (code) => ws.close(code),
+  };
   ws.onmessage = (event) => socket.onmessage?.(event);
   ws.onclose = (event) => socket.onclose?.(event);
   return socket;
@@ -36,6 +44,8 @@ export interface EventsOptions {
 
 export interface Events {
   close(): void;
+  /** Opts in to one Device's `console` topic while `onLine` listens. The returned function stops listening. */
+  console(device: string, onLine: (line: string) => void): () => void;
 }
 
 type Frame =
@@ -43,9 +53,10 @@ type Frame =
   | { type: 'sync'; data: Partial<SyncData> }
   | { type: 'device.added' | 'device.updated'; data: DeviceSummary }
   | { type: 'device.removed'; data: DeviceRemoved }
-  | { type: 'job.updated'; data: Job };
+  | { type: 'job.updated'; data: Job }
+  | { type: 'device.console'; data: DeviceConsole };
 
-const HANDLED: ReadonlySet<unknown> = new Set<Frame['type']>(['hello', 'sync', 'device.added', 'device.updated', 'device.removed', 'job.updated']);
+const HANDLED: ReadonlySet<unknown> = new Set<Frame['type']>(['hello', 'sync', 'device.added', 'device.updated', 'device.removed', 'job.updated', 'device.console']);
 
 function parse(data: unknown): Frame | null {
   if (typeof data !== 'string') return null;
@@ -66,6 +77,12 @@ export function openEvents(options: EventsOptions): Events {
   let closed = false;
   let failures = 0;
   let build: string | undefined;
+  let greeted: EventSocket | null = null;
+  const consoles = new Map<string, Set<(line: string) => void>>();
+
+  function topic(op: 'subscribe' | 'unsubscribe', device: string) {
+    if (socket && socket === greeted) socket.send(JSON.stringify({ op, topic: 'console', device }));
+  }
 
   function receive(frame: Frame) {
     switch (frame.type) {
@@ -74,6 +91,8 @@ export function openEvents(options: EventsOptions): Events {
           if (build !== undefined && frame.build !== build) onNewBuild?.();
           build = frame.build;
         }
+        greeted = socket;
+        for (const device of consoles.keys()) topic('subscribe', device);
         break;
       case 'sync':
         failures = 0;
@@ -90,6 +109,9 @@ export function openEvents(options: EventsOptions): Events {
       case 'job.updated':
         store.getState().job(frame.data);
         jobs?.getState().upsert(frame.data);
+        break;
+      case 'device.console':
+        for (const onLine of consoles.get(frame.data.device) ?? []) onLine(frame.data.line);
         break;
       default: {
         const _exhaustive: never = frame;
@@ -166,6 +188,21 @@ export function openEvents(options: EventsOptions): Events {
       clearTimeout(timer);
       socket?.close(1000);
       socket = null;
+    },
+    console(device, onLine) {
+      let listeners = consoles.get(device);
+      if (!listeners) {
+        listeners = new Set();
+        consoles.set(device, listeners);
+        topic('subscribe', device);
+      }
+      listeners.add(onLine);
+      const own = listeners;
+      return () => {
+        if (!own.delete(onLine) || own.size > 0 || consoles.get(device) !== own) return;
+        consoles.delete(device);
+        topic('unsubscribe', device);
+      };
     },
   };
 }

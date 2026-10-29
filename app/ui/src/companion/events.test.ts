@@ -85,6 +85,7 @@ describe('the event stream', () => {
 
   const follow = (options: Partial<Parameters<typeof openEvents>[0]> = {}) => {
     events = openEvents({ url: URL, session: windowSession(fake.bridge), store, open: fake.openSocket, ...options });
+    return events;
   };
 
   test('sync fills the store, then deltas keep it current', async () => {
@@ -167,6 +168,33 @@ describe('the event stream', () => {
     fake.publish({ type: 'hello', api: 'v1', build: 'two' });
     await settle();
     expect(onNewBuild).toHaveBeenCalledOnce();
+  });
+
+  test('the console topic is asked for after hello, again after a reconnect, and dropped with its last listener', async () => {
+    const stream = follow({ retryMs: [0] });
+    const desk: string[] = [];
+    const deskAgain: string[] = [];
+    const stopDesk = stream.console('mock0001', (line) => desk.push(line));
+    const stopDeskAgain = stream.console('mock0001', (line) => deskAgain.push(line));
+    await settle();
+    expect(fake.topics).toEqual([['console/mock0001']]);
+
+    fake.dropSockets(1001);
+    await settle();
+    await settle();
+    expect(fake.topics).toEqual([['console/mock0001']]);
+
+    fake.publish({ type: 'device.console', device: 'mock0001', data: { device: 'mock0001', line: '@td {"cmd":"version"}' } });
+    fake.publish({ type: 'device.console', device: 'mock0002', data: { device: 'mock0002', line: 'not for Desk' } });
+    await settle();
+    expect(desk).toEqual(['@td {"cmd":"version"}']);
+    expect(deskAgain).toEqual(['@td {"cmd":"version"}']);
+
+    stopDesk();
+    stopDesk();
+    expect(fake.topics).toEqual([['console/mock0001']]);
+    stopDeskAgain();
+    expect(fake.topics).toEqual([[]]);
   });
 
   test('closing stops the stream for good', async () => {

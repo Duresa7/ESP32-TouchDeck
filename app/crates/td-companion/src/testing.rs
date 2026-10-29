@@ -70,7 +70,12 @@ impl TestCompanion {
         let stop = ctx.shutdown.subscribe();
         let task = tokio::spawn(crate::serve::serve(listener, router, limits, stop));
         let url = format!("http://127.0.0.1:{port}");
-        let client = reqwest::Client::new();
+        // Below the 5 s header-read limit, so a pooled connection is never reused as the
+        // Companion closes it.
+        let client = reqwest::Client::builder()
+            .pool_idle_timeout(Duration::from_secs(4))
+            .build()
+            .unwrap();
         let pairing_token = ctx.pairing_token();
         let session: serde_json::Value = client
             .post(format!("{url}/api/v1/auth/sessions"))
