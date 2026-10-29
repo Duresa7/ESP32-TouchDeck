@@ -54,6 +54,7 @@ export function SettingsDialog() {
   const appearance = useUi((s) => s.appearance);
   const setAppearance = useUi((s) => s.setAppearance);
   const ids = useId();
+  const section = useUi((s) => s.settingsSection);
 
   return (
     <Dialog.Portal>
@@ -104,6 +105,10 @@ export function SettingsDialog() {
           </div>
         </section>
 
+        {section === 'troubleshooting' && <section className="settings-section" aria-labelledby={`${ids}-troubleshooting`}>
+          <h3 id={`${ids}-troubleshooting`}>Troubleshooting</h3>
+          <div className="group"><div className="row"><span className="row-note">Device details, and tools to check that taps reach this PC.</span></div></div>
+        </section>}
         <section className="settings-section" aria-labelledby={`${ids}-about`}>
           <h3 id={`${ids}-about`}>About</h3>
           <div className="group">

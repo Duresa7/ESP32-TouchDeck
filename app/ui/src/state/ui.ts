@@ -9,6 +9,10 @@ export interface UiState {
   /** Home is where the app always starts. */
   section: Section;
   settingsOpen: boolean;
+  deviceId: string | null;
+  settingsSection: 'general' | 'troubleshooting';
+  openDevice(id: string): void;
+  openTroubleshooting(): void;
   /** Kept in memory for now; Settings owns where it's saved (#88). */
   appearance: Appearance;
   go(section: Section): void;
@@ -19,6 +23,10 @@ export interface UiState {
 export function createUiStore() {
   return createStore<UiState>()((set) => ({
     section: 'home',
+    deviceId: null,
+    settingsSection: 'general',
+    openDevice: (deviceId) => set({ section: 'layout', deviceId }),
+    openTroubleshooting: () => set({ settingsOpen: true, settingsSection: 'troubleshooting' }),
     settingsOpen: false,
     appearance: 'system',
     go: (section) => set({ section }),
