@@ -31,7 +31,7 @@ describe('the setup dialog', () => {
   test('closing for a Device that went away only closes', () => {
     const ui = createSetupUi(memoryStorage());
     ui.getState().start('a');
-    ui.getState().close(undefined);
+    ui.getState().close();
     expect(ui.getState()).toMatchObject({ open: null, skipped: new Set() });
   });
 

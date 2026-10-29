@@ -1,5 +1,3 @@
-/* Setting up a Device, built from tokens.css. The Device stands lit on the mat at the left and shows each choice as it's made. Never write a raw color here. */
-
 .dialog-onboarding {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr);
@@ -60,7 +58,6 @@
   margin-top: var(--space-1);
 }
 
-/* The Device's own pager: a pill for the current step, dots for the rest */
 .onboarding-dots {
   display: flex;
   align-items: center;
@@ -164,7 +161,6 @@
   }
 }
 
-/* Chosen in the app's chrome is an ink ring, so blue stays the focus ring */
 .choice.is-chosen {
   border-color: var(--ink);
   box-shadow: inset 0 0 0 1px var(--ink);
@@ -216,7 +212,6 @@
   letter-spacing: var(--track-12);
 }
 
-/* A Device outline in each orientation, drawn in its own glass */
 .orientation-glyph {
   display: block;
   border-radius: 3px;

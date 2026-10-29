@@ -26,7 +26,7 @@ declare global {
       firmware: { hold(id: string): void; release(id: string): void };
       fresh(id: string, firmware?: { version: string; protocol: number }): void;
       newBoards: {
-        plug(id: string, port: string, kind?: BoardKind): void;
+        plug(board: { id: string; port: string; kind?: BoardKind }): void;
         unplug(id: string): void;
         answer(id: string, answer: Answer): void;
         confirming(id: string): boolean;
@@ -57,9 +57,9 @@ export function demoEnvironment(target: Window): Environment {
     offline: (id) => fake.update(id, { link: { state: 'lost', reason: 'unplugged', detail: '', at_ms: Date.UTC(2026, 9, 27, 21, 40) } }),
     device: (id, change) => fake.update(id, change),
     firmware: { hold: fake.firmware.hold, release: fake.firmware.release },
-    fresh: (id, firmware = { version: '1.5.0', protocol: 2 }) => fake.add(freshDevice(id, 'COM9', firmware)),
+    fresh: (id, firmware = { version: '1.5.0', protocol: 2 }) => fake.add(freshDevice({ id, port: 'COM9', firmware })),
     newBoards: {
-      plug: (id, port, kind) => fake.newBoards.plug(newBoard(id, port, kind)),
+      plug: (board) => fake.newBoards.plug(newBoard(board)),
       unplug: fake.newBoards.unplug,
       answer: fake.newBoards.answer,
       confirming: fake.newBoards.confirming,

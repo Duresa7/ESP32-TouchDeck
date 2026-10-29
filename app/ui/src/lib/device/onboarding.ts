@@ -4,7 +4,7 @@ import type { Companion } from '../../companion/client.ts';
 import { toApiError } from '../../companion/errors.ts';
 import { readDraft, writeDraft, type DraftStorage } from '../editor/drafts.ts';
 import { canonical, counts, newLayout, parseLayout, starterLayout, type Layout, type Orientation } from '../editor/validate.ts';
-import { NAME_BYTES, nameBreak, SPECIAL_CHARACTERS, type DeviceSettingsState } from './settings.ts';
+import { NAME_BYTES, nameBreak, SPECIAL_CHARACTERS, type DeviceSettingsStore } from './settings.ts';
 
 export type StepId = 'name' | 'orientation' | 'layout' | 'firmware' | 'done';
 export type LayoutChoice = 'starter' | 'blank' | 'keep';
@@ -85,15 +85,10 @@ export interface SetupState {
   error: { text: string; detail: string } | null;
 }
 
-type Settings = Pick<StoreApi<DeviceSettingsState>, 'getState' | 'subscribe'> & {
-  chooseOrientation(orientation: Orientation): void;
-  confirmOrientation(): Promise<void>;
-};
-
 export interface SetupDeps {
   companion: Pick<Companion, 'devices' | 'layouts'>;
   wait(job: Job): Promise<PushReport>;
-  settings: Settings;
+  settings: Pick<DeviceSettingsStore, 'getState' | 'subscribe' | 'chooseOrientation' | 'confirmOrientation'>;
   drafts: DraftStorage | null;
   device: DeviceSummary;
   firmware: { offered: string | null };

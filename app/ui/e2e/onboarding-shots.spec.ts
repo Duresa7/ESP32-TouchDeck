@@ -12,6 +12,7 @@ async function home(page: Page, devices = 1) {
 
 async function shoot(page: Page, name: string, theme: string) {
   await page.mouse.move(0, 0);
+  await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)));
   await page.screenshot({ path: join(folder!, `${name}-${theme}.png`) });
 }
 
@@ -50,7 +51,7 @@ for (const theme of ['light', 'dark'] as const) {
 
     test('the New board card while installing', async ({ page }) => {
       await home(page, 1);
-      await page.evaluate(() => window.touchdeckDemo?.newBoards.plug('mock00ff', 'COM7'));
+      await page.evaluate(() => window.touchdeckDemo?.newBoards.plug({ id: 'mock00ff', port: 'COM7' }));
       const card = page.getByTestId('new-board');
       await expect(card).toHaveAttribute('data-step', 'detected');
       await shoot(page, 'new-board-found', theme);

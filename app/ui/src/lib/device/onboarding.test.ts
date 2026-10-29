@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { DeviceSummary } from '../../companion/api.ts';
+import type { DeviceSummary, LinkState } from '../../companion/api.ts';
 import { createClient, type Companion } from '../../companion/client.ts';
 import { createDevicesStore, type DevicesStore } from '../../companion/devices.ts';
 import { openEvents, type Events } from '../../companion/events.ts';
@@ -100,9 +100,9 @@ function memoryStorage(): DraftStorage {
 }
 
 describe('setting up a Device', () => {
-  const connected = { state: 'connected' as const, port: 'COM3', since_ms: 0, protocol: 2 };
-  const shelf = freshDevice('mock0009', 'COM9', { version: '1.5.0', protocol: 2 });
-  const old = freshDevice('mock0008', 'COM8', { version: '1.2.0', protocol: 1 });
+  const connected = { state: 'connected', port: 'COM3', since_ms: 0, protocol: 2 } satisfies LinkState;
+  const shelf = freshDevice({ id: 'mock0009', port: 'COM9', firmware: { version: '1.5.0', protocol: 2 } });
+  const old = freshDevice({ id: 'mock0008', port: 'COM8', firmware: { version: '1.2.0', protocol: 1 } });
 
   let fake: FakeCompanion;
   let companion: Companion;

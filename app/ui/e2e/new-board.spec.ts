@@ -6,7 +6,7 @@ const status = (page: Page) => card(page).getByTestId('board-status');
 const dialog = (page: Page) => page.getByTestId('onboarding');
 
 const demo = (page: Page) => ({
-  plug: () => page.evaluate((id) => window.touchdeckDemo?.newBoards.plug(id, 'COM7'), ID),
+  plug: () => page.evaluate((id) => window.touchdeckDemo?.newBoards.plug({ id, port: 'COM7' }), ID),
   unplug: () => page.evaluate((id) => window.touchdeckDemo?.newBoards.unplug(id), ID),
   answer: (answer: 'accept' | 'decline') => page.evaluate(({ id, answer }) => window.touchdeckDemo?.newBoards.answer(id, answer), { id: ID, answer }),
   confirming: () => page.evaluate((id) => window.touchdeckDemo?.newBoards.confirming(id) ?? false, ID),

@@ -69,9 +69,9 @@ describe('the devices store', () => {
 
   test('sync lists the New boards, and added or removed ones change the list', () => {
     const store = createDevicesStore();
-    store.getState().sync([], [], [newBoard('x', 'COM7')]);
-    store.getState().boardAdded(newBoard('y', 'COM8', 'busy'));
-    store.getState().boardAdded(newBoard('x', 'COM9'));
+    store.getState().sync([], [], [newBoard({ id: 'x', port: 'COM7' })]);
+    store.getState().boardAdded(newBoard({ id: 'y', port: 'COM8', kind: 'busy' }));
+    store.getState().boardAdded(newBoard({ id: 'x', port: 'COM9' }));
     store.getState().boardRemoved('y');
     expect(store.getState().newBoards.map((b) => [b.id, b.port])).toEqual([['x', 'COM9']]);
     store.getState().sync([]);
@@ -115,11 +115,11 @@ describe('the event stream', () => {
   });
 
   test('New boards arrive with the sync and follow plugs and unplugs', async () => {
-    fake.newBoards.plug(newBoard('mock00ff', 'COM7'));
+    fake.newBoards.plug(newBoard({ id: 'mock00ff', port: 'COM7' }));
     follow();
     await settle();
     expect(store.getState().newBoards.map((b) => b.id)).toEqual(['mock00ff']);
-    fake.newBoards.plug(newBoard('mock00fe', 'COM8', 'silent'));
+    fake.newBoards.plug(newBoard({ id: 'mock00fe', port: 'COM8', kind: 'silent' }));
     fake.newBoards.unplug('mock00ff');
     await settle();
     expect(store.getState().newBoards.map((b) => b.id)).toEqual(['mock00fe']);

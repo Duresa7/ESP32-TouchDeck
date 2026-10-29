@@ -3,6 +3,7 @@ import type { Job } from '../../companion/api.ts';
 import { createClient, type Companion } from '../../companion/client.ts';
 import { createFakeCompanion, type FakeCompanion } from '../../companion/fake.ts';
 import { newBoard } from '../../companion/fake-new-boards.ts';
+import type { FirmwareProgress } from '../../companion/firmware-api.ts';
 import { createJobsStore, type JobsStore } from '../../companion/jobs.ts';
 import { windowSession } from '../../companion/session.ts';
 import { viewOf } from './firmware.ts';
@@ -41,11 +42,11 @@ describe('the New board steps', () => {
     expect(boardStep(view(job({ state: 'waiting_for_confirmation' })))).toBe('waiting');
   });
 
-  test.each([
-    [{ phase: 'checking' as const }, 'Installing Firmware…', null],
-    [{ phase: 'recovering' as const, pct: 60 }, 'Installing Firmware… 60%', 60],
-    [{ phase: 'sending' as const, pct: 33.6 }, 'Installing Firmware… 34%', 33.6],
-    [{ phase: 'rebooting' as const }, 'Installing Firmware…', null],
+  test.each<[FirmwareProgress, string, number | null]>([
+    [{ phase: 'checking' }, 'Installing Firmware…', null],
+    [{ phase: 'recovering', pct: 60 }, 'Installing Firmware… 60%', 60],
+    [{ phase: 'sending', pct: 33.6 }, 'Installing Firmware… 34%', 33.6],
+    [{ phase: 'rebooting' }, 'Installing Firmware…', null],
   ])('installing %j reads %j', (progress, text, pct) => {
     const running = view(job({ progress }));
     expect(running).toMatchObject({ step: 'running', text, pct });
@@ -86,7 +87,7 @@ describe('installing on a New board', () => {
   const step = (store: BoardInstallStore) => boardStep(store.getState().view);
 
   beforeEach(() => {
-    fake = createFakeCompanion({ devices: [], newBoards: [newBoard('mock00ff', 'COM7')], jobMs: 2 });
+    fake = createFakeCompanion({ devices: [], newBoards: [newBoard({ id: 'mock00ff', port: 'COM7' })], jobMs: 2 });
     vi.stubGlobal('fetch', fake.fetch);
     companion = createClient(BASE, windowSession(fake.bridge));
     jobs = createJobsStore();

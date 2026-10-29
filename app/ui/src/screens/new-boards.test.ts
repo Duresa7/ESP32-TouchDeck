@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, test } from 'vitest';
 import { newBoard } from '../companion/fake-new-boards.ts';
 import { boardCards, boardsUi } from './new-boards.ts';
 
-const a = newBoard('mock00aa', 'COM7');
-const b = newBoard('mock00bb', 'COM8', 'silent');
+const a = newBoard({ id: 'mock00aa', port: 'COM7' });
+const b = newBoard({ id: 'mock00bb', port: 'COM8', kind: 'silent' });
 const ids = (cards: { id: string }[]) => cards.map((c) => c.id);
 const none = { ignored: new Set<string>(), started: {} };
 

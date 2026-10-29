@@ -7,7 +7,7 @@ export interface SetupUiState {
   open: string | null;
   skipped: ReadonlySet<string>;
   start(id: string): void;
-  close(device: Pick<DeviceSummary, 'id' | 'setup'> | undefined): void;
+  close(device?: Pick<DeviceSummary, 'id' | 'setup'>): void;
   unskip(id: string): void;
 }
 

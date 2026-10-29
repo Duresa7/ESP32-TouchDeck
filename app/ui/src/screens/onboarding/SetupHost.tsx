@@ -25,7 +25,7 @@ export function SetupHost() {
   useEffect(() => {
     if (shown !== null && !device) {
       setShown(null);
-      if (open === shown) setupUi.getState().close(undefined);
+      if (open === shown) setupUi.getState().close();
     }
   }, [shown, device, open]);
 

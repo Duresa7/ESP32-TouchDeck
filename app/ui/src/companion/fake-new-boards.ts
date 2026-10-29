@@ -24,14 +24,14 @@ const failure = (status: number, code: string, message: string, details: unknown
 const WRITING = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 const BOARD_KINDS: readonly BoardKind[] = ['silent', 'busy', 'other-firmware'];
 
-export function newBoard(id: string, port: string, kind: BoardKind = 'other-firmware'): NewBoard {
+export function newBoard({ id, port, kind = 'other-firmware' }: { id: string; port: string; kind?: BoardKind }): NewBoard {
   const seen_ms = Date.now();
   if (kind === 'busy') return { id, port, seen_ms, probe: 'busy', detail: 'Access is denied.' };
   if (kind === 'silent') return { id, port, seen_ms, probe: 'silent' };
   return { id, port, seen_ms, probe: 'other-firmware', product: 'esp32s3', detail: 'ESP-ROM:esp32s3-20210327' };
 }
 
-export function freshDevice(id: string, port: string, firmware: { version: string; protocol: number }): DeviceSummary {
+export function freshDevice({ id, port, firmware }: { id: string; port: string; firmware: { version: string; protocol: number } }): DeviceSummary {
   return {
     id,
     rev: 1,
@@ -86,7 +86,7 @@ export function createFakeNewBoards(options: FakeNewBoardsOptions) {
     boards.delete(board.id);
     publish({ type: 'new-board.removed', data: { id: board.id } });
     setTimeout(() => {
-      const device = freshDevice(board.id, board.port, { version: bundled.version, protocol: 2 });
+      const device = freshDevice({ id: board.id, port: board.port, firmware: { version: bundled.version, protocol: 2 } });
       devices.set(device.id, device);
       publish({ type: 'device.added', device: device.id, data: device });
     }, bootMs);
@@ -192,7 +192,7 @@ export function createFakeNewBoards(options: FakeNewBoardsOptions) {
       const plugged = plugOf(body);
       const kind = BOARD_KINDS.find((k) => k === plugged?.kind);
       if (plugged && kind) {
-        plug(newBoard(plugged.id, `COM${10 + boards.size}`, kind));
+        plug(newBoard({ id: plugged.id, port: `COM${10 + boards.size}`, kind }));
         return json(204, null);
       }
       if (typeof body === 'object' && body !== null && 'unplug' in body && typeof body.unplug === 'string') {

@@ -11,8 +11,7 @@ import type { OpenTouchDeckBridge } from './session.ts';
 // `system.ping`, `system.get`, `devices.list`, `devices.get` and `layouts.get` the way
 // docs/companion-api.md says, checks session tokens, and runs the event stream:
 // `hello`, `sync`, then `device.added`, `device.updated`, `device.removed` and `job.updated`. fake-layouts.ts
-// answers the Layouts, Jobs and Assets prune routes and sends `job.updated`. fake-new-boards.ts answers
-// the New board routes and sends `new-board.added` and `new-board.removed`.
+// answers the Layouts, Jobs and Assets prune routes and sends `job.updated`.
 
 export interface FakeCompanionOptions {
   devices?: DeviceSummary[];

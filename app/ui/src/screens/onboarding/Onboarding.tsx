@@ -8,7 +8,7 @@ import { useCompanion } from '../../companion/connection.ts';
 import { jobsStore, waitForJob } from '../../companion/jobs.ts';
 import { inProgress, type FirmwareUpdateStore } from '../../lib/device/firmware.ts';
 import { needsFirmwareField } from '../../lib/device/needs-firmware.ts';
-import { createSetup, describeOnDevice, stepCount, type LayoutChoice, type SetupState, type SetupStore } from '../../lib/device/onboarding.ts';
+import { createSetup, describeOnDevice, stepCount, type Busy, type LayoutChoice, type SetupState, type SetupStore } from '../../lib/device/onboarding.ts';
 import { newLayout, starterLayout, type Layout, type Orientation } from '../../lib/editor/validate.ts';
 import { button } from '../../shell/button.ts';
 import { DevicePreview } from '../DevicePreview.tsx';
@@ -23,7 +23,7 @@ const ORIENTATIONS: { value: Orientation; label: string }[] = [
   { value: 'portrait', label: 'Portrait' },
 ];
 
-const BUSY_LABEL: Record<NonNullable<SetupState['busy']>, string> = {
+const BUSY_LABEL: Record<Busy, string> = {
   saving: 'Saving…',
   restarting: 'Restarting…',
   reading: 'Loading…',
@@ -190,16 +190,26 @@ function OrientationStep({ setup, headingId }: { setup: SetupStore; headingId: s
   );
 }
 
+interface LayoutOption {
+  value: LayoutChoice;
+  title: string;
+  hint: string;
+  icon: LucideIcon;
+}
+
+const STARTING_LAYOUTS: readonly LayoutOption[] = [
+  { value: 'starter', title: 'Starter Layout', hint: 'Media controls and everyday shortcuts, ready to change.', icon: Sparkles },
+  { value: 'blank', title: 'Blank Layout', hint: 'One empty Page with room for 12 Tiles.', icon: LayoutGrid },
+];
+
+const keepOption = (layout: Layout): LayoutOption => ({ value: 'keep', title: `Keep “${layout.name}”`, hint: describeOnDevice(layout), icon: Usb });
+
 function LayoutStep({ setup, headingId }: { setup: SetupStore; headingId: string }) {
   const chosen = useStore(setup, (s) => s.choice);
   const onDevice = useStore(setup, (s) => s.onDevice);
   const reading = useStore(setup, (s) => s.busy === 'reading');
   const id = useId();
-  const options: { value: LayoutChoice; title: string; hint: string; icon: LucideIcon }[] = [
-    ...(onDevice ? [{ value: 'keep' as const, title: `Keep “${onDevice.layout.name}”`, hint: describeOnDevice(onDevice.layout), icon: Usb }] : []),
-    { value: 'starter', title: 'Starter Layout', hint: 'Media controls and everyday shortcuts, ready to change.', icon: Sparkles },
-    { value: 'blank', title: 'Blank Layout', hint: 'One empty Page with room for 12 Tiles.', icon: LayoutGrid },
-  ];
+  const options = onDevice ? [keepOption(onDevice.layout), ...STARTING_LAYOUTS] : STARTING_LAYOUTS;
   return (
     <>
       <h3 className="onboarding-heading" id={headingId}>
@@ -360,10 +370,10 @@ function Footer({ setup, firmware, device, onClose }: { setup: SetupStore; firmw
   if (at === 'done') {
     actions = (
       <>
-        <button type="button" className={button()} onClick={() => onClose('edit')} data-testid="onboarding-edit">
+        <button key="edit" type="button" className={button()} onClick={() => onClose('edit')} data-testid="onboarding-edit">
           Edit Layout
         </button>
-        <button type="button" className={button({ kind: 'primary' })} onClick={() => onClose('stay')} data-autofocus data-testid="onboarding-done">
+        <button key="done" type="button" className={button({ kind: 'primary' })} onClick={() => onClose('stay')} data-autofocus data-testid="onboarding-done">
           Done
         </button>
       </>
@@ -372,10 +382,11 @@ function Footer({ setup, firmware, device, onClose }: { setup: SetupStore; firmw
     const failed = view.step === 'failed';
     actions = (
       <>
-        <button type="button" className={button()} aria-disabled={updating || undefined} onClick={() => !updating && setup.next()} data-testid="onboarding-skip">
+        <button key="skip" type="button" className={button()} aria-disabled={updating || undefined} onClick={() => !updating && setup.next()} data-testid="onboarding-skip">
           Skip
         </button>
         <button
+          key="update"
           type="button"
           className={button({ kind: 'primary' })}
           aria-disabled={!live || updating || undefined}
@@ -390,6 +401,7 @@ function Footer({ setup, firmware, device, onClose }: { setup: SetupStore; firmw
   } else {
     actions = (
       <button
+        key="next"
         type="button"
         className={button({ kind: 'primary' })}
         aria-disabled={!live || held || undefined}
