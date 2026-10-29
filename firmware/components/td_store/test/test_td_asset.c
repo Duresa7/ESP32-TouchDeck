@@ -110,7 +110,7 @@ TEST_CASE("Asset put commits by hash, a duplicate is present, and delete removes
     TEST_ASSERT_EQUAL(TD_ASSET_OK, td_asset_space(&after));
     TEST_ASSERT_LESS_THAN_UINT32(before.free_bytes, after.free_bytes);
 
-        TEST_ASSERT_TRUE(td_asset_present(id, NULL, NULL));
+    TEST_ASSERT_TRUE(td_asset_present(id, NULL, NULL));
 
     TEST_ASSERT_EQUAL(TD_ASSET_OK, td_asset_delete(id, &deleted));
     TEST_ASSERT_TRUE(deleted);

@@ -47,7 +47,6 @@ const char *ui_icon_symbol(const char *icon)
     return NULL;
 }
 
-/* The 16 hex digits of a `file:` icon, or NULL. */
 static const char *file_id(const char *icon)
 {
     if (icon != NULL && strncmp(icon, "sha256:", 7) == 0) return icon + 7;

@@ -97,6 +97,7 @@ async fn second_layout_push_sends_no_asset() {
     let hash = done.result.unwrap()["id"].as_str().unwrap().to_owned();
     let layout = Layout::parse(&serde_json::to_vec(&json!({"schema":2,"name":"Assets","orientation":"landscape","pages":[{"id":"main","title":"Main","kind":"grid","rows":1,"cols":1,"tiles":[{"id":"a","label":"A","row":0,"col":0,"rowSpan":1,"colSpan":1,"icon":null,"asset":format!("sha256:{hash}"),"action":{"type":"none"}}]}]})).unwrap()).unwrap();
     for count in [1, 0] {
+        let before = td.deck("mock0001").chunk_bytes();
         let job = td
             .call::<Push>(
                 LayoutPath {
@@ -110,6 +111,10 @@ async fn second_layout_push_sends_no_asset() {
             .unwrap();
         let done = td.wait(&job).await;
         assert_eq!(done.state, JobState::Succeeded, "{done:?}");
+        assert_eq!(
+            td.deck("mock0001").chunk_bytes() - before,
+            layout.to_canonical_json().len() + count * td_host::icon_pack::FILE_BYTES
+        );
         assert_eq!(
             done.result.unwrap()["assets"]["sent"]
                 .as_array()

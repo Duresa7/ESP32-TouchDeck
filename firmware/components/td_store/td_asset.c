@@ -15,9 +15,6 @@
 #define SHARD_PATH_MAX (sizeof(TD_ASSET_DIR) + 2)
 #define ASSET_PATH_MAX (SHARD_PATH_MAX + TD_ASSET_ID_LEN + sizeof(BIN_SUFFIX))
 #define SHARDS "0123456789abcdef"
-/* esp_littlefs formats with 4096-byte blocks. A file block past the first spends up to 8 bytes on its skip-list. */
-#define BLOCK_BYTES 4096u
-#define BLOCK_DATA (BLOCK_BYTES - 8u)
 #define HEAD_BYTES 12
 #define READ_CHUNK 256
 
@@ -214,7 +211,7 @@ static bool name_id(const char *name, char id[TD_ASSET_ID_LEN + 1])
 
 typedef struct {
     const char *after;
-        td_asset_item_t found[TD_ASSET_PAGE + 1];
+    td_asset_item_t found[TD_ASSET_PAGE + 1];
     size_t count;
 } list_walk_t;
 
@@ -282,7 +279,7 @@ td_asset_result_t td_asset_list(const char *after, td_asset_item_t items[TD_ASSE
     static list_walk_t walk;
     td_store_lock();
     walk = (list_walk_t){ .after = after };
-        bool ok = true;
+    bool ok = true;
     for (const char *shard = after ? strchr(SHARDS, after[0]) : SHARDS; ok && shard && *shard; shard++) {
         ok = list_shard(&walk, *shard);
         if (walk.count > TD_ASSET_PAGE) {
@@ -293,7 +290,7 @@ td_asset_result_t td_asset_list(const char *after, td_asset_item_t items[TD_ASSE
         td_store_unlock();
         return TD_ASSET_STORAGE;
     }
-        for (size_t i = 0; i < walk.count && *count < TD_ASSET_PAGE; i++) {
+    for (size_t i = 0; i < walk.count && *count < TD_ASSET_PAGE; i++) {
         walk.found[i].format = read_item(&walk.found[i]);
         if (walk.found[i].format != TD_ASSET_FMT_NONE) {
             items[(*count)++] = walk.found[i];
@@ -320,7 +317,7 @@ td_asset_result_t td_asset_delete(const char *id, bool *deleted)
     const int rc = unlink(path);
     if (rc == 0 && existed) td_store_budget_adjust(-(int64_t)td_asset_cost((uint32_t)previous.st_size));
     const int saved = errno;
-        if (rmdir(shard) == 0) td_store_budget_adjust(-8192);
+    if (rmdir(shard) == 0) td_store_budget_adjust(-8192);
     td_store_unlock();
     if (rc == 0) {
         *deleted = true;
@@ -367,7 +364,7 @@ td_asset_result_t td_asset_upload_begin(const char *id, uint32_t bytes, td_asset
         td_store_unlock();
         return TD_ASSET_FULL;
     }
-        int made = mkdir(TD_ASSET_DIR, 0777);
+    int made = mkdir(TD_ASSET_DIR, 0777);
     if (made == 0) td_store_budget_adjust(8192);
     if (made != 0 && errno != EEXIST) {
         td_store_unlock();

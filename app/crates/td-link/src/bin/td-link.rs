@@ -148,8 +148,6 @@ fn print(value: &Value) {
 
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 
-/// The bytes and format to store for a file: a PNG goes through the icon packer to a 64 by 64
-/// tdi1, and anything else is stored as it is, in the format named or sniffed from its first bytes.
 fn asset_file(path: &str, format: Option<&str>) -> Result<(Vec<u8>, AssetFormat), String> {
     let bytes = std::fs::read(path).map_err(|error| format!("{path}: {error}"))?;
     let named = format
@@ -169,7 +167,6 @@ fn asset_file(path: &str, format: Option<&str>) -> Result<(Vec<u8>, AssetFormat)
     Ok((bytes, format))
 }
 
-/// Opens a session and selects protocol 2, which Assets need.
 fn open_v2(args: &Args) -> Result<Session, String> {
     let (session, _) = open(args, quiet())?;
     let identity = session

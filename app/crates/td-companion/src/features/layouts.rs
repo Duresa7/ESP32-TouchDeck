@@ -374,10 +374,6 @@ fn push(
     let _ = ctx.layouts.put(device, layout);
     Ok(report)
 }
-/// Sends the Assets the Layout uses that the Device lacks, before the Layout itself.
-///
-/// This is the hook for #93: icons still go over today's v1 `icon.*` messages, and the v2
-/// Asset store replaces this body without changing the Job's progress or result.
 fn send_missing_assets(
     ctx: &Ctx,
     session: &Session,

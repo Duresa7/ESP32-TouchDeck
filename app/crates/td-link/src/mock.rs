@@ -28,7 +28,6 @@ const HEARTBEAT: Duration = Duration::from_secs(2);
 const BUILTIN: &[u8] = include_bytes!("../../../../schema/examples/builtin.json");
 /// The space a mock Device has for Assets until a test sets another.
 pub const ASSET_CAPACITY: u64 = 4 * 1024 * 1024;
-/// The largest Asset the mock takes, one tdi1 icon, as the Firmware advertises.
 const ASSET_BYTES: usize = ICON_BYTES;
 
 /// Where a put lands once `xfer.end` accepts it.
@@ -1131,7 +1130,6 @@ impl MockDeck {
     }
 }
 
-/// Total, used, reserved and free bytes for Assets. An open Asset upload reserves its size.
 fn asset_space(state: &State) -> (u64, u64, u64, u64) {
     let used: u64 = state.assets.values().map(|data| data.len() as u64).sum();
     let reserved = match &state.inbound {
@@ -1152,7 +1150,6 @@ impl MockDeck {
         state.v2 && state.selected_v2 && state.online_since_hello
     }
 
-    /// The v2 Asset requests, once protocol 2 is selected. Refusals carry the protocol's reasons.
     fn asset(&self, m: &str, request: &Map<String, Value>) -> Map<String, Value> {
         let refused = |reason: &str| refusal(reason, "Request refused");
         let only = |keys: &[&str]| {

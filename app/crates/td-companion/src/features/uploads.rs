@@ -1,4 +1,3 @@
-//! Session-owned, bounded, single-use image uploads.
 use crate::api::{ClientInfo, CommonError, Ctx, Endpoint, NoQuery, Req};
 use axum::{
     body::{Body, to_bytes},
