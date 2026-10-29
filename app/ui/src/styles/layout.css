@@ -1,0 +1,1030 @@
+/* The Layout screen, built from tokens.css. docs/design.md, "Layout editor", explains each part. Never write a raw color here. */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-rows: 64px minmax(0, 1fr);
+  height: 100vh;
+}
+
+.editor.is-empty {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* ---------- Header ---------- */
+
+.editor-head {
+  grid-column: 1;
+  container: editor-head / inline-size;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-4) 0 var(--space-3);
+}
+
+.editor-head > * {
+  flex: none;
+}
+
+.device-switch {
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 260px;
+  height: 40px;
+  padding: 0 10px 0 12px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .device-switch:hover {
+    background: var(--fill-hover);
+  }
+}
+
+.device-switch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-18);
+  line-height: var(--leading-18);
+  letter-spacing: var(--track-18);
+  font-weight: var(--weight-semibold);
+  font-stretch: var(--stretch-plate);
+}
+
+.chev {
+  flex: none;
+  color: var(--ink-2);
+}
+
+.editor-head .status {
+  margin-left: var(--space-2);
+}
+
+.save-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  margin-right: var(--space-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.save-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--signal-led);
+}
+
+.save-state.is-sending .save-dot {
+  background: var(--accent);
+}
+
+/* A narrow header keeps the save state's mark and drops its words */
+@container editor-head (max-width: 800px) {
+  .save-words {
+    display: none;
+  }
+}
+
+.segmented-icons .segment {
+  display: grid;
+  place-items: center;
+  padding: 0 8px;
+}
+
+.button-icon[data-pressed] {
+  background: var(--fill-active);
+  color: var(--ink);
+}
+
+.add-tile-button {
+  padding-left: 10px;
+}
+
+/* ---------- Layout menu ---------- */
+
+.menu-positioner {
+  z-index: 20;
+  outline: none;
+}
+
+.menu {
+  min-width: 280px;
+  padding: 4px;
+  border-radius: var(--radius-group);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-float);
+  outline: none;
+  transform-origin: var(--transform-origin);
+  transition:
+    opacity var(--duration-popover) var(--ease-out),
+    scale var(--duration-popover) var(--ease-out);
+}
+
+.menu[data-starting-style],
+.menu[data-ending-style] {
+  opacity: 0;
+  scale: 0.97;
+}
+
+.menu[data-ending-style] {
+  transition-duration: var(--duration-exit);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu {
+    transition-property: opacity;
+  }
+
+  .menu[data-starting-style],
+  .menu[data-ending-style] {
+    scale: 1;
+  }
+}
+
+.menu-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--radius-control);
+  outline: none;
+  cursor: default;
+  user-select: none;
+}
+
+.menu-item[data-highlighted] {
+  background: var(--fill-hover);
+}
+
+.menu-item:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.menu-name {
+  font-weight: var(--weight-medium);
+}
+
+.menu-line {
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  color: var(--ink-2);
+}
+
+.menu-item[data-disabled] .menu-name {
+  color: var(--ink-disabled);
+}
+
+.menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
+}
+
+/* ---------- Canvas ---------- */
+
+.canvas {
+  grid-column: 1;
+  grid-row: 2;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: safe center;
+  justify-content: safe center;
+  gap: var(--space-8);
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-6) var(--space-8) 72px;
+  overflow: hidden;
+}
+
+.canvas.is-actual {
+  overflow: auto;
+}
+
+.editor-banner {
+  position: absolute;
+  top: var(--space-2);
+  left: 50%;
+  translate: -50% 0;
+  width: max-content;
+  max-width: calc(100% - var(--space-8));
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-group);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-float);
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  text-align: center;
+}
+
+.editor-banner strong {
+  color: var(--ink);
+  font-weight: var(--weight-semibold);
+}
+
+.canvas-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: 100%;
+}
+
+.canvas-hint {
+  max-width: 520px;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  text-align: center;
+}
+
+.preview-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.editor-status {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--leading-12);
+  max-width: 600px;
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  text-align: center;
+}
+
+.editor-status.is-error {
+  color: var(--danger-ink);
+}
+
+.editor-status-details summary {
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.editor-status-details p {
+  margin: var(--space-1) 0 0;
+  color: var(--ink-2);
+  text-align: start;
+  white-space: pre-line;
+}
+
+/* ---------- Page tabs ---------- */
+
+.page-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.page-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--ink-2);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .page-tab:hover {
+    color: var(--ink);
+    background: var(--fill-hover);
+  }
+}
+
+.page-tab.is-current {
+  color: var(--ink);
+}
+
+/* The Device's own pager pill marks the current Page */
+.page-tab.is-current::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 18px;
+  height: 4px;
+  margin-left: -9px;
+  border-radius: var(--radius-chip);
+  background: var(--accent);
+}
+
+.page-tag {
+  padding: 0 6px;
+  border-radius: var(--radius-chip);
+  background: var(--fill-active);
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+}
+
+.page-add {
+  margin-left: var(--space-2);
+}
+
+.page-add[aria-disabled='true'] {
+  color: var(--ink-disabled);
+  cursor: not-allowed;
+}
+
+/* ---------- The Device ---------- */
+
+.device-stage {
+  flex: none;
+  position: relative;
+}
+
+.device {
+  position: relative;
+  background: var(--bezel);
+  box-shadow:
+    inset 0 0 0 1px var(--bezel-edge),
+    inset 0 1px 0 color-mix(in srgb, var(--screen-ink) 9%, transparent),
+    var(--shadow-device);
+}
+
+.device-screen {
+  position: relative;
+  overflow: hidden;
+  background: var(--screen-bg);
+}
+
+/* A faint reflection across the glass */
+.device-glass {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(115deg, color-mix(in srgb, var(--screen-ink) 5.5%, transparent) 0%, transparent 38%);
+}
+
+/* ---------- The screen, drawn at the Device's own pixels and scaled by --s ---------- */
+
+.screen {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  color: var(--screen-ink);
+  font-family: var(--screen-font);
+  font-stretch: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.screen.is-preview {
+  touch-action: pan-y;
+}
+
+.scene-band {
+  position: absolute;
+  left: 0;
+  overflow: hidden;
+}
+
+.scene-track {
+  position: absolute;
+  inset: 0;
+}
+
+.screen.is-preview .scene-track {
+  will-change: transform;
+}
+
+.scene-page {
+  position: absolute;
+  top: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.scene-text {
+  position: absolute;
+  font-weight: var(--screen-weight-medium);
+  pointer-events: none;
+}
+
+.scene-text.is-ink {
+  color: var(--screen-ink);
+}
+
+.scene-text.is-ink-2 {
+  color: var(--screen-ink-2);
+}
+
+.scene-text.is-title {
+  font-size: var(--screen-text-title);
+  font-weight: var(--screen-weight-semibold);
+  font-stretch: var(--screen-stretch-plate);
+  letter-spacing: -0.01em;
+}
+
+.scene-line {
+  position: absolute;
+  white-space: nowrap;
+}
+
+/* The empty box the Device draws for a letter its font lacks */
+.scene-box {
+  display: inline-block;
+  height: 0.72em;
+  margin: 0 1px;
+  border: 2px solid currentColor;
+  border-radius: 2px;
+  opacity: 0.7;
+}
+
+.scene-icon {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  color: var(--screen-ink);
+  pointer-events: none;
+}
+
+.glyph-pair {
+  display: inline-flex;
+  align-items: center;
+}
+
+.scene-image {
+  position: absolute;
+  border-radius: 12px;
+  background: var(--screen-track);
+}
+
+.scene-bar {
+  position: absolute;
+  background: var(--screen-accent);
+}
+
+.scene-row {
+  position: absolute;
+  border-radius: 10px;
+  background: var(--screen-tile);
+}
+
+.scene-dot {
+  position: absolute;
+  border-radius: var(--radius-chip);
+  background: var(--screen-pager-idle);
+}
+
+.scene-dot.is-current {
+  background: var(--screen-accent);
+}
+
+.scene-lock {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  color: var(--screen-ink);
+}
+
+.tile {
+  position: absolute;
+  border-radius: var(--radius-tile);
+  background: var(--screen-tile);
+  color: var(--screen-ink);
+  outline: none;
+  cursor: pointer;
+  touch-action: none;
+  transition: transform 160ms var(--ease-out);
+}
+
+.screen.is-preview .tile {
+  touch-action: pan-y;
+  transition: none;
+}
+
+/*
+ * On the canvas the selection ring sits outside the Tile and the focus ring inside it, so a selected Tile with
+ * keyboard focus shows both. The focus ring is the app's ring in app pixels: the screen is scaled by --s.
+ */
+.tile:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 calc(var(--focus-ring-width) / var(--s)) var(--focus-ring);
+}
+
+.tile.is-selected {
+  background: var(--screen-tile-raised);
+  outline: 5px solid var(--screen-accent);
+  outline-offset: 6px;
+}
+
+.tile.is-selected:focus-visible {
+  outline: 5px solid var(--screen-accent);
+}
+
+.tile.is-moving {
+  z-index: 2;
+  cursor: grabbing;
+  transition: none;
+  box-shadow: 0 12px 28px -6px color-mix(in srgb, var(--bezel) 70%, transparent);
+}
+
+.tile.is-pressed {
+  background: var(--screen-tile-raised);
+  box-shadow: inset 0 0 0 3px var(--screen-accent);
+}
+
+/* A modifier Tile: one-shot rings it, locked fills it and shows a lock, as the Device does */
+.tile.is-one-shot {
+  outline: 4px solid var(--screen-accent);
+  outline-offset: 2px;
+}
+
+.tile.is-locked {
+  background: var(--tile-color-blue);
+}
+
+/* The corner dot that resizes the selected Tile */
+.tile-grip {
+  position: absolute;
+  right: -16px;
+  bottom: -16px;
+  z-index: 1;
+  width: 32px;
+  height: 32px;
+  border: 6px solid var(--screen-bg);
+  border-radius: 50%;
+  background: var(--screen-accent);
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+/* Edit only: an empty cell you can fill. The Device draws nothing there. */
+.cell-empty {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 3px dashed var(--screen-pager-idle);
+  border-radius: var(--radius-tile);
+  background: transparent;
+  color: var(--screen-ink-2);
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .cell-empty:hover {
+    border-color: var(--screen-ink-2);
+    color: var(--screen-ink);
+  }
+}
+
+.cell-empty:focus-visible {
+  outline: calc(var(--focus-ring-width) / var(--s)) solid var(--focus-ring);
+  outline-offset: calc(var(--focus-ring-offset) / var(--s));
+}
+
+.cell-empty.is-target {
+  border: 5px solid var(--screen-accent);
+  background: var(--screen-tile);
+  color: var(--screen-accent);
+}
+
+.drag-ghost {
+  position: absolute;
+  z-index: 1;
+  border: 5px solid var(--screen-accent);
+  border-radius: var(--radius-tile);
+  background: color-mix(in srgb, var(--screen-accent) 12%, transparent);
+  pointer-events: none;
+}
+
+.drag-ghost.is-blocked {
+  border: 4px dashed var(--screen-danger);
+  background: color-mix(in srgb, var(--screen-danger) 10%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile {
+    transition: none;
+  }
+}
+
+/* ---------- Inspector ---------- */
+
+.inspector {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-height: 0;
+  padding: var(--space-5);
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+  overflow: auto;
+}
+
+.inspector-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-bottom: var(--space-5);
+  border-bottom: 1px solid var(--line);
+}
+
+.inspector-head-text {
+  min-width: 0;
+}
+
+.tile-thumb {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: var(--screen-tile);
+  color: var(--screen-ink);
+  box-shadow: 0 0 0 3px var(--screen-bg);
+}
+
+.tile-thumb-add {
+  color: var(--screen-accent);
+}
+
+.inspector-title {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-16);
+  line-height: var(--leading-16);
+  letter-spacing: var(--track-16);
+  font-weight: var(--weight-semibold);
+}
+
+.inspector-sub {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+}
+
+/* Duplicate and Clear Tile, or Cancel, pinned to the bottom of the rail */
+.inspector-foot {
+  position: sticky;
+  bottom: calc(-1 * var(--space-5));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: auto calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.inspector-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.inspector-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.section-title {
+  margin: 0;
+  font-size: var(--text-16);
+  line-height: var(--leading-16);
+  letter-spacing: var(--track-16);
+  font-weight: var(--weight-semibold);
+}
+
+.section-sub {
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.field-label {
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-2);
+}
+
+.field-hint {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  text-wrap: pretty;
+}
+
+.field-hint.is-warning {
+  color: var(--signal-ink);
+}
+
+.input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font: inherit;
+}
+
+.grid-size {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.grid-size .select-native {
+  flex: 1;
+  padding-right: 8px;
+}
+
+.grid-times {
+  color: var(--ink-2);
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.switch {
+  flex: none;
+  position: relative;
+  display: inline-flex;
+  width: 36px;
+  height: 22px;
+  padding: 2px;
+  border: 0;
+  border-radius: var(--radius-chip);
+  background: var(--line-control);
+  cursor: pointer;
+  transition: background-color var(--duration-hover) ease;
+}
+
+.switch[data-checked] {
+  background: var(--accent);
+}
+
+.switch-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--screen-ink);
+  box-shadow: var(--shadow-float);
+  transition: translate var(--duration-press) var(--ease-out);
+}
+
+.switch[data-checked] .switch-thumb {
+  translate: 14px 0;
+}
+
+.switch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* ---------- Add Tile ---------- */
+
+.add-heading {
+  margin: 0;
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-2);
+}
+
+.add-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.add-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: var(--space-2) 10px var(--space-2) var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  text-align: start;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-hover) ease,
+    transform var(--duration-press) var(--ease-out);
+}
+
+.add-action:active {
+  transform: scale(var(--press-scale));
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .add-action:hover {
+    background: color-mix(in srgb, var(--surface-raised), var(--ink) 5%);
+  }
+}
+
+.add-action-glyph {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+  background: var(--screen-tile);
+  color: var(--screen-ink);
+}
+
+.add-action-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.add-action-name {
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  font-weight: var(--weight-semibold);
+}
+
+.add-action-line {
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+}
+
+/* ---------- Start a Layout ---------- */
+
+.start {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 440px;
+}
+
+.start-choices {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.start-choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-3) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-group);
+  background: var(--surface-raised);
+  text-align: start;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-hover) ease,
+    transform var(--duration-press) var(--ease-out);
+}
+
+.start-choice:active {
+  transform: scale(var(--press-scale));
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .start-choice:hover {
+    background: color-mix(in srgb, var(--surface-raised), var(--ink) 5%);
+  }
+}
+
+.start-choice[aria-disabled='true'] {
+  border-color: transparent;
+  background: var(--fill-disabled);
+  cursor: not-allowed;
+  transform: none;
+}
+
+.start-choice[aria-disabled='true'] .start-name {
+  color: var(--ink-disabled);
+}
+
+.start-glyph {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-control);
+  background: var(--fill-hover);
+  color: var(--ink-2);
+}
+
+.start-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.start-name {
+  font-weight: var(--weight-semibold);
+}
+
+.start-line {
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+}
+
+/* ---------- Replace or Keep mine ---------- */
+
+.dialog-confirm {
+  width: 420px;
+}
+
+.dialog-text {
+  margin: var(--space-2) 0 var(--space-6);
+  color: var(--ink-2);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}

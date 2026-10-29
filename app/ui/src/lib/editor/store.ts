@@ -1,0 +1,553 @@
+// The Layout editor's state, ported from app/src/lib/editor/layoutStore.ts. It keeps one draft per orientation of the
+// open Device, saved per Device id, and every Layout it holds passes the Layout rules: each edit goes through
+// validate.ts and a refused one leaves the draft as it was. Sending and loading go through the Companion's
+// `layouts.push` Job and `layouts.get`, with `If-Match` set to the last revision the editor saw.
+import { createStore } from 'zustand/vanilla';
+import type { Job, JobMap } from '../../companion/api.ts';
+import type { Companion } from '../../companion/client.ts';
+import { toApiError, type ApiError } from '../../companion/errors.ts';
+import { isSent, readDraft, writeDraft, type Draft, type DraftStorage } from './drafts.ts';
+import { describeLayout, friendlyFileError, friendlyRefusal, plural, PLUG_IN } from './messages.ts';
+import {
+  addPage,
+  addTile,
+  canonical,
+  counts,
+  freeCell,
+  freshId,
+  moveTile,
+  newGridPage,
+  newLayout,
+  parseLayout,
+  removePage,
+  removeTile,
+  resizeTile,
+  setFullScreen,
+  setGridSize,
+  setLayoutName,
+  setPageTitle,
+  starterLayout,
+  type Action,
+  type ActionType,
+  type Edit,
+  type GridPage,
+  type Layout,
+  type Orientation,
+  type Tile,
+} from './validate.ts';
+
+/** What the editor last did, in plain words. `detail` keeps the technical reason and `event` names the outcome. */
+export interface Status {
+  kind: 'info' | 'ok' | 'error';
+  text: string;
+  detail?: string;
+  event: string;
+  pages?: number;
+  tiles?: number;
+}
+
+/** Where Add Tile puts the new Tile: a free cell on the current Page, or the first cell of a new Page. */
+export type Target = { row: number; col: number } | 'new-page';
+
+/** A Layout read from the Device that waits for Replace or Keep mine. */
+export interface Conflict {
+  /** `load`: Load from {device}. `changed`: a send found the Device's Layout had changed (412). */
+  reason: 'load' | 'changed';
+  orientation: Orientation;
+  layout: Layout;
+  revision: string;
+}
+
+export type SaveState = 'none' | 'saved' | 'unsent' | 'sending';
+
+export interface EditorDevice {
+  id: string;
+  name: string;
+}
+
+export interface EditorState {
+  device: EditorDevice | null;
+  orientation: Orientation;
+  drafts: Record<Orientation, Draft | null>;
+  page: string | null;
+  selected: string | null;
+  adding: Target | null;
+  mode: 'edit' | 'preview';
+  status: Status | null;
+  busy: 'push' | 'load' | 'prune' | null;
+  conflict: Conflict | null;
+  /**
+   * The action kind picked in Add Tile for a Tile whose kind has no valid default yet, such as Open an app before it
+   * names one. The Tile holds `none` until the inspector's fields (#83) set it.
+   */
+  intents: Record<string, ActionType>;
+}
+
+/** The action kinds Add Tile offers, in the order its grid shows them. */
+export const ADD_KINDS = ['key', 'launch', 'consumer', 'page', 'mod', 'open', 'command', 'none'] as const;
+export type AddKind = (typeof ADD_KINDS)[number];
+
+/** A kind's default action, or null when the kind needs a value first and its Tile starts as `none`. */
+export function defaultAction(kind: AddKind, pages: string[]): Action | null {
+  switch (kind) {
+    case 'key':
+      return { type: 'key', usage: 58, mods: [] };
+    case 'consumer':
+      return { type: 'consumer', usage: 205 };
+    case 'mod':
+      return { type: 'mod', mod: 'ctrl' };
+    case 'page':
+      return { type: 'page', page: pages[1] ?? pages[0] };
+    case 'none':
+      return { type: 'none' };
+    default:
+      return null;
+  }
+}
+
+export interface EditorDeps {
+  companion: Pick<Companion, 'layouts' | 'assets'>;
+  /** Resolves with a Job's result once it succeeds, and throws its error otherwise. */
+  wait<K extends keyof JobMap>(job: Job): Promise<JobMap[K]['result']>;
+  /** Where drafts are kept. Null keeps them in memory only. */
+  storage: DraftStorage | null;
+}
+
+const initial = (): Omit<EditorState, 'device'> => ({
+  orientation: 'landscape',
+  drafts: { landscape: null, portrait: null },
+  page: null,
+  selected: null,
+  adding: null,
+  mode: 'edit',
+  status: null,
+  busy: null,
+  conflict: null,
+  intents: {},
+});
+
+const gridOf = (layout: Layout | undefined, page: string | null): GridPage | null => {
+  const found = layout?.pages.find((p) => p.id === page);
+  return found?.kind === 'grid' ? found : null;
+};
+
+const covers = (tile: Tile, row: number, col: number) =>
+  row >= tile.row && row < tile.row + tile.rowSpan && col >= tile.col && col < tile.col + tile.colSpan;
+
+/** The Asset ids a Layout's Tiles name, as `file:` icons. */
+export function assetIds(layout: Layout): string[] {
+  const ids = new Set<string>();
+  for (const page of layout.pages) {
+    if (page.kind !== 'grid') continue;
+    for (const tile of page.tiles) if (tile.icon?.startsWith('file:')) ids.add(tile.icon.slice(5));
+  }
+  return [...ids];
+}
+
+export function createEditorStore(deps: EditorDeps) {
+  const store = createStore<EditorState>()(() => ({ device: null, ...initial() }));
+  const { getState: state, setState: set } = store;
+
+  const name = () => state().device?.name ?? 'the Device';
+  const current = () => state().drafts[state().orientation];
+  const say = (kind: Status['kind'], text: string, extra: Omit<Status, 'kind' | 'text'>) => set({ status: { kind, text, ...extra } });
+
+  /** Puts a draft in place for an orientation and saves it for the open Device. */
+  function keep(orientation: Orientation, draft: Draft | null) {
+    const device = state().device;
+    set((s) => ({ drafts: { ...s.drafts, [orientation]: draft } }));
+    if (device && deps.storage) writeDraft(deps.storage, device.id, orientation, draft);
+  }
+
+  /** Starts editing a new Layout in its own orientation, keeping what the editor knows about the Device's copy. */
+  function start(layout: Layout, status: Status, known?: { sent: string | null; revision: string | null }) {
+    const before = state().drafts[layout.orientation];
+    keep(layout.orientation, { layout, sent: known?.sent ?? before?.sent ?? null, revision: known?.revision ?? before?.revision ?? null });
+    set({
+      orientation: layout.orientation,
+      page: layout.pages[0]?.id ?? null,
+      selected: null,
+      adding: null,
+      conflict: null,
+      status,
+    });
+  }
+
+  /** Applies one edit to the current draft, or says why it was refused and keeps the draft. */
+  function apply(edit: (layout: Layout) => Edit, next: Partial<Pick<EditorState, 'page' | 'selected' | 'adding'>> = {}): string | null {
+    const draft = current();
+    if (!draft) return 'no layout is open';
+    const result = edit(draft.layout);
+    if (!result.ok) {
+      say('error', friendlyRefusal(result.reason, draft.layout, name()), { detail: result.reason, event: 'refused' });
+      return result.reason;
+    }
+    keep(state().orientation, { ...draft, layout: result.layout });
+    set((s) => {
+      const page = next.page !== undefined ? next.page : s.page;
+      return {
+        page: result.layout.pages.some((p) => p.id === page) ? page : (result.layout.pages[0]?.id ?? null),
+        selected: next.selected !== undefined ? next.selected : s.selected,
+        adding: next.adding !== undefined ? next.adding : s.adding,
+        status: null,
+      };
+    });
+    return null;
+  }
+
+  /** The cell Add Tile should target on the current Page: the first free one, or a new Page when it's full. */
+  function target(): Target {
+    const draft = current();
+    const page = state().page;
+    const grid = gridOf(draft?.layout, page);
+    const cell = grid && draft ? freeCell(draft.layout, grid.id) : null;
+    return cell ? { row: cell[0], col: cell[1] } : 'new-page';
+  }
+
+  async function readLayout(): Promise<{ layout: Layout; revision: string } | { problem: string }> {
+    const { device, orientation } = state();
+    const read = await deps.companion.layouts.get({ device: device!.id, orientation });
+    const parsed = parseLayout(JSON.stringify(read.layout));
+    if (!parsed.ok) {
+      const [first] = parsed.errors;
+      return { problem: `${first.key}: ${first.message}` };
+    }
+    return { layout: parsed.layout, revision: read.revision };
+  }
+
+  function sendFailed(error: ApiError, layout: Layout) {
+    const device = name();
+    if (error.code === 'layout.invalid') {
+      const issues = ((error.details as { issues?: { rule?: string; path?: string; message?: string }[] } | null)?.issues ?? []).map(
+        (issue) => `${issue.rule ?? 'layout.invalid'}: ${issue.message ?? ''}`,
+      );
+      const text = issues.length ? friendlyRefusal(issues[0], layout, device) : 'That change breaks a Layout rule. See Details.';
+      say('error', text, { detail: issues.join('\n') || error.message, event: 'push-failed' });
+    } else if (error.code === 'device.busy') {
+      say('error', `${device} is busy. Wait a moment, then retry.`, { detail: error.message, event: 'push-failed' });
+    } else if (error.code === 'job.cancelled') {
+      say('error', `Sending stopped. ${device} keeps its Layout.`, { detail: error.message, event: 'push-failed' });
+    } else {
+      say('error', `Couldn't send to ${device}. ${PLUG_IN}`, { detail: error.message, event: 'push-failed' });
+    }
+  }
+
+  async function send(layout: Layout, revision: string | null): Promise<void> {
+    const { device, orientation } = state();
+    const job = await deps.companion.layouts.push(
+      { device: device!.id, orientation },
+      null,
+      layout,
+      undefined,
+      revision ? { 'If-Match': revision } : undefined,
+    );
+    const report = await deps.wait<'layouts.push'>(job);
+    const sentDraft = state().drafts[orientation];
+    if (sentDraft) keep(orientation, { ...sentDraft, sent: canonical(layout), revision: report.revision });
+    const { sent, unavailable } = report.assets;
+    const shown = report.state;
+    const missing = unavailable.length ? `, ${plural(unavailable.length, 'icon')} not cached` : '';
+    say(
+      unavailable.length ? 'error' : 'ok',
+      unavailable.length
+        ? `Sent to ${name()}, but ${plural(unavailable.length, 'icon is', 'icons are')} missing on this PC, so those Tiles show only their names.`
+        : `Sent to ${name()}`,
+      {
+        detail: `${name()} shows ${shown.name}: ${plural(shown.pages, 'Page')}, ${plural(shown.tiles, 'Tile')} (${report.bytes} bytes in ${report.elapsed_ms} ms), ${plural(sent.length, 'icon')} sent${missing}`,
+        event: 'pushed',
+        pages: shown.pages,
+        tiles: shown.tiles,
+      },
+    );
+  }
+
+  return Object.assign(store, {
+    /** Opens a Device's drafts. Opening the same Device again only updates its name. */
+    open(device: EditorDevice, orientation: Orientation = 'landscape') {
+      if (state().device?.id === device.id) {
+        if (state().device!.name !== device.name) set({ device });
+        return;
+      }
+      const drafts = {
+        landscape: deps.storage ? readDraft(deps.storage, device.id, 'landscape') : null,
+        portrait: deps.storage ? readDraft(deps.storage, device.id, 'portrait') : null,
+      };
+      set({ device, ...initial(), orientation, drafts, page: drafts[orientation]?.layout.pages[0]?.id ?? null });
+    },
+
+    setOrientation(orientation: Orientation) {
+      if (orientation === state().orientation) return;
+      set((s) => ({
+        orientation,
+        page: s.drafts[orientation]?.layout.pages[0]?.id ?? null,
+        selected: null,
+        adding: null,
+        status: null,
+      }));
+    },
+
+    setMode(mode: EditorState['mode']) {
+      set({ mode, adding: mode === 'preview' ? null : state().adding });
+    },
+
+    selectPage(page: string) {
+      set((s) => ({ page, selected: null, adding: s.adding && page !== s.page ? null : s.adding }));
+    },
+
+    select(tile: string | null) {
+      set({ selected: tile, adding: null });
+    },
+
+    startBlank() {
+      start(newLayout(state().orientation), { kind: 'ok', text: 'Started a Blank Layout.', event: 'new' });
+    },
+
+    startStarter() {
+      start(starterLayout(state().orientation), { kind: 'ok', text: 'Started the Starter Layout.', event: 'starter' });
+    },
+
+    /** Reads a Layout file. A file that breaks a rule leaves the editor as it was. */
+    importText(text: string, file = 'file'): boolean {
+      const parsed = parseLayout(text);
+      if (!parsed.ok) {
+        const [first] = parsed.errors;
+        say('error', friendlyFileError(file, first.key), { detail: `${first.key}: ${first.message}`, event: 'open-failed' });
+        return false;
+      }
+      const layout = parsed.layout;
+      start(layout, { kind: 'ok', text: `Imported “${layout.name}”: ${describeLayout(layout)}.`, event: 'opened', ...counts(layout) });
+      return true;
+    },
+
+    exportText(): string | null {
+      const draft = current();
+      return draft ? `${JSON.stringify(draft.layout, null, 2)}\n` : null;
+    },
+
+    say,
+
+    /** Opens Add Tile for a cell, or for the first free one. */
+    openAdd(cell?: { row: number; col: number }) {
+      if (!current()) return;
+      set({ adding: cell ?? target(), selected: null, mode: 'edit' });
+    },
+
+    closeAdd() {
+      set({ adding: null });
+    },
+
+    /** Places a Tile of a kind where Add Tile points, then selects it. */
+    place(kind: AddKind) {
+      const draft = current();
+      const where = state().adding;
+      if (!draft || !where) return;
+      const action = defaultAction(kind, draft.layout.pages.map((p) => p.id));
+      let page = state().page;
+      let layout = draft.layout;
+      let cell = where === 'new-page' ? { row: 0, col: 0 } : where;
+      if (where === 'new-page') {
+        const id = freshId(layout, 'page');
+        const added = addPage(layout, newGridPage(id, `Page ${layout.pages.length + 1}`));
+        if (!added.ok) {
+          say('error', friendlyRefusal(added.reason, layout, name()), { detail: added.reason, event: 'refused' });
+          return;
+        }
+        layout = added.layout;
+        page = id;
+        cell = { row: 0, col: 0 };
+      }
+      const id = freshId(layout, 'tile');
+      const tile: Tile = { id, label: 'Tile', row: cell.row, col: cell.col, rowSpan: 1, colSpan: 1, icon: null, action: action ?? { type: 'none' } };
+      const base = layout;
+      const placed = apply(() => addTile(base, page!, tile), { page, selected: id, adding: null });
+      if (placed === null && action === null) set((s) => ({ intents: { ...s.intents, [id]: kind } }));
+    },
+
+    moveTile(tile: string, row: number, col: number) {
+      const page = state().page;
+      return page ? apply((l) => moveTile(l, page, tile, row, col)) : 'no page';
+    },
+
+    resizeTile(tile: string, rowSpan: number, colSpan: number) {
+      const page = state().page;
+      return page ? apply((l) => resizeTile(l, page, tile, rowSpan, colSpan)) : 'no page';
+    },
+
+    /** Copies a Tile into the next free cell after it on the same Page, and selects the copy. */
+    duplicate(tile: string) {
+      const draft = current();
+      const page = state().page;
+      const grid = gridOf(draft?.layout, page);
+      const source = grid?.tiles.find((t) => t.id === tile);
+      if (!draft || !grid || !source) return;
+      const fits = (row: number, col: number) => {
+        if (row + source.rowSpan > grid.rows || col + source.colSpan > grid.cols) return false;
+        for (let r = row; r < row + source.rowSpan; r++) for (let c = col; c < col + source.colSpan; c++) if (grid.tiles.some((t) => covers(t, r, c))) return false;
+        return true;
+      };
+      const cells: [number, number][] = [];
+      for (let row = 0; row < grid.rows; row++) for (let col = 0; col < grid.cols; col++) cells.push([row, col]);
+      const after = cells.findIndex(([r, c]) => r * grid.cols + c > source.row * grid.cols + source.col);
+      const order = after < 0 ? cells : [...cells.slice(after), ...cells.slice(0, after)];
+      const spot = order.find(([r, c]) => fits(r, c));
+      if (!spot) {
+        say('error', friendlyRefusal('no free cell on this page', draft.layout, name()), { detail: 'no free cell on this page', event: 'refused' });
+        return;
+      }
+      const id = freshId(draft.layout, 'tile');
+      const copy: Tile = { ...structuredClone(source), id, row: spot[0], col: spot[1] };
+      const placed = apply((l) => addTile(l, grid.id, copy), { selected: id });
+      const intent = state().intents[tile];
+      if (placed === null && intent) set((s) => ({ intents: { ...s.intents, [id]: intent } }));
+    },
+
+    /** Clear Tile: removes it from the Page. */
+    clearTile(tile: string) {
+      const page = state().page;
+      if (page) apply((l) => removeTile(l, page, tile), { selected: null });
+    },
+
+    addPage() {
+      const draft = current();
+      if (!draft) return;
+      const id = freshId(draft.layout, 'page');
+      apply((l) => addPage(l, newGridPage(id, `Page ${l.pages.length + 1}`)), { page: id, selected: null, adding: null });
+    },
+
+    removePage(page: string) {
+      apply((l) => removePage(l, page), { selected: null, adding: null });
+    },
+
+    renamePage(page: string, title: string) {
+      return apply((l) => setPageTitle(l, page, title));
+    },
+
+    setGrid(rows: number, cols: number) {
+      const page = state().page;
+      return page ? apply((l) => setGridSize(l, page, rows, cols)) : 'no page';
+    },
+
+    renameLayout(value: string) {
+      return apply((l) => setLayoutName(l, value));
+    },
+
+    setFullScreen(on: boolean) {
+      return apply((l) => setFullScreen(l, on));
+    },
+
+    /** Send to Device: `layouts.push` with `If-Match` set to the last revision seen, then waits for its Job. */
+    async push(): Promise<void> {
+      const draft = current();
+      if (!draft || !state().device || state().busy) return;
+      const layout = draft.layout;
+      set({ busy: 'push', status: { kind: 'info', text: 'Sending…', event: 'pushing' } });
+      const started = performance.now();
+      try {
+        try {
+          await send(layout, draft.revision);
+        } catch (first) {
+          const error = toApiError(first);
+          if (error.code !== 'layout.changed') throw error;
+          let read: Awaited<ReturnType<typeof readLayout>>;
+          try {
+            read = await readLayout();
+          } catch (second) {
+            // The slot is empty now, so sending loses nothing.
+            if (toApiError(second).code !== 'layout.not_found') throw error;
+            await send(layout, null);
+            return;
+          }
+          if ('problem' in read) throw error;
+          const { orientation } = state();
+          set({ conflict: { reason: 'changed', orientation, ...read } });
+          say('info', `${name()} has “${read.layout.name}”: ${describeLayout(read.layout)}.`, { event: 'changed', detail: error.message, ...counts(read.layout) });
+        }
+      } catch (error) {
+        sendFailed(toApiError(error), layout);
+      } finally {
+        performance.measure?.('push', { start: started });
+        set({ busy: null });
+      }
+    },
+
+    /** Load from {device}: reads its Layout, and asks before it replaces a draft that differs. */
+    async load(): Promise<void> {
+      if (!state().device || state().busy) return;
+      set({ busy: 'load', status: { kind: 'info', text: 'Loading…', event: 'pulling' } });
+      try {
+        const read = await readLayout();
+        if ('problem' in read) {
+          say('error', `${name()}'s Layout has a problem Open TouchDeck can't read. Nothing changed.`, { detail: read.problem, event: 'pull-failed' });
+          return;
+        }
+        const draft = current();
+        if (!draft || canonical(draft.layout) === canonical(read.layout)) {
+          start(read.layout, { kind: 'ok', text: `Loaded “${read.layout.name}” from ${name()}`, event: 'pulled', ...counts(read.layout) }, { sent: canonical(read.layout), revision: read.revision });
+          return;
+        }
+        set({ conflict: { reason: 'load', orientation: state().orientation, ...read } });
+        say('info', `${name()} has “${read.layout.name}”: ${describeLayout(read.layout)}.`, { event: 'pull-ready', ...counts(read.layout) });
+      } catch (thrown) {
+        const error = toApiError(thrown);
+        const device = name();
+        const text =
+          error.code === 'layout.not_found'
+            ? `${device} has no ${state().orientation} Layout yet.`
+            : error.code === 'layout.stored_invalid'
+              ? `${device}'s Layout has a problem Open TouchDeck can't read. Nothing changed.`
+              : error.code === 'device.busy'
+                ? `${device} is busy. Wait a moment, then retry.`
+                : `Couldn't load from ${device}. ${PLUG_IN}`;
+        say('error', text, { detail: error.message, event: 'pull-failed' });
+      } finally {
+        set({ busy: null });
+      }
+    },
+
+    /** Replace: the Device's Layout becomes the draft. */
+    replace() {
+      const conflict = state().conflict;
+      if (!conflict) return;
+      const { layout, revision } = conflict;
+      set({ orientation: conflict.orientation });
+      start(layout, { kind: 'ok', text: `Loaded “${layout.name}” from ${name()}`, event: 'pulled', ...counts(layout) }, { sent: canonical(layout), revision });
+    },
+
+    /** Keep mine: the draft stays, and the next send replaces what the Device has now. */
+    keepMine() {
+      const conflict = state().conflict;
+      if (!conflict) return;
+      const draft = state().drafts[conflict.orientation];
+      if (draft) keep(conflict.orientation, { ...draft, sent: canonical(conflict.layout), revision: conflict.revision });
+      set({ conflict: null });
+      say('info', 'Kept your Layout', { event: 'pull-cancelled' });
+    },
+
+    /** Remove unused Assets: `assets.prune`, keeping every Asset the drafts use. */
+    async pruneAssets(): Promise<void> {
+      const { device, drafts, busy } = state();
+      if (!device || busy) return;
+      const keepIds = [...new Set([drafts.landscape, drafts.portrait].flatMap((d) => (d ? assetIds(d.layout) : [])))];
+      set({ busy: 'prune', status: { kind: 'info', text: 'Removing unused Assets…', event: 'assets-removing' } });
+      try {
+        const job = await deps.companion.assets.prune({ device: device.id }, null, { also_keep: keepIds });
+        const result = await deps.wait<'assets.prune'>(job);
+        say('ok', `Removed ${plural(result.removed.length, 'unused Asset')} from ${name()}`, { detail: result.removed.join(', ') || 'none', event: 'assets-removed' });
+      } catch (error) {
+        say('error', `Couldn't remove unused Assets. Check that ${name()} is plugged in, then retry.`, { detail: toApiError(error).message, event: 'assets-failed' });
+      } finally {
+        set({ busy: null });
+      }
+    },
+  });
+}
+
+export type EditorStore = ReturnType<typeof createEditorStore>;
+
+/** The open draft's save state, for the header. */
+export function saveState(state: EditorState): SaveState {
+  if (state.busy === 'push') return 'sending';
+  const draft = state.drafts[state.orientation];
+  if (!draft) return 'none';
+  return isSent(draft) ? 'saved' : 'unsent';
+}

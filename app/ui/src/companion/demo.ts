@@ -1,4 +1,5 @@
 import type { Environment } from './connection.ts';
+import { demoStoredLayouts } from './fake-layouts.ts';
 import { createFakeCompanion } from './fake.ts';
 import { demoDevices } from './samples.ts';
 import { windowSession } from './session.ts';
@@ -7,7 +8,7 @@ import { windowSession } from './session.ts';
 // calls the global fetch, so API requests are routed to the fake here; everything
 // else, such as Vite's own requests, still goes to the network.
 export function demoEnvironment(target: Window): Environment {
-  const fake = createFakeCompanion({ devices: demoDevices, system: { build: 'demo' } });
+  const fake = createFakeCompanion({ devices: demoDevices, system: { build: 'demo' }, layouts: demoStoredLayouts() });
   const network = target.fetch.bind(target);
   target.fetch = (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), target.location.href);

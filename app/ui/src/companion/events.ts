@@ -1,5 +1,6 @@
-import type { DeviceSummary, SyncData } from './api.ts';
+import type { DeviceSummary, Job, SyncData } from './api.ts';
 import type { DevicesStore } from './devices.ts';
+import type { JobsStore } from './jobs.ts';
 import type { Session } from './session.ts';
 
 // The part of a WebSocket the event stream uses, so the fake Companion's socket can stand in.
@@ -31,6 +32,8 @@ export interface EventsOptions {
   url: string;
   session: Session;
   store: DevicesStore;
+  /** Where `job.updated` and the `jobs` key of `sync` go. */
+  jobs?: JobsStore;
   open?: OpenSocket;
   /** A reconnect met a Companion with a different build, so the page should reload. */
   onNewBuild?: () => void;
@@ -59,7 +62,7 @@ function parse(data: unknown): Frame | null {
  * asks the session for a new token after close 4401.
  */
 export function openEvents(options: EventsOptions): Events {
-  const { url, session, store, open = openWebSocket, onNewBuild, retryMs = RETRY_MS } = options;
+  const { url, session, store, jobs, open = openWebSocket, onNewBuild, retryMs = RETRY_MS } = options;
   let socket: EventSocket | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
@@ -77,6 +80,7 @@ export function openEvents(options: EventsOptions): Events {
       case 'sync':
         failures = 0;
         store.getState().sync((frame.data as SyncData).devices ?? []);
+        jobs?.getState().sync((frame.data as SyncData).jobs ?? []);
         break;
       case 'device.added':
       case 'device.updated':
@@ -84,6 +88,9 @@ export function openEvents(options: EventsOptions): Events {
         break;
       case 'device.removed':
         store.getState().remove((frame.data as { id: string }).id);
+        break;
+      case 'job.updated':
+        jobs?.getState().upsert(frame.data as Job);
         break;
       // Clients ignore event types they don't know.
     }
