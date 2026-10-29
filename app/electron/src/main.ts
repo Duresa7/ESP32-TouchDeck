@@ -3,6 +3,8 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { connect, devUiOrigin, restartMessage, revoke, runtimePath, type WindowSession } from './companion';
 
+import { Updater, builtInKey, feedSettings } from './updates';
+
 app.setName('Open TouchDeck');
 if (process.platform === 'win32') app.setAppUserModelId('io.github.duresa7.touchdeck');
 if (process.env.TOUCHDECK_APP_DATA_DIR) app.setPath('userData', join(process.env.TOUCHDECK_APP_DATA_DIR, 'electron'));
@@ -72,8 +74,43 @@ ipcMain.handle('session', async event => {
   return trusted(event) ? token : null;
 });
 
+let updater: Updater | undefined;
+for (const action of ['check', 'download', 'install'] as const) {
+  ipcMain.handle(`updates:${action}`, async event => {
+    const failed = action === 'check' ? { state: 'failed' } : { state: 'failed', reason: action === 'download' ? 'download' : 'installer' };
+    if (!trusted(event) || !updater) return failed;
+    try {
+      if (action === 'download') return await updater.download(progress => {
+        if (trusted(event)) event.senderFrame?.send('updates:progress', progress);
+      });
+      return await updater[action]();
+    } catch { return failed; }
+  });
+}
+
 async function openWindow() {
   current = await connect(runtimePath(), startCompanion);
+  updater = new Updater({
+    publicKey: await builtInKey(__dirname), current: app.getVersion(), dataDir: app.getPath('userData'),
+    ...feedSettings(app.isPackaged),
+    system: () => {
+      const session = current;
+      if (!session) throw new Error('Companion unavailable');
+      return async (method, path) => {
+        const res = await fetch(`${session.origin}/api/v1${path}`, {
+          method, redirect: 'error', signal: AbortSignal.timeout(5000),
+          headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' },
+        });
+        return { status: res.status, body: await res.json().catch(() => null) };
+      };
+    },
+    launch: (path, args) => new Promise((resolve, reject) => {
+      const child = spawn(path, args, { detached: true, stdio: 'ignore', windowsHide: true });
+      child.once('error', reject);
+      child.once('spawn', () => { child.unref(); resolve(); });
+    }),
+    quit: () => { closing = true; app.quit(); },
+  });
   window = new BrowserWindow({
     title: 'Open TouchDeck', width: 1100, height: 760,
     webPreferences: { preload: join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true,

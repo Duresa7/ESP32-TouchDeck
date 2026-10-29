@@ -17,7 +17,17 @@ test('isolated shell, exact preload, navigation, renewal, single instance and cl
     expect(await page.evaluate(() => ['require', 'process', 'Buffer', 'global'].map(k => typeof (window as any)[k]))).toEqual(['undefined', 'undefined', 'undefined', 'undefined']);
     expect(await page.evaluate(() => Object.keys((window as any).openTouchDeck).sort())).toEqual(['onSessionChanged', 'session', 'updates', 'version']);
     expect(await page.evaluate(() => Object.keys((window as any).openTouchDeck.updates).sort())).toEqual(['check', 'download', 'install']);
-    expect(await page.evaluate(() => (window as any).openTouchDeck.updates.check().catch((e: Error) => e.message))).toBe('not available yet');
+    expect(await page.evaluate(() => (window as any).openTouchDeck.updates.check().catch((e: Error) => e.message))).toEqual({ state: 'disabled' });
+    expect(await app.evaluate(async ({ ipcMain, BrowserWindow }) => {
+      const contents = BrowserWindow.getAllWindows()[0].webContents;
+      const handlers: unknown = Reflect.get(ipcMain, '_invokeHandlers');
+      if (!(handlers instanceof Map)) throw new Error('IPC handlers unavailable');
+      return Promise.all(['check', 'download', 'install'].map(action => {
+        const handler: unknown = handlers.get(`updates:${action}`);
+        if (typeof handler !== 'function') throw new Error('Update handler missing');
+        return handler({ sender: contents, senderFrame: { origin: 'https://example.invalid' } });
+      }));
+    })).toEqual([{ state: 'failed' }, { state: 'failed', reason: 'download' }, { state: 'failed', reason: 'installer' }]);
     const token = await page.evaluate(() => (window as any).openTouchDeck.session());
     expect(fake.sessions.has(token)).toBe(true);
     expect(token).not.toBe(fake.runtime.token);
