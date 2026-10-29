@@ -1,5 +1,3 @@
-// The worst layout a person can realistically build, at the schema's limits: 24-character names, 16-character labels,
-// 8 pages, a full 8 by 8 grid, one-letter and non-Latin labels, emoji, an empty page, and a wide span.
 import type { Layout, Tile } from '../../src/lib/editor/validate.ts';
 
 const LABELS = [

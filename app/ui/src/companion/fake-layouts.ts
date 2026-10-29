@@ -1,18 +1,12 @@
-// The fake Companion's Layouts, Jobs and Assets prune, as docs/companion-api.md and #75 built them: `layouts.get`
-// with its revision, `layouts.push` as a Job with `If-Match`, the 412, 422 and busy answers, `assets.prune`, and
-// `job.updated` on the event stream. It also answers a few test routes the real Companion's test hooks mirror, so the
-// demo's Playwright specs can change a Device behind the editor's back.
-import { canonical, validateSource, type Layout, type Orientation } from '../lib/editor/validate.ts';
-import type { DeviceSummary, Job, JobScope, Layout as StoredLayout, LinkState, PushReport } from './api.ts';
+import { canonical, parseLayout, type Layout, type Orientation } from '../lib/editor/validate.ts';
+import type { DeviceSummary, Job, JobMap, JobScope, Layout as StoredLayout, LinkState, PushReport } from './api.ts';
 
 type Frame = Record<string, unknown> & { type: string };
 
 export interface FakeLayoutsOptions {
   devices: Map<string, DeviceSummary>;
   publish(frame: Frame): void;
-  /** The Layout each Device stores at the start, by Device id. */
   seed?: Record<string, StoredLayout>;
-  /** How long a Job runs before it finishes. */
   delayMs?: number;
 }
 
@@ -27,7 +21,6 @@ const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
   return c >>> 0;
 });
 
-/** The Device's revision: CRC-32 of the stored bytes as 8 lowercase hex digits. */
 export function revisionOf(text: string): string {
   let crc = 0xffffffff;
   for (const byte of new TextEncoder().encode(text)) crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
@@ -42,7 +35,6 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
   const jobs = new Map<string, Job>();
   let minted = 0;
   let puts = 0;
-  /** Device ids whose next Job stays running until released, to test a busy Device. */
   const held = new Set<string>();
   const releases = new Map<string, () => void>();
 
@@ -59,8 +51,7 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
   const active = (device: string) =>
     [...jobs.values()].find((job) => job.scope.kind === 'device' && job.scope.id === device && !['succeeded', 'failed', 'cancelled'].includes(job.state));
 
-  /** Starts a Job on a Device, runs `work` after the delay and finishes it with its result. */
-  function startJob(kind: string, device: string, progress: unknown, work: () => unknown): Job {
+  function startJob<K extends keyof JobMap>(kind: K, device: string, progress: JobMap[K]['progress'], work: () => JobMap[K]['result']): Job {
     minted += 1;
     const scope: JobScope = { kind: 'device', id: device };
     const job: Job = {
@@ -68,7 +59,7 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
       kind,
       scope,
       state: 'running',
-      progress: progress as Job['progress'],
+      progress,
       result: null,
       error: null,
       cancellable: true,
@@ -81,7 +72,7 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
     const finish = () => {
       const now = jobs.get(job.id)!;
       if (now.state === 'cancelled') return;
-      update(now, { state: 'succeeded', result: work() as Job['result'], cancellable: false, finished_ms: Date.now() });
+      update(now, { state: 'succeeded', result: work(), cancellable: false, finished_ms: Date.now() });
     };
     if (held.delete(device)) releases.set(device, () => setTimeout(finish, 0));
     else setTimeout(finish, delayMs);
@@ -110,12 +101,12 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
 
   async function pushLayout(request: Request, device: string, orientation: string) {
     const body = await request.text();
-    const errors = validateSource(body);
-    if (errors.length) {
-      const issues = errors.map((e) => ({ rule: e.key, path: e.message.split(/\s/)[0].startsWith('/') ? e.message.split(/\s/)[0] : '', message: e.message }));
+    const parsed = parseLayout(body);
+    if (!parsed.ok) {
+      const issues = parsed.errors.map((e) => ({ rule: e.key, path: e.message.split(/\s/)[0].startsWith('/') ? e.message.split(/\s/)[0] : '', message: e.message }));
       return failure(422, 'layout.invalid', `The Layout has ${issues.length} problems.`, { issues });
     }
-    const layout = JSON.parse(body) as Layout;
+    const { layout } = parsed;
     if (layout.orientation !== orientation) return failure(422, 'layout.orientation_mismatch', 'The path and the Layout name different orientations.');
     const found = deviceOr404(device);
     if (found instanceof Response) return found;
@@ -160,7 +151,6 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
   }
 
   return {
-    /** Answers a session-checked request, or returns null when it isn't one of these routes. */
     async handle(request: Request, path: string): Promise<Response | null> {
       const method = request.method;
       let match: RegExpExecArray | null;
@@ -193,15 +183,10 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
       return null;
     },
 
-    /**
-     * The fake's test routes, which need no session: `PUT /test/devices/{d}/layouts/{o}` stores a Layout as another
-     * program would, `GET /test/devices/{d}/record` reads what the Device stores, and `POST /test/devices/{d}/link`
-     * with `{state}` plugs it in or unplugs it.
-     */
     async test(request: Request, path: string): Promise<Response> {
       let match: RegExpExecArray | null;
       if ((match = /^\/test\/devices\/([^/]+)\/layouts\/([^/]+)$/.exec(path)) && request.method === 'PUT') {
-        stored.set(slot(decodeURIComponent(match[1]), decodeURIComponent(match[2])), canonical(JSON.parse(await request.text()) as Layout));
+        stored.set(slot(decodeURIComponent(match[1]), decodeURIComponent(match[2])), JSON.stringify(JSON.parse(await request.text())));
         return json(204, null);
       }
       if ((match = /^\/test\/devices\/([^/]+)\/record$/.exec(path)) && request.method === 'GET') {
@@ -213,7 +198,8 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
         return json(200, { layouts: { landscape: read('landscape'), portrait: read('portrait') }, puts });
       }
       if ((match = /^\/test\/devices\/([^/]+)\/link$/.exec(path)) && request.method === 'POST') {
-        const { state } = (await request.json()) as { state: string };
+        const body: unknown = await request.json();
+        const state = typeof body === 'object' && body !== null && 'state' in body ? body.state : undefined;
         const link: LinkState =
           state === 'connected' ? { state: 'connected', port: 'COM9', since_ms: Date.now(), protocol: 2 } : { state: 'lost', reason: 'unplugged', detail: '', at_ms: Date.now() };
         setLink(decodeURIComponent(match[1]), link);
@@ -222,13 +208,9 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
       return failure(404, 'route.not_found', 'No test route with that path.');
     },
 
-    /** Jobs for the `jobs` key of `sync`. */
     jobs: () => [...jobs.values()],
-    /** The Layout a Device stores, in canonical form. */
     stored: (device: string, orientation: Orientation) => stored.get(slot(device, orientation)) ?? null,
-    /** Stores a Layout on a Device, as another program would. */
     store: (device: string, layout: Layout) => void stored.set(slot(device, layout.orientation), canonical(layout)),
-    /** A `layouts.push` Job that another client ran: the Device stores `layout` and the Job succeeds. */
     pushed(device: string, layout: StoredLayout) {
       stored.set(slot(device, layout.orientation), JSON.stringify(layout));
       puts += 1;
@@ -249,7 +231,6 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
       jobs.set(job.id, job);
       publish({ type: 'job.updated', data: job });
     },
-    /** Keeps the Device's next Job running until `release`. */
     hold: (device: string) => void held.add(device),
     release: (device: string) => {
       releases.get(device)?.();

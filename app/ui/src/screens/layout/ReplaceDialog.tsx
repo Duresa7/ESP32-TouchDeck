@@ -5,13 +5,8 @@ import type { EditorStore } from '../../lib/editor/store.ts';
 import { button } from '../../shell/button.ts';
 import { useEditorState } from './editor.ts';
 
-/**
- * Replace or Keep mine, when Load from {device} finds a different Layout or a send finds the Device's Layout changed
- * since it was loaded (412). Keep mine after a 412 sends this Layout over the Device's; Escape keeps it without sending.
- */
 export function ReplaceDialog({ store, device }: { store: EditorStore; device: string }) {
   const conflict = useEditorState(store, (s) => s.conflict);
-  // The dialog keeps its words while it fades out.
   const last = useRef(conflict);
   if (conflict) last.current = conflict;
   const shown = last.current;

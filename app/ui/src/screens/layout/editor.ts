@@ -13,7 +13,6 @@ function storage() {
   }
 }
 
-/** The one editor store for a Companion, so a draft and its selection outlive switching screens. */
 export function editorFor(companion: Companion): EditorStore {
   let store = stores.get(companion);
   if (!store) {

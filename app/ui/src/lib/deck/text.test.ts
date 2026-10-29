@@ -17,7 +17,6 @@ test('the fonts carry the LVGL line heights and the deck character set', () => {
 });
 
 test('an advance rounds the 1/16 px width with its kerning, letter by letter', () => {
-  // lv_font_montserrat_48.c: F is 488/16 px and 1 is 284/16 px wide, and the pair F 1 has no kerning.
   const F = MONTSERRAT_48.glyphs.find(([cp]) => cp === 70)!;
   const one = MONTSERRAT_48.glyphs.find(([cp]) => cp === 49)!;
   assert.equal(f48.width(70, 0), (F[1] + 8) >> 4);

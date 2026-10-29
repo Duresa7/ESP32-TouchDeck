@@ -1,24 +1,20 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { counts, validateSource, type GridPage, type Layout } from '../src/lib/editor/validate.ts';
+import { counts, validateSource, type Layout } from '../src/lib/editor/validate.ts';
 import { worstCase } from './fixtures/worst-case.ts';
-import { drag, exportText, importText, menu, openLayout, placeOf, sorted, status, swipe, tile, waitEvent } from './layout-helpers.ts';
+import { drag, exportText, gridPage, importText, layoutOf, menu, openLayout, placeOf, sorted, status, swipe, tile, waitEvent } from './layout-helpers.ts';
 
-// The Layout screen on the demo's fake Companion: today's editor checks (app/e2e/specs/editor.spec.ts and
-// preview.spec.ts), ported. Actions, icons and command approval have their own tickets (#83, #90, #76).
 const examples = join(import.meta.dirname, '..', '..', '..', 'schema', 'examples');
 const devText = readFileSync(join(examples, 'dev.json'), 'utf8');
-const dev = JSON.parse(devText) as Layout;
-const first = dev.pages[0] as GridPage;
+const dev = layoutOf(devText);
+const first = gridPage(dev.pages[0]);
 const folder = process.env.TD_SHOTS;
 
-/** What the demo's Desk stores, read through the fake's test route. */
 async function record(page: Page, device = 'mock0001') {
   return page.evaluate(async (id) => (await fetch(`/api/v1/test/devices/${id}/record`)).json(), device) as Promise<{ layouts: { landscape: Layout | null; portrait: Layout | null } }>;
 }
 
-/** Another program puts a Layout on the Device, behind the editor's back. */
 async function storeOnDevice(page: Page, layout: Layout, device = 'mock0001') {
   await page.evaluate(async ([id, text]) => {
     await fetch(`/api/v1/test/devices/${id}/layouts/${JSON.parse(text).orientation}`, { method: 'PUT', body: text });
@@ -94,18 +90,18 @@ test("loads the Device's Layout after a confirm, and every Tile matches", async 
   await expect(dialog).toContainText('(2 Pages, 16 Tiles). Replace the landscape Layout here with it?');
   await dialog.getByRole('button', { name: 'Replace' }).click();
   await expect(await waitEvent(page, 'pulled')).toHaveText('Loaded “Demo Layout” from Desk');
-  const loaded = JSON.parse(await exportText(page)) as Layout;
+  const loaded = layoutOf(await exportText(page));
   const stored = (await record(page)).layouts.landscape!;
   expect(sorted(loaded)).toEqual(sorted(stored));
   await expect(page.getByTestId('save-state')).toHaveAttribute('data-state', 'saved');
-  expect((await drawn(page)).sort()).toEqual((stored.pages[0] as GridPage).tiles.map((t) => t.id).sort());
+  expect((await drawn(page)).sort()).toEqual(gridPage(stored.pages[0]).tiles.map((t) => t.id).sort());
 });
 
 test('exports a file that passes the Layout rules', async ({ page }) => {
   await importDev(page);
   const text = await exportText(page);
   expect(validateSource(new TextEncoder().encode(text))).toEqual([]);
-  expect(sorted(JSON.parse(text) as Layout)).toEqual(sorted(dev));
+  expect(sorted(layoutOf(text))).toEqual(sorted(dev));
   await expect(await waitEvent(page, 'exported')).toHaveText('Exported “Development.json”');
 });
 
@@ -169,10 +165,8 @@ test('tries Pages out like the Device: swipe, tap, a page jump and the arrow key
   await expect(preview).toHaveAttribute('data-page', 'desktop');
   await swipe(page, 300);
   await expect(preview).toHaveAttribute('data-page', 'shortcuts');
-  // A press on a sliding Page only stops it, as on the Device, so the tap waits for the slide to end.
   await expect(preview).not.toHaveAttribute('data-sliding');
 
-  // A tapped Tile reacts: pressed while the finger is down, then a modifier's one-shot ring.
   const shift = await tile(page, 'shift').boundingBox();
   await page.mouse.move(shift!.x + shift!.width / 2, shift!.y + shift!.height / 2);
   await page.mouse.down();
@@ -228,7 +222,6 @@ test('holds up to the worst realistic Layout', async ({ page }) => {
     expect(device.x).toBeGreaterThanOrEqual(canvas.x);
     expect(device.x + device.width).toBeLessThanOrEqual(canvas.x + canvas.width + 0.5);
     expect(device.y + device.height).toBeLessThanOrEqual(canvas.y + canvas.height + 0.5);
-    // The Page tabs and the status line stay clear of the nav cluster under them.
     const foot = (await page.locator('.canvas-foot').boundingBox())!;
     const dock = (await page.locator('.nav-dock').boundingBox())!;
     expect(foot.y + foot.height).toBeLessThanOrEqual(dock.y + 0.5);
@@ -333,7 +326,10 @@ test('the keyboard moves, resizes, clears and deselects a Tile', async ({ page }
 });
 
 test('a Device that is not connected can still be edited, but not sent to', async ({ page }) => {
-  await page.evaluate(() => (window as unknown as { touchdeckDemo: { offline(id: string): void } }).touchdeckDemo.offline('mock0001'));
+  await page.evaluate(() => {
+    if (!window.touchdeckDemo) throw new Error('The demo controls are missing.');
+    window.touchdeckDemo.offline('mock0001');
+  });
   await expect(page.getByTestId('disconnected')).toHaveText("Desk isn't connected. Plug it in with a USB cable. You can still edit its Layout.");
   await expect(page.getByTestId('start-pull')).toHaveAttribute('aria-disabled', 'true');
   await expect(page.getByTestId('start-pull')).toContainText('Plug in Desk to load its Layout.');
@@ -346,7 +342,6 @@ test('a Device that is not connected can still be edited, but not sent to', asyn
   await expect(page.getByTestId('push')).toHaveAttribute('aria-disabled', 'true');
   await page.getByTestId('push').hover();
   await expect(page.locator('.tooltip')).toHaveText("Desk isn't connected");
-  // Disabled controls keep their focus and tooltip, so a click reaches the button and does nothing.
   await page.getByTestId('push').click({ force: true });
   await expect(status(page)).not.toHaveAttribute('data-event');
   expect((await record(page)).layouts.landscape?.name).toBe('Demo Layout');
@@ -354,7 +349,6 @@ test('a Device that is not connected can still be edited, but not sent to', asyn
 
 test('focus is visible on Tiles, Page tabs and header controls', async ({ page }) => {
   await page.getByTestId('start-starter').click();
-  /** Reaches a control from the keyboard: Tab away from it, then back with Shift+Tab. */
   const reach = async (testId: string, nth = 0) => {
     const el = page.getByTestId(testId).nth(nth);
     await el.focus();
@@ -371,7 +365,6 @@ test('focus is visible on Tiles, Page tabs and header controls', async ({ page }
   }
   expect(await reach('tile', 1)).toEqual({ visible: true, ring: true });
   if (folder) await page.screenshot({ path: join(folder, 'layout-focus-tile-light.png') });
-  // The ring on the canvas is drawn in app pixels: its width divides by the canvas scale.
   const ring = await page.getByTestId('tile').nth(1).evaluate((node) => getComputedStyle(node).boxShadow);
   const scale = Number(await page.getByTestId('deck-screen').getAttribute('data-scale'));
   expect(Number(/([\d.]+)px inset/.exec(ring)?.[1])).toBeCloseTo(2 / scale, 1);

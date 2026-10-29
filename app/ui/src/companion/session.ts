@@ -1,15 +1,27 @@
 // Where a client's session token comes from (docs/companion-api.md, "How the Electron
 // window gets its session" and "How a browser pairs").
 
+export type UpdateCheck =
+  | { state: 'none' }                                    // up to date
+  | { state: 'available'; version: string; current: string; notes: string | null; date: string | null }
+  | { state: 'disabled' }                                // source build: no public key was built in
+  | { state: 'offline' }
+  | { state: 'failed' };
+export type UpdateProgress = { downloaded: number; total: number | null };
+export type UpdateDownload = { state: 'ready' } | { state: 'offline' } | { state: 'failed'; reason: 'download' | 'signature' };
+export type UpdateInstall = { state: 'failed'; reason: 'busy'; device: string | null } | { state: 'failed'; reason: 'installer' };
+
 // What Electron's preload exposes. The renderer never sees the pairing token.
 export interface OpenTouchDeckBridge {
   version: 1;
   session(): Promise<string | null>;
   onSessionChanged(callback: () => void): void;
+  // Every call resolves; none rejects, because Errors lose their fields across contextBridge.
   updates?: {
-    check(): Promise<unknown>;
-    download(onProgress: (progress: unknown) => void): Promise<unknown>;
-    install(): Promise<unknown>;
+    check(): Promise<UpdateCheck>;
+    download(onProgress: (p: UpdateProgress) => void): Promise<UpdateDownload>;
+    // On success, install() never resolves: the app quits and the installer runs.
+    install(): Promise<UpdateInstall>;
   };
 }
 
