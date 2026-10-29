@@ -315,5 +315,31 @@ fn feature() -> Feature {
         .endpoint::<InputLog>()
         .endpoint::<Ports>()
         .endpoint::<Clock>()
+        .endpoint::<ApprovalsScript>()
 }
 inventory::submit! { Registration(feature) }
+
+#[derive(Serialize, Deserialize, TS)]
+pub struct ApprovalScript {
+    pub answers: Vec<crate::actions::ScriptAnswer>,
+}
+pub struct ApprovalsScript;
+impl Endpoint for ApprovalsScript {
+    const NAME: &'static str = "test.approvals_script";
+    const METHOD: Method = Method::POST;
+    const PATH: &'static str = "/test/approvals/script";
+    const STATUS: StatusCode = StatusCode::NO_CONTENT;
+    type Path = ();
+    type Query = NoQuery;
+    type Body = ApprovalScript;
+    type Ok = ();
+    type Error = CommonError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<(), CommonError> {
+        ctx.devices.mock().ok_or(CommonError::NotFound)?;
+        if ctx.actions.script(req.body.answers) {
+            Ok(())
+        } else {
+            Err(CommonError::NotFound)
+        }
+    }
+}

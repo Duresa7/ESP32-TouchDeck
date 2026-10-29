@@ -1,0 +1,575 @@
+mod prompt;
+use crate::{
+    api::{Clock, Event, Events},
+    devices::{DeviceId, DeviceManager},
+    link::Links,
+};
+use parking_lot::Mutex;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use prompt::FakePrompter;
+pub use prompt::{ApprovalPrompter, NativePrompter, NoopNotifier, TrayNotifier};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::VecDeque,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::{Duration, Instant},
+};
+use td_core::layout::{Layout, Page};
+use td_host::{actions::Plan, approval::CommandSpec};
+use ts_rs::TS;
+
+const TAP_WAIT: Duration = Duration::from_secs(10);
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ActionSpec {
+    pub kind: String,
+    pub program: String,
+    pub args: Vec<String>,
+    pub cwd: String,
+    pub shell: bool,
+}
+impl ActionSpec {
+    pub fn hash(&self) -> String {
+        Sha256::digest(serde_json::to_vec(self).expect("action serializes"))
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+    fn command(&self) -> CommandSpec {
+        CommandSpec {
+            program: self.program.clone(),
+            args: self.args.clone(),
+            cwd: self.cwd.clone(),
+            shell: self.shell,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ApprovalRequest {
+    pub id: String,
+    pub device: DeviceId,
+    pub page: String,
+    pub tile: String,
+    pub hash: String,
+    #[serde(flatten)]
+    pub spec: ActionSpec,
+    pub created_ms: u64,
+}
+impl Event for ApprovalRequest {
+    const NAME: &'static str = "approval.requested";
+    fn device(&self) -> Option<&str> {
+        Some(&self.device)
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum Answer {
+    Once,
+    Always,
+    Deny,
+    Expired,
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct ApprovalResolved {
+    pub id: String,
+    pub answer: Answer,
+}
+impl Event for ApprovalResolved {
+    const NAME: &'static str = "approval.resolved";
+}
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct AllowedAction {
+    pub hash: String,
+    #[serde(flatten)]
+    pub spec: ActionSpec,
+    pub granted_ms: u64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ActionLog {
+    pub id: String,
+    pub device: DeviceId,
+    pub at_ms: u64,
+    pub page: String,
+    pub tile: String,
+    pub kind: String,
+    pub status: String,
+    pub detail: String,
+    pub pid: Option<u32>,
+    pub exit_code: Option<i32>,
+}
+impl Event for ActionLog {
+    const NAME: &'static str = "action.logged";
+    fn device(&self) -> Option<&str> {
+        Some(&self.device)
+    }
+}
+/// Where "Always allow" answers are kept. Blocking: call it off the async runtime.
+pub trait GrantStore: Send + Sync {
+    /// The saved grants; none when nothing was saved yet.
+    fn load(&self) -> std::io::Result<Vec<AllowedAction>>;
+    /// Replaces the saved grants. A failed save must leave the previous ones in place.
+    fn save(&self, allowed: &[AllowedAction]) -> std::io::Result<()>;
+}
+/// Grants in one JSON file, replaced by writing a sibling file and renaming it over.
+pub struct FileGrants(PathBuf);
+impl FileGrants {
+    pub fn new(path: PathBuf) -> Self {
+        Self(path)
+    }
+}
+impl GrantStore for FileGrants {
+    fn load(&self) -> std::io::Result<Vec<AllowedAction>> {
+        match std::fs::read(&self.0) {
+            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+    fn save(&self, allowed: &[AllowedAction]) -> std::io::Result<()> {
+        if let Some(parent) = self.0.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let tmp = self.0.with_extension("tmp");
+        std::fs::write(&tmp, serde_json::to_vec(allowed)?)?;
+        std::fs::rename(tmp, &self.0)
+    }
+}
+struct Pending {
+    request: ApprovalRequest,
+    deadline: Instant,
+    shown: Option<Instant>,
+    text: String,
+}
+#[derive(Default)]
+struct State {
+    pending: VecDeque<Pending>,
+    allowed: Vec<AllowedAction>,
+    log: VecDeque<ActionLog>,
+    serial: u64,
+    load_failed: bool,
+}
+struct Inner {
+    state: Mutex<State>,
+    grant_writer: Mutex<()>,
+    events: Events,
+    clock: Clock,
+    devices: DeviceManager,
+    links: Links,
+    grants: Arc<dyn GrantStore>,
+    prompter: Arc<dyn ApprovalPrompter>,
+    running: AtomicUsize,
+    #[cfg(any(test, feature = "test-hooks"))]
+    fake: Option<Arc<FakePrompter>>,
+}
+#[derive(Clone)]
+pub struct Actions(Arc<Inner>);
+impl Actions {
+    pub(crate) fn new(
+        events: Events,
+        clock: Clock,
+        devices: DeviceManager,
+        links: Links,
+        grants: Arc<dyn GrantStore>,
+        mock: bool,
+    ) -> Self {
+        let mut state = State::default();
+        match grants.load() {
+            Ok(allowed) => state.allowed = allowed,
+            Err(_) => state.load_failed = true,
+        }
+        let prompter: Arc<dyn ApprovalPrompter> = Arc::new(NativePrompter::default());
+        #[cfg(any(test, feature = "test-hooks"))]
+        let fake = (mock && std::env::var_os("TOUCHDECK_NATIVE_APPROVALS").is_none())
+            .then(|| Arc::new(FakePrompter::default()));
+        #[cfg(any(test, feature = "test-hooks"))]
+        let prompter: Arc<dyn ApprovalPrompter> = fake.clone().map_or(prompter, |p| p);
+        let _ = mock;
+        let inner = Arc::new(Inner {
+            state: Mutex::new(state),
+            grant_writer: Mutex::new(()),
+            events,
+            clock,
+            devices: devices.clone(),
+            links,
+            grants,
+            prompter,
+            running: AtomicUsize::new(0),
+            #[cfg(any(test, feature = "test-hooks"))]
+            fake,
+        });
+        let weak = Arc::downgrade(&inner);
+        devices.action_handler(Arc::new(move |device, event| {
+            if let Some(inner) = weak.upgrade() {
+                Actions(inner).press(device, event);
+            }
+        }));
+        let weak = Arc::downgrade(&inner);
+        std::thread::spawn(move || {
+            loop {
+                let Some(inner) = weak.upgrade() else { break };
+                let actions = Actions(inner);
+                actions.prompt_next();
+                drop(actions);
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        });
+        Self(inner)
+    }
+    pub fn pending(&self) -> Vec<ApprovalRequest> {
+        self.0
+            .state
+            .lock()
+            .pending
+            .iter()
+            .map(|p| p.request.clone())
+            .collect()
+    }
+    pub fn allowed(&self) -> Vec<AllowedAction> {
+        self.0.state.lock().allowed.clone()
+    }
+    pub fn log(&self, device: Option<&DeviceId>) -> Vec<ActionLog> {
+        self.0
+            .state
+            .lock()
+            .log
+            .iter()
+            .filter(|l| device.is_none_or(|d| d == &l.device))
+            .cloned()
+            .collect()
+    }
+    fn change_grants(
+        &self,
+        change: impl FnOnce(&mut Vec<AllowedAction>) -> bool,
+    ) -> std::io::Result<bool> {
+        let _one_at_a_time = self.0.grant_writer.lock();
+        let (mut next, load_failed) = {
+            let state = self.0.state.lock();
+            (state.allowed.clone(), state.load_failed)
+        };
+        if !change(&mut next) {
+            return Ok(false);
+        }
+        if load_failed {
+            return Err(std::io::Error::other(
+                "The saved allowed actions could not be read.",
+            ));
+        }
+        self.0.grants.save(&next)?;
+        self.0.state.lock().allowed = next;
+        Ok(true)
+    }
+    /// Blocking: call it off the async runtime.
+    pub fn remove(&self, hash: &str) -> Result<bool, std::io::Error> {
+        self.change_grants(|allowed| {
+            let before = allowed.len();
+            allowed.retain(|a| a.hash != hash);
+            allowed.len() != before
+        })
+    }
+    pub fn show(&self, id: &str) -> Result<(), crate::features::actions::ActionError> {
+        use crate::{api::CommonError, features::actions::ActionError};
+        let mut state = self.0.state.lock();
+        let p = state
+            .pending
+            .iter_mut()
+            .find(|p| p.request.id == id && self.0.clock.now() < p.deadline)
+            .ok_or(ActionError::ApprovalMissing)?;
+        let now = self.0.clock.now();
+        if p.shown
+            .is_some_and(|t| now.duration_since(t) < Duration::from_secs(5))
+        {
+            return Err(CommonError::Limits(
+                "Show prompt again is limited to once every 5 seconds.",
+            )
+            .into());
+        }
+        p.shown = Some(now);
+        self.0.prompter.show(id);
+        Ok(())
+    }
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn script(&self, answers: Vec<prompt::ScriptAnswer>) -> bool {
+        if let Some(fake) = &self.0.fake {
+            fake.script(answers);
+            true
+        } else {
+            false
+        }
+    }
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn prompted(&self) -> Vec<String> {
+        self.0.fake.as_ref().map(|f| f.texts()).unwrap_or_default()
+    }
+    fn logged(
+        &self,
+        request: &ApprovalRequest,
+        status: &str,
+        detail: String,
+        pid: Option<u32>,
+        exit_code: Option<i32>,
+    ) {
+        let mut state = self.0.state.lock();
+        state.serial += 1;
+        let entry = ActionLog {
+            id: format!("a{}", state.serial),
+            device: request.device.clone(),
+            at_ms: crate::now_ms(),
+            page: request.page.clone(),
+            tile: request.tile.clone(),
+            kind: request.spec.kind.clone(),
+            status: status.into(),
+            detail,
+            pid,
+            exit_code,
+        };
+        self.0.events.publish(&entry);
+        state.log.push_back(entry);
+        while state.log.len() > 100 {
+            state.log.pop_front();
+        }
+    }
+    fn resolve(
+        &self,
+        device: &DeviceId,
+        session: &td_link::Session,
+        page: &str,
+        tile: &str,
+    ) -> Result<Option<(Plan, prompt::Context)>, String> {
+        let shown = session
+            .layout_state(Duration::from_secs(2))
+            .map_err(|e| format!("The Device didn't report its Layout: {e}"))?;
+        let bytes = match shown.source.as_str() {
+            "builtin" => include_bytes!("../../../../../schema/examples/builtin.json").to_vec(),
+            "storage" => {
+                td_link::xfer::get_layout(session, shown.orientation)
+                    .map_err(|e| format!("The Device's Layout couldn't be read: {e}"))?
+                    .data
+            }
+            _ => return Ok(None),
+        };
+        let layout =
+            Layout::parse(&bytes).map_err(|_| "The Device's Layout isn't valid.".to_owned())?;
+        let Some(found) = td_host::actions::find_tile(&layout, page, tile) else {
+            return Ok(None);
+        };
+        let title = layout
+            .pages
+            .iter()
+            .find_map(|p| match p {
+                Page::Grid { id, title, .. } if id == page => Some(title.as_str()),
+                _ => None,
+            })
+            .unwrap_or(page);
+        let name = self
+            .0
+            .devices
+            .get(device)
+            .and_then(|d| d.name)
+            .unwrap_or_else(|| device.to_string());
+        Ok(Some((
+            Plan::of(&found.action),
+            prompt::Context {
+                device: name,
+                page: title.into(),
+                tile: found.label.clone(),
+            },
+        )))
+    }
+    fn press(&self, device: &DeviceId, event: &serde_json::Value) {
+        let page = event["page"].as_str().unwrap_or_default();
+        let tile = event["tile"].as_str().unwrap_or_default();
+        let mut request = ApprovalRequest {
+            id: String::new(),
+            device: device.clone(),
+            page: page.into(),
+            tile: tile.into(),
+            hash: String::new(),
+            spec: ActionSpec {
+                kind: event["kind"].as_str().unwrap_or_default().into(),
+                program: String::new(),
+                args: vec![],
+                cwd: String::new(),
+                shell: false,
+            },
+            created_ms: crate::now_ms(),
+        };
+        let resolved = match self.0.links.within(device, TAP_WAIT, |session| {
+            self.resolve(device, session, page, tile)
+        }) {
+            Some(Ok(resolved)) => resolved,
+            Some(Err(link)) => Err(link.to_string()),
+            None => Err(
+                "The Device stayed busy with a Layout or Asset transfer, so the tap was dropped."
+                    .into(),
+            ),
+        };
+        let (plan, context) = match resolved {
+            Ok(Some(found)) => found,
+            Ok(None) => {
+                self.logged(
+                    &request,
+                    "unknown",
+                    "No matching Tile in the Device's Layout.".into(),
+                    None,
+                    None,
+                );
+                return;
+            }
+            Err(reason) => {
+                self.logged(&request, "failed", reason, None, None);
+                return;
+            }
+        };
+        let approval = match plan {
+            Plan::Deck => return, // Key and media reports are already typed by the Device's mirror.
+            Plan::Launch { path, args, cwd } => {
+                request.spec = ActionSpec {
+                    kind: "launch".into(),
+                    program: path,
+                    args,
+                    cwd,
+                    shell: false,
+                };
+                true
+            }
+            Plan::Command(spec) => {
+                request.spec = ActionSpec {
+                    kind: "command".into(),
+                    program: spec.program,
+                    args: spec.args,
+                    cwd: spec.cwd,
+                    shell: spec.shell,
+                };
+                true
+            }
+            Plan::Open { target } => {
+                let safe = target.split_once(':').is_some_and(|(scheme, _)| {
+                    ["http", "https", "mailto"]
+                        .iter()
+                        .any(|s| scheme.eq_ignore_ascii_case(s))
+                }) && !target.chars().any(char::is_control);
+                request.spec.kind = "open".into();
+                request.spec.program = target;
+                !safe
+            }
+        };
+        request.hash = request.spec.hash();
+        let text = prompt::dialog_text(&context, &request.spec);
+        let mut state = self.0.state.lock();
+        if state.pending.iter().any(|p| {
+            p.request.device == *device && p.request.page == page && p.request.tile == tile
+        }) {
+            return;
+        }
+        if !approval || state.allowed.iter().any(|a| a.hash == request.hash) {
+            drop(state);
+            self.execute(request);
+            return;
+        }
+        if state.pending.len() >= 16 {
+            drop(state);
+            self.logged(&request, "denied", "limits.exceeded".into(), None, None);
+            return;
+        }
+        state.serial += 1;
+        request.id = format!("p{}", state.serial);
+        self.0.events.publish(&request);
+        state.pending.push_back(Pending {
+            request,
+            deadline: self.0.clock.now() + Duration::from_secs(300),
+            shown: None,
+            text,
+        });
+    }
+    fn prompt_next(&self) {
+        let next = self
+            .0
+            .state
+            .lock()
+            .pending
+            .front()
+            .map(|p| (p.request.clone(), p.deadline, p.text.clone()));
+        let Some((request, deadline, text)) = next else {
+            return;
+        };
+        let expired = || self.0.clock.now() >= deadline || Arc::strong_count(&self.0) == 1;
+        let prompted = if expired() {
+            Ok(Answer::Expired)
+        } else {
+            let _suppressed = self.0.devices.suppress_input();
+            self.0.prompter.prompt(&request, &text, &expired)
+        };
+        let (answer, detail) = match prompted {
+            _ if expired() => (Answer::Expired, "Approval expired.".to_owned()),
+            Ok(Answer::Always) => {
+                let grant = AllowedAction {
+                    hash: request.hash.clone(),
+                    spec: request.spec.clone(),
+                    granted_ms: crate::now_ms(),
+                };
+                let saved = self.change_grants(|allowed| {
+                    allowed.retain(|a| a.hash != grant.hash);
+                    allowed.push(grant);
+                    true
+                });
+                match saved {
+                    Ok(_) => (Answer::Always, String::new()),
+                    Err(e) => (
+                        Answer::Deny,
+                        format!("The allowed action couldn't be saved, so it was denied: {e}"),
+                    ),
+                }
+            }
+            Ok(Answer::Deny) => (Answer::Deny, "Denied on this PC.".to_owned()),
+            Ok(answer) => (answer, String::new()),
+            Err(e) => (
+                Answer::Deny,
+                format!("The approval prompt failed, so the action was denied: {e}"),
+            ),
+        };
+        let mut state = self.0.state.lock();
+        state.pending.pop_front();
+        self.0.events.publish(&ApprovalResolved {
+            id: request.id.clone(),
+            answer,
+        });
+        drop(state);
+        match answer {
+            Answer::Once | Answer::Always => self.execute(request),
+            Answer::Deny => self.logged(&request, "denied", detail, None, None),
+            Answer::Expired => self.logged(&request, "expired", detail, None, None),
+        }
+    }
+    fn execute(&self, request: ApprovalRequest) {
+        if self.0.running.fetch_add(1, Ordering::SeqCst) >= 16 {
+            self.0.running.fetch_sub(1, Ordering::SeqCst);
+            self.logged(&request, "denied", "limits.exceeded".into(), None, None);
+            return;
+        }
+        let actions = self.clone();
+        std::thread::spawn(move || {
+            let spec = &request.spec;
+            let result = match spec.kind.as_str() {
+                "launch" => td_host::actions::launch(&spec.program, &spec.args, &spec.cwd)
+                    .map(|pid| ("started", Some(pid), None)),
+                "open" => td_host::actions::open(&spec.program).map(|()| ("opened", None, None)),
+                _ => {
+                    td_host::actions::run(&spec.command()).map(|exit| ("exited", None, exit.code()))
+                }
+            };
+            match result {
+                Ok((status, pid, exit)) => {
+                    actions.logged(&request, status, spec.program.clone(), pid, exit)
+                }
+                Err(e) => actions.logged(&request, "failed", e.to_string(), None, None),
+            }
+            actions.0.running.fetch_sub(1, Ordering::SeqCst);
+        });
+    }
+}
+pub use prompt::ScriptAnswer;
