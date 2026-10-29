@@ -230,6 +230,15 @@ function FirmwareRow({ device, name, settings, firmware }: PanelProps & { firmwa
           </details>
         </div>
       )}
+      {view.step === 'cancelled' && (
+        <div className="panel-status" role="status" data-testid="device-panel-firmware-stopped">
+          <p className="panel-status-text">{view.text}</p>
+          <details className="panel-details">
+            <summary>Details</summary>
+            <p>{log.join('\n')}</p>
+          </details>
+        </div>
+      )}
     </div>
   );
 }

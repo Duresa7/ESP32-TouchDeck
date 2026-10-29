@@ -144,6 +144,21 @@ test('an update that rolls back says so, and keeps the old version', async ({ pa
   await expect(page.getByTestId('device-panel-update')).toBeVisible();
 });
 
+test('a cancelled update says it stopped, keeps the old version, and offers Update again', async ({ page }) => {
+  await studio(page, async () => {
+    await page.evaluate(() => window.touchdeckDemo?.firmware.hold('mock0002'));
+  });
+  await page.getByTestId('device-panel-update').click();
+  await expect(page.getByTestId('device-panel-firmware-status')).toHaveText('Updating… 40%');
+  await page.evaluate(() => window.touchdeckDemo?.firmware.cancel('mock0002'));
+  const stopped = page.getByTestId('device-panel-firmware-stopped');
+  await expect(stopped.locator('.panel-status-text')).toHaveText('Update stopped. Studio still runs 1.4.0.');
+  await expect(page.getByTestId('device-panel-firmware-error')).toHaveCount(0);
+  await expect(page.getByTestId('device-panel-firmware')).toContainText('Firmware 1.4.0');
+  await expect(page.getByTestId('device-panel-update')).toBeVisible();
+  await page.evaluate(() => window.touchdeckDemo?.firmware.release('mock0002'));
+});
+
 test("a v1 Device's name and brightness say they need newer Firmware", async ({ page }) => {
   await openLayout(page);
   await page.evaluate(() => {

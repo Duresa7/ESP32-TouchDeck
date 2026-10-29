@@ -1,4 +1,4 @@
-import type { DeviceSummary, Layout, SystemInfo } from './api.ts';
+import type { DeviceSummary, FirmwareBuild, Layout, SystemInfo } from './api.ts';
 import { CLOSE_SESSION, type EventSocket } from './events.ts';
 import { createFakeActions } from './fake-actions.ts';
 import { createFakeConsole } from './fake-console.ts';
@@ -7,7 +7,6 @@ import { createFakeFirmware } from './fake-firmware.ts';
 import { createFakeLayouts } from './fake-layouts.ts';
 import { createFakeSessions, type FakeBrowser } from './fake-sessions.ts';
 import { createFakeStartup } from './fake-startup.ts';
-import type { FirmwareBuild } from './firmware-api.ts';
 import type { OpenTouchDeckBridge } from './session.ts';
 
 // An in-memory Companion for tests and the demo mode of `pnpm dev:ui`. It answers
