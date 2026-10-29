@@ -7,13 +7,11 @@ import { Toggle } from '@base-ui/react/toggle';
 import { ToggleGroup } from '@base-ui/react/toggle-group';
 import { ChevronDown } from 'lucide-react';
 import type { DeviceSummary, Orientation } from '../../companion/api.ts';
-import { useCompanion } from '../../companion/connection.ts';
-import { jobsStore } from '../../companion/jobs.ts';
 import { inProgress, type FirmwareUpdateStore } from '../../lib/device/firmware.ts';
 import { needsFirmwareField } from '../../lib/device/needs-firmware.ts';
 import type { DeviceSettingsStore } from '../../lib/device/settings.ts';
 import { button } from '../../shell/button.ts';
-import { deviceStoresFor, useOfferedFirmware } from './device.ts';
+import { useDeviceStores, useOfferedFirmware } from './device.ts';
 
 const ORIENTATIONS: { value: Orientation; label: string }[] = [
   { value: 'landscape', label: 'Landscape' },
@@ -264,23 +262,15 @@ function Notice({ settings }: { settings: DeviceSettingsStore }) {
 }
 
 function PanelBody({ device }: { device: DeviceSummary }) {
-  const companion = useCompanion();
-  const stores = deviceStoresFor(companion, device);
-  const { settings, firmware } = stores;
+  const { settings, firmware } = useDeviceStores(device);
   const name = device.name ?? 'Unnamed Device';
   const live = device.link.state === 'connected';
   const loaded = useStore(settings, (s) => s.load === 'ready');
   const restarting = useStore(settings, (s) => s.restart === 'restarting');
-  const job = device.link.state === 'updating' ? device.link.job : null;
 
-  useEffect(() => stores.observe(device), [stores, device]);
   useEffect(() => {
     if (live) void settings.load();
   }, [settings, live]);
-  useEffect(() => {
-    const known = job ? jobsStore.getState().jobs[job] : undefined;
-    if (known) firmware.attach(known);
-  }, [firmware, job]);
 
   const props: PanelProps = { device, name, settings, live, editable: live && loaded && !restarting };
   return (
