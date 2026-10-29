@@ -28,6 +28,7 @@ import {
   type Edit,
   type GridPage,
   type Layout,
+  type Page,
   type Tile,
 } from './validate.ts';
 
@@ -53,7 +54,11 @@ const small = (): Layout => ({
   ],
 });
 
-const grid = (layout: Layout, page: string) => layout.pages.find((p) => p.id === page) as GridPage;
+function gridPage(page: Page | undefined): GridPage {
+  if (page?.kind !== 'grid') throw new Error(`${page?.id} is not a grid page`);
+  return page;
+}
+const grid = (layout: Layout, page: string) => gridPage(layout.pages.find((p) => p.id === page));
 
 function ok(edit: Edit): Layout {
   assert.ok(edit.ok, edit.ok ? '' : edit.reason);
@@ -249,7 +254,7 @@ test('a page and a layout can be renamed within their limits', () => {
 test('a grid grows freely and shrinks only past empty cells', () => {
   const bigger = setGridSize(dev(), 'shortcuts', 4, 5);
   assert.ok(bigger.ok);
-  const page = bigger.layout.pages[0] as GridPage;
+  const page = gridPage(bigger.layout.pages[0]);
   assert.deepEqual([page.rows, page.cols], [4, 5]);
   const smaller = setGridSize(dev(), 'shortcuts', 2, 3);
   assert.ok(!smaller.ok);

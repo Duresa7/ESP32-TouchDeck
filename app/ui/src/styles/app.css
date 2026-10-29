@@ -305,11 +305,175 @@ button {
   background: var(--fill-active);
 }
 
-/* The Update icon's puck. #87 draws inside it. */
+/* The clip would cut a box-shadow, so the wrapper casts a drop-shadow */
 .update-slot {
   flex: none;
   display: flex;
   filter: var(--shadow-float-filter);
+}
+
+.update-button {
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-group);
+  background: var(--surface-raised);
+  color: var(--ink);
+  white-space: nowrap;
+  cursor: pointer;
+  clip-path: inset(0 calc(100% - 44px) 0 0 round var(--radius-group));
+  transition: clip-path var(--duration-collapse) var(--ease-out);
+}
+
+/* Open, the clip reaches past the edge far enough to show the focus ring */
+.update-slot.is-expanded .update-button {
+  clip-path: inset(
+    calc(-1 * (var(--focus-ring-width) + var(--focus-ring-offset)))
+      round calc(var(--radius-group) + var(--focus-ring-width) + var(--focus-ring-offset))
+  );
+  transition-duration: var(--duration-expand);
+}
+
+.update-icon {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  color: var(--ink-2);
+  transition: color var(--duration-hover) ease;
+}
+
+.update-slot.is-expanded .update-icon {
+  color: var(--ink);
+}
+
+.update-dot {
+  position: absolute;
+  top: 10px;
+  right: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--signal-led);
+  box-shadow: 0 0 0 2px var(--surface-raised);
+}
+
+.update-label {
+  padding-right: var(--space-4);
+  font-size: var(--text-14);
+  line-height: var(--leading-14);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity var(--duration-exit) var(--ease-out);
+}
+
+.update-slot.is-expanded .update-label {
+  opacity: 1;
+  transition: opacity var(--duration-label) var(--ease-out) var(--delay-label);
+}
+
+.update-slot.is-instant .update-button,
+.update-slot.is-instant .update-label {
+  transition-duration: 0ms;
+  transition-delay: 0ms;
+}
+
+.update-ring {
+  transform: rotate(-90deg);
+}
+
+.update-ring-track,
+.update-ring-fill {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.update-ring-track {
+  stroke: var(--line-strong);
+}
+
+.update-ring-fill {
+  stroke: var(--accent);
+  stroke-linecap: round;
+}
+
+.dialog-update {
+  width: 440px;
+}
+
+.update-text {
+  margin: var(--space-2) 0 0;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+.update-changes-heading {
+  margin: var(--space-5) 0 var(--space-2);
+  font-size: var(--text-14);
+  line-height: var(--leading-14);
+  font-weight: var(--weight-semibold);
+}
+
+.update-changes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-4) var(--space-4) var(--space-4) var(--space-8);
+  border-radius: var(--radius-group);
+  background: var(--surface-inset);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow-wrap: anywhere;
+}
+
+.update-changes li::marker {
+  color: var(--ink-2);
+}
+
+.update-changes-none {
+  padding-left: var(--space-4);
+  color: var(--ink-2);
+}
+
+.update-progress {
+  position: relative;
+  height: 6px;
+  margin-top: var(--space-5);
+  border-radius: var(--radius-chip);
+  background: var(--surface-inset);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+
+.update-progress span {
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  transform-origin: 0 50%;
+  transition: transform 120ms linear;
+}
+
+.update-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  margin: var(--space-2) 0 0;
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  font-variant-numeric: tabular-nums;
+}
+
+.update-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
 }
 
 /* ---------- Tooltip ---------- */

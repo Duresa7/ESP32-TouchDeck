@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { applyTheme } from './theme.ts';
 import { createUiStore } from './ui.ts';
 
-const html = () => ({ dataset: {} as DOMStringMap });
+const html = (): { dataset: DOMStringMap } => ({ dataset: {} });
 
 describe('theme selection', () => {
   test('Match Windows leaves no data-theme, so prefers-color-scheme decides', () => {
