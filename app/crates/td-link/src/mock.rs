@@ -212,7 +212,6 @@ impl MockDeck {
         self.state.lock().unwrap()
     }
 
-    /// Plugs a host into the deck. A later connect replaces the earlier one.
     /// Simulates the ROM flasher writing a validated bundle, preserving Layout storage.
     pub fn flash_bundle(&self, bundle: &crate::bundle::Bundle) {
         let mut state = self.state();
@@ -227,6 +226,7 @@ impl MockDeck {
     pub fn update_mode(&self, mode: &str) {
         self.state().update_mode = mode.into();
     }
+    /// Plugs a host into the deck. A later connect replaces the earlier one.
     pub fn connect(&self) -> MockTransport {
         {
             let mut state = self.state();

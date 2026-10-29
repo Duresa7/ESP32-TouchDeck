@@ -410,7 +410,14 @@ fn start<K: JobKind<Progress = FirmwareProgress, Result = FirmwareResult>>(
             job.progress(&FirmwareProgress {
                 phase: phase.into(),
                 pct,
-                bytes: pct.map_or(0, |p| bundle.app().len() * usize::from(p) / 100),
+                bytes: pct.map_or(0, |p| {
+                    let total = if recovery {
+                        bundle.images.iter().map(|image| image.data.len()).sum()
+                    } else {
+                        bundle.app().len()
+                    };
+                    total * usize::from(p) / 100
+                }),
             });
         };
         let mut connector = hold.connector();
@@ -492,3 +499,17 @@ fn feature() -> Feature {
         .job::<Install>()
 }
 inventory::submit! { Registration(feature) }
+
+#[cfg(test)]
+mod tests {
+    use super::same_or_newer;
+
+    #[test]
+    fn semantic_versions_require_consent_only_for_downgrades() {
+        assert!(same_or_newer("v2.0.0", "1.0.0"));
+        assert!(same_or_newer("1.0.0", "1.0.0"));
+        assert!(!same_or_newer("1.0.0", "2.0.0"));
+        assert!(!same_or_newer("1.0.0-rc.1", "1.0.0"));
+        assert!(!same_or_newer("unknown", "1.0.0"));
+    }
+}

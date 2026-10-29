@@ -22,7 +22,14 @@ impl Prompter for Prompt {
         self.seen.lock().unwrap().push(c.clone());
         let mut a = self.answer.lock().unwrap();
         while a.is_none() {
-            a = self.wake.wait(a).unwrap();
+            let (next, timeout) = self
+                .wake
+                .wait_timeout(a, std::time::Duration::from_secs(10))
+                .unwrap();
+            a = next;
+            if timeout.timed_out() {
+                return false;
+            }
         }
         a.take().unwrap()
     }
@@ -114,10 +121,12 @@ async fn update_reports_success_and_rollback() {
             .unwrap();
         let done = td.wait(&job).await;
         if rollback {
+            assert_eq!(done.state, JobState::Failed);
             assert_eq!(done.error.unwrap().code, "firmware.rolled_back");
         } else {
             assert_eq!(done.state, JobState::Succeeded, "{:?}", done.error);
-            assert!(done.result.is_some());
+            let result: FirmwareResult = serde_json::from_value(done.result.unwrap()).unwrap();
+            assert_eq!(result.version, "test-only");
         }
     }
 }
@@ -174,6 +183,16 @@ async fn new_board_install_requires_consent_and_needs_setup() {
     })
     .await;
     use futures_util::StreamExt;
+    let expected_bytes: usize = td_link::bundle::Bundle::parse(include_bytes!(
+        "../../td-link/tests/fixtures/touchdeck-test.tdfw"
+    ))
+    .unwrap()
+    .images
+    .iter()
+    .map(|image| image.data.len())
+    .sum();
+    let mut recovered = false;
+    let mut added = false;
     let mut removed = false;
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while let Some(Ok(message)) = events.next().await {
@@ -181,11 +200,24 @@ async fn new_board_install_requires_consent_and_needs_setup() {
                 continue;
             };
             let frame: serde_json::Value = serde_json::from_str(text).unwrap();
+            if frame["type"] == "job.updated"
+                && frame["data"]["id"] == job.id
+                && frame["data"]["progress"]["phase"] == "recovering"
+            {
+                assert_eq!(frame["data"]["progress"]["bytes"], expected_bytes);
+                recovered = true;
+            }
+            if frame["type"] == "new-board.added" {
+                assert_eq!(frame["data"]["id"], board.id.as_str());
+                added = true;
+            }
             if frame["type"] == "new-board.removed" {
+                assert!(added);
                 removed = true;
             }
             if frame["type"] == "device.added" {
                 assert!(removed);
+                assert!(recovered);
                 assert_eq!(frame["data"]["id"], board.id.as_str());
                 assert_eq!(frame["data"]["setup"], "needs-setup");
                 break;
@@ -357,7 +389,7 @@ async fn same_or_newer_bundle_needs_no_prompt_and_emits_progress() {
 async fn ending_or_revoking_lock_owner_allows_new_jobs() {
     use serde_json::{Value, json};
     for action in ["end", "revoke", "reset"] {
-        let td = TestCompanion::start().await;
+        let mut td = TestCompanion::start().await;
         let id = td.plug_device("mocka").await;
         let owner: Value = td
             .raw()
@@ -437,14 +469,15 @@ async fn ending_or_revoking_lock_owner_allows_new_jobs() {
                 .json()
                 .await
                 .unwrap();
-            let response = td
-                .raw()
-                .post("/api/v1/system/lock")
-                .bearer_auth(session["token"].as_str().unwrap())
-                .send()
+            td.token = session["token"].as_str().unwrap().to_owned();
+            let prompt = Arc::new(Prompt::default());
+            prompt.answer(false);
+            td.firmware_prompter(prompt);
+            let job = td
+                .call::<Repair>(FirmwareTarget { device: id }, NoQuery, request())
                 .await
                 .unwrap();
-            assert_eq!(response.status(), 200);
+            assert_eq!(td.wait(&job).await.error.unwrap().code, "firmware.declined");
         }
     }
 }
@@ -507,4 +540,307 @@ async fn browser_cannot_take_install_lock() {
         response.json::<serde_json::Value>().await.unwrap()["error"]["code"],
         "auth.forbidden"
     );
+}
+
+#[tokio::test]
+async fn new_board_decline_preserves_other_firmware() {
+    use td_companion::devices::BoardKind;
+    let td = TestCompanion::start().await;
+    let board = td.plug_board("newboard", BoardKind::OtherFirmware).await;
+    let prompt = Arc::new(Prompt::default());
+    td.firmware_prompter(prompt.clone());
+    let job = td
+        .call::<Install>(
+            FirmwareTarget {
+                device: board.id.clone(),
+            },
+            NoQuery,
+            request(),
+        )
+        .await
+        .unwrap();
+    td.until(|_| !prompt.seen.lock().unwrap().is_empty()).await;
+    let state: serde_json::Value = td
+        .raw()
+        .get(&format!("/api/v1/jobs/{}", job.id))
+        .bearer_auth(&td.token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(state["state"], "waiting_for_confirmation");
+    assert_eq!(td.deck("newboard").reboots(), 0);
+    {
+        let seen = prompt.seen.lock().unwrap();
+        assert_eq!(seen[0].target, board.id.as_str());
+        assert_eq!(seen[0].port, board.port);
+        assert_eq!(seen[0].current, "unknown");
+        assert_eq!(seen[0].version, "test-only");
+    }
+    prompt.answer(false);
+    let done = td.wait(&job).await;
+    assert_eq!(done.state, JobState::Failed);
+    assert_eq!(done.error.unwrap().code, "firmware.declined");
+    assert_eq!(td.deck("newboard").reboots(), 0);
+    assert!(td.device(&board.id).is_none());
+}
+
+#[tokio::test]
+async fn downgrade_waits_for_exact_consent_and_suppresses_every_device() {
+    use futures_util::{SinkExt, StreamExt};
+    struct VersionPrompt(Prompt);
+    impl Prompter for VersionPrompt {
+        fn pick(&self) -> Result<Option<Vec<u8>>, String> {
+            Ok(Some(include_bytes!("fixtures/firmware-v1.tdfw").to_vec()))
+        }
+        fn confirm(&self, c: &Confirmation) -> bool {
+            self.0.confirm(c)
+        }
+    }
+    for accept in [false, true] {
+        let td = TestCompanion::start().await;
+        let id = td.plug_device("mocka").await;
+        td.plug_device("mockb").await;
+        let mut current = td_link::bundle::Bundle::parse(include_bytes!(
+            "../../td-link/tests/fixtures/touchdeck-test-b.tdfw"
+        ))
+        .unwrap();
+        current.manifest.version = "2.0.0".into();
+        td.deck("mocka").flash_bundle(&current);
+        td.call::<td_companion::features::devices::Restart>(
+            td_companion::features::devices::DevicePath { device: id.clone() },
+            NoQuery,
+            (),
+        )
+        .await
+        .unwrap();
+        td.until(|td| {
+            td.device(&id).is_some_and(|d| {
+                matches!(d.link, td_companion::devices::LinkState::Connected { .. })
+                    && d.firmware.is_some_and(|f| f.version == "2.0.0")
+            })
+        })
+        .await;
+        let before = td.deck("mocka").reboots();
+        let prompt = Arc::new(VersionPrompt(Prompt::default()));
+        td.firmware_prompter(prompt.clone());
+        let selected = td
+            .call::<Pick>((), NoQuery, FirmwareTarget { device: id.clone() })
+            .await
+            .unwrap()
+            .bundle
+            .unwrap();
+        let mut events = td.events().await;
+        for device in ["mocka", "mockb"] {
+            events
+                .send(tokio_tungstenite::tungstenite::Message::text(
+                    serde_json::json!({"op":"subscribe", "topic":"key-mirror", "device":device})
+                        .to_string(),
+                ))
+                .await
+                .unwrap();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let job = td
+            .call::<Update>(
+                FirmwareTarget { device: id },
+                NoQuery,
+                FirmwareRequest {
+                    bundle: selected.id,
+                },
+            )
+            .await
+            .unwrap();
+        td.until(|_| !prompt.0.seen.lock().unwrap().is_empty())
+            .await;
+        {
+            let seen = prompt.0.seen.lock().unwrap();
+            assert_eq!(seen[0].target, "mocka");
+            assert_eq!(seen[0].current, "2.0.0");
+            assert_eq!(seen[0].version, "1.0.0");
+            assert_eq!(seen[0].build, selected.build);
+        }
+        assert_eq!(td.deck("mocka").reboots(), before);
+        assert!(
+            !td.deck("mocka")
+                .received()
+                .iter()
+                .any(|v| v["m"] == "update.begin")
+        );
+        for device in ["mocka", "mockb"] {
+            td.deck(device)
+                .emit_key(&serde_json::json!({"type":"kbd","mods":0,"keys":[4]}));
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut suppressed = std::collections::BTreeSet::new();
+            let mut waiting = false;
+            while let Some(Ok(message)) = events.next().await {
+                let Ok(text) = message.to_text() else {
+                    continue;
+                };
+                let frame: serde_json::Value = serde_json::from_str(text).unwrap();
+                if frame["type"] == "job.updated"
+                    && frame["data"]["id"] == job.id
+                    && frame["data"]["state"] == "waiting_for_confirmation"
+                {
+                    waiting = true;
+                }
+                if frame["type"] == "device.key-mirror" {
+                    assert_eq!(frame["data"]["outcome"], "suppressed");
+                    suppressed.insert(frame["data"]["device"].as_str().unwrap().to_owned());
+                }
+                if waiting && suppressed.len() == 2 {
+                    break;
+                }
+            }
+            assert!(waiting);
+            assert_eq!(suppressed.len(), 2);
+        })
+        .await
+        .unwrap();
+        assert!(td.input_log().is_empty());
+        prompt.0.answer(accept);
+        let done = td.wait(&job).await;
+        if accept {
+            assert_eq!(done.state, JobState::Succeeded);
+            assert!(td.deck("mocka").reboots() > before);
+        } else {
+            assert_eq!(done.error.unwrap().code, "firmware.declined");
+            assert_eq!(td.deck("mocka").reboots(), before);
+        }
+    }
+}
+
+#[tokio::test]
+async fn all_install_control_routes_require_a_window() {
+    let td = TestCompanion::start().await;
+    let browser = td.browser_token();
+    for (method, path) in [
+        (reqwest::Method::POST, "/api/v1/system/lock"),
+        (reqwest::Method::PUT, "/api/v1/system/lock/unknown"),
+        (reqwest::Method::DELETE, "/api/v1/system/lock/unknown"),
+        (reqwest::Method::POST, "/api/v1/system/shutdown"),
+    ] {
+        let response = td
+            .raw()
+            .request(method, path)
+            .bearer_auth(&browser)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 403);
+        assert_eq!(
+            response.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+            "auth.forbidden"
+        );
+    }
+    assert!(!td.shutdown_requested());
+}
+
+#[tokio::test]
+async fn active_firmware_job_blocks_install_lock() {
+    use td_companion::features::system::Lock;
+    let td = TestCompanion::start().await;
+    let id = td.plug_device("mocka").await;
+    let prompt = Arc::new(Prompt::default());
+    td.firmware_prompter(prompt.clone());
+    let job = td
+        .call::<Repair>(FirmwareTarget { device: id }, NoQuery, request())
+        .await
+        .unwrap();
+    td.until(|_| !prompt.seen.lock().unwrap().is_empty()).await;
+    let response = td.request::<Lock>((), NoQuery, &()).send().await.unwrap();
+    assert_eq!(response.status(), 409);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "system.busy"
+    );
+    prompt.answer(false);
+    td.wait(&job).await;
+    td.call::<Lock>((), NoQuery, ()).await.unwrap();
+}
+
+#[tokio::test]
+async fn expired_lease_allows_new_jobs() {
+    use td_companion::features::system::Lock;
+    let td = TestCompanion::start().await;
+    let _socket = td.events().await;
+    let id = td.plug_device("mocka").await;
+    td.call::<Lock>((), NoQuery, ()).await.unwrap();
+    td.clock().advance(std::time::Duration::from_secs(601));
+    let prompt = Arc::new(Prompt::default());
+    prompt.answer(false);
+    td.firmware_prompter(prompt);
+    let job = td
+        .call::<Repair>(FirmwareTarget { device: id }, NoQuery, request())
+        .await
+        .unwrap();
+    assert_eq!(td.wait(&job).await.error.unwrap().code, "firmware.declined");
+}
+
+#[tokio::test]
+async fn firmware_requests_cannot_supply_bytes_or_consent() {
+    let td = TestCompanion::start().await;
+    td.plug_device("mocka").await;
+    for extra in [
+        serde_json::json!({"bytes":[1,2,3]}),
+        serde_json::json!({"consent":true}),
+    ] {
+        let mut body = extra;
+        body["bundle"] = serde_json::json!("bundled");
+        let response = td
+            .raw()
+            .post("/api/v1/devices/mocka/firmware/update")
+            .bearer_auth(&td.token)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_client_error());
+    }
+    assert_eq!(td.deck("mocka").reboots(), 0);
+    assert!(
+        !td.deck("mocka")
+            .received()
+            .iter()
+            .any(|v| v["m"] == "update.begin")
+    );
+}
+
+#[tokio::test]
+async fn repair_waits_then_flashes_only_after_acceptance() {
+    let td = TestCompanion::start().await;
+    let id = td.plug_device("mocka").await;
+    let prompt = Arc::new(Prompt::default());
+    td.firmware_prompter(prompt.clone());
+    let job = td
+        .call::<Repair>(FirmwareTarget { device: id.clone() }, NoQuery, request())
+        .await
+        .unwrap();
+    td.until(|_| !prompt.seen.lock().unwrap().is_empty()).await;
+    let state: serde_json::Value = td
+        .raw()
+        .get(&format!("/api/v1/jobs/{}", job.id))
+        .bearer_auth(&td.token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(state["state"], "waiting_for_confirmation");
+    assert_eq!(td.deck("mocka").reboots(), 0);
+    prompt.answer(true);
+    let done = td.wait(&job).await;
+    assert_eq!(done.state, JobState::Succeeded);
+    let result: FirmwareResult = serde_json::from_value(done.result.unwrap()).unwrap();
+    assert_eq!(result.version, "test-only");
+    assert_eq!(td.deck("mocka").reboots(), 1);
+    td.until(|td| {
+        td.device(&id)
+            .is_some_and(|d| matches!(d.link, td_companion::devices::LinkState::Connected { .. }))
+    })
+    .await;
 }
