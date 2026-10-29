@@ -1,3 +1,4 @@
+pub mod asset;
 pub mod bundle;
 pub mod discover;
 pub mod mock;
@@ -9,6 +10,7 @@ pub mod xfer;
 use std::io::{self, Read, Write};
 use std::time::Duration;
 
+pub use asset::{AssetError, AssetFormat, AssetReason};
 pub use discover::{Candidate, Probe, discover, probe_transport};
 pub use mock::MockDeck;
 pub use session::{Incoming, LinkError, Session, SessionConfig, Transfer, XferFrame};

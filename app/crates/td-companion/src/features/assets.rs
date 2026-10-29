@@ -1,5 +1,3 @@
-//! Assets: the built-in icons, icons taken from programs, Asset files, and removing the Assets
-//! no stored Layout uses. Uploads and the Device's Asset list come with #93.
 use crate::{
     api::{ApiError, CommonError, Ctx, Endpoint, Feature, JobKind, NoQuery, Registration, Req},
     features::devices::DevicePath,
@@ -40,6 +38,8 @@ impl From<&icons::Builtin> for Builtin {
 pub enum AssetError {
     #[error("The Asset does not exist.")]
     NotFound,
+    #[error("The upload expired or never existed.")]
+    UploadNotFound,
     #[error("The image or icon couldn't be rendered: {0}")]
     RenderFailed(String),
     #[error(transparent)]
@@ -52,6 +52,7 @@ pub enum AssetError {
 impl ApiError for AssetError {
     const CODES: &'static [&'static str] = &[
         "asset.not_found",
+        "upload.not_found",
         "asset.render_failed",
         "device.not_found",
         "device.not_connected",
@@ -61,7 +62,7 @@ impl ApiError for AssetError {
     ];
     fn status(&self) -> StatusCode {
         match self {
-            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::NotFound | Self::UploadNotFound => StatusCode::NOT_FOUND,
             Self::RenderFailed(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Device(e) => e.status(),
             Self::Job(e) => e.status(),
@@ -71,6 +72,7 @@ impl ApiError for AssetError {
     fn code(&self) -> &'static str {
         match self {
             Self::NotFound => "asset.not_found",
+            Self::UploadNotFound => "upload.not_found",
             Self::RenderFailed(_) => "asset.render_failed",
             Self::Device(e) => e.code(),
             Self::Job(e) => e.code(),
@@ -191,7 +193,9 @@ impl Endpoint for File {
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum AssetSource {
     /// The icon of the program at `path`. Only its icon resource is read.
-    App { path: String },
+    App {
+        path: String,
+    },
     Catalog {
         catalog: String,
         id: String,
@@ -201,6 +205,9 @@ pub enum AssetSource {
         padding: u32,
         background: Option<[u8; 4]>,
         tint: Option<[u8; 3]>,
+    },
+    Upload {
+        upload: String,
     },
 }
 /// How an image that isn't square fills the Tile: whole inside it, or cropped to fill it.
@@ -252,17 +259,19 @@ impl Endpoint for Create {
     type Ok = Job;
     type Error = AssetError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
+        let owner = req.client().id.clone();
         let CreateAsset { source, fit } = req.body;
         let work = ctx.clone();
         Ok(ctx
             .jobs
             .start::<RenderJob>(JobScope::Companion, true, move |job| {
-                render(&work, source, fit.unwrap_or_default(), job)
+                render(&work, &owner, source, fit.unwrap_or_default(), job)
             })?)
     }
 }
 fn render(
     ctx: &Ctx,
+    owner: &str,
     source: AssetSource,
     fit: Fit,
     job: &JobHandle<RenderJob>,
@@ -302,6 +311,13 @@ fn render(
                 },
             )
             .map_err(|e| AssetError::RenderFailed(e.to_string()))?,
+        AssetSource::Upload { upload } => {
+            let bytes = ctx
+                .uploads
+                .take(owner, &upload, ctx.clock.now())
+                .ok_or(AssetError::UploadNotFound)?;
+            super::uploads::decode(&bytes)?
+        }
     };
     job.check()?;
     let image = match fit {
@@ -379,6 +395,7 @@ fn prune(
     let link = |e: XferError| Stop::from(DeviceLinkError::from_xfer(e));
     for layout in ctx.layouts.all(device) {
         keep.extend(icons::file_ids(&layout));
+        keep.extend(icons::asset_ids(&layout));
     }
     ctx.links.with(device, |session| {
         for orientation in [Orientation::Landscape, Orientation::Portrait] {
@@ -387,6 +404,7 @@ fn prune(
                 && let Ok(stored) = Layout::parse(&report.data)
             {
                 keep.extend(icons::file_ids(&stored));
+                keep.extend(icons::asset_ids(&stored));
             }
         }
         let unused: Vec<String> = xfer::list_icons(session)
@@ -407,6 +425,16 @@ fn prune(
             progress.removed += 1;
             job.progress(&progress);
         }
+        let (device_info, _) = ctx.links.connected(device)?;
+        if device_info.capabilities.is_some() {
+            for asset in td_link::asset::list_assets(session).map_err(asset_link)? {
+                if !keep.contains(&asset.id) {
+                    job.check()?;
+                    td_link::asset::delete_asset(session, &asset.id).map_err(asset_link)?;
+                    removed.push(asset.id);
+                }
+            }
+        }
         Ok(PruneResult { removed })
     })?
 }
@@ -414,6 +442,8 @@ fn prune(
 fn feature() -> Feature {
     Feature::new("assets")
         .endpoint::<CatalogSearch>()
+        .endpoint::<super::uploads::Upload>()
+        .endpoint::<OnDevice>()
         .endpoint::<BuiltinList>()
         .endpoint::<Suggest>()
         .endpoint::<File>()
@@ -474,4 +504,39 @@ impl Endpoint for CatalogSearch {
             attribution: if e.source == "selfhst" { "Icons by selfh.st (CC BY 4.0); resized, padded or tinted. Logos belong to their owners." } else { "Icons by Simple Icons; see individual license and brand guidelines. Logos belong to their owners." }.into(),
         }).collect()).await
     }
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct DeviceAssets {
+    pub ids: Vec<String>,
+    pub storage_free: u64,
+}
+pub struct OnDevice;
+impl Endpoint for OnDevice {
+    const NAME: &'static str = "assets.on_device";
+    const METHOD: Method = Method::GET;
+    const PATH: &'static str = "/devices/{device}/assets";
+    type Path = DevicePath;
+    type Query = NoQuery;
+    type Body = ();
+    type Ok = DeviceAssets;
+    type Error = AssetError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<DeviceAssets, AssetError> {
+        blocking(move || {
+            ctx.links.with(req.path.device.as_str(), |session| {
+                let ids = td_link::asset::list_assets(session)
+                    .map_err(asset_link)?
+                    .into_iter()
+                    .map(|a| a.id)
+                    .collect();
+                let storage_free = td_link::asset::asset_space(session)
+                    .map_err(asset_link)?
+                    .free_bytes;
+                Ok::<_, AssetError>(DeviceAssets { ids, storage_free })
+            })
+        })
+        .await??
+    }
+}
+pub(crate) fn asset_link(error: td_link::asset::AssetError) -> AssetError {
+    DeviceLinkError::Link(error.to_string()).into()
 }

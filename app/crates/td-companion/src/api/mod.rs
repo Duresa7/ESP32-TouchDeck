@@ -27,6 +27,7 @@ use ts_rs::TS;
 
 #[derive(Clone)]
 pub struct Ctx {
+    pub actions: crate::actions::Actions,
     pub devices: crate::devices::DeviceManager,
     pub events: Events,
     pub jobs: crate::jobs::Jobs,
@@ -34,6 +35,7 @@ pub struct Ctx {
     pub layouts: crate::store::LayoutStore,
     pub assets: crate::store::AssetStore,
     pub catalog: Arc<td_host::catalog::Catalog>,
+    pub(crate) uploads: crate::features::uploads::Uploads,
     auth: Arc<Mutex<Auth>>,
     pub(crate) clock: Clock,
     pub(crate) shutdown: tokio::sync::watch::Sender<bool>,
@@ -53,19 +55,31 @@ impl Ctx {
         runtime: Option<Arc<crate::runtime::Runtime>>,
         limits: crate::Limits,
         data: &std::path::Path,
+        grants: Arc<dyn crate::actions::GrantStore>,
     ) -> Self {
         let events = Events::default();
         let clock = Clock::default();
         let devices = crate::devices::DeviceManager::new(events.clone());
+        let links = crate::link::Links::new(devices.clone());
+        let actions = crate::actions::Actions::new(
+            events.clone(),
+            clock.clone(),
+            devices.clone(),
+            links.clone(),
+            grants,
+            mock,
+        );
         Self {
+            actions,
             jobs: crate::jobs::Jobs::new(events.clone(), clock.clone()),
-            links: crate::link::Links::new(devices.clone()),
+            links,
             layouts: crate::store::LayoutStore::new(data.join("layouts")),
             assets: crate::store::AssetStore::new(data.join("assets")),
             catalog: Arc::new(td_host::catalog::Catalog::new(
                 data.join("cache/catalog"),
                 Box::new(td_host::catalog::HttpFetcher),
             )),
+            uploads: Default::default(),
             devices,
             events,
             auth: Arc::new(Mutex::new(Auth::new())),
@@ -86,7 +100,10 @@ impl Ctx {
     }
     /// Forgets sessions that were revoked or have ended and hold no sockets.
     pub(crate) fn sweep_sessions(&self) -> usize {
-        self.auth.lock().sweep(self.clock.now())
+        let now = self.clock.now();
+        let mut auth = self.auth.lock();
+        self.uploads.sweep(now, |id| auth.active_at(id, now));
+        auth.sweep(now)
     }
     pub(crate) fn runtime_value(&self) -> serde_json::Value {
         serde_json::json!({
@@ -114,6 +131,25 @@ pub trait Endpoint: Sized + Send + Sync + 'static {
     const PATH: &'static str;
     const STATUS: StatusCode = StatusCode::OK;
     const BODY_LIMIT: usize = 1 << 20;
+    fn read_body(
+        ctx: &Ctx,
+        headers: &HeaderMap,
+        _client: Option<&ClientInfo>,
+        body: axum::body::Body,
+    ) -> impl Future<Output = Result<Self::Body, CommonError>> + Send {
+        async move {
+            let bytes =
+                tokio::time::timeout(ctx.limits.body_read, to_bytes(body, Self::BODY_LIMIT))
+                    .await
+                    .map_err(|_| CommonError::Timeout)?
+                    .map_err(|_| CommonError::TooLarge)?;
+            if !bytes.is_empty() && !is_json(headers) {
+                return Err(CommonError::MediaType);
+            }
+            serde_json::from_slice(if bytes.is_empty() { b"null" } else { &bytes })
+                .map_err(|e| CommonError::invalid("body", e))
+        }
+    }
     type Path: DeserializeOwned + Serialize + TS + Send + 'static;
     type Query: DeserializeOwned + Serialize + TS + Send + Default + 'static;
     type Body: RequestBody;
@@ -355,7 +391,7 @@ pub fn kernel_events() -> Vec<EventInfo> {
 }
 
 async fn dispatch<E: Endpoint>(State(ctx): State<Ctx>, request: Request) -> Response {
-    let result = async {
+    let result: Result<_, CommonError> = async {
         let (mut parts, body) = request.into_parts();
         let client = parts.extensions.remove::<ClientInfo>();
         let path = if !E::PATH.contains('{') {
@@ -370,15 +406,7 @@ async fn dispatch<E: Endpoint>(State(ctx): State<Ctx>, request: Request) -> Resp
         };
         let query = serde_urlencoded::from_str(parts.uri.query().unwrap_or(""))
             .map_err(|e| CommonError::invalid("query", e))?;
-        let bytes = tokio::time::timeout(ctx.limits.body_read, to_bytes(body, E::BODY_LIMIT))
-            .await
-            .map_err(|_| CommonError::Timeout)?
-            .map_err(|_| CommonError::TooLarge)?;
-        if !bytes.is_empty() && !is_json(&parts.headers) {
-            return Err(CommonError::MediaType);
-        }
-        let body = serde_json::from_slice(if bytes.is_empty() { b"null" } else { &bytes })
-            .map_err(|e| CommonError::invalid("body", e))?;
+        let body = E::read_body(&ctx, &parts.headers, client.as_ref(), body).await?;
         #[cfg(any(test, feature = "test-hooks"))]
         ctx.handler_hits
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -405,9 +433,22 @@ async fn dispatch<E: Endpoint>(State(ctx): State<Ctx>, request: Request) -> Resp
 
 /// Builds the router from the registry. Every request, routed or not, passes `guard` first.
 pub fn router(ctx: Ctx) -> Router {
+    build_router(ctx, registry())
+}
+/// The production route set, also exercised by tests built with test hooks.
+pub fn release_router(ctx: Ctx) -> Router {
+    build_router(
+        ctx,
+        registry()
+            .into_iter()
+            .filter(|f| f.name != "test")
+            .collect(),
+    )
+}
+fn build_router(ctx: Ctx, features: Vec<Feature>) -> Router {
     let mut router = Router::new();
     let mut access = HashMap::new();
-    for feature in registry() {
+    for feature in features {
         for e in &feature.endpoints {
             access.insert((e.method.clone(), format!("/api/v1{}", e.path)), e.access);
         }
@@ -461,6 +502,9 @@ fn admit(
         Method::POST | Method::PUT | Method::PATCH
     ) && h.contains_key("content-type")
         && !is_json(h)
+        && !(request.method() == Method::POST
+            && request.uri().path() == "/api/v1/uploads"
+            && header("content-type").is_some_and(|v| v.starts_with("image/")))
     {
         return Err(CommonError::MediaType);
     }
