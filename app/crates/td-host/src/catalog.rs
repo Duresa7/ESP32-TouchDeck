@@ -532,7 +532,8 @@ mod tests {
     }
     #[test]
     fn fits_both_orientations_and_all_grid_spans() {
-        // Geometry uses integer edges, a 16px gap and 28/76/60px margins.
+        // Match geometry.ts cell edges, including position-dependent integer rounding.
+        let mut sizes = std::collections::BTreeSet::new();
         for (screen_w, screen_h) in [(1024, 600), (600, 1024)] {
             for fullscreen in [false, true] {
                 let (w, h) = if fullscreen {
@@ -540,24 +541,34 @@ mod tests {
                 } else {
                     (screen_w - 56, screen_h - 136)
                 };
-                for cells in 1..=8 {
-                    for span in 1..=cells {
-                        let width = span * (w + 16) / cells - 16;
-                        let height = span * (h + 16) / cells - 16;
-                        let image = fit(
-                            SVG,
-                            true,
-                            Options {
-                                width,
-                                height,
-                                ..Default::default()
-                            },
-                        )
-                        .unwrap();
-                        assert_eq!(image.dimensions(), (width, height));
+                let edges = |length| {
+                    let mut lengths = std::collections::BTreeSet::new();
+                    for cells in 1..=8 {
+                        for start in 0..cells {
+                            for span in 1..=cells - start {
+                                lengths.insert(
+                                    (start + span) * (length + 16) / cells
+                                        - start * (length + 16) / cells - 16,
+                                );
+                            }
+                        }
+                    }
+                    lengths
+                };
+                for width in edges(w) {
+                    for height in edges(h) {
+                        sizes.insert((width, height));
                     }
                 }
             }
+        }
+        for (width, height) in sizes {
+            let image = fit(
+                SVG,
+                true,
+                Options { width, height, ..Default::default() },
+            ).unwrap();
+            assert_eq!(image.dimensions(), (width, height));
         }
     }
 }

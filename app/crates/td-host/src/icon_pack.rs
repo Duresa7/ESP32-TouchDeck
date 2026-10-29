@@ -117,7 +117,11 @@ pub fn fit_tile(
         (available_w as f64 / image.width() as f64).min(available_h as f64 / image.height() as f64);
     let w = ((image.width() as f64 * scale).round() as u32).clamp(1, available_w);
     let h = ((image.height() as f64 * scale).round() as u32).clamp(1, available_h);
-    let mut scaled = imageops::resize(image, w, h, FilterType::Lanczos3);
+    let mut scaled = if image.dimensions() == (w, h) {
+        image.clone()
+    } else {
+        imageops::resize(image, w, h, FilterType::Lanczos3)
+    };
     if let Some([r, g, b]) = tint {
         for pixel in scaled.pixels_mut() {
             pixel.0[..3].copy_from_slice(&[r, g, b]);
