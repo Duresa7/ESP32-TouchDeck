@@ -1,5 +1,5 @@
 import { createStore } from 'zustand/vanilla';
-import type { ErrorBody, FirmwareProgress, FirmwareRequest, FirmwareResult, Job } from '../../companion/api.ts';
+import type { ErrorBody, FirmwareProgress, FirmwareRequest, FirmwareResult, Job, PickResult } from '../../companion/api.ts';
 import type { Companion } from '../../companion/client.ts';
 import { toApiError } from '../../companion/errors.ts';
 import type { JobsStore } from '../../companion/jobs.ts';
@@ -74,6 +74,8 @@ export function failureText(error: { code: string; details: unknown }, { device,
       return "That file isn't a Firmware file for this Device.";
     case 'firmware.bundle_not_found':
       return 'That file expired. Choose it again, then retry.';
+    case 'system.dialog_open':
+      return 'A file dialog is already open on this PC. Close it, then retry.';
     case 'device.busy':
       return `${device} is updating. Wait for it to finish.`;
     case 'device.not_connected':
@@ -138,6 +140,8 @@ export interface FirmwareUpdateState {
   view: UpdateView;
   job: string | null;
   log: string[];
+  /** The PC's file dialog is open. */
+  picking: boolean;
 }
 
 export interface FirmwareJobDeps {
@@ -157,7 +161,7 @@ const finished = (job: Job) => job.state === 'succeeded' || job.state === 'faile
 
 export function createFirmwareJob(deps: FirmwareJobDeps) {
   const { companion, jobs, words = updateWords, pollMs = 1000 } = deps;
-  const store = createStore<FirmwareUpdateState>()(() => ({ view: { step: 'idle' }, job: null, log: [] }));
+  const store = createStore<FirmwareUpdateState>()(() => ({ view: { step: 'idle' }, job: null, log: [], picking: false }));
   const { getState: state, setState: set } = store;
   let stop = () => {};
   let started: UpdateContext = { device: 'the Device', version: '' };
@@ -228,8 +232,29 @@ export function createFirmwareJob(deps: FirmwareJobDeps) {
 
 export function createFirmwareUpdate(deps: FirmwareUpdateDeps) {
   const { companion } = deps;
-  return createFirmwareJob({ ...deps, run: (id, bundle) => companion.firmware.update({ device: id }, null, { bundle }) });
+  const update = createFirmwareJob({ ...deps, run: (id, bundle) => companion.firmware.update({ device: id }, null, { bundle }) });
+  const { getState: state, setState: set } = update;
+  return Object.assign(update, {
+    /** Has the Companion open a file dialog on this PC, then updates from the file chosen there. */
+    async startFromFile(): Promise<void> {
+      if (state().picking || inProgress(state().view)) return;
+      const { id, ...context } = deps.context();
+      set({ picking: true });
+      let picked: PickResult;
+      try {
+        picked = await companion.firmware.pick({}, null, { device: id });
+      } catch (thrown) {
+        const error = toApiError(thrown);
+        const raw = `Failed: ${error.message}`;
+        set({ view: { step: 'failed', text: failureText(error, context), raw, code: error.code }, job: null, log: [raw] });
+        return;
+      } finally {
+        set({ picking: false });
+      }
+      if (picked.bundle) await update.start(picked.bundle.id);
+    },
+  });
 }
 
 export type FirmwareJobStore = ReturnType<typeof createFirmwareJob>;
-export type FirmwareUpdateStore = FirmwareJobStore;
+export type FirmwareUpdateStore = ReturnType<typeof createFirmwareUpdate>;

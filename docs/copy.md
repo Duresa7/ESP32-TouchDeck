@@ -220,6 +220,7 @@ Opens from the Device's name.
 | Firmware declined, or consent not answered in 5 min | Declined on this PC. {device} still runs {version}. |
 | Firmware update cancelled | Update stopped. {device} still runs {version}. |
 | Firmware file expired | That file expired. Choose it again, then retry. |
+| Firmware file, a file dialog is already open | A file dialog is already open on this PC. Close it, then retry. |
 | Restart button | Restart |
 | Restart progress | Restarting… |
 | Restart failed | Couldn't restart {device}. Unplug it and plug it back in. |
@@ -265,6 +266,9 @@ Opens from the Device's name.
 | Paired browsers heading | Paired browsers |
 | Paired browsers, empty | No browsers paired. Choose Open in browser in the tray to pair one. |
 | Troubleshooting entry | Troubleshooting |
+| Troubleshooting, update from a file heading | Update from a file |
+| Troubleshooting, update from a file hint | A .tdfw file from an Open TouchDeck release. |
+| Troubleshooting, update from a file button | Choose file |
 | About entry | About |
 | About, version | Open TouchDeck {version} |
 | About, build | Build {sha} |

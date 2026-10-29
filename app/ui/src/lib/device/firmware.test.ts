@@ -3,6 +3,7 @@ import type { DeviceSummary, FirmwareProgress, Job } from '../../companion/api.t
 import { createClient, type Companion } from '../../companion/client.ts';
 import { ApiError } from '../../companion/errors.ts';
 import { createFakeCompanion, type FakeCompanion } from '../../companion/fake.ts';
+import type { FakePick } from '../../companion/fake-firmware.ts';
 import { createJobsStore, type JobsStore } from '../../companion/jobs.ts';
 import { sampleDevice } from '../../companion/samples.ts';
 import { windowSession } from '../../companion/session.ts';
@@ -248,7 +249,7 @@ describe('the update runner', () => {
     fake.firmware.release('mock0002');
     await vi.waitFor(() => expect(update.getState().view.step).toBe('done'));
     update.dismiss();
-    expect(update.getState()).toEqual({ view: { step: 'idle' }, job: null, log: [] });
+    expect(update.getState()).toEqual({ view: { step: 'idle' }, job: null, log: [], picking: false });
   });
 
   test('a consent that expires while waiting shows the declined sentence, and a cancel while waiting shows it stopped', () => {
@@ -279,6 +280,47 @@ describe('the update runner', () => {
     expect(device.firmware?.version).toBe('1.4.0');
     fake.firmware.release('mock0002');
     await update.start('bundled');
+    await vi.waitFor(() => expect(update.getState().view.step).toBe('done'));
+  });
+
+  test('a file chosen on this PC updates the Device to its version', async () => {
+    const update = runner();
+    await update.startFromFile();
+    expect(update.getState().picking).toBe(false);
+    await vi.waitFor(() => expect(update.getState().view.step).toBe('done'));
+    expect(update.getState().view).toMatchObject({ text: 'Updated to 1.5.0' });
+    expect((await companion.devices.get({ device: 'mock0002' })).firmware?.version).toBe('1.5.0');
+  });
+
+  test('closing the file dialog without a file changes nothing', async () => {
+    fake.firmware.picks('cancel');
+    const update = runner();
+    await update.startFromFile();
+    expect(update.getState()).toEqual({ view: { step: 'idle' }, job: null, log: [], picking: false });
+  });
+
+  test.each<[FakePick, string, string]>([
+    ['invalid', 'firmware.bundle_invalid', "That file isn't a Firmware file for this Device."],
+    ['open', 'system.dialog_open', 'A file dialog is already open on this PC. Close it, then retry.'],
+  ])('a pick answered %s fails with its sentence and keeps the reason for Details', async (answer, code, text) => {
+    fake.firmware.picks(answer);
+    const update = runner();
+    await update.startFromFile();
+    expect(update.getState().view).toMatchObject({ step: 'failed', code, text });
+    expect(update.getState().log).toHaveLength(1);
+    expect(update.getState().log[0]).toMatch(/^Failed: /);
+    expect((await companion.devices.get({ device: 'mock0002' })).firmware?.version).toBe('1.4.0');
+  });
+
+  test('the file dialog shows as picking until it closes, and a second choose waits for it', async () => {
+    const update = runner();
+    const pick = vi.spyOn(companion.firmware, 'pick');
+    const first = update.startFromFile();
+    expect(update.getState().picking).toBe(true);
+    await update.startFromFile();
+    await first;
+    expect(pick).toHaveBeenCalledTimes(1);
+    expect(update.getState().picking).toBe(false);
     await vi.waitFor(() => expect(update.getState().view.step).toBe('done'));
   });
 
