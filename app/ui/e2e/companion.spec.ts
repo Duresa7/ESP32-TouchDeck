@@ -3,11 +3,8 @@ import { expect, test, type APIRequestContext } from '@playwright/test';
 import type { Layout } from '../src/lib/editor/validate.ts';
 import { exportText, menu, openLayout, sorted, status, tile, waitEvent } from './layout-helpers.ts';
 
-// Runs with playwright.companion.config.ts, against `td-companion --mock-devices 3`.
-// One Companion serves every test, and a later test unplugs a Device, so they run in order.
 test.describe.configure({ mode: 'serial' });
 
-/** A window session from the dev server, as the page gets one, for driving the Companion. */
 async function companion(request: APIRequestContext) {
   const minted = await request.post('/__companion/session', { headers: { 'X-TouchDeck-Dev': '1' } });
   expect(minted.status()).toBe(200);
@@ -53,7 +50,6 @@ test('a Layout pushed to a Device shows on its miniature, and stays when it is u
   await page.goto('/');
   const card = page.getByRole('list', { name: 'Devices' }).getByRole('listitem').nth(1);
   await expect(card).toContainText('Connected');
-  // A mock Device starts with no stored Layout, so its screen is blank.
   await expect(card.locator('.device-scene')).not.toHaveAttribute('data-page');
   await page.evaluate(() => { (window as unknown as { notReloaded: boolean }).notReloaded = true; });
 
@@ -75,14 +71,12 @@ test('a Layout pushed to a Device shows on its miniature, and stays when it is u
 
 type Api = Awaited<ReturnType<typeof companion>>;
 
-/** What a mock Device stores, from the Companion's test hook. */
 async function stored(api: Api, device: string): Promise<Layout | null> {
   const record = await api('GET', `/test/devices/${device}/record`);
   expect(record.status()).toBe(200);
   return ((await record.json()) as { layouts: { landscape: Layout | null } }).layouts.landscape;
 }
 
-/** Another client sends `body` to the Device and its Job finishes, behind the editor's back. */
 async function pushElsewhere(api: Api, device: string, body: unknown) {
   const pushed = await api('PUT', `/devices/${device}/layouts/landscape`, body);
   expect(pushed.status()).toBe(202);
@@ -103,7 +97,6 @@ test('the Layout screen sends a Layout to a mock Device, and the Device shows it
   await expect(page.getByTestId('save-state')).toHaveAttribute('data-state', 'saved');
   const mine = JSON.parse(await exportText(page)) as Layout;
   expect(sorted((await stored(api, 'mock0001'))!)).toEqual(sorted(mine));
-  // Home's miniature reads it back from the Device.
   await page.getByRole('button', { name: 'Home', exact: true }).click();
   const card = page.getByRole('list', { name: 'Devices' }).getByRole('listitem').first();
   await expect(card.locator('.device-scene')).toHaveAttribute('data-page', 'media');

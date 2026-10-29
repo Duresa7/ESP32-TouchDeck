@@ -1,11 +1,7 @@
-// The editor's refusals and errors in plain words, from docs/copy.md: "Layout rule messages" and "Layout status
-// messages". The Layout rules speak in rule keys and JSON pointers, such as `overlaps quiet` or
-// `label.too-long: /pages/0/tiles/2/label ...`, which stay available as the detail.
 import { counts, type Layout } from './validate.ts';
 
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-/** "4 Pages, 13 Tiles" */
 export function describeLayout(layout: Layout): string {
   const { pages, tiles } = counts(layout);
   return `${plural(pages, 'Page')}, ${plural(tiles, 'Tile')}`;
@@ -28,7 +24,6 @@ const FIELDS: Record<string, string> = {
   field: 'Choose a value to show.',
 };
 
-/** A sentence for why a change was refused, from the rule's own reason. `device` names the Device. */
 export function friendlyRefusal(reason: string, layout?: Layout | null, device = 'the Device'): string {
   let match: RegExpExecArray | null;
   if ((match = /^overlaps (\S+)$/.exec(reason))) {
@@ -76,11 +71,9 @@ export function friendlyRefusal(reason: string, layout?: Layout | null, device =
   }
 }
 
-/** A sentence for a Layout file that couldn't be opened. */
 export function friendlyFileError(file: string, key: string): string {
   if (key === 'file.json' || key === 'file.utf8') return `“${file}” isn't a Layout file. Nothing changed.`;
   return `“${file}” breaks a Layout rule. Nothing changed. See Details.`;
 }
 
-/** The fix for a Device that didn't take a Layout. */
 export const PLUG_IN = "Check that it's plugged in, then retry.";

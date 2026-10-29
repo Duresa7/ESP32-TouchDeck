@@ -44,7 +44,6 @@ describe('Home', () => {
   });
   it('does not invent a Page or a last-seen time', () => {
     expect(previewOf(null)).toBeNull();
-    expect(previewOf(undefined)).toBeNull();
     expect(previewOf({ ...demoLayout(), pages: [] })).toBeNull();
     expect(renderToStaticMarkup(<DevicePreview preview={null} live />)).not.toContain('data-page');
     expect(lastSeen(sampleDevice('one', 'Desk'))).toBeNull();

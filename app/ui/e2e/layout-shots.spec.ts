@@ -1,8 +1,6 @@
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 
-// The Layout screen's review screenshots at 1180 x 760, light and dark: an action Tile selected, Add Tile open, and
-// the empty state. They're written only when TD_SHOTS names a folder: TD_SHOTS=<folder> pnpm e2e:ui layout-shots
 const folder = process.env.TD_SHOTS;
 
 async function openLayout(page: Page) {
