@@ -18,5 +18,5 @@ export function devEnvironment(target: Window): Environment {
     },
     onSessionChanged: () => {},
   };
-  return { base: target.location.origin, session: windowSession(bridge), open: openWebSocket };
+  return { base: target.location.origin, session: windowSession(bridge), open: openWebSocket, updates: target.openTouchDeck?.updates };
 }
