@@ -115,6 +115,11 @@ Shown the first time a Device with Open TouchDeck Firmware connects to this PC w
 | All | Title | Set up your Device |
 | All | Step counter | Step {n} of {total} |
 | All | Buttons | Back, Next |
+| All | Close button label | Close |
+| Name, Orientation | Next, while saving | Saving… |
+| Orientation | Next, while {device} restarts | Restarting… |
+| Starting Layout | Next, while reading the Layout on the Device | Loading… |
+| Starting Layout | Next, while sending the Layout | Sending… |
 | Name | Heading | Name this Device |
 | Name | Field label | Name |
 | Name | Placeholder | Desk |
@@ -154,6 +159,8 @@ Shown the first time a Device with Open TouchDeck Firmware connects to this PC w
 | Confirm warning | Installing replaces everything on the board, including any other project on it. This can't be undone. |
 | Confirm buttons | Install Firmware, Cancel |
 | Progress | Installing Firmware… {pct}% |
+| Progress, before a percentage | Installing Firmware… |
+| Declined on this PC | Declined on this PC. Nothing changed on the board. |
 | Progress hint | Keep the board plugged in. This takes about a minute. |
 | Success | Firmware installed |
 | Success body | Next, name your Device. |
