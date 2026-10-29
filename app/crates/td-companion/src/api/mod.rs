@@ -28,6 +28,7 @@ use ts_rs::TS;
 #[derive(Clone)]
 pub struct Ctx {
     pub actions: crate::actions::Actions,
+    pub(crate) desktop: Arc<crate::tray::Desktop>,
     pub devices: crate::devices::DeviceManager,
     pub firmware: crate::features::firmware::Firmware,
     pub events: Events,
@@ -75,10 +76,11 @@ impl Ctx {
         Self {
             actions,
             firmware: crate::features::firmware::Firmware::new(mock),
+            desktop: Arc::new(crate::tray::Desktop::new(mock)),
             jobs: crate::jobs::Jobs::new(
                 events.clone(),
                 clock.clone(),
-                Arc::new(move |id| lease_auth.lock().live(id, lease_clock.now())),
+                Arc::new(move |id| lease_auth.lock().active(id, lease_clock.now())),
             ),
             links,
             layouts: crate::store::LayoutStore::new(data.join("layouts")),
@@ -98,6 +100,14 @@ impl Ctx {
             handler_hits: Default::default(),
         }
     }
+    #[cfg(windows)]
+    pub(crate) async fn pair_browser(&self) -> Result<(), CommonError> {
+        auth::pair_code(self.clone()).await.map(|_| ())
+    }
+    #[cfg(windows)]
+    pub(crate) async fn reset_pairing(&self) -> Result<(), CommonError> {
+        auth::reset(self.clone()).await
+    }
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn pairing_token(&self) -> String {
         self.auth.lock().pairing().to_owned()
@@ -107,11 +117,15 @@ impl Ctx {
         self.auth.lock().browser_token(self.clock.now())
     }
     /// Forgets sessions that were revoked or have ended and hold no sockets.
-    pub(crate) fn sweep_sessions(&self) -> usize {
+    pub(crate) fn sweep_sessions(&self) {
         let now = self.clock.now();
         let mut auth = self.auth.lock();
-        self.uploads.sweep(now, |id| auth.active_at(id, now));
-        auth.sweep(now)
+        self.uploads.sweep(now, |id| auth.active(id, now));
+        let ended_with_sockets = auth.sweep(now);
+        drop(auth);
+        if ended_with_sockets {
+            self.events.notify();
+        }
     }
     pub(crate) fn runtime_value(&self) -> serde_json::Value {
         serde_json::json!({

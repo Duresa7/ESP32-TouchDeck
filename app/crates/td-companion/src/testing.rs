@@ -30,31 +30,35 @@ impl TestCompanion {
     }
     /// Starts with other connection and time limits, so limit tests run in milliseconds.
     pub async fn start_with(limits: crate::Limits) -> Self {
-        Self::start_router(limits, false, None).await
+        Self::start_router(limits, false, None, None).await
     }
     pub async fn start_release_router() -> Self {
-        Self::start_router(crate::Limits::default(), true, None).await
+        Self::start_router(crate::Limits::default(), true, None, None).await
     }
     /// Starts with grants kept in `grants` instead of a file.
     pub async fn start_with_grants(grants: Arc<dyn GrantStore>) -> Self {
-        Self::start_router(crate::Limits::default(), false, Some(grants)).await
+        Self::start_router(crate::Limits::default(), false, Some(grants), None).await
     }
     async fn start_router(
         limits: crate::Limits,
         release: bool,
         grants: Option<Arc<dyn GrantStore>>,
+        desktop: Option<Arc<crate::tray::Desktop>>,
     ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let data = tempfile::tempdir().unwrap();
         let path = data.path().to_owned();
-        let ctx = tokio::task::spawn_blocking(move || {
+        let mut ctx = tokio::task::spawn_blocking(move || {
             let grants = grants
                 .unwrap_or_else(|| Arc::new(FileGrants::new(path.join("allowed-actions.json"))));
             Ctx::new(port, true, None, limits, &path, grants)
         })
         .await
         .unwrap();
+        if let Some(desktop) = desktop {
+            ctx.desktop = desktop;
+        }
         let config = Config::mock(Some(data.path().join("devices.json")));
         let (ports, input) = config.mock.clone().unwrap();
         ctx.devices.start(config);
@@ -91,6 +95,15 @@ impl TestCompanion {
             url,
             client,
         }
+    }
+    pub async fn restart(&mut self) {
+        let desktop = self.ctx.desktop.clone();
+        assert!(self.stop(Duration::from_secs(5)).await);
+        *self = Self::start_router(crate::Limits::default(), false, None, Some(desktop)).await;
+    }
+    pub fn pairing_delivery(&self) -> (Option<String>, Option<String>) {
+        let (opener, notifier) = self.ctx.desktop.captures.as_ref().unwrap();
+        (opener.0.lock().take(), notifier.0.lock().take())
     }
     /// Plugs in a mock Device with v2 Firmware under this USB serial and waits until it's
     /// connected.

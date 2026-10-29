@@ -62,6 +62,7 @@ fn test_registry_is_consistent() {
     assert_eq!(
         open,
         [
+            ("auth.pair", Access::Public),
             ("auth.proof", Access::Public),
             ("auth.session_create", Access::Pairing),
             ("system.ping", Access::Public),

@@ -166,7 +166,7 @@ The user starts pairing from **Open in browser** in the tray or in the window. T
 
 1. It opens `http://127.0.0.1:PORT/pair#code=XXXX-XXXX-XXXX` in the default browser. The code is in the fragment, which browsers never send to a server or in a `Referer`.
 2. It shows the code for typing by hand only in a native tray notification. The window never displays or copies the code or link. Pairing codes never appear in API responses; `POST /auth/pair-codes` returns only `{expires_ms}` after the Companion opens the default browser itself.
-3. If a browser drops the fragment when the link is opened, the Companion opens `/pair?code=…` instead. The query form is allowed because the code is single-use, lasts 120 s and never leaves loopback. The page removes it with `history.replaceState(null, '', '/pair')` before doing anything else.
+3. The Companion always opens the fragment form. It can't tell whether a browser dropped the fragment, so it never retries with another link; the code in the tray notification is the fallback. The `/pair` page also accepts `/pair?code=…`. The query form is allowed because the code is single-use, lasts 120 s and never leaves loopback. The page removes the fragment and the query with `history.replaceState(null, '', '/pair')` before it connects or renders anything.
 
 The `/pair` page says "Pair this browser again after the Companion restarts." It reads the code from the fragment, the query, or a text field where the user types it. Input ignores case, spaces and dashes, and reads `O` as `0` and `I` or `L` as `1`. The page sends `POST /api/v1/auth/pair` with `{code, label}`, where `label` comes from the user agent (for example "Edge on Windows"), and receives `{id, token}`. It stores the token in `localStorage` as `touchdeck.session`, then goes to `/`.
 
@@ -963,3 +963,30 @@ Never add a public route, a CORS header, a route that answers approvals, or a ro
 | With Fast User Switching, two Companions try to open the same COM ports | **Reduced** in #74. A COM port opens exclusively, so the Companion that holds a Device keeps it; the other user's Companion shows it `busy` and retries with backoff up to every 10 s, taking it over only once the first lets go. Each user has their own runtime folder, file, lock and port, so the two Companions never share a pairing token |
 | A browser tab can't show the app update icon, because updates live in Electron | **Open.** The browser shows nothing for now |
 | The key monitor's `focus_window` may need to come back | **Open.** If so, one preload call, through security review |
+
+### Tray and startup implementation decisions (#79)
+
+The Companion owns the Windows tray on a dedicated message-loop thread. Open starts
+`Open TouchDeck.exe` beside the Companion. Development may point Open elsewhere with
+`TOUCHDECK_WINDOW_BIN`; a Companion started with `--packaged` ignores it.
+Electron's single-instance handler focuses an existing window. Closing that window
+revokes its session and leaves the detached Companion running.
+
+Electron passes `--packaged` only for installed builds. The first packaged start
+registers the current Companion executable with `--packaged` in the per-user Run
+value `Open TouchDeck`, then writes a non-secret `startup-initialized` marker.
+Later starts respect the registry, including an absent value after disabling startup.
+Development and mock starts never enable startup automatically.
+
+| Name | Method | Path | Request | Response | Access |
+|---|---|---|---|---|---|
+| `system.startup_get` | GET | `/system/startup` | — | `{at_sign_in: bool}` | Any session |
+| `system.startup_put` | PUT | `/system/startup` | `{at_sign_in: bool}` | `{at_sign_in: bool}` | Any session |
+
+The Windows shell receives the fragment URL directly. The Companion can't detect a
+dropped fragment, so it never retries with the query form; the code in the tray
+notification is the fallback, as How a browser pairs says. Pairing rejection uses the
+contract's combined wrong-or-expired message because both share `auth.code_invalid`.
+Mock runs capture native delivery in memory. Only test-hook builds register
+`test.pairing_delivery`, which requires a window session and consumes the captures;
+its types appear only in `api.test.gen.ts`.

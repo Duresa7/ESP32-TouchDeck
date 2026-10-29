@@ -9,7 +9,9 @@ pub mod link;
 mod process;
 mod runtime;
 mod serve;
+pub mod startup;
 pub mod store;
+pub mod tray;
 pub use serve::Limits;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod testing;
