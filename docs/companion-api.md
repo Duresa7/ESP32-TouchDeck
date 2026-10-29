@@ -342,7 +342,9 @@ pub enum BoardProbe { Silent, Busy { detail: String }, OtherFirmware { product: 
 `{ product: string, running_from: string, sinks: string[], current_layout: string }`,
 from `hello.product`, `hello.running`, `hello.sinks` and `hello.layout`. `current_layout`
 is the Firmware's Layout id, separate from the Layout JSON in `DeviceSummary.layout`.
-Changes increment `rev` and publish `device.updated`.
+Changes increment `rev` and publish `device.updated`. These strings, and the Firmware's
+`version` and `build`, are the Device's own and untrusted. The API returns them as sent,
+and clients show control, format and line or paragraph separator characters as escapes.
 
 ### Rules for several Devices
 

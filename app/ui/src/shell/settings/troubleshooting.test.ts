@@ -27,6 +27,21 @@ describe('Troubleshooting', () => {
     expect(factsOf(device).every((f) => f.value === null)).toBe(true);
   });
 
+  test('control, bidi and separator characters a Device sends show as escapes', () => {
+    const device = sampleDevice('a0b1', 'Desk', connected);
+    device.firmware = { ...device.firmware!, build: 'ab\u0007cd', version: '1.4.0‏' };
+    device.diagnostics = { product: 'touch\u0000deck', running_from: 'ota_0‮evil', sinks: ['log\n', 'li nk'], current_layout: 'a\u001B[31mb' };
+    const shown = Object.fromEntries(factsOf(device).map((fact) => [fact.key, fact.value]));
+    expect(shown).toMatchObject({
+      product: 'touch\\u{0000}deck',
+      elf_sha256: 'ab\\u{0007}cd',
+      version: '1.4.0\\u{200F}',
+      running: 'ota_0\\u{202E}evil',
+      sinks: 'log\\u{000A}, li\\u{2028}nk',
+      layout: 'a\\u{001B}[31mb',
+    });
+  });
+
   test('empty hello values remain known rather than becoming Unknown', () => {
     const device = sampleDevice('a0b1', 'Desk', connected);
     device.diagnostics = { product: '', running_from: '', sinks: [], current_layout: '' };

@@ -1,4 +1,5 @@
 import type { DeviceSummary } from '../../companion/api.ts';
+import { escapeInvisible } from '../../lib/editor/actions.ts';
 
 export interface Fact {
   key: 'product' | 'proto' | 'elf_sha256' | 'version' | 'running' | 'sinks' | 'recovery' | 'layout';
@@ -10,17 +11,19 @@ export const nameOf = (device: DeviceSummary) => device.name ?? 'Unnamed Device'
 
 const yesNo = (value: boolean) => (value ? 'Yes' : 'No');
 
+const shown = (value: string | null) => value && escapeInvisible(value);
+
 export function factsOf(device: DeviceSummary): Fact[] {
   const { firmware, diagnostics } = device;
   return [
-    { key: 'product', label: 'Product', value: diagnostics && diagnostics.product },
+    { key: 'product', label: 'Product', value: shown(diagnostics && diagnostics.product) },
     { key: 'proto', label: 'Protocol', value: firmware && String(firmware.protocol) },
-    { key: 'elf_sha256', label: 'Firmware build', value: firmware && firmware.build },
-    { key: 'version', label: 'Firmware version', value: firmware && firmware.version },
-    { key: 'running', label: 'Running from', value: diagnostics && diagnostics.running_from },
-    { key: 'sinks', label: 'Sends keys through', value: diagnostics && diagnostics.sinks.join(', ') },
+    { key: 'elf_sha256', label: 'Firmware build', value: shown(firmware && firmware.build) },
+    { key: 'version', label: 'Firmware version', value: shown(firmware && firmware.version) },
+    { key: 'running', label: 'Running from', value: shown(diagnostics && diagnostics.running_from) },
+    { key: 'sinks', label: 'Sends keys through', value: diagnostics && diagnostics.sinks.map(escapeInvisible).join(', ') },
     { key: 'recovery', label: 'Safe mode', value: firmware && yesNo(firmware.recovery) },
-    { key: 'layout', label: 'Current Layout', value: diagnostics && diagnostics.current_layout },
+    { key: 'layout', label: 'Current Layout', value: shown(diagnostics && diagnostics.current_layout) },
   ];
 }
 
