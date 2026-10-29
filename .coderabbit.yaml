@@ -1,0 +1,66 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+
+reviews:
+  profile: chill
+  high_level_summary: true
+  collapse_walkthrough: true
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  related_prs: false
+  suggested_labels: false
+  suggested_reviewers: false
+  in_progress_fortune: false
+  poem: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+
+  pre_merge_checks:
+    # The project keeps comments for the why only, so docstring coverage isn't a goal.
+    docstrings:
+      mode: "off"
+    title:
+      mode: warning
+      requirements: >-
+        Conventional Commits: `type: description` or `type(scope): description`,
+        lowercase and imperative, with no trailing period. Mark breaking changes with `!`.
+
+  path_filters:
+    - "!app/ui/src/companion/api.gen.ts"
+    - "!app/ui/src/companion/api.test.gen.ts"
+    - "!**/pnpm-lock.yaml"
+    - "!**/Cargo.lock"
+    - "!firmware/components/ui/fonts/**"
+    - "!app/src/assets/fonts/**"
+
+  path_instructions:
+    - path: "app/ui/**"
+      instructions: >-
+        Check user-facing strings against docs/copy.md and terms against GLOSSARY.md.
+        Colors, spacing and overlay layers come from the tokens in tokens.css; flag raw colors.
+    - path: "app/crates/**"
+      instructions: >-
+        The Companion API is documented in docs/companion-api.md; flag behavior that drifts from it.
+        Treat Device data, uploads and hub responses as untrusted input.
+    - path: "firmware/**"
+      instructions: >-
+        Firmware runs on an ESP32-S3 with LVGL. Watch for unbounded allocation, blocking calls
+        on the UI task, and wire behavior that drifts from schema/protocol/link-v2.md.
+    - path: "schema/**"
+      instructions: >-
+        The protocol and Layout schema are shared by the Rust Companion, the TypeScript UI and the
+        C Firmware; a change here usually needs matching changes on every side.
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "GLOSSARY.md"
+      - "docs/copy.md"
+      - "docs/design.md"
+      - "docs/adr/*.md"
+
+chat:
+  art: false
