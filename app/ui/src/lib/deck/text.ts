@@ -217,9 +217,7 @@ export function textSize(text: number[], f: Font, maxWidth: number, flags: Flags
 export const codepoints = (text: string) => Array.from(text, (c) => c.codePointAt(0)!);
 
 export interface Line {
-  /** Where the line starts, from the label's left edge. */
   x: number;
-  /** The line's top, from the label's top edge. */
   y: number;
   letters: { letter: number; x: number; width: number; placeholder: boolean }[];
 }

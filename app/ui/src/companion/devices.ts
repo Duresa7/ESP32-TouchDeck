@@ -2,23 +2,16 @@ import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
 import type { DeviceSummary, Job } from './api.ts';
 
-/** How the event stream stands: no answer yet, live, retrying, or this browser needs to pair. */
 export type StreamStatus = 'connecting' | 'live' | 'reconnecting' | 'unpaired';
 
 export interface DevicesState {
   status: StreamStatus;
-  /** Every known Device, in the order the Companion listed them. */
   devices: DeviceSummary[];
-  /** The id of the last `layouts.push` Job that succeeded on each Device, so views of its Layout know to read it again. */
   layoutPushes: Record<string, string>;
   setStatus(status: StreamStatus): void;
-  /** `sync`: the Companion's snapshot replaces whatever the client had. */
   sync(devices: DeviceSummary[], jobs?: Job[]): void;
-  /** `device.added` and `device.updated`: a full object, ignored unless its `rev` is newer. */
   upsert(device: DeviceSummary): void;
-  /** `device.removed` */
   remove(id: string): void;
-  /** `job.updated` */
   job(job: Job): void;
 }
 

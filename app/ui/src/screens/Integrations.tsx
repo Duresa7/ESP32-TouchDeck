@@ -1,4 +1,3 @@
-/** The Integrations screen's place. #86 lists the Integrations. */
 export function Integrations() {
   return (
     <main className="screen">

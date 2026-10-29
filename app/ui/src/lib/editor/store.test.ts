@@ -9,7 +9,7 @@ import { sampleDevice } from '../../companion/samples.ts';
 import { windowSession } from '../../companion/session.ts';
 import { draftKey, type DraftStorage } from './drafts.ts';
 import { createEditorStore, saveState, type EditorDeps, type EditorStore } from './store.ts';
-import { canonical, starterLayout, type GridPage, type Layout } from './validate.ts';
+import { canonical, starterLayout, type GridPage, type Layout, type Page } from './validate.ts';
 
 const BASE = 'http://127.0.0.1:51234';
 const DESK = { id: 'mock0001', name: 'Desk' };
@@ -36,7 +36,11 @@ function editor(overrides: Partial<EditorDeps> = {}): EditorStore {
 
 const state = (store: EditorStore) => store.getState();
 const draft = (store: EditorStore) => state(store).drafts[state(store).orientation]!.layout;
-const page = (store: EditorStore) => draft(store).pages.find((p) => p.id === state(store).page) as GridPage;
+function gridPage(page: Page | undefined): GridPage {
+  if (page?.kind !== 'grid') throw new Error(`${page?.id} is not a grid page`);
+  return page;
+}
+const page = (store: EditorStore) => gridPage(draft(store).pages.find((p) => p.id === state(store).page));
 const tile = (store: EditorStore, id: string) => page(store).tiles.find((t) => t.id === id)!;
 
 beforeEach(() => {
@@ -381,7 +385,7 @@ describe('send and load', () => {
     const store = editor({ companion: { ...companion, assets: { ...companion.assets, prune } } });
     store.open(DESK);
     const layout = starterLayout('landscape');
-    (layout.pages[0] as GridPage).tiles[0].icon = 'file:0123456789abcdef';
+    gridPage(layout.pages[0]).tiles[0].icon = 'file:0123456789abcdef';
     store.importText(JSON.stringify(layout), 'icons.json');
     await store.pruneAssets();
     expect(prune).toHaveBeenCalledWith({ device: 'mock0001' }, null, { also_keep: ['0123456789abcdef'] });

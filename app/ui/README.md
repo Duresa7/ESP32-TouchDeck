@@ -9,7 +9,7 @@ Run these from `app/`:
 | Command | What it does |
 | --- | --- |
 | `pnpm dev:ui` | The UI on `http://127.0.0.1:5174/`, against the Companion running on this PC. Start the Companion first, for example with `cargo run -p td-companion --features test-hooks -- --mock-devices 1`. |
-| `pnpm dev:ui:demo` | The UI against a fake Companion with three demo Devices. No Companion needed. |
+| `pnpm dev:ui:demo` | The UI against a fake Companion with three demo Devices. No Companion needed. Add `?update=available` for an app update to offer; `none`, `no-notes`, `disabled`, `offline` and `failed` give the updater's other answers. |
 | `pnpm build:ui` | The production build in `ui/dist`, which the Companion embeds. |
 | `pnpm test:ui` | Vitest. `pnpm test` runs it too. |
 | `pnpm e2e:ui` | Playwright against `dev:ui:demo`. |

@@ -1,8 +1,6 @@
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 
-// Review screenshots at 1180 x 760, light and dark. They're written only when
-// TD_SHOTS names a folder: TD_SHOTS=<folder> pnpm e2e screens
 const folder = process.env.TD_SHOTS;
 
 for (const theme of ['light', 'dark'] as const) {

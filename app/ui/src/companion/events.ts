@@ -1,9 +1,8 @@
-import type { DeviceSummary, Job, SyncData } from './api.ts';
+import type { DeviceRemoved, DeviceSummary, Job, SyncData } from './api.ts';
 import type { DevicesStore } from './devices.ts';
 import type { JobsStore } from './jobs.ts';
 import type { Session } from './session.ts';
 
-// The part of a WebSocket the event stream uses, so the fake Companion's socket can stand in.
 export interface EventSocket {
   onmessage: ((event: { data: unknown }) => void) | null;
   onclose: ((event: { code: number }) => void) | null;
@@ -20,22 +19,17 @@ export const openWebSocket: OpenSocket = (url, protocols) => {
   return socket;
 };
 
-// Close codes from docs/companion-api.md, "WebSocket auth".
 export const CLOSE_SESSION = 4401;
 export const CLOSE_TOO_SLOW = 4008;
 
-// Waits between reconnects. A clean `sync` resets them.
 const RETRY_MS = [250, 500, 1000, 2000, 5000];
 
 export interface EventsOptions {
-  /** `ws://127.0.0.1:PORT/api/v1/events` */
   url: string;
   session: Session;
   store: DevicesStore;
-  /** Where `job.updated` and the `jobs` key of `sync` go. */
   jobs?: JobsStore;
   open?: OpenSocket;
-  /** A reconnect met a Companion with a different build, so the page should reload. */
   onNewBuild?: () => void;
   retryMs?: readonly number[];
 }
@@ -44,23 +38,27 @@ export interface Events {
   close(): void;
 }
 
-type Frame = { type?: unknown; build?: unknown; data?: unknown };
+type Frame =
+  | { type: 'hello'; build?: unknown }
+  | { type: 'sync'; data: Partial<SyncData> }
+  | { type: 'device.added' | 'device.updated'; data: DeviceSummary }
+  | { type: 'device.removed'; data: DeviceRemoved }
+  | { type: 'job.updated'; data: Job };
+
+const HANDLED: ReadonlySet<unknown> = new Set<Frame['type']>(['hello', 'sync', 'device.added', 'device.updated', 'device.removed', 'job.updated']);
 
 function parse(data: unknown): Frame | null {
   if (typeof data !== 'string') return null;
+  let frame: unknown;
   try {
-    const frame: unknown = JSON.parse(data);
-    return typeof frame === 'object' && frame !== null ? (frame as Frame) : null;
+    frame = JSON.parse(data);
   } catch {
     return null;
   }
+  if (typeof frame !== 'object' || frame === null || !('type' in frame) || !HANDLED.has(frame.type)) return null;
+  return frame as Frame;
 }
 
-/**
- * Follows the Companion's event stream: `hello`, then a `sync` snapshot that
- * replaces the store, then full-object deltas. Reconnects until closed, and
- * asks the session for a new token after close 4401.
- */
 export function openEvents(options: EventsOptions): Events {
   const { url, session, store, jobs, open = openWebSocket, onNewBuild, retryMs = RETRY_MS } = options;
   let socket: EventSocket | null = null;
@@ -79,21 +77,24 @@ export function openEvents(options: EventsOptions): Events {
         break;
       case 'sync':
         failures = 0;
-        store.getState().sync((frame.data as SyncData).devices ?? [], (frame.data as SyncData).jobs ?? []);
-        jobs?.getState().sync((frame.data as SyncData).jobs ?? []);
+        store.getState().sync(frame.data.devices ?? [], frame.data.jobs ?? []);
+        jobs?.getState().sync(frame.data.jobs ?? []);
         break;
       case 'device.added':
       case 'device.updated':
-        store.getState().upsert(frame.data as DeviceSummary);
+        store.getState().upsert(frame.data);
         break;
       case 'device.removed':
-        store.getState().remove((frame.data as { id: string }).id);
+        store.getState().remove(frame.data.id);
         break;
       case 'job.updated':
-        store.getState().job(frame.data as Job);
-        jobs?.getState().upsert(frame.data as Job);
+        store.getState().job(frame.data);
+        jobs?.getState().upsert(frame.data);
         break;
-      // Clients ignore event types they don't know.
+      default: {
+        const _exhaustive: never = frame;
+        void _exhaustive;
+      }
     }
   }
 
@@ -134,7 +135,6 @@ export function openEvents(options: EventsOptions): Events {
   }
 
   async function reconnect(code: number, token: string) {
-    // A new session or a fresh `sync` after 4008 is worth one immediate try.
     const immediate = failures === 0 && (code === CLOSE_SESSION || code === CLOSE_TOO_SLOW);
     if (code === CLOSE_SESSION) {
       let fresh: string | null;
