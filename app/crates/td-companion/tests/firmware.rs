@@ -246,6 +246,7 @@ async fn install_lock_is_owner_bound_and_expires() {
     let td = TestCompanion::start().await;
     let _socket = td.events().await;
     let lock = td.call::<Lock>((), NoQuery, ()).await.unwrap();
+    assert!(lock.lock.starts_with("lock_"), "{}", lock.lock);
     let other: serde_json::Value = reqwest::Client::new()
         .post(format!("{}/api/v1/auth/sessions", td.url))
         .bearer_auth(&td.pairing_token)
@@ -502,7 +503,7 @@ async fn overlapping_file_pickers_are_rejected() {
         fn pick(&self) -> Result<Option<Vec<u8>>, String> {
             self.0.confirm(
                 &Confirmation {
-                    operation: "pick".into(),
+                    question: "pick".into(),
                     target: String::new(),
                     name: String::new(),
                     port: String::new(),
@@ -593,6 +594,10 @@ async fn new_board_decline_preserves_other_firmware() {
         assert_eq!(seen[0].port, board.port);
         assert_eq!(seen[0].current, "unknown");
         assert_eq!(seen[0].version, "test-only");
+        assert_eq!(
+            seen[0].text().lines().next(),
+            Some("Install Firmware on this New board?")
+        );
     }
     prompt.answer(false);
     let done = td.wait(&job).await;
@@ -675,6 +680,10 @@ async fn downgrade_waits_for_exact_consent_and_suppresses_every_device() {
             assert_eq!(seen[0].target, "mocka");
             assert_eq!(seen[0].current, "2.0.0");
             assert_eq!(seen[0].version, "1.0.0");
+            assert_eq!(
+                seen[0].text().lines().next(),
+                Some("Downgrade this Device's Firmware?")
+            );
             assert_eq!(seen[0].build, selected.build);
         }
         assert_eq!(td.deck("mocka").reboots(), before);
@@ -847,6 +856,10 @@ async fn repair_waits_then_flashes_only_after_acceptance() {
         .unwrap();
     assert_eq!(state["state"], "waiting_for_confirmation");
     assert_eq!(td.deck("mocka").reboots(), 0);
+    assert_eq!(
+        prompt.seen.lock().unwrap()[0].text().lines().next(),
+        Some("Repair this Device's Firmware?")
+    );
     prompt.answer(true);
     let done = td.wait(&job).await;
     assert_eq!(done.state, JobState::Succeeded);
@@ -1111,4 +1124,21 @@ async fn an_answer_after_cancel_writes_nothing() {
     let done = ended_quickly(&td, &job).await;
     assert_eq!(done.state, JobState::Cancelled);
     released_without_writes(&td, &id).await;
+}
+
+#[tokio::test]
+async fn installing_on_an_unknown_new_board_is_new_board_not_found() {
+    let td = TestCompanion::start().await;
+    let known = td.plug_device("mocka").await;
+    td.unplug("mocka").await;
+    let response = td
+        .request::<Install>(FirmwareTarget { device: known }, NoQuery, &request())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "new_board.not_found"
+    );
 }

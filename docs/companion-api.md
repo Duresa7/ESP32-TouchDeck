@@ -129,6 +129,7 @@ These initial limits are reversible; changing them requires updating this contra
 | Socket queues | 1024 frames or 4 MiB per socket, whichever comes first; overflow follows Backpressure |
 | Pending approvals | 16 across the Companion, including the displayed request; deny and log new requests above the cap |
 | Firmware consent dialog | 5 minutes, then the Job fails with `firmware.declined` |
+| Picked Firmware bundles | 16 across the Companion, each kept 10 minutes; a pick above the cap gets 429 `limits.exceeded` |
 | `approvals.show` | At most once every 5 s per request, shared across sessions |
 
 Size and decode limits return 413 `request.too_large` (or that code in a render Job's error if decoding has begun). Count, aggregate capacity and rate limits return 429 `limits.exceeded`; Device-originated approvals above the cap are denied and logged with that code. Checks reserve capacity atomically before allocating work and release it on failure or completion. Device event floods must not starve Layout Jobs.
@@ -240,7 +241,7 @@ A session can install only two kinds of Firmware bundle: the one bundled with th
 - `POST /firmware/bundles/pick` takes `{device}` (the Device or New board id) and opens the dialog on the PC, filtered to `*.tdfw`. It returns `{bundle: BundleInfo | null}`, where `null` means the user cancelled. The Companion parses and checks the file with `Bundle::parse` and keeps it for 10 minutes under a single-use `BundleId` bound to that Device. A different target cannot use it; accepting a Job consumes it, even if the user later declines.
 - A second pick while a dialog is open gets 409 `system.dialog_open`.
 - Firmware routes take `{bundle: "bundled" | BundleId}`.
-- `firmware.install` on a New board, every `firmware.repair`, and a `firmware.update` to an older version wait for a native PC confirmation dialog owned by the Companion. It names the exact target, its port, what it runs now if known, and the bundle version. Consent is bound to that target and bundle; no API request can grant it. Until consent, no write starts and the Job state is `waiting_for_confirmation`. Declining fails the Job with `firmware.declined`.
+- `firmware.install` on a New board, every `firmware.repair`, and a `firmware.update` to an older version wait for a native PC confirmation dialog owned by the Companion. It asks in plain words (install on this New board, repair this Device, or downgrade this Device) and names the exact target, its port, what it runs now if known, and the bundle version, each quoted with control, format and separator characters escaped. Consent is bound to that target and bundle; no API request can grant it. Until consent, no write starts and the Job state is `waiting_for_confirmation`. Declining fails the Job with `firmware.declined`.
 - A consent dialog nobody answers closes after 5 minutes, as an approval does, and fails the Job with `firmware.declined`. Cancelling the Job while the dialog waits closes the dialog and ends the Job as `cancelled` at once; an answer that lands after the cancel or the deadline is ignored. Either way nothing is written, the Device leaves `updating`, Device input is no longer suppressed and the install lock can be taken again.
 - Updating to the bundled build when it is the same or newer needs no confirmation and stays one click.
 
@@ -422,7 +423,7 @@ pub struct Job {
 
 | Kind | Progress | Result | Cancellable |
 |---|---|---|---|
-| `firmware.update`, `firmware.repair`, `firmware.install` | `{phase: "checking" \| "sending" \| "rebooting" \| "confirming" \| "recovering", pct?}` | `{message, version}` | While waiting for confirmation; during `checking` or `sending` only when the image goes to the inactive OTA slot |
+| `firmware.update`, `firmware.repair`, `firmware.install` | `{phase: "checking" \| "sending" \| "rebooting" \| "confirming" \| "recovering", pct?, bytes}`, where `bytes` is how many bytes the phase has written so far, `0` when it has no `pct` | `{message, version}` | While waiting for confirmation; during `checking` or `sending` only when the image goes to the inactive OTA slot |
 | `layouts.push` | `{assets_sent, assets_total, bytes_sent, bytes_total}` | `PushReport {state, bytes, chunks, retransmits, elapsed_ms, assets: {sent, unavailable}}` | Before the Layout put starts |
 | `assets.render` | `{frames_done, frames_total}` | `AssetRef {id, kind, width, height, bytes}` | Yes |
 | `assets.prune` | `{removed, total}` | `{removed: AssetId[]}` | Yes |
@@ -511,7 +512,7 @@ Feature module `firmware`.
 | `firmware.pick` | `POST /firmware/bundles/pick` | `{device}` → `{bundle: BundleInfo {id, version, build, bytes} \| null}`. Opens a native file dialog on the PC; single-use, target-bound, expires after 10 minutes |
 | `firmware.update` | `POST /devices/{device}/firmware/update` | `{bundle: "bundled" \| BundleId}` → 202 Job `firmware.update` |
 | `firmware.repair` | `POST /devices/{device}/firmware/repair` | `{bundle}` → 202 Job `firmware.repair`, through the ROM bootloader |
-| `firmware.install` | `POST /new-boards/{device}/install` | `{bundle}` → 202 Job `firmware.install`. Waits for native PC confirmation |
+| `firmware.install` | `POST /new-boards/{device}/install` | `{bundle}` → 202 Job `firmware.install`. Waits for native PC confirmation. 404 `new_board.not_found` when no New board has that id |
 
 While a Firmware Job holds a Device, its `link.state` is `updating`.
 
@@ -575,12 +576,12 @@ Feature module `system`.
 |---|---|---|
 | `system.ping` | `GET /system/ping` | → `{api: ["v1"]}`. Public |
 | `system.get` | `GET /system` | → `{version, build, api: "v1", mock, data_dir_override}` |
-| `system.lock` | `POST /system/lock` | → `{lock}`. Window sessions only; owner-bound 10-minute lease. 409 `system.busy` while any Job is active or another session holds the lock. Once held, new Jobs fail with 503 `companion.installing` |
+| `system.lock` | `POST /system/lock` | → `{lock}`, where `lock` is `lock_` and 16 random characters. Window sessions only; owner-bound 10-minute lease. 409 `system.busy` while any Job is active or another session holds the lock. Once held, new Jobs fail with 503 `companion.installing` |
 | `system.lock_renew` | `PUT /system/lock/{lock}` | → `()`. Owner window session only; renews the lease for 10 minutes |
 | `system.unlock` | `DELETE /system/lock/{lock}` | → `()`. Owner window session only |
 | `system.shutdown` | `POST /system/shutdown` | → `()`, then `companion.stopping`. Window sessions only |
 
-App updates aren't API routes. They stay in Electron's preload as `openTouchDeck.updates.check()`, `download(onProgress)` and `install()` (ADR 0005). The lock is released when its owner session ends or is revoked (including Reset pairing), or its lease lapses. Browser sessions and non-owner sessions get 403 `auth.forbidden` on lock operations. Before installing, Electron takes `system.lock`, renews it with `system.lock_renew` while needed, then stops the Companion with `system.shutdown` and runs the installer.
+App updates aren't API routes. They stay in Electron's preload as `openTouchDeck.updates.check()`, `download(onProgress)` and `install()` (ADR 0005). The lock is released when its owner session ends or is revoked (including Reset pairing), or its lease lapses. Browser sessions and non-owner sessions get 403 `auth.forbidden` on lock operations. So does renewing or releasing a lock whose lease has lapsed, since nobody owns it any more; take a new one with `system.lock`. Before installing, Electron takes `system.lock`, renews it with `system.lock_renew` while needed, then stops the Companion with `system.shutdown` and runs the installer.
 
 ### Auth
 

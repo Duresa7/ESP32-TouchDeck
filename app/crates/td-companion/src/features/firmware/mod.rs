@@ -26,7 +26,7 @@ use ts_rs::TS;
 const CONSENT_WAIT: Duration = Duration::from_secs(300);
 #[derive(Clone, Debug)]
 pub struct Confirmation {
-    pub operation: String,
+    pub question: String,
     pub target: String,
     pub name: String,
     pub port: String,
@@ -37,8 +37,8 @@ pub struct Confirmation {
 impl Confirmation {
     pub fn text(&self) -> String {
         format!(
-            "{} Firmware?\nTarget: {} ({})\nPort: {}\nCurrent: {}\nBundle: {}\nBuild: {}",
-            self.operation,
+            "{}\nTarget: {} ({})\nPort: {}\nCurrent: {}\nBundle: {}\nBuild: {}",
+            self.question,
             shown(&self.name),
             shown(&self.target),
             shown(&self.port),
@@ -131,6 +131,8 @@ pub enum FirmwareError {
     DialogOpen,
     #[error("Firmware confirmation was declined.")]
     Declined,
+    #[error("No New board with that id.")]
+    NewBoardNotFound,
     #[error("Firmware failed: {0}")]
     Failed(String),
     #[error(transparent)]
@@ -144,6 +146,7 @@ impl ApiError for FirmwareError {
     const CODES: &'static [&'static str] = &[
         "firmware.bundle_invalid",
         "firmware.bundle_not_found",
+        "new_board.not_found",
         "system.dialog_open",
         "firmware.declined",
         "firmware.failed",
@@ -153,7 +156,7 @@ impl ApiError for FirmwareError {
     fn status(&self) -> StatusCode {
         match self {
             Self::Invalid => StatusCode::UNPROCESSABLE_ENTITY,
-            Self::Missing => StatusCode::NOT_FOUND,
+            Self::Missing | Self::NewBoardNotFound => StatusCode::NOT_FOUND,
             Self::Common(e) => e.status(),
             Self::Job(e) => e.status(),
             Self::Device(e) => e.status(),
@@ -164,6 +167,7 @@ impl ApiError for FirmwareError {
         match self {
             Self::Invalid => "firmware.bundle_invalid",
             Self::Missing => "firmware.bundle_not_found",
+            Self::NewBoardNotFound => "new_board.not_found",
             Self::DialogOpen => "system.dialog_open",
             Self::Declined => "firmware.declined",
             Self::Failed(s) if s == "rolled back" => "firmware.rolled_back",
@@ -320,7 +324,11 @@ fn target(
         .into_iter()
         .find(|b| &b.id == id)
         .map(|b| (id.to_string(), b.port, "unknown".into()))
-        .ok_or(crate::link::DeviceLinkError::NotFound.into())
+        .ok_or(if install {
+            FirmwareError::NewBoardNotFound
+        } else {
+            crate::link::DeviceLinkError::NotFound.into()
+        })
 }
 macro_rules! operation {
     ($name:ident, $kind:literal, $path:literal) => {
@@ -382,8 +390,17 @@ fn start<K: JobKind<Progress = FirmwareProgress, Result = FirmwareResult>>(
             .clone()
     };
     let consent = recovery || !same_or_newer(&bundle.manifest.version, &current);
+    let question = if install {
+        "Install Firmware on this New board?"
+    } else if recovery {
+        "Repair this Device's Firmware?"
+    } else if older(&bundle.manifest.version, &current) {
+        "Downgrade this Device's Firmware?"
+    } else {
+        "Replace this Device's Firmware with a version that may be older?"
+    };
     let confirmation = Confirmation {
-        operation: K::NAME.into(),
+        question: question.into(),
         target: id.to_string(),
         name,
         port,
@@ -500,17 +517,17 @@ fn start<K: JobKind<Progress = FirmwareProgress, Result = FirmwareResult>>(
     }
     Ok(job)
 }
+fn versions(next: &str, current: &str) -> Option<(semver::Version, semver::Version)> {
+    Some((
+        semver::Version::parse(next.trim_start_matches('v')).ok()?,
+        semver::Version::parse(current.trim_start_matches('v')).ok()?,
+    ))
+}
 fn same_or_newer(next: &str, current: &str) -> bool {
-    if next == current {
-        return true;
-    }
-    match (
-        semver::Version::parse(next.trim_start_matches('v')),
-        semver::Version::parse(current.trim_start_matches('v')),
-    ) {
-        (Ok(n), Ok(c)) => n >= c,
-        _ => false,
-    }
+    next == current || versions(next, current).is_some_and(|(n, c)| n >= c)
+}
+fn older(next: &str, current: &str) -> bool {
+    versions(next, current).is_some_and(|(n, c)| n < c)
 }
 fn feature() -> Feature {
     Feature::new("firmware")
@@ -527,7 +544,7 @@ inventory::submit! { Registration(feature) }
 
 #[cfg(test)]
 mod tests {
-    use super::same_or_newer;
+    use super::{older, same_or_newer};
 
     #[test]
     fn semantic_versions_require_consent_only_for_downgrades() {
@@ -536,5 +553,14 @@ mod tests {
         assert!(!same_or_newer("1.0.0", "2.0.0"));
         assert!(!same_or_newer("1.0.0-rc.1", "1.0.0"));
         assert!(!same_or_newer("unknown", "1.0.0"));
+    }
+
+    #[test]
+    fn only_ordered_lower_versions_read_as_downgrades() {
+        assert!(older("1.0.0", "v2.0.0"));
+        assert!(older("1.0.0-rc.1", "1.0.0"));
+        assert!(!older("2.0.0", "1.0.0"));
+        assert!(!older("1.0.0", "1.0.0"));
+        assert!(!older("unknown", "1.0.0"));
     }
 }

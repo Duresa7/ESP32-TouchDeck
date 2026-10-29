@@ -214,7 +214,7 @@ impl Jobs {
         if !table.active.is_empty() || table.lease.is_some() {
             return Err(CommonError::SystemBusy);
         }
-        let id = new_id();
+        let id = new_id("lock");
         table.lease = Some(InstallLease {
             id: id.clone(),
             owner: owner.into(),
@@ -314,7 +314,7 @@ impl Jobs {
                 return Err(JobError::Busy(Box::new(e.job.clone())));
             }
             let job = Job {
-                id: new_id(),
+                id: new_id("job"),
                 kind: K::NAME.into(),
                 scope,
                 state: JobState::Queued,
@@ -450,8 +450,8 @@ impl<K: JobKind> JobHandle<K> {
     }
 }
 
-/// `job_` and 16 random lowercase letters and digits.
-fn new_id() -> String {
+/// `prefix`, `_` and 16 random lowercase letters and digits.
+fn new_id(prefix: &str) -> String {
     const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).expect("the OS random source works");
@@ -459,5 +459,5 @@ fn new_id() -> String {
         .iter()
         .map(|b| ALPHABET[usize::from(*b) % ALPHABET.len()] as char)
         .collect();
-    format!("job_{tail}")
+    format!("{prefix}_{tail}")
 }
