@@ -1,4 +1,3 @@
-//! The Integration API. All vault, disk and HTTP work runs off the async executor.
 use crate::api::{
     ApiError, CommonError, Ctx, Endpoint, Event, Events, Feature, NoQuery, Registration, Req,
 };
@@ -60,7 +59,6 @@ impl Service {
         self.1.lock().unwrap().clone()
     }
 }
-// The mock environment never reaches a network or the OS credential store.
 struct FakeFetch;
 impl td_host::sources::Fetch for FakeFetch {
     fn get(&self, _: &str, _: &str) -> Result<String, String> {
@@ -230,7 +228,6 @@ impl Endpoint for SecretPut {
         work(ctx, move |r| {
             r.get(&req.path.integration)?
                 .secret_put(&req.path.field, &req.body.value)?;
-            // A constant hint also protects very short secrets from being echoed in full.
             Ok(SecretHint { hint: "Set".into() })
         })
         .await
