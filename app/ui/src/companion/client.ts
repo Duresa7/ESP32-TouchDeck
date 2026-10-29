@@ -9,10 +9,6 @@ function createRoutes(base: string, token: () => string) {
 
 export type Companion = ReturnType<typeof createRoutes>;
 
-/**
- * Sends one Companion call with the session loaded. Every failure becomes an
- * ApiError. A 401 asks the session for a new token and retries once.
- */
 export async function request<T>(session: Session, send: () => Promise<T>): Promise<T> {
   let token: string | null;
   try {
@@ -35,19 +31,17 @@ export async function request<T>(session: Session, send: () => Promise<T>): Prom
   }
 }
 
-// Wraps every `companion.<feature>.<action>()` in `request`, keeping its type.
 function guard<T extends object>(api: T, session: Session): T {
   const guarded: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(api)) {
-    guarded[key] =
-      typeof value === 'function'
-        ? (...args: unknown[]) => request(session, () => (value as (...a: unknown[]) => Promise<unknown>)(...args))
-        : guard(value as object, session);
+    const member: unknown = value;
+    if (typeof member === 'function') guarded[key] = (...args: unknown[]) => request(session, async (): Promise<unknown> => member(...args));
+    else if (typeof member === 'object' && member !== null) guarded[key] = guard(member, session);
+    else guarded[key] = member;
   }
   return guarded as T;
 }
 
-/** The typed Companion client: `companion.devices.list()`, `companion.system.get()`. */
 export function createClient(base: string, session: Session): Companion {
   return guard(
     createRoutes(base, () => session.current() ?? ''),

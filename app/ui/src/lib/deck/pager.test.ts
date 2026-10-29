@@ -8,7 +8,7 @@ test('a press that stays inside the slop is a tap', () => {
   const p = make();
   press(p, 100, 100);
   assert.equal(move(p, 116, 84).press, 'tap');
-  assert.equal(release(p), true);
+  assert.equal(release(p), 'tap');
 });
 
 test('a sideways drag swipes to the next page the moment it reaches the swipe distance', () => {
@@ -16,9 +16,9 @@ test('a sideways drag swipes to the next page the moment it reaches the swipe di
   press(p, 500, 300);
   assert.equal(move(p, 480, 300).press, 'drag');
   const m = move(p, 404, 300);
-  assert.deepEqual(m, { press: 'swiped', from: 0, to: 1, changed: true, blocked: 0 });
+  assert.deepEqual(m, { press: 'swiped', from: 0, to: 1, changed: true, bounce: null });
   assert.equal(move(p, 100, 300).changed, false, 'the rest of the press does nothing');
-  assert.equal(release(p), false);
+  assert.equal(release(p), 'swiped');
   assert.equal(restX(p), -1024);
 });
 
@@ -27,16 +27,16 @@ test('an up or down drag never swipes and never taps', () => {
   press(p, 500, 300);
   assert.equal(move(p, 500, 340).press, 'moved');
   assert.equal(move(p, 300, 340).changed, false);
-  assert.equal(release(p), false);
+  assert.equal(release(p), 'moved');
 });
 
 test('a swipe past either end bounces the way the finger went', () => {
   const p = make(2);
   press(p, 500, 300);
-  assert.equal(move(p, 600, 300).blocked, 1);
+  assert.equal(move(p, 600, 300).bounce, 'right');
   goTo(p, 1);
   press(p, 500, 300);
-  assert.equal(move(p, 400, 300).blocked, -1);
+  assert.equal(move(p, 400, 300).bounce, 'left');
 });
 
 test('the title names the page nearest the middle, and the slide eases out like LVGL', () => {

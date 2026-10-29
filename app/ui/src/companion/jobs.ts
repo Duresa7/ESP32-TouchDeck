@@ -3,11 +3,9 @@ import type { Job, JobMap } from './api.ts';
 import type { Companion } from './client.ts';
 import { ApiError, toApiError } from './errors.ts';
 
-/** The Jobs the event stream has reported: the `jobs` key of `sync`, then `job.updated`. */
 export interface JobsState {
   jobs: Record<string, Job>;
   sync(jobs: Job[]): void;
-  /** A full Job, ignored unless its `rev` is newer. */
   upsert(job: Job): void;
 }
 
@@ -36,11 +34,6 @@ function outcome<K extends keyof JobMap>(job: Job): JobMap[K]['result'] {
   throw new ApiError(job.state === 'cancelled' ? 'job.cancelled' : 'internal', `The Job ended as ${job.state}.`);
 }
 
-/**
- * Waits for a Job to finish and gives its typed result, or throws its error as an
- * ApiError. It follows `job.updated` through the store, and reads `GET /jobs/{id}`
- * every `pollMs` in case an event was missed while the stream reconnected.
- */
 export function waitForJob<K extends keyof JobMap>(
   store: JobsStore,
   companion: Pick<Companion, 'jobs'>,

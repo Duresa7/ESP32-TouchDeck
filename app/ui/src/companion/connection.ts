@@ -7,7 +7,6 @@ import { jobsStore, type JobsStore } from './jobs.ts';
 import { pickSession, type Session } from './session.ts';
 import type { UpdatesBridge } from '../state/updates.ts';
 
-/** Where the UI finds its Companion: the page's own origin, unless the demo fakes one. */
 export interface Environment {
   base: string;
   session: Session;
@@ -30,7 +29,6 @@ export interface Connection {
   events: Events;
 }
 
-/** Starts the client and the event stream that feeds the Devices store. */
 export function connect(
   env: Environment,
   store: DevicesStore = devicesStore,

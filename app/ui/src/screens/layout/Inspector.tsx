@@ -1,4 +1,3 @@
-// The inspector rail: the selected Tile, Add Tile, or the Page and Layout details when nothing is selected.
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import clsx from 'clsx';
 import { Switch } from '@base-ui/react/switch';
@@ -24,7 +23,6 @@ function GlyphWarning({ value, device }: { value: string; device: string }) {
   );
 }
 
-/** A name field that applies on Enter or when it loses focus. A refused name goes back to the saved one. */
 function NameField({ label, value, hint, device, onCommit, testId }: { label: string; value: string; hint?: string; device: string; onCommit(next: string): string | null; testId: string }) {
   const id = useId();
   const [draft, setDraft] = useState(value);
@@ -266,7 +264,6 @@ function AddTile({ store, page, target }: { store: EditorStore; page: Page; targ
   );
 }
 
-/** The rail beside the canvas. Its content follows the selection: a Tile, Add Tile, or the Page and Layout. */
 export function Inspector({ store, layout, device }: { store: EditorStore; layout: Layout; device: string }) {
   const pageId = useEditorState(store, (s) => s.page);
   const selected = useEditorState(store, (s) => s.selected);

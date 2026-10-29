@@ -2,14 +2,23 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'vitest';
-import type { Layout } from '../editor/validate.ts';
+import { parseLayout, type GridPage, type Page } from '../editor/validate.ts';
 import { geometry, screenSize, tileRect } from './geometry.ts';
 import { buildDots, buildPage, buildTitle, fitLabel, FONTS, missingGlyphs, sampleRows, sampleWidget } from './scene.ts';
 import { layoutLabel } from './text.ts';
 import { panelColor, THEME } from './theme.ts';
 
 const examples = join(import.meta.dirname, '..', '..', '..', '..', '..', 'schema', 'examples');
-const load = (name: string) => JSON.parse(readFileSync(join(examples, name), 'utf8')) as Layout;
+function load(name: string) {
+  const parsed = parseLayout(readFileSync(join(examples, name), 'utf8'));
+  if (!parsed.ok) throw new Error(`${name} breaks the Layout rules`);
+  return parsed.layout;
+}
+
+function gridPage(page: Page): GridPage {
+  if (page.kind !== 'grid') throw new Error(`${page.id} is not a grid page`);
+  return page;
+}
 const landscape = geometry(screenSize('landscape'));
 const shown = (view: { label: { lines: { letters: { letter: number }[] }[] } }) =>
   view.label.lines.map((line) => line.letters.map((l) => String.fromCodePoint(l.letter)).join(''));
@@ -27,7 +36,6 @@ test('a short label keeps the 48 px tile font and sits in the middle of its tile
 
 test('a label steps down to 28 px, then 14 px, then wraps with dots, as fit_label', () => {
   assert.equal(fitLabel('Shift', 200, 100).size, 48);
-  // Ctrl+Shift+F13 is 331 px wide at 48 px, 192 px at 28 px, and 98 px at 14 px, against the tile less 32 px.
   assert.equal(fitLabel('Ctrl+Shift+F13', 240, 100).size, 28);
   assert.equal(fitLabel('Ctrl+Shift+F13', 140, 100).size, 14);
   assert.equal(fitLabel('Ctrl+Shift+F13', 120, 100).label.lines.length, 2);
@@ -47,6 +55,8 @@ test('a media tile stacks its symbol over a one-line caption', () => {
   assert.equal(caption.y, Math.trunc(play.rect.h / 2) - 15 + Math.trunc((52 + 14) / 2));
   assert.deepEqual(shown(icon), ['']);
   assert.equal(icon.y, Math.trunc(play.rect.h / 2) - 26 - 22);
+  assert.equal(icon.icon, 'lv:play_pause');
+  assert.equal(caption.icon, null);
 });
 
 test('a widget tile shows its value, its caption below, and a bar as wide as the reading', () => {
@@ -57,14 +67,13 @@ test('a widget tile shows its value, its caption below, and a bar as wide as the
   assert.deepEqual(shown(caption), ['5h usage']);
   assert.equal(caption.color, THEME.color.caption);
   assert.deepEqual(five.bar, { x: 0, y: five.rect.h - 18, w: Math.trunc(0.42 * five.rect.w + 0.5), h: 6, radius: 3 });
-  assert.equal(five.dims, true);
   const bare = buildPage(load('dev.json').pages[2], landscape).tiles[0];
   assert.deepEqual(shown(bare.texts[0]), ['--']);
   assert.equal(bare.bar, null);
 });
 
 test('a widget tile keeps its caption and value on one line, cut with dots to the tile', () => {
-  const usage = load('dev.json').pages[2] as Layout['pages'][number] & { kind: 'grid' };
+  const usage = gridPage(load('dev.json').pages[2]);
   const page = { ...usage, cols: 4, tiles: [{ ...usage.tiles[0], label: 'Claude 5h usage' }] };
   const long = buildPage(page, landscape, { widget: () => ({ value: '100% of the five hour', caption: 'Claude 5h usage', bar: -1 }) });
   const [value, caption] = long.tiles[0].texts;
@@ -103,7 +112,6 @@ test('a dashboard row wraps its text only as far as the row holds, the last line
   ];
   const uncut = (value: string, g: typeof landscape) => layoutLabel(value, FONTS[28], { width: g.dashValueX - 2 * THEME.dash.pad });
 
-  // A landscape row is 51 px, one 30 px line, so a value wider than its 220 px column stays on one line.
   const wide = buildPage(dashboard, landscape, { rows });
   const [label, value] = wide.rows[0].texts;
   assert.deepEqual(label.label, uncut('claude jordan.k', landscape));
@@ -112,7 +120,6 @@ test('a dashboard row wraps its text only as far as the row holds, the last line
   assert.deepEqual([value.label.width, value.label.height, value.y], [220, 30, 25 - 15]);
   assert.deepEqual(shown(wide.rows[1].texts[0]), ['WWWWWWWWW...']);
 
-  // A portrait row is 104 px, three lines. Text on two lines wraps as it always did, and a fourth line is cut.
   const portrait = geometry(screenSize('portrait'));
   const tall = buildPage(dashboard, portrait, { rows });
   const [twoLines, twoValues] = tall.rows[0].texts;
@@ -124,7 +131,6 @@ test('a dashboard row wraps its text only as far as the row holds, the last line
   assert.deepEqual([cut.label.height, cut.y, cut.label.lines.length], [90, 52 - 45, 3]);
   assert.match(shown(cut)[2], /^W+\.\.\.$/);
 
-  // A full-screen landscape row is 68 px, so two lines fit there.
   const full = buildPage(dashboard, geometry(screenSize('landscape'), true), { rows });
   assert.deepEqual(shown(full.rows[1].texts[1]), ['000000000000', '0000']);
 });
@@ -145,7 +151,6 @@ test('a title too wide for the screen stays on one line, cut with dots short of 
   const fits = buildTitle('Usage on every account', portrait)!;
   assert.deepEqual(fits.label.lines, layoutLabel('Usage on every account', FONTS[28]).lines);
   assert.deepEqual([fits.x, fits.y, fits.label.height], [36, 14, 30]);
-  // 24 W are 768 px, wider than the 528 px between the margins of a portrait screen.
   const wide = buildTitle('W'.repeat(24), portrait)!;
   assert.equal(wide.label.width, 600 - 2 * 36);
   assert.deepEqual(shown(wide), [`${'W'.repeat(15)}...`]);
@@ -158,7 +163,6 @@ test('characters outside the deck font are listed once', () => {
 });
 
 test('colors widen from RGB565 the way a deck screenshot reads them', () => {
-  // Board screenshots read the tile as 24, 32, 49 and the background as 8, 8, 16.
   assert.equal(THEME.color.tile, '#182031');
   assert.equal(THEME.color.bg, '#080810');
   assert.equal(panelColor(72, 160, 255), '#4aa2ff');

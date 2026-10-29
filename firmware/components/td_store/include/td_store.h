@@ -100,3 +100,7 @@ const esp_console_cmd_t *td_store_console_commands(size_t *count);
 #ifdef __cplusplus
 }
 #endif
+
+uint32_t td_store_budget_cost(uint32_t bytes);
+esp_err_t td_store_budget(td_store_info_t *out);
+void td_store_budget_adjust(int64_t delta);

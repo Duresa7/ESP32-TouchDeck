@@ -1,9 +1,3 @@
-// The layout rules of `schema/check-layouts.mjs`, with the same rule keys, for the editor.
-// The app's CSP has no 'unsafe-eval', so Ajv cannot compile the schema here, and the schema's
-// structural rules are written out by hand as in td-core's layout.rs. The edits below mirror
-// td-core's edit.rs: each one returns the edited copy or the reason it refuses, and runs the
-// full rules on its result, so a store that keeps only what they return stays valid.
-
 export type Orientation = 'landscape' | 'portrait';
 export type Modifier = 'ctrl' | 'shift' | 'alt' | 'win';
 
@@ -53,7 +47,6 @@ export interface Layout {
   schema: 1;
   name: string;
   orientation: Orientation;
-  /** True gives the tiles the whole screen, with no page title and no page dots. A file writes it only when true. */
   fullScreen?: boolean;
   pages: Page[];
 }
@@ -128,6 +121,8 @@ const ACTION_FIELDS: Record<ActionType, string[]> = {
   widget: ['type', 'source', 'field', 'account'],
 };
 
+const isActionType = (value: unknown): value is ActionType => typeof value === 'string' && Object.hasOwn(ACTION_FIELDS, value);
+
 function structuralErrors(root: unknown): LayoutError[] {
   const errors: LayoutError[] = [];
   const at = (key: string, pointer: string, message: string) => errors.push(fail(key, `${place(pointer)} ${message}`));
@@ -180,7 +175,7 @@ function structuralErrors(root: unknown): LayoutError[] {
   };
 
   const modifier = (value: unknown, pointer: string) => {
-    if (!(MODIFIERS as readonly unknown[]).includes(value)) at('modifier.unknown', pointer, 'must be equal to one of the allowed values (enum)');
+    if (!MODIFIERS.some((mod) => mod === value)) at('modifier.unknown', pointer, 'must be equal to one of the allowed values (enum)');
   };
 
   const args = (value: unknown, pointer: string) => {
@@ -197,7 +192,7 @@ function structuralErrors(root: unknown): LayoutError[] {
 
   const action = (value: unknown, pointer: string) => {
     if (!isObject(value)) return wrongType(pointer, 'object');
-    const kind = typeof value.type === 'string' && Object.hasOwn(ACTION_FIELDS, value.type) ? (value.type as ActionType) : undefined;
+    const kind = isActionType(value.type) ? value.type : undefined;
     if (!kind) return at('action.type', pointer, 'must match exactly one schema in oneOf (oneOf)');
     const fields = ACTION_FIELDS[kind];
     object(value, pointer, fields);
@@ -219,7 +214,7 @@ function structuralErrors(root: unknown): LayoutError[] {
   };
 
   const tile = (value: unknown, pointer: string) => {
-    const tile = object(value, pointer, ['id', 'label', 'row', 'col', 'rowSpan', 'colSpan', 'icon', 'action']);
+    const tile = object(value, pointer, ['id', 'label', 'row', 'col', 'rowSpan', 'colSpan', 'icon', 'action'], isObject(root) && root.schema === 2 ? ['asset'] : []);
     if (!tile) return;
     if (Object.hasOwn(tile, 'id')) id(tile.id, `${pointer}/id`);
     if (Object.hasOwn(tile, 'label')) bounded(tile.label, `${pointer}/label`, LABEL);
@@ -235,6 +230,7 @@ function structuralErrors(root: unknown): LayoutError[] {
       if (typeof tile.icon !== 'string') wrongType(`${pointer}/icon`, 'string,null');
       else if (!ICON.test(tile.icon)) at('icon.format', `${pointer}/icon`, 'must be null, a built-in lv: name, or file: and 16 lowercase hex digits (pattern)');
     }
+    if (tile.asset != null && (typeof tile.asset !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(tile.asset) || tile.icon !== null)) at('icon.format', `${pointer}/asset`, 'Asset requires a SHA-256 reference and icon null');
     if (Object.hasOwn(tile, 'action')) action(tile.action, `${pointer}/action`);
   };
 
@@ -267,7 +263,7 @@ function structuralErrors(root: unknown): LayoutError[] {
   const layout = object(root, '', ['schema', 'name', 'orientation', 'pages'], ['fullScreen']);
   if (!layout) return errors;
   if (Object.hasOwn(layout, 'fullScreen') && typeof layout.fullScreen !== 'boolean') wrongType('/fullScreen', 'boolean');
-  if (Object.hasOwn(layout, 'schema') && layout.schema !== 1) at('layout.schema-version', '/schema', 'must be equal to constant (const)');
+  if (Object.hasOwn(layout, 'schema') && layout.schema !== 1 && layout.schema !== 2) at('layout.schema-version', '/schema', 'must be equal to constant (const)');
   if (Object.hasOwn(layout, 'name')) bounded(layout.name, '/name', NAME);
   if (Object.hasOwn(layout, 'orientation') && layout.orientation !== 'landscape' && layout.orientation !== 'portrait') {
     at('layout.orientation', '/orientation', 'must be equal to one of the allowed values (enum)');
@@ -324,7 +320,6 @@ function semanticErrors(layout: Layout): LayoutError[] {
   return errors;
 }
 
-/** Every rule a parsed layout breaks, as check-layouts.mjs's validateLayout reports them. */
 export function validateLayout(layout: unknown): LayoutError[] {
   const errors = malformedStrings(layout);
   const structural = structuralErrors(layout);
@@ -378,7 +373,7 @@ function scanSource(text: string): LayoutError[] {
       if (top?.members) top.expectMember = true;
       else if (top) top.index = (top.index ?? 0) + 1;
     } else if (token[0] === '"' && top?.members && top.expectMember) {
-      top.member = JSON.parse(token) as string;
+      top.member = String(JSON.parse(token));
       top.expectMember = false;
       if (top.members.has(top.member)) errors.push(fail('json.duplicate-member', `${place(top.pointer)} repeats the member name ${JSON.stringify(top.member)}`));
       top.members.add(top.member);
@@ -389,7 +384,6 @@ function scanSource(text: string): LayoutError[] {
   return errors;
 }
 
-/** Every rule a layout file breaks, as check-layouts.mjs's validateSource reports them. */
 export function validateSource(source: Uint8Array | string): LayoutError[] {
   let text: string;
   if (typeof source === 'string') {
@@ -406,12 +400,11 @@ export function validateSource(source: Uint8Array | string): LayoutError[] {
   try {
     layout = JSON.parse(text);
   } catch (error) {
-    return [fail('file.json', (error as Error).message)];
+    return [fail('file.json', error instanceof Error ? error.message : String(error))];
   }
   return [...scanSource(text), ...validateLayout(layout)];
 }
 
-/** Reads a layout file, or returns every rule it breaks. */
 export function parseLayout(source: Uint8Array | string): { ok: true; layout: Layout } | { ok: false; errors: LayoutError[] } {
   const errors = validateSource(source);
   if (errors.length) return { ok: false, errors };
@@ -419,7 +412,6 @@ export function parseLayout(source: Uint8Array | string): { ok: true; layout: La
   return { ok: true, layout: JSON.parse(text) as Layout };
 }
 
-/** The bytes every sender uploads: JSON.stringify of the parsed layout. */
 export const canonical = (layout: Layout) => JSON.stringify(layout);
 
 export type Edit = { ok: true; layout: Layout } | { ok: false; reason: string };
@@ -442,7 +434,6 @@ function gridOf(layout: Layout, page: string): GridPage | string {
 const covers = (tile: Tile, row: number, col: number) =>
   row >= tile.row && row < tile.row + tile.rowSpan && col >= tile.col && col < tile.col + tile.colSpan;
 
-/** Checks that `tile` fits the grid and overlaps no other tile, naming the first one it hits. */
 function fits(grid: GridPage, tile: Tile, skip: number): string | null {
   if (tile.row < 0 || tile.col < 0 || tile.row + tile.rowSpan > grid.rows || tile.col + tile.colSpan > grid.cols) {
     return `outside the ${grid.rows}x${grid.cols} grid`;
@@ -539,7 +530,6 @@ export function setPageTitle(layout: Layout, page: string, title: string): Edit 
   return checked(next);
 }
 
-/** Changes a grid page's rows and columns. A tile that would fall outside the new grid refuses it, by its id. */
 export function setGridSize(layout: Layout, page: string, rows: number, cols: number): Edit {
   const next = copy(layout);
   const grid = gridOf(next, page);
@@ -552,7 +542,6 @@ export function setGridSize(layout: Layout, page: string, rows: number, cols: nu
   return checked(next);
 }
 
-/** Turns the full-screen look on or off. Off removes the member, so the file matches one written before it existed. */
 export function setFullScreen(layout: Layout, on: boolean): Edit {
   const next = copy(layout);
   if (on) {
@@ -570,7 +559,6 @@ export function addPage(layout: Layout, page: Page): Edit {
   return checked(next);
 }
 
-/** Removes a page and turns every `page` action that jumped to it into `none`. */
 export function removePage(layout: Layout, page: string): Edit {
   const index = layout.pages.findIndex((candidate) => candidate.id === page);
   if (index < 0) return refuse(`no page ${page}`);
@@ -586,7 +574,6 @@ export function removePage(layout: Layout, page: string): Edit {
   return checked(next);
 }
 
-/** The first free cell of a grid page in row order, for a new 1 by 1 tile. */
 export function freeCell(layout: Layout, page: string): [number, number] | null {
   const grid = gridOf(layout, page);
   if (typeof grid === 'string') return null;
@@ -598,7 +585,6 @@ export function freeCell(layout: Layout, page: string): [number, number] | null 
   return null;
 }
 
-/** The first id of the form `<prefix><n>` that no page or tile of the layout uses. */
 export function freshId(layout: Layout, prefix: string): string {
   const taken = new Set<string>();
   for (const page of layout.pages) {
@@ -642,7 +628,6 @@ const media = (id: string, label: string, col: number, row: number, usage: numbe
   action: { type: 'consumer', usage },
 });
 
-/** A first layout with buttons people use every day: media controls and editing shortcuts. */
 export function starterLayout(orientation: Orientation): Layout {
   return {
     schema: 1,
