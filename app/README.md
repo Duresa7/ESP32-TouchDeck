@@ -36,6 +36,8 @@ updating deck firmware in the **Update** tab. App updates use releases signed
 with the project's updater key. Source builds carry no updater key, so
 their **Check for updates** reports that release signing is not configured.
 
+The Companion embeds `ui/dist` at compile time: run `pnpm build:ui` before building Rust. Without that directory it serves a small "UI not built" page.
+
 ## Build the desktop app
 
 Use Node.js **24**, pnpm **12.12.1** as pinned in [package.json](package.json),

@@ -4,6 +4,7 @@ mod auth;
 mod error;
 pub mod security;
 mod socket;
+mod ui;
 
 pub use crate::jobs::{JobKind, Jobs};
 pub(crate) use auth::{Auth, Clock};
@@ -410,7 +411,7 @@ pub fn router(ctx: Ctx) -> Router {
     router = router.route("/api/v1/events", axum::routing::get(socket::upgrade));
     let access = Arc::new(access);
     router
-        .fallback(|| async { CommonError::NotFound })
+        .fallback(ui::serve)
         .method_not_allowed_fallback(|| async { CommonError::MethodNotAllowed })
         .layer(middleware::from_fn_with_state((ctx.clone(), access), guard))
         .with_state(ctx)
@@ -445,7 +446,7 @@ fn admit(
             origin: header("origin"),
             fetch_site: header("sec-fetch-site"),
             fetch_mode: header("sec-fetch-mode"),
-            api: request.uri().path().starts_with("/api/"),
+            api: ui::is_api(request.uri().path()),
             get: request.method() == Method::GET,
         },
         ctx.port,
@@ -457,6 +458,9 @@ fn admit(
         && !is_json(h)
     {
         return Err(CommonError::MediaType);
+    }
+    if !ui::is_api(request.uri().path()) {
+        return Ok(request);
     }
     // Access is looked up by the route the request matched, so a request that matches no
     // public declaration needs a session. That includes unknown paths and HEAD.
@@ -490,10 +494,12 @@ fn with_security_headers(mut response: Response, port: u16) -> Response {
         ("referrer-policy", "no-referrer"),
         ("cross-origin-opener-policy", "same-origin"),
         ("cross-origin-resource-policy", "same-origin"),
-        ("cache-control", "no-store"),
     ] {
         headers.insert(k, v.parse().unwrap());
     }
+    headers
+        .entry("cache-control")
+        .or_insert("no-store".parse().unwrap());
     let csp = format!(
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
          img-src 'self' blob: data:; connect-src 'self' ws://127.0.0.1:{port}; \

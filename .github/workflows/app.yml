@@ -76,6 +76,8 @@ jobs:
       - run: pnpm test
       - name: Build the frontend that tauri embeds
         run: pnpm build
+      - name: Build the UI that the Companion embeds
+        run: pnpm build:ui
       - run: cargo fmt --check
       - run: cargo clippy --workspace -- -D warnings
       - run: cargo test --workspace
