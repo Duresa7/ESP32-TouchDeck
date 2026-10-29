@@ -3,6 +3,7 @@
 
 pub mod actions;
 pub mod approval;
+pub mod gif_normalize;
 pub mod icon_pack;
 pub mod icons;
 #[cfg(target_os = "linux")]

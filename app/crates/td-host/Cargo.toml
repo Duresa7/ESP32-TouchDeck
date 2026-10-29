@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+gif = { version = "0.14", default-features = false, features = ["std", "raii_no_panic"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 open = "5"
 resvg = { version = "0.45", default-features = false }
