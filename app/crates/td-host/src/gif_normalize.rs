@@ -10,11 +10,15 @@ use image::{
     imageops::{self, FilterType},
 };
 
+use crate::icon_pack;
+
 const SOURCE_BYTES: usize = 16 << 20;
 const SOURCE_SIDE: usize = 4096;
 const SOURCE_FRAMES: usize = 300;
 const SOURCE_RGBA: usize = 64 << 20;
 const MAX_DELAY_CS: u32 = u16::MAX as u32;
+const MIN_SIDE: u16 = 32;
+const MATTE: [u8; 3] = [0, 0, 0];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fit {
@@ -101,8 +105,12 @@ struct Composed {
 /// Source delays below 20 ms become 100 ms, matching browser playback.
 /// Contain centres on a transparent canvas; cover crops the centre. Alpha is
 /// thresholded at 128 for GIF's binary transparency. Background disposal clears
-/// to transparent, as in browser image playback. A loop shorter than the minimum
-/// delay is refused rather than lengthened. All returned delays are exact 10 ms units.
+/// to transparent, as in browser image playback. Output frames keep the previous
+/// frame (disposal 1), so only pixels clear in every frame stay transparent; a
+/// pixel clear in some frames is drawn black there. A multi-frame loop shorter
+/// than the minimum delay is refused rather than lengthened; a single frame just
+/// gets the minimum delay. The canvas shrinks by 7/8 steps while its longer side
+/// stays at least 32 px. All returned delays are exact 10 ms units.
 pub fn normalize_gif(
     bytes: &[u8],
     target: Target,
@@ -144,11 +152,15 @@ pub fn normalize_gif(
                 });
             }
         }
-        if width == 1 && height == 1 {
+        let (next_w, next_h) = (
+            (u32::from(width) * 7 / 8).max(1) as u16,
+            (u32::from(height) * 7 / 8).max(1) as u16,
+        );
+        if next_w.max(next_h) < MIN_SIDE {
             return if smallest == usize::MAX {
                 Err(GifError::PixelLimit {
                     limit: limits.max_frame_pixels_total,
-                    smallest: timeline.len(),
+                    smallest: pixels,
                 })
             } else {
                 Err(GifError::TooLarge {
@@ -157,8 +169,7 @@ pub fn normalize_gif(
                 })
             };
         }
-        width = (u32::from(width) * 7 / 8).max(1) as u16;
-        height = (u32::from(height) * 7 / 8).max(1) as u16;
+        (width, height) = (next_w, next_h);
     }
 }
 
@@ -250,6 +261,9 @@ fn decode(bytes: &[u8]) -> Result<Vec<Composed>, GifError> {
 fn resample(source: &[Composed], limits: &AnimLimits) -> Result<Vec<(usize, u32)>, GifError> {
     let min_cs = limits.min_delay_ms.div_ceil(10);
     let total: u32 = source.iter().map(|f| f.delay_cs).sum();
+    if source.len() == 1 {
+        return Ok(vec![(0, total.max(min_cs))]);
+    }
     if total < min_cs {
         return Err(GifError::TooShort {
             min_delay_ms: limits.min_delay_ms,
@@ -291,40 +305,22 @@ fn resample(source: &[Composed], limits: &AnimLimits) -> Result<Vec<(usize, u32)
 
 fn fit(source: &RgbaImage, w: u16, h: u16, mode: Fit) -> RgbaImage {
     let (w, h) = (u32::from(w), u32::from(h));
-    let sx = f64::from(w) / f64::from(source.width());
-    let sy = f64::from(h) / f64::from(source.height());
-    let scale = match mode {
-        Fit::Contain => sx.min(sy),
-        Fit::Cover => sx.max(sy),
-    };
-    let sw = (f64::from(source.width()) * scale).round().max(1.0) as u32;
-    let sh = (f64::from(source.height()) * scale).round().max(1.0) as u32;
-    match mode {
-        Fit::Contain => {
-            let scaled = imageops::resize(source, sw.min(w), sh.min(h), FilterType::Lanczos3);
-            let mut out = RgbaImage::new(w, h);
-            imageops::overlay(
-                &mut out,
-                &scaled,
-                i64::from((w - scaled.width()) / 2),
-                i64::from((h - scaled.height()) / 2),
-            );
-            out
-        }
-        Fit::Cover => {
-            let crop_w = (f64::from(w) / scale).round().max(1.0) as u32;
-            let crop_h = (f64::from(h) / scale).round().max(1.0) as u32;
-            let cropped = imageops::crop_imm(
-                source,
-                (source.width() - crop_w) / 2,
-                (source.height() - crop_h) / 2,
-                crop_w,
-                crop_h,
-            )
-            .to_image();
-            imageops::resize(&cropped, w, h, FilterType::Lanczos3)
-        }
+    if mode == Fit::Contain {
+        return icon_pack::fit_tile(source, w, h, 0, None, None);
     }
+    let scale =
+        (f64::from(w) / f64::from(source.width())).max(f64::from(h) / f64::from(source.height()));
+    let crop_w = (f64::from(w) / scale).round().max(1.0) as u32;
+    let crop_h = (f64::from(h) / scale).round().max(1.0) as u32;
+    let cropped = imageops::crop_imm(
+        source,
+        (source.width() - crop_w) / 2,
+        (source.height() - crop_h) / 2,
+        crop_w,
+        crop_h,
+    )
+    .to_image();
+    imageops::resize(&cropped, w, h, FilterType::Lanczos3)
 }
 
 fn encode(
@@ -333,19 +329,20 @@ fn encode(
     w: u16,
     h: u16,
 ) -> Result<Vec<u8>, GifError> {
-    let opaque = || {
-        images
-            .iter()
-            .flat_map(|i| i.pixels())
-            .filter(|p| p[3] >= 128)
-    };
+    let mut clear = vec![true; usize::from(w) * usize::from(h)];
+    for image in images {
+        for (clear, p) in clear.iter_mut().zip(image.pixels()) {
+            *clear &= p[3] < 128;
+        }
+    }
+    let transparent = clear.contains(&true);
+    let opaque = || images.iter().flat_map(|i| shown(i, &clear)).flatten();
     let mut unique = BTreeSet::new();
-    let coarse = opaque().any(|p| {
-        unique.insert([p[0], p[1], p[2]]);
+    let coarse = opaque().any(|rgb| {
+        unique.insert(rgb);
         unique.len() > 4096
     });
-    let key = |p: &Rgba<u8>| {
-        let rgb = [p[0], p[1], p[2]];
+    let key = |rgb: [u8; 3]| {
         if coarse {
             rgb.map(|c| (c & 0xf8) | 4)
         } else {
@@ -353,9 +350,8 @@ fn encode(
         }
     };
     let mut colors = BTreeMap::<[u8; 3], usize>::new();
-    let transparent = images.iter().flat_map(|i| i.pixels()).any(|p| p[3] < 128);
-    for p in opaque() {
-        *colors.entry(key(p)).or_default() += 1;
+    for rgb in opaque() {
+        *colors.entry(key(rgb)).or_default() += 1;
     }
     let mut boxes = vec![colors.into_iter().collect::<Vec<_>>()];
     while boxes.len() < 256 - usize::from(transparent) {
@@ -425,9 +421,8 @@ fn encode(
             .set_repeat(Repeat::Infinite)
             .map_err(|_| GifError::Corrupt)?;
         for (image, &(_, delay)) in images.iter().zip(timeline) {
-            let buffer: Vec<_> = image
-                .pixels()
-                .map(|p| if p[3] < 128 { 0 } else { indices[&key(p)] })
+            let buffer: Vec<_> = shown(image, &clear)
+                .map(|rgb| rgb.map_or(0, |rgb| indices[&key(rgb)]))
                 .collect();
             encoder
                 .write_frame(&Frame {
@@ -443,4 +438,15 @@ fn encode(
         }
     }
     Ok(bytes)
+}
+
+fn shown<'a>(
+    image: &'a RgbaImage,
+    clear: &'a [bool],
+) -> impl Iterator<Item = Option<[u8; 3]>> + 'a {
+    image.pixels().zip(clear).map(|(p, &clear)| match () {
+        _ if clear => None,
+        _ if p[3] < 128 => Some(MATTE),
+        _ => Some([p[0], p[1], p[2]]),
+    })
 }

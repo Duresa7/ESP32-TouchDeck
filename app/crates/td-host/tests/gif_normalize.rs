@@ -100,6 +100,25 @@ fn pixels(bytes: &[u8]) -> Vec<image::RgbaImage> {
     images
 }
 
+fn played(bytes: &[u8]) -> Vec<image::RgbaImage> {
+    play(pixels(bytes))
+}
+
+fn play(frames: Vec<image::RgbaImage>) -> Vec<image::RgbaImage> {
+    let mut screen = image::RgbaImage::new(frames[0].width(), frames[0].height());
+    frames
+        .iter()
+        .map(|frame| {
+            for (x, y, p) in frame.enumerate_pixels() {
+                if p[3] != 0 {
+                    screen.put_pixel(x, y, *p);
+                }
+            }
+            screen.clone()
+        })
+        .collect()
+}
+
 #[test]
 fn composes_disposal_transparency_local_palettes_and_offsets() {
     for disposal in [
@@ -119,11 +138,11 @@ fn composes_disposal_transparency_local_palettes_and_offsets() {
         last.left = 3;
         let input = source(4, 4, &[frame(4, 4, 1, 10), patch, last]);
         let result = normalize_gif(&input, target(), &limits()).unwrap();
-        let images = pixels(&result.bytes);
+        let images = played(&result.bytes);
         assert_eq!(images[1].get_pixel(1, 1).0, [0, 255, 0, 255]);
         assert_eq!(images[1].get_pixel(2, 1).0, [255, 0, 0, 255]);
         let expected = match disposal {
-            gif::DisposalMethod::Background => [0, 0, 0, 0],
+            gif::DisposalMethod::Background => [0, 0, 0, 255],
             gif::DisposalMethod::Previous => [255, 0, 0, 255],
             _ => [0, 255, 0, 255],
         };
@@ -230,10 +249,16 @@ fn zero_and_tiny_delays_follow_browser_timing_without_rounding_drift() {
     caps.min_delay_ms = 101;
     let output = normalize_gif(&input, target(), &caps).unwrap();
     assert_eq!(output.delays_ms, [220]);
+    let still = normalize_gif(&source(4, 4, &[frame(4, 4, 1, 2)]), target(), &caps).unwrap();
+    assert_eq!(still.delays_ms, [110]);
     assert!(matches!(
-        normalize_gif(&source(4, 4, &[frame(4, 4, 1, 2)]), target(), &caps),
+        normalize_gif(
+            &source(4, 4, &[frame(4, 4, 1, 2), frame(4, 4, 2, 2)]),
+            target(),
+            &caps
+        ),
         Err(GifError::TooShort {
-            duration_ms: 20,
+            duration_ms: 40,
             ..
         })
     ));
@@ -260,25 +285,87 @@ fn shrinks_for_byte_and_pixel_budgets_and_reports_the_smallest_attempt() {
         fit: Fit::Contain,
     };
     let mut caps = limits();
-    caps.max_bytes = 80;
+    caps.max_bytes = 100;
     let output = normalize_gif(&input, t, &caps).unwrap();
-    assert!(output.width < 128 && output.bytes.len() <= 80);
+    assert!(output.width < 128 && output.bytes.len() <= 100);
     caps.max_bytes = 1;
     assert!(
-        matches!(normalize_gif(&input,t,&caps), Err(GifError::TooLarge { max_bytes: 1, smallest }) if smallest > 1 && smallest <= 80)
+        matches!(normalize_gif(&input,t,&caps), Err(GifError::TooLarge { max_bytes: 1, smallest }) if smallest > 1 && smallest <= 100)
     );
     caps = limits();
-    caps.max_frame_pixels_total = 100;
+    caps.max_frame_pixels_total = 40 * 40;
     let output = normalize_gif(&input, t, &caps).unwrap();
-    assert!(usize::from(output.width) * usize::from(output.height) <= 100);
-    caps.max_frame_pixels_total = 0;
+    assert!(usize::from(output.width) * usize::from(output.height) <= 40 * 40);
+    caps.max_frame_pixels_total = 30 * 30;
     assert_eq!(
         normalize_gif(&input, t, &caps).unwrap_err(),
         GifError::PixelLimit {
-            limit: 0,
-            smallest: 1
+            limit: 30 * 30,
+            smallest: 36 * 36
         }
     );
+}
+
+#[test]
+fn stops_shrinking_at_the_floor() {
+    let mut noise = frame(128, 128, 0, 10);
+    noise.palette = Some(
+        (0..=255)
+            .flat_map(|i: u8| [i, i.wrapping_mul(97), i ^ 0x5a])
+            .collect(),
+    );
+    noise.buffer = Cow::Owned(
+        (0..128u32 * 128)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
+            .collect(),
+    );
+    let mut caps = limits();
+    caps.max_bytes = 400;
+    let t = Target {
+        width: 128,
+        height: 128,
+        fit: Fit::Contain,
+    };
+    let Err(GifError::TooLarge { smallest, .. }) =
+        normalize_gif(&source(128, 128, &[noise]), t, &caps)
+    else {
+        panic!("expected TooLarge");
+    };
+    assert!(
+        smallest > 36 * 36 / 2,
+        "stepped below the floor: {smallest} bytes"
+    );
+}
+
+#[test]
+fn a_pixel_that_turns_transparent_is_matted_so_disposal_one_leaves_no_trail() {
+    let sprite = |x: u16, color: u8| {
+        let mut f = frame(1, 1, color, 10);
+        f.left = x;
+        f.dispose = gif::DisposalMethod::Background;
+        f
+    };
+    let mut clear = frame(4, 4, 0, 10);
+    clear.transparent = Some(0);
+    let input = source(4, 4, &[clear, sprite(0, 1), sprite(2, 2)]);
+    let output = normalize_gif(&input, target(), &limits()).unwrap();
+    let shown = played(&output.bytes);
+    assert_eq!(shown[1].get_pixel(0, 0).0, [255, 0, 0, 255]);
+    assert_eq!(shown[2].get_pixel(0, 0).0, [0, 0, 0, 255]);
+    assert_eq!(shown[2].get_pixel(2, 0).0, [0, 255, 0, 255]);
+    assert_eq!(shown[2].get_pixel(1, 0).0, [0, 0, 0, 0]);
+    let raw = pixels(&output.bytes);
+    let twice = play([raw.clone(), raw].concat());
+    assert_eq!(twice[3], shown[0]);
+    assert_eq!(twice[5], shown[2]);
+}
+
+#[test]
+fn a_full_size_4096_square_frame_decodes() {
+    let input = source(4096, 4096, &[frame(4096, 4096, 2, 10)]);
+    let output = normalize_gif(&input, target(), &limits()).unwrap();
+    assert_eq!(output.frames, 1);
+    assert_eq!(played(&output.bytes)[0].get_pixel(2, 2).0, [0, 255, 0, 255]);
 }
 
 #[test]
@@ -382,8 +469,11 @@ fn deterministic_global_palette_across_more_than_256_colors() {
 #[test]
 #[ignore = "manual performance evidence; no CI timing threshold"]
 fn benchmark_large_source() {
-    for (side, count) in [(1024, 300), (128, 300)] {
-        let input = source(side, side, &vec![frame(side, side, 1, 3); count]);
+    for (side, count) in [(1024, 300), (1024, 16), (128, 300)] {
+        let frames: Vec<_> = (0..count)
+            .map(|i| frame(side, side, 1 + (i % 3) as u8, 3))
+            .collect();
+        let input = source(side, side, &frames);
         let start = std::time::Instant::now();
         let output = normalize_gif(
             &input,
@@ -398,13 +488,14 @@ fn benchmark_large_source() {
             },
         );
         println!(
-            "{count} frames {side}x{side}: {:?}; {:?}",
+            "{count} frames {side}x{side}, {} source bytes: {:?}; {:?}",
+            input.len(),
             start.elapsed(),
             output
                 .as_ref()
                 .map(|o| (o.width, o.height, o.frames, o.bytes.len()))
         );
-        if side == 1024 {
+        if count == 300 && side == 1024 {
             assert!(matches!(
                 output,
                 Err(GifError::SourceTooLarge {
