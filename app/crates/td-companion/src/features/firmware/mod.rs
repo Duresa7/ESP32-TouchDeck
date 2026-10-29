@@ -238,6 +238,7 @@ impl Endpoint for Pick {
     const NAME: &'static str = "firmware.pick";
     const METHOD: Method = Method::POST;
     const PATH: &'static str = "/firmware/bundles/pick";
+    const UNTIMED: bool = true;
     type Path = ();
     type Query = NoQuery;
     type Body = FirmwareTarget;

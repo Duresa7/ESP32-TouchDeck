@@ -935,3 +935,34 @@ async fn pick_refuses_a_long_or_unprintable_version() {
         );
     }
 }
+
+#[tokio::test]
+async fn pick_outlives_the_whole_request_limit() {
+    struct SlowPicker;
+    impl Prompter for SlowPicker {
+        fn pick(&self) -> Result<Option<Vec<u8>>, String> {
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            Ok(Some(
+                include_bytes!("../../td-link/tests/fixtures/touchdeck-test.tdfw").to_vec(),
+            ))
+        }
+        fn confirm(&self, _: &Confirmation) -> bool {
+            false
+        }
+    }
+    let td = TestCompanion::start_with(td_companion::Limits {
+        request: std::time::Duration::from_millis(300),
+        ..Default::default()
+    })
+    .await;
+    let id = td.plug_device("mocka").await;
+    td.firmware_prompter(Arc::new(SlowPicker));
+    let response = td
+        .request::<Pick>((), NoQuery, &FirmwareTarget { device: id })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let picked: PickResult = response.json().await.unwrap();
+    assert_eq!(picked.bundle.unwrap().version, "test-only");
+}

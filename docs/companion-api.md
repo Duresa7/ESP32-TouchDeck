@@ -123,7 +123,7 @@ These initial limits are reversible; changing them requires updating this contra
 | Connections | 128 open at once; the accept loop waits for a free slot |
 | Request headers | 5 s to arrive, then the connection is dropped |
 | Request body | 10 s to arrive, then 408 `request.timeout`. Public routes read at most 4 KiB |
-| Whole request | 30 s, then 408 `request.timeout`. The WebSocket upgrade is exempt, since the socket runs after it |
+| Whole request | 30 s, then 408 `request.timeout`. The WebSocket upgrade is exempt, since the socket runs after it. `firmware.pick` is exempt too, since it waits for the native file dialog; its header and body limits still apply |
 | Shutdown drain | 5 s for open requests, then their connections are dropped |
 | WebSockets | 4 per session, 16 across the Companion |
 | Socket queues | 1024 frames or 4 MiB per socket, whichever comes first; overflow follows Backpressure |
