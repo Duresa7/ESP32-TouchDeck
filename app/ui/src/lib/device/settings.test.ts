@@ -280,6 +280,18 @@ describe('brightness', () => {
     expect(store.getState().notice).toBeNull();
   });
 
+  test('goes out as the percentage the slider shows, and the Companion refuses one above 100 before checking the Firmware', async () => {
+    const store = await loaded(desk);
+    const patch = vi.spyOn(companion.devices, 'settings_patch');
+    store.slideBrightness(100);
+    await vi.waitFor(() => expect(store.getState().saved?.brightness).toBe(100));
+    expect(patch.mock.calls[0][2].brightness).toBe(100);
+    for (const device of [desk.id, old.id]) {
+      const over = companion.devices.settings_patch({ device }, null, { idle_timeout_s: null, orientation: null, name: null, brightness: 101 });
+      await expect(over).rejects.toMatchObject({ code: 'request.invalid' });
+    }
+  });
+
   test('a failed change goes back to the stored brightness', async () => {
     const store = await loaded(desk);
     vi.spyOn(companion.devices, 'settings_patch').mockRejectedValue(new ApiError('device.not_connected', 'The Device is not connected.'));
