@@ -21,9 +21,6 @@ import '../styles/layout.css';
 /** The Device's long side fits the canvas between these, as docs/design.md asks. */
 const LONG_MIN = 420;
 const LONG_MAX = 680;
-/** What the canvas keeps for its padding, the Page tabs and the status line. */
-const RESERVED_W = 64;
-const RESERVED_H = 212;
 
 const editable = 'input, textarea, select, [contenteditable], [role="dialog"], [role="alertdialog"], [role="menu"]';
 
@@ -58,24 +55,27 @@ function useEditorKeys(store: EditorStore) {
   }, [store]);
 }
 
-/** The Device's long side for the canvas's size and the Layout's orientation. */
-function useDeviceLong(canvas: RefObject<HTMLDivElement | null>, portrait: boolean) {
+/** The Device's long side for the room the canvas leaves beside its foot (the Page tabs and status line). */
+function useDeviceLong(canvas: RefObject<HTMLDivElement | null>, foot: RefObject<HTMLDivElement | null>, portrait: boolean, drawn: boolean) {
   const [long, setLong] = useState(LONG_MAX);
   useLayoutEffect(() => {
     const el = canvas.current;
     if (!el) return;
     const fit = () => {
+      const style = getComputedStyle(el);
       const aspect = deviceAspect();
-      const w = el.clientWidth - RESERVED_W;
-      const h = el.clientHeight - RESERVED_H;
+      const w = el.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+      const below = foot.current ? foot.current.offsetHeight + Number.parseFloat(style.rowGap) : 0;
+      const h = el.clientHeight - Number.parseFloat(style.paddingTop) - Number.parseFloat(style.paddingBottom) - below;
       const fitted = portrait ? Math.min(h, w / aspect) : Math.min(w, h / aspect);
       setLong(Math.round(Math.min(LONG_MAX, Math.max(LONG_MIN, fitted))));
     };
     fit();
     const observer = new ResizeObserver(fit);
     observer.observe(el);
+    if (foot.current) observer.observe(foot.current);
     return () => observer.disconnect();
-  }, [canvas, portrait]);
+  }, [canvas, foot, portrait, drawn]);
   return long;
 }
 
@@ -89,8 +89,9 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
   const adding = useEditorState(store, (s) => s.adding);
   const [actualSize, setActualSize] = useState(false);
   const canvas = useRef<HTMLDivElement>(null);
+  const foot = useRef<HTMLDivElement>(null);
   const picker = useRef<HTMLInputElement>(null);
-  const long = useDeviceLong(canvas, layout?.orientation === 'portrait');
+  const long = useDeviceLong(canvas, foot, layout?.orientation === 'portrait', layout !== null);
   useEditorKeys(store);
 
   const current = layout?.pages.find((p) => p.id === page) ?? layout?.pages[0];
@@ -119,7 +120,7 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
               long={long}
               actualSize={preview && actualSize}
             />
-            <div className="canvas-foot">
+            <div ref={foot} className="canvas-foot">
               <PageTabs store={store} layout={layout} page={current.id} />
               {preview ? (
                 <div className="preview-bar">

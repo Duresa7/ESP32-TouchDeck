@@ -228,6 +228,11 @@ test('holds up to the worst realistic Layout', async ({ page }) => {
     expect(device.x).toBeGreaterThanOrEqual(canvas.x);
     expect(device.x + device.width).toBeLessThanOrEqual(canvas.x + canvas.width + 0.5);
     expect(device.y + device.height).toBeLessThanOrEqual(canvas.y + canvas.height + 0.5);
+    // The Page tabs and the status line stay clear of the nav cluster under them.
+    const foot = (await page.locator('.canvas-foot').boundingBox())!;
+    const dock = (await page.locator('.nav-dock').boundingBox())!;
+    expect(foot.y + foot.height).toBeLessThanOrEqual(dock.y + 0.5);
+    expect(await page.locator('.device-switch-name').evaluate((el) => el.getBoundingClientRect().width)).toBeGreaterThan(30);
   };
   await importText(page, JSON.stringify(worstCase), 'worst-case.json');
   await waitEvent(page, 'opened');

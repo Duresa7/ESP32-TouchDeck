@@ -44,7 +44,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-width: 0;
+  min-width: 96px;
   max-width: 260px;
   height: 40px;
   padding: 0 10px 0 12px;
@@ -104,10 +104,26 @@
   background: var(--accent);
 }
 
-/* A narrow header keeps the save state's mark and drops its words */
+/* A narrow header keeps the save state's mark and drops its words, then Add Tile keeps only its icon */
 @container editor-head (max-width: 800px) {
   .save-words {
     display: none;
+  }
+}
+
+@container editor-head (max-width: 680px) {
+  .add-tile-button {
+    width: 34px;
+    padding: 0;
+  }
+
+  .add-tile-words {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 }
 

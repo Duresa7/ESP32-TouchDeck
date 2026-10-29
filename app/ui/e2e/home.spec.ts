@@ -66,8 +66,10 @@ for (const method of ['click', 'Enter', 'Space']) {
 
 test('keyboard focus is visible; fine-pointer lift stops with reduced motion', async ({ page }) => {
   await page.goto('/');
-  await page.keyboard.press('Tab');
   const device = page.getByRole('button', { name: 'Edit Desk' });
+  // Tab only once the cards are there, or focus lands on whatever rendered first.
+  await expect(device).toBeVisible();
+  await page.keyboard.press('Tab');
   await expect(device).toBeFocused();
   await expect(device).toHaveCSS('outline-width', '2px');
   await expect(device).toHaveCSS('outline-style', 'solid');

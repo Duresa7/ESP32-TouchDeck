@@ -164,7 +164,7 @@ export function EditorHeader({ store, device, onOpenDevice, onImport, onExport }
             data-testid="add-tile"
           >
             <Plus size={16} strokeWidth={2} aria-hidden />
-            Add Tile
+            <span className="add-tile-words">Add Tile</span>
           </button>
           <Tip label={status.live ? `Send this Layout to ${name}` : `${name} isn't connected`}>
             <button
