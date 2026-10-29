@@ -69,3 +69,7 @@ Read the [user guide](docs/usage.md) for actions, icons, usage limits, backups, 
 ## License
 
 Open TouchDeck is licensed under the [Apache License 2.0](LICENSE).
+
+## Icon sources
+
+The icon catalog includes [Simple Icons](https://simpleicons.org) (CC0 1.0, with individual licenses carried in the index) and [selfh.st/icons](https://selfh.st/icons) by selfh.st ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)). Icons are resized, padded or tinted to fit your Tile. Logos are trademarks of their owners. Open TouchDeck is not affiliated with or endorsed by them.

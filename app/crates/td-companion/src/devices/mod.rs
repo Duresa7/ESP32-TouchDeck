@@ -165,6 +165,13 @@ pub struct KeyMirrorState {
     pub reason: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeviceDiagnostics {
+    pub product: String,
+    pub running_from: String,
+    pub sinks: Vec<String>,
+    pub current_layout: String,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct DeviceSummary {
     pub id: DeviceId,
     pub rev: u64,
@@ -172,6 +179,7 @@ pub struct DeviceSummary {
     pub setup: SetupState,
     pub link: LinkState,
     pub firmware: Option<FirmwareInfo>,
+    pub diagnostics: Option<DeviceDiagnostics>,
     pub capabilities: Option<Capabilities>,
     pub orientation: Option<String>,
     pub layout: Option<serde_json::Value>,
@@ -500,6 +508,7 @@ impl DeviceManager {
                     setup: saved.setup,
                     link: LinkState::Offline,
                     firmware: None,
+                    diagnostics: None,
                     capabilities: None,
                     orientation: None,
                     layout: None,

@@ -188,7 +188,7 @@ The `/pair` page says "Pair this browser again after the Companion restarts." It
 
 - `last_used_ms` stays in Companion memory; no session state is persisted. At most one pairing code is pending, and Reset pairing invalidates it.
 - **Settings → Sessions** lists every session (`GET /auth/sessions`) with its kind, label, created time and last use. The caller's own row is marked. Each row has **Revoke** (`DELETE /auth/sessions/{id}`). **Sign out all browsers** is `DELETE /auth/sessions?kind=browser`. **Reset pairing** is `POST /auth/reset`.
-- Any session may revoke any session or reset pairing, because both only take access away.
+- Any session may revoke one session or reset pairing, because both only take access away. Forget all browsers requires a window session; a browser receives 403 `auth.forbidden`. It revokes all browser sessions under one auth lock, sending each browser socket `auth.revoked` followed by close 4401. Window sessions, including the caller, remain active.
 
 ### Rotation and revoke
 
@@ -327,6 +327,7 @@ pub struct DeviceSummary {
     pub setup: SetupState,                     // NeedsSetup | Ready
     pub link: LinkState,
     pub firmware: Option<FirmwareInfo>,        // {version, protocol, build, recovery, update_available: Option<String>}
+    pub diagnostics: Option<DeviceDiagnostics>,
     pub capabilities: Option<Capabilities>,    // v2 hello: screen, storage_free, tile_kinds. None on v1
     pub orientation: Option<Orientation>,
     pub layout: Option<LayoutSummary>,         // what the Device shows
@@ -336,6 +337,14 @@ pub struct DeviceSummary {
 pub struct NewBoard { pub id: DeviceId, pub port: String, pub probe: BoardProbe, pub seen_ms: u64 }
 pub enum BoardProbe { Silent, Busy { detail: String }, OtherFirmware { product: String, detail: String } }
 ```
+
+`diagnostics` is null until the Device has answered `hello`. Otherwise it is
+`{ product: string, running_from: string, sinks: string[], current_layout: string }`,
+from `hello.product`, `hello.running`, `hello.sinks` and `hello.layout`. `current_layout`
+is the Firmware's Layout id, separate from the Layout JSON in `DeviceSummary.layout`.
+Changes increment `rev` and publish `device.updated`. These strings, and the Firmware's
+`version` and `build`, are the Device's own and untrusted. The API returns them as sent,
+and clients show control, format and line or paragraph separator characters as escapes.
 
 ### Rules for several Devices
 
@@ -527,13 +536,13 @@ Feature module `assets`. Assets reach a Device only through `layouts.push`, whic
 | `assets.file` | `GET /assets/{asset}` | → the stored bytes with their media type: `application/vnd.touchdeck.tdi1`, `image/gif` or `image/png` |
 | `assets.create` | `POST /assets` | `{source: {kind: "app", path} \| {kind: "upload", upload} \| {kind: "catalog", catalog, id}, fit}` → 202 Job `assets.render`. For `app`, the Companion reads only the icon resource of that program |
 | `assets.upload` | `POST /uploads` | raw `image/*`, at most 16 MiB → `{id, media_type, bytes}`, kept for 1 hour |
-| `assets.catalog_search` | `GET /assets/catalog/search?q=&catalog=` | → `CatalogHit[]`. The Companion fetches and caches catalogs |
+| `assets.catalog_search` | `GET /assets/catalog/search?q=&catalog=` | → `CatalogHit[]`. Searches the bundled catalogs offline; images are fetched on pick |
 | `assets.on_device` | `GET /devices/{device}/assets` | → `{ids: AssetId[], storage_free}` |
 | `assets.prune` | `POST /devices/{device}/assets/prune` | `{also_keep: AssetId[]}` → 202 Job `assets.prune`. Removes Assets no stored Layout uses |
 
 As built in #75:
 
-- `assets.create` takes `app` and `upload` sources; #89 owns `catalog`. Uploads accept PNG and JPEG images. An expired, consumed or foreign upload returns `upload.not_found`. `fit` is `"contain"` (the default: the whole image inside the Tile) or `"cover"` (cropped to a centered square first). The result's `kind` is `tdi1`, 64 by 64, identified by the full SHA-256 of its encoded bytes. A third render while two run gets 429 `limits.exceeded`.
+- `assets.create` takes `app`, `upload` and `catalog` sources. Uploads accept PNG and JPEG images. An expired, consumed or foreign upload returns `upload.not_found`. Catalog picks accept `variant` (`base`, `light`, `dark`), pixel `padding`, RGBA `background` and RGB `tint`. `fit` is `"contain"` (the default: the whole image inside the Tile) or `"cover"` (cropped to a centered square first). The result's `kind` is `tdi1`, 64 by 64, identified by the full SHA-256 of its encoded bytes. A third render while two run gets 429 `limits.exceeded`.
 - `assets.prune` keeps the Assets that `also_keep` names, that the Companion's stored Layouts for the Device use, and that the Device's own stored Layouts use, as today's `remove_unused_icons` does.
 - `assets.file` reads built-in icons and the Companion's Asset files, kept as `assets/<id>.bin` under its data folder. The generated client returns a `Blob` for it.
 
@@ -587,6 +596,20 @@ Feature module `system`.
 
 App updates aren't API routes. They stay in Electron's preload as `openTouchDeck.updates.check()`, `download(onProgress)` and `install()` (ADR 0005). The lock is released when its owner session ends or is revoked (including Reset pairing), or its lease lapses. Browser sessions and non-owner sessions get 403 `auth.forbidden` on lock operations. So does renewing or releasing a lock whose lease has lapsed, since nobody owns it any more; take a new one with `system.lock`. Before installing, Electron takes `system.lock`, renews it with `system.lock_renew` while needed, then stops the Companion with `system.shutdown` and runs the installer.
 
+### Electron signed updater (87A)
+
+The preload calls always resolve with data, except successful `install()`, which quits without resolving. `UpdateCheck`, `UpdateProgress`, `UpdateDownload` and `UpdateInstall` in `app/ui/src/companion/session.ts` are the UI seam. Each update IPC handler uses the same top-frame, window and Companion-origin check as `session`. The renderer supplies no URL, path, key or installer arguments.
+
+The Windows x64 feed is the existing `plugins.updater.endpoints[0]` in `app/src-tauri/tauri.conf.json`, mirrored in Electron and checked by a test. Only a strictly newer SemVer version is offered. Manifest bodies are limited to 1 MiB and 15 seconds; installers to 256 MiB and 5 minutes, including redirects and reading the body. Every redirect is checked for HTTPS. Unpackaged builds alone honor `TOUCHDECK_UPDATE_TEST_FEED=http://127.0.0.1:PORT/latest.json`; this also permits numeric-loopback HTTP artifact URLs. Packaged builds ignore it.
+
+For #91 and #108: set `TOUCHDECK_UPDATER_PUBKEY` at build time to the existing base64-wrapped public key. Every Electron build generates the ignored `src/updates/key.gen.ts` before TypeScript compiles it. Unset means disabled, including ordinary source builds. No runtime environment, file or IPC supplies the trusted key. Release packaging must use this build entry point, supply the real public key, and protect app.asar integrity (including the Electron integrity fuse); that wiring belongs to #91/#108. The existing Tauri packaging scripts do not package Electron.
+
+Verification follows [`tauri-plugin-updater` 2.12.0](https://github.com/tauri-apps/plugins-workspace/blob/updater-v2.12.0/plugins/updater/src/updater.rs) and [`minisign-verify` 0.2.5](https://github.com/jedisct1/rust-minisign-verify/blob/0.2.5/src/lib.rs): decode the base64-wrapped minisign packet, match the eight-byte key id, verify Ed25519 over either the original bytes (`Ed`) or their BLAKE2b-512 hash (`ED`), and verify the global signature over the 64-byte signature followed by the trusted comment. Both algorithms are required for existing release compatibility. The manifest carries the same signature as the installer's `.sig`; no second signature fetch is required. Like the existing `requireSignedVersion: true` setting, production downloads also require a matching `version:` field in the authenticated comment, including build metadata (an optional leading `v` is ignored). The v0.1.0 compatibility test verifies the cryptographic signature independently of that newer version requirement.
+
+Downloads use an exclusive file in a random `update-*` folder inside the Companion's secured runtime folder, inheriting its protected DACL. Runtime and staging folders must be directories, never symlinks or junctions, before writing and before launch. Startup removes leftover staging folders. Terminal download and install failures clear ready state and remove the whole staging folder; replacing a ready download does too. Busy retains the verified download for retry. Install verifies before acquiring `system.lock` and again after renewal and shutdown, immediately before launch. One check, download or install runs at a time. Lock calls pin the window session for the entire attempt. Busy returns the error's `details.device` string, or null if absent. A successful lock is renewed immediately before shutdown; each API call times out after 5 seconds, within the 10-minute lease. Failure releases only a lock this attempt acquired.
+
+For #91: after `system.shutdown` acknowledges, launch the verified NSIS executable directly with `/P /UPDATE /R` (passive, update, restart), no shell and no inherited CLI arguments, then quit Electron. This matches the old updater's passive restart flags. The installer must wait for the Companion and Electron to exit before replacing files. A failed spawn returns `installer`; starting the Companion again is the normal next-launch recovery. The #77 integration remains draft until its real lock is available; fakes exercise the merged API contract meanwhile.
+
 ### Auth
 
 The auth module mounts these itself. Features can't import it.
@@ -599,7 +622,7 @@ The auth module mounts these itself. Features can't import it.
 | `auth.pair_code` | `POST /auth/pair-codes` | → `{expires_ms}` only. Window sessions only. The Companion opens `/pair#code=…` in the default browser and shows the manual code only in a native tray notification; replaces any pending code |
 | `auth.sessions` | `GET /auth/sessions` | → `SessionInfo[] {id, kind, label, created_ms, last_used_ms, current}` |
 | `auth.session_delete` | `DELETE /auth/sessions/{id}` | → `()`. `self` means the caller's own session |
-| `auth.sessions_delete` | `DELETE /auth/sessions?kind=browser` | → `()` |
+| `auth.sessions_delete` | `DELETE /auth/sessions?kind=browser` | → `()` (204). Window only; 403 `auth.forbidden` for browsers. Missing or other `kind`: 400 `request.invalid` |
 | `auth.reset` | `POST /auth/reset` | → `()`. Reset pairing |
 
 ### Test hooks
