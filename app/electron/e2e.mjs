@@ -15,6 +15,7 @@ function build(env) {
 const playwright = require.resolve('@playwright/test/cli');
 const sourceEnv = { ...process.env, TOUCHDECK_UPDATER_PUBKEY: '' };
 build(sourceEnv);
+run('tests/updates-lock.integration.mjs');
 run(playwright, ['test', '--grep-invert', 'authorized top frame reaches']);
 const { publicKey, privateKey } = generateKeyPairSync('ed25519');
 const id = randomBytes(8);
