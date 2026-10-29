@@ -9,7 +9,7 @@ async function companion(request: APIRequestContext) {
   const minted = await request.post('/__companion/session', { headers: { 'X-TouchDeck-Dev': '1' } });
   expect(minted.status()).toBe(200);
   const { token } = (await minted.json()) as { token: string };
-  return (method: 'GET' | 'POST' | 'PUT', path: string, data?: unknown) =>
+  return (method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string, data?: unknown) =>
     request.fetch(`/api/v1${path}`, { method, data, headers: { Authorization: `Bearer ${token}` } });
 }
 
@@ -126,4 +126,50 @@ test('a send after the mock Device changed offers Keep mine, and Load from repla
   await expect(await waitEvent(page, 'pulled', 30_000)).toHaveText('Loaded “E2E” from Mock Device mock0001');
   expect(sorted(JSON.parse(await exportText(page)) as Layout)).toEqual(sorted((await stored(api, 'mock0001'))!));
   await expect(status(page)).toHaveAttribute('data-kind', 'ok');
+});
+
+interface MockRecord {
+  settings: { orientation: string };
+  reboots: number;
+}
+
+test('the Device panel renames a mock Device, switches its orientation with a restart, and restarts it', async ({ page, request }) => {
+  const api = await companion(request);
+  const record = async (): Promise<MockRecord> => (await api('GET', '/test/devices/mock0003/record')).json();
+  const before = await record();
+  await page.goto('/');
+  await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit Mock Device mock0003' }).click();
+  await expect(page.getByTestId('editor')).toHaveAttribute('data-device-id', 'mock0003');
+  await page.getByTestId('device-name').click();
+  const status = page.getByTestId('device-panel-status');
+  const name = page.getByTestId('device-panel-name');
+  await expect(name).toBeEditable();
+
+  await name.fill('Bench');
+  await name.press('Enter');
+  await expect(status).toHaveAttribute('data-event', 'saved');
+  await expect(page.getByTestId('device-name')).toHaveText('Bench');
+  const renamed: { name: string } = await (await api('GET', '/devices/mock0003')).json();
+  expect(renamed.name).toBe('Bench');
+  await expect(page.getByTestId('device-panel-brightness-hint')).toHaveText("Bench's Firmware can't change this yet.");
+
+  await page.getByTestId('device-panel-portrait').click();
+  await page.getByTestId('device-panel-confirm-restart').click();
+  await expect(status).toHaveAttribute('data-event', 'restarting');
+  await expect(status).not.toHaveAttribute('data-event', 'restarting', { timeout: 30_000 });
+  await expect(status).not.toHaveAttribute('data-kind', 'error');
+  await expect(page.getByTestId('device-panel-portrait')).toHaveAttribute('aria-pressed', 'true');
+  const switched = await record();
+  expect(switched.settings.orientation).toBe('portrait');
+  expect(switched.reboots).toBe(before.reboots + 1);
+
+  await page.getByTestId('device-panel-restart').click();
+  await expect(status).toHaveAttribute('data-event', 'restarting');
+  await expect(status).not.toHaveAttribute('data-event', 'restarting', { timeout: 30_000 });
+  await expect(status).not.toHaveAttribute('data-kind', 'error');
+  expect((await record()).reboots).toBe(before.reboots + 2);
+
+  const restored = await api('PATCH', '/devices/mock0003/settings', { idle_timeout_s: null, orientation: 'landscape', name: 'Mock Device mock0003', brightness: null });
+  expect(restored.status()).toBe(200);
 });

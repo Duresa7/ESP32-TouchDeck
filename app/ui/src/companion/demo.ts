@@ -1,3 +1,4 @@
+import type { DeviceSummary } from './api.ts';
 import type { Environment } from './connection.ts';
 import { createFakeCompanion } from './fake.ts';
 import { createFakeUpdates, sampleOffer, type FakeUpdates } from './fake-updates.ts';
@@ -20,6 +21,8 @@ declare global {
     touchdeckDemo?: {
       push(id: string, order: string[]): void;
       offline(id: string): void;
+      device(id: string, change: Partial<Omit<DeviceSummary, 'id' | 'rev'>>): void;
+      firmware: { hold(id: string): void; release(id: string): void };
       updates: Pick<FakeUpdates, 'script' | 'finish' | 'calls'>;
     };
   }
@@ -30,12 +33,19 @@ export function demoEnvironment(target: Window): Environment {
   const requested = Number(params.get('devices') ?? 3);
   const count = Number.isInteger(requested) && requested >= 0 && requested <= 5 ? requested : 3;
   const devices = demoScenario(count);
-  const fake = createFakeCompanion({ devices, layouts: Object.fromEntries(devices.map((d) => [d.id, demoLayout()])), system: { build: 'demo' } });
+  const fake = createFakeCompanion({
+    devices,
+    layouts: Object.fromEntries(devices.map((d) => [d.id, demoLayout()])),
+    system: { build: 'demo' },
+    brightness: Object.fromEntries(devices.filter((_, i) => i % 3 !== 2).map((d) => [d.id, 80])),
+  });
   const update = params.get('update');
   const updates = createFakeUpdates({ check: isCheckName(update) ? checks[update] : checks.none });
   target.touchdeckDemo = {
     push: (id, order) => fake.setLayout(id, demoLayout(order)),
     offline: (id) => fake.update(id, { link: { state: 'lost', reason: 'unplugged', detail: '', at_ms: Date.UTC(2026, 9, 27, 21, 40) } }),
+    device: (id, change) => fake.update(id, change),
+    firmware: { hold: fake.firmware.hold, release: fake.firmware.release },
     updates: { script: updates.script, finish: updates.finish, calls: updates.calls },
   };
   const network = target.fetch.bind(target);

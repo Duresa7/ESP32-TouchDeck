@@ -1,6 +1,9 @@
 import type { DeviceSummary, Layout, SystemInfo } from './api.ts';
 import { CLOSE_SESSION, type EventSocket } from './events.ts';
+import { createFakeDeviceSettings } from './fake-device-settings.ts';
+import { createFakeFirmware } from './fake-firmware.ts';
 import { createFakeLayouts } from './fake-layouts.ts';
+import type { FirmwareBuild } from './firmware-api.ts';
 import type { OpenTouchDeckBridge } from './session.ts';
 
 // An in-memory Companion for tests and the demo mode of `pnpm dev:ui`. It answers
@@ -16,6 +19,8 @@ export interface FakeCompanionOptions {
   system?: Partial<SystemInfo>;
   /** How long a fake Job runs. */
   jobMs?: number;
+  brightness?: Record<string, number>;
+  bundled?: FirmwareBuild;
 }
 
 type Frame = Record<string, unknown> & { type: string };
@@ -64,6 +69,8 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   let minted = 0;
   let requests = 0;
   const layouts = createFakeLayouts({ devices, publish, seed: options.layouts, delayMs: options.jobMs });
+  const settings = createFakeDeviceSettings({ devices, publish, brightness: options.brightness });
+  const firmware = createFakeFirmware({ devices, publish, bundled: options.bundled, stepMs: options.jobMs });
 
   function mint() {
     minted += 1;
@@ -93,7 +100,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     const get = request.method === 'GET';
 
     if (path === '/system/ping') return get ? json(200, { api: ['v1'] }) : failure(405, 'route.method_not_allowed', 'Use GET.');
-    if (path.startsWith('/test/')) return layouts.test(request, path);
+    if (path.startsWith('/test/')) return (await firmware.test(request, path)) ?? settings.record(path, await layouts.test(request, path));
 
     const auth = request.headers.get('Authorization') ?? '';
     const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
@@ -112,7 +119,12 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
       const found = devices.get(decodeURIComponent(device![1]));
       return found ? json(200, found) : failure(404, 'device.not_found', 'No Device with that id.');
     }
-    return (await layouts.handle(request, path)) ?? failure(404, 'route.not_found', 'No route with that path.');
+    return (
+      (await settings.handle(request, path)) ??
+      (await firmware.handle(request, path)) ??
+      (await layouts.handle(request, path)) ??
+      failure(404, 'route.not_found', 'No route with that path.')
+    );
   }
 
   function openSocket(url: string, protocols: string[]): EventSocket {
@@ -125,7 +137,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     }
     sockets.add(socket);
     socket.send({ type: 'hello', api: 'v1', build: system.build, session: { id: 'fake-session', kind: 'window' } });
-    socket.send({ type: 'sync', data: { devices: [...devices.values()], jobs: layouts.jobs() } });
+    socket.send({ type: 'sync', data: { devices: [...devices.values()], jobs: [...layouts.jobs(), ...firmware.jobs()] } });
     return socket;
   }
 
@@ -134,6 +146,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     openSocket,
     bridge,
     layouts,
+    firmware,
     /** Sessions minted so far through the bridge. */
     get minted() {
       return minted;
