@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { mkdtemp, readdir, readFile, rm, symlink, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { blake2b } from '@noble/hashes/blake2.js';
 import { Updater, feedSettings, INSTALLER_ARGS } from '../dist/updates/index.js';
 import { compareVersions, verifyInstaller } from '../dist/updates/signature.js';
 
@@ -139,6 +140,20 @@ test('file changed after ready is refused and deleted before lock', async t => {
   assert.deepEqual(await f.updater.install(), { state: 'failed', reason: 'installer' });
   assert.equal(f.state.calls.length, 0); await assert.rejects(readFile(path));
   assert.deepEqual(await readdir(f.dir), []);
+});
+
+test('noble BLAKE2b-512 matches the RFC 7693 vectors and streams like one-shot', () => {
+  const vectors = {
+    '': '786a02f742015903c6c6fd852552d272912f4740e15847618a86e217f71f5419d25e1031afee585313896444934eb04b903a685b1448b755d56f701afe9be2ce',
+    abc: 'ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923',
+  };
+  for (const [text, digest] of Object.entries(vectors)) {
+    assert.equal(Buffer.from(blake2b.create({ dkLen: 64 }).update(Buffer.from(text)).digest()).toString('hex'), digest);
+  }
+  const data = randomBytes(300_000);
+  const hash = blake2b.create({ dkLen: 64 });
+  for (let at = 0; at < data.length; at += 65_536) hash.update(data.subarray(at, at + 65_536));
+  assert.deepEqual(Buffer.from(hash.digest()), createHash('blake2b512').update(data).digest());
 });
 
 test('real v0.1.0 installer verifies; one byte flipped is refused', { skip: !process.env.TOUCHDECK_REAL_UPDATE_ASSETS }, async t => {

@@ -5,12 +5,16 @@ import { resolve } from 'node:path';
 import { fakeCompanion } from './fake-companion.mjs';
 import type {} from '../../ui/src/companion/session';
 
-test('authorized top frame reaches check download and install handlers', async () => {
+const kinds = [['legacy', 'Ed'], ['prehashed', 'ED']] as const;
+
+for (const [kind, algorithm] of kinds) test(`authorized top frame reaches check download and install handlers (${algorithm} ${kind})`, async () => {
   const fixture: unknown = JSON.parse(await readFile(resolve('dist/e2e-update.json'), 'utf8'));
   if (!fixture || typeof fixture !== 'object' || !('data' in fixture) || typeof fixture.data !== 'string' ||
-      !('signature' in fixture) || typeof fixture.signature !== 'string') throw new Error('Invalid test fixture');
+      !('signatures' in fixture) || !fixture.signatures || typeof fixture.signatures !== 'object' ||
+      !(kind in fixture.signatures)) throw new Error('Invalid test fixture');
+  const signature: unknown = fixture.signatures[kind];
+  if (typeof signature !== 'string') throw new Error('Invalid test fixture');
   const bytes = Buffer.from(fixture.data, 'base64');
-  const signature = fixture.signature;
   let origin = '';
   const feed = createServer((req, res) => {
     if (req.url === '/latest.json') res.end(JSON.stringify({ version: '99.0.0', platforms: {

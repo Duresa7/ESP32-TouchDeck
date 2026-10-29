@@ -1,4 +1,4 @@
-import { createHash, createPublicKey, verify } from 'node:crypto';
+import { createPublicKey, verify } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 
@@ -24,9 +24,10 @@ export async function verifyInstaller(path: string, wrappedSignature: string, wr
   const signature = packet.subarray(10);
   const comment = lines[2].slice(17);
   if (!verify(null, Buffer.concat([signature, Buffer.from(comment)]), publicKey, global)) throw new Error('Invalid comment signature');
-  let data: Buffer;
+  let data: Uint8Array;
   if (packet[1] === 0x44) {
-    const hash = createHash('blake2b512');
+    const { blake2b } = await import('@noble/hashes/blake2.js');
+    const hash = blake2b.create({ dkLen: 64 });
     for await (const chunk of createReadStream(path)) hash.update(chunk);
     data = hash.digest();
   } else {

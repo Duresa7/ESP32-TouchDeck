@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
-import { generateKeyPairSync, randomBytes, sign } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { writeFile, rm } from 'node:fs/promises';
 
 const require = createRequire(import.meta.url);
@@ -21,14 +21,16 @@ const id = randomBytes(8);
 const key = Buffer.concat([Buffer.from('Ed'), id, publicKey.export({ type: 'spki', format: 'der' }).subarray(-32)]);
 const encodedKey = Buffer.from(`untrusted comment: test\n${key.toString('base64')}\n`).toString('base64');
 const data = randomBytes(4096);
-const sig = sign(null, data, privateKey);
 const comment = 'timestamp:1\tfile:setup.exe\tversion:99.0.0';
-const global = sign(null, Buffer.concat([sig, Buffer.from(comment)]), privateKey);
-const packet = Buffer.concat([Buffer.from('Ed'), id, sig]);
-const signature = Buffer.from(`untrusted comment: test\n${packet.toString('base64')}\ntrusted comment: ${comment}\n${global.toString('base64')}\n`).toString('base64');
+function signed(prehashed) {
+  const sig = sign(null, prehashed ? createHash('blake2b512').update(data).digest() : data, privateKey);
+  const global = sign(null, Buffer.concat([sig, Buffer.from(comment)]), privateKey);
+  const packet = Buffer.concat([Buffer.from(prehashed ? 'ED' : 'Ed'), id, sig]);
+  return Buffer.from(`untrusted comment: test\n${packet.toString('base64')}\ntrusted comment: ${comment}\n${global.toString('base64')}\n`).toString('base64');
+}
 try {
   build({ ...process.env, TOUCHDECK_UPDATER_PUBKEY: encodedKey });
-  await writeFile(new URL('./dist/e2e-update.json', import.meta.url), JSON.stringify({ data: data.toString('base64'), signature }));
+  await writeFile(new URL('./dist/e2e-update.json', import.meta.url), JSON.stringify({ data: data.toString('base64'), signatures: { legacy: signed(false), prehashed: signed(true) } }));
   run(playwright, ['test', 'updates.spec.ts']);
 } finally {
   await rm(new URL('./dist/e2e-update.json', import.meta.url), { force: true });
