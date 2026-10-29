@@ -20,7 +20,6 @@ import {
 } from 'lucide-react';
 import type { ActionType } from '../../lib/editor/validate.ts';
 
-/** What each action kind is called in the inspector's what-and-where line and in Add Tile. */
 export const KINDS: Record<ActionType, { name: string; line: string; noun: string; icon: ComponentType<LucideProps> }> = {
   key: { name: 'Keyboard shortcut', line: 'Press keys on this PC', noun: 'Keyboard shortcut', icon: Keyboard },
   launch: { name: 'Open an app', line: 'Start a program', noun: 'App', icon: AppWindow },
@@ -36,7 +35,6 @@ export const KINDS: Record<ActionType, { name: string; line: string; noun: strin
 const solid = (size: number) => ({ size, strokeWidth: 0, fill: 'currentColor' });
 const line = (size: number) => ({ size, strokeWidth: 2.2 });
 
-/** A built-in `lv:` icon, drawn with the app's icon set. Null for any other icon. */
 export function BuiltinIcon({ icon, size }: { icon: string; size: number }) {
   switch (icon) {
     case 'lv:prev':
@@ -63,7 +61,6 @@ export function BuiltinIcon({ icon, size }: { icon: string; size: number }) {
 
 const BUILTIN: ReadonlySet<string> = new Set(['lv:prev', 'lv:next', 'lv:play_pause', 'lv:mute', 'lv:volume_mid', 'lv:volume_max']);
 
-/** A Tile's glyph for thumbnails: its built-in icon, or its kind's. */
 export function TileGlyph({ icon, kind, size }: { icon: string | null; kind: ActionType; size: number }) {
   if (icon && BUILTIN.has(icon)) return <BuiltinIcon icon={icon} size={size} />;
   const Kind = KINDS[kind].icon;

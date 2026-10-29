@@ -1,29 +1,13 @@
-// The expected numbers are the firmware's own, from firmware/components/td_ui_core/test/test_ui_geometry.c, one test
-// case here for each one there.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'vitest';
+import { parseLayout, type GridPage } from '../editor/validate.ts';
 import { cellAt, dotX, geometry, screenSize, tileRect, type Orientation, type Rect } from './geometry.ts';
 
-interface Tile {
-  id: string;
-  row: number;
-  col: number;
-  rowSpan: number;
-  colSpan: number;
-}
-
-interface Page {
-  id: string;
-  rows: number;
-  cols: number;
-  tiles: Tile[];
-}
-
-const builtin = JSON.parse(readFileSync(join(import.meta.dirname, '..', '..', '..', '..', '..', 'schema', 'examples', 'builtin.json'), 'utf8')) as {
-  pages: Page[];
-};
+const parsed = parseLayout(readFileSync(join(import.meta.dirname, '..', '..', '..', '..', '..', 'schema', 'examples', 'builtin.json'), 'utf8'));
+if (!parsed.ok) throw new Error('builtin.json breaks the Layout rules');
+const builtin = { pages: parsed.layout.pages.filter((page): page is GridPage => page.kind === 'grid') };
 
 const geometryOf = (orientation: Orientation, fullScreen = false) => geometry(screenSize(orientation), fullScreen);
 const overlap = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;

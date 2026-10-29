@@ -1,9 +1,11 @@
-// Import and Export for the Layout screen. Export asks where to save when the browser can, and downloads otherwise.
 import type { EditorStore } from '../../lib/editor/store.ts';
 
-type SavePicker = (options: object) => Promise<{ createWritable(): Promise<{ write(data: string): Promise<void>; close(): Promise<void> }> }>;
+declare global {
+  interface Window {
+    showSaveFilePicker?(options: { suggestedName: string; types: { description: string; accept: Record<string, string[]> }[] }): Promise<FileSystemFileHandle>;
+  }
+}
 
-/** The file name Export suggests: the Layout's name with anything unsafe in a file name turned into dashes. */
 export const exportName = (layout: string) => `${layout.trim().replace(/[^A-Za-z0-9._-]+/g, '-') || 'layout'}.json`;
 
 export async function exportLayout(store: EditorStore) {
@@ -12,7 +14,7 @@ export async function exportLayout(store: EditorStore) {
   const text = store.exportText();
   if (!draft || !text) return;
   const name = exportName(draft.layout.name);
-  const save = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
+  const save = window.showSaveFilePicker;
   try {
     if (save) {
       const handle = await save({ suggestedName: name, types: [{ description: 'Open TouchDeck Layout', accept: { 'application/json': ['.json'] } }] });
@@ -28,7 +30,7 @@ export async function exportLayout(store: EditorStore) {
     }
     store.say('ok', `Exported “${name}”`, { event: 'exported' });
   } catch (error) {
-    if ((error as DOMException).name !== 'AbortError') store.say('error', "Couldn't export. Pick another folder, then retry.", { detail: String(error), event: 'export-failed' });
+    if (!(error instanceof DOMException && error.name === 'AbortError')) store.say('error', "Couldn't export. Pick another folder, then retry.", { detail: String(error), event: 'export-failed' });
   }
 }
 

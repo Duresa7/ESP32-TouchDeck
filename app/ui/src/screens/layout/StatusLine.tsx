@@ -2,7 +2,6 @@ import clsx from 'clsx';
 import type { EditorStore } from '../../lib/editor/store.ts';
 import { useEditorState } from './editor.ts';
 
-/** What the editor last did, in plain words, with the technical reason under Details when something went wrong. */
 export function StatusLine({ store }: { store: EditorStore }) {
   const status = useEditorState(store, (s) => s.status);
   return (

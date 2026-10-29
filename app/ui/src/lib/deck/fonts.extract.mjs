@@ -1,11 +1,3 @@
-// Writes fonts.data.ts from LVGL's built-in Montserrat fonts, the ones the deck draws with.
-//
-//   node src/lib/deck/fonts.extract.mjs <lvgl>/src/font
-//
-// <lvgl> is the LVGL component the firmware builds against, firmware/managed_components/lvgl__lvgl
-// after an ESP-IDF build. Each lv_font_montserrat_<size>.c holds the glyph advances in 1/16 px, the
-// two cmaps, and the class kerning that lv_font_conv generated. The preview measures text with these
-// numbers, so a label wraps, shrinks, and centres where the deck puts it.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
