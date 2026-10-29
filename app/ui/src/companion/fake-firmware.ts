@@ -56,7 +56,7 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
     if (!job || job.finished_ms !== null) return;
     const device = devices.get(job.scope.kind === 'device' ? job.scope.id : '');
     if (device?.firmware) {
-      const firmware = version ? { ...device.firmware, version, update_available: null } : device.firmware;
+      const firmware = version ? { ...device.firmware, version, protocol: Math.max(device.firmware.protocol, 2), update_available: null } : device.firmware;
       setDevice(device.id, { firmware, link: connected(port) });
     }
     update(job, 'result' in outcome

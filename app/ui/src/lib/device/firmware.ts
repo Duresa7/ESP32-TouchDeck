@@ -6,6 +6,7 @@ import type { BundleRef, FirmwarePhase, FirmwareProgress, FirmwareResult } from 
 import type { JobsStore } from '../../companion/jobs.ts';
 
 export type JobView =
+  | { step: 'waiting'; text: string; raw: string }
   | { step: 'running'; text: string; raw: string; pct: number | null }
   | { step: 'done'; text: string; raw: string; version: string }
   | { step: 'failed'; text: string; raw: string; code: string };
@@ -90,25 +91,36 @@ export function doneText(result: FirmwareResult): string {
   return `Done. ${result.message}.`;
 }
 
-export function viewOf(job: Job, context: UpdateContext): JobView {
+export interface FirmwareWords {
+  waiting: string;
+  progress(progress: FirmwareProgress | null): string;
+  done(result: FirmwareResult): string;
+  failed(error: { code: string; details: unknown }, context: UpdateContext): string;
+}
+
+export const updateWords: FirmwareWords = { waiting: 'Confirm on this PC to continue.', progress: phaseText, done: doneText, failed: failureText };
+
+export const inProgress = (view: UpdateView) => view.step === 'running' || view.step === 'waiting';
+
+export function viewOf(job: Job, context: UpdateContext, words: FirmwareWords = updateWords): JobView {
   switch (job.state) {
     case 'queued':
-      return { step: 'running', text: 'Updating…', raw: 'Queued', pct: null };
+      return { step: 'running', text: words.progress(null), raw: 'Queued', pct: null };
     case 'waiting_for_confirmation':
-      return { step: 'running', text: 'Confirm on this PC to continue.', raw: 'Waiting for confirmation', pct: null };
+      return { step: 'waiting', text: words.waiting, raw: 'Waiting for confirmation' };
     case 'running': {
       const progress = progressOf(job.progress);
       const pct = progress?.pct ?? null;
-      return { step: 'running', text: phaseText(progress), raw: progress ? `${RAW[progress.phase]}${pct === null ? '' : ` ${pct}%`}` : 'Running', pct };
+      return { step: 'running', text: words.progress(progress), raw: progress ? `${RAW[progress.phase]}${pct === null ? '' : ` ${pct}%`}` : 'Running', pct };
     }
     case 'succeeded': {
       const result = resultOf(job.result) ?? { message: 'Firmware updated', version: context.version };
-      return { step: 'done', text: doneText(result), raw: result.message, version: result.version };
+      return { step: 'done', text: words.done(result), raw: result.message, version: result.version };
     }
     case 'failed':
     case 'cancelled': {
       const error: ErrorBody = job.error ?? { code: job.state === 'cancelled' ? 'job.cancelled' : 'internal', message: `The Job ended as ${job.state}.`, details: null };
-      return { step: 'failed', text: failureText(error, context), raw: `Failed: ${error.message}`, code: error.code };
+      return { step: 'failed', text: words.failed(error, context), raw: `Failed: ${error.message}`, code: error.code };
     }
     default: {
       const _exhaustive: never = job.state;
@@ -123,17 +135,23 @@ export interface FirmwareUpdateState {
   log: string[];
 }
 
-export interface FirmwareUpdateDeps {
-  companion: Pick<Companion, 'firmware' | 'jobs'>;
+export interface FirmwareJobDeps {
+  companion: Pick<Companion, 'jobs'>;
   jobs: JobsStore;
   context(): UpdateContext & { id: string };
+  run(id: string, bundle: BundleRef): Promise<Job>;
+  words?: FirmwareWords;
   pollMs?: number;
+}
+
+export interface FirmwareUpdateDeps extends Omit<FirmwareJobDeps, 'companion' | 'run' | 'words'> {
+  companion: Pick<Companion, 'firmware' | 'jobs'>;
 }
 
 const finished = (job: Job) => job.state === 'succeeded' || job.state === 'failed' || job.state === 'cancelled';
 
-export function createFirmwareUpdate(deps: FirmwareUpdateDeps) {
-  const { companion, jobs, pollMs = 1000 } = deps;
+export function createFirmwareJob(deps: FirmwareJobDeps) {
+  const { companion, jobs, words = updateWords, pollMs = 1000 } = deps;
   const store = createStore<FirmwareUpdateState>()(() => ({ view: { step: 'idle' }, job: null, log: [] }));
   const { getState: state, setState: set } = store;
   let stop = () => {};
@@ -141,7 +159,7 @@ export function createFirmwareUpdate(deps: FirmwareUpdateDeps) {
 
   function show(job: Job) {
     if (state().job !== job.id) return;
-    const view = viewOf(job, started);
+    const view = viewOf(job, started, words);
     set((s) => ({ view, log: s.log.at(-1) === view.raw ? s.log : [...s.log, view.raw] }));
     if (finished(job)) stop();
   }
@@ -169,12 +187,12 @@ export function createFirmwareUpdate(deps: FirmwareUpdateDeps) {
 
   return Object.assign(store, {
     async start(bundle: BundleRef = 'bundled'): Promise<void> {
-      if (state().view.step === 'running') return;
+      if (inProgress(state().view)) return;
       const { id, ...context } = deps.context();
       started = context;
-      set({ view: { step: 'running', text: 'Updating…', raw: 'Starting', pct: null }, job: null, log: [] });
+      set({ view: { step: 'running', text: words.progress(null), raw: 'Starting', pct: null }, job: null, log: [] });
       try {
-        follow(await companion.firmware.update({ device: id }, null, { bundle }));
+        follow(await deps.run(id, bundle));
       } catch (thrown) {
         const error = toApiError(thrown);
         const busy = error.code === 'device.busy' && typeof error.details === 'object' && error.details !== null && 'job' in error.details ? error.details.job : null;
@@ -182,7 +200,7 @@ export function createFirmwareUpdate(deps: FirmwareUpdateDeps) {
           const known = jobs.getState().jobs[busy.id];
           if (known) return follow(known);
         }
-        set({ view: { step: 'failed', text: failureText(error, context), raw: `Failed: ${error.message}`, code: error.code } });
+        set({ view: { step: 'failed', text: words.failed(error, context), raw: `Failed: ${error.message}`, code: error.code } });
       }
     },
 
@@ -194,7 +212,7 @@ export function createFirmwareUpdate(deps: FirmwareUpdateDeps) {
     },
 
     dismiss() {
-      if (state().view.step !== 'running') set({ view: { step: 'idle' }, job: null, log: [] });
+      if (!inProgress(state().view)) set({ view: { step: 'idle' }, job: null, log: [] });
     },
 
     dispose() {
@@ -203,4 +221,10 @@ export function createFirmwareUpdate(deps: FirmwareUpdateDeps) {
   });
 }
 
-export type FirmwareUpdateStore = ReturnType<typeof createFirmwareUpdate>;
+export function createFirmwareUpdate(deps: FirmwareUpdateDeps) {
+  const { companion } = deps;
+  return createFirmwareJob({ ...deps, run: (id, bundle) => companion.firmware.update({ device: id }, null, { bundle }) });
+}
+
+export type FirmwareJobStore = ReturnType<typeof createFirmwareJob>;
+export type FirmwareUpdateStore = FirmwareJobStore;

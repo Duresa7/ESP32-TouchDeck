@@ -173,3 +173,22 @@ test('the Device panel renames a mock Device, switches its orientation with a re
   const restored = await api('PATCH', '/devices/mock0003/settings', { idle_timeout_s: null, orientation: 'landscape', name: 'Mock Device mock0003', brightness: null });
   expect(restored.status()).toBe(200);
 });
+
+test('a board on a mock port shows a New board card that waits for a click, and leaves when unplugged', async ({ page, request }) => {
+  const api = await companion(request);
+  await page.goto('/');
+  await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
+
+  const plugged = await api('POST', '/test/ports', { plug: { id: 'mock00ff', kind: 'other-firmware' } });
+  expect(plugged.status()).toBe(204);
+  const card = page.getByTestId('new-board');
+  await expect(card).toHaveAttribute('data-step', 'detected', { timeout: 15_000 });
+  await expect(card).toHaveAttribute('data-id', 'mock00ff');
+  await expect(card).toContainText("doesn't run Open TouchDeck Firmware yet.");
+  await expect(card.getByTestId('board-install')).toBeVisible();
+  await expect(page.getByTestId('onboarding')).toHaveCount(0);
+
+  const unplugged = await api('POST', '/test/ports', { unplug: 'mock00ff' });
+  expect(unplugged.status()).toBe(204);
+  await expect(card).toHaveCount(0, { timeout: 15_000 });
+});

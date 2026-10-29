@@ -89,10 +89,9 @@ describe('the Job view', () => {
   test('queued and waiting', () => {
     expect(viewOf(job({ state: 'queued' }), STUDIO)).toEqual({ step: 'running', text: 'Updating…', raw: 'Queued', pct: null });
     expect(viewOf(job({ state: 'waiting_for_confirmation' }), STUDIO)).toEqual({
-      step: 'running',
+      step: 'waiting',
       text: 'Confirm on this PC to continue.',
       raw: 'Waiting for confirmation',
-      pct: null,
     });
   });
 

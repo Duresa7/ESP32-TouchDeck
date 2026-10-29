@@ -13,6 +13,7 @@ export type FirmwareResult = { message: string, version: string, };
 
 const firmwareEndpoints = {
   'firmware.bundled': { method: 'GET', path: '/firmware/bundled', access: 'session' },
+  'firmware.install': { method: 'POST', path: '/new-boards/{device}/install', access: 'session' },
   'firmware.pick': { method: 'POST', path: '/firmware/bundles/pick', access: 'session' },
   'firmware.update': { method: 'POST', path: '/devices/{device}/firmware/update', access: 'session' },
 } as const;
@@ -34,6 +35,7 @@ export function createFirmwareRoutes(base: string, token: () => string) {
     bundled: (_path: Record<string, never> = {}, _query: null = null, _body: null = null) => call<FirmwareBuild>('firmware.bundled', {}, null),
     pick: (_path: Record<string, never>, _query: null, body: { device: DeviceId, }) => call<PickResult>('firmware.pick', {}, body),
     update: (path: { device: DeviceId, }, _query: null, body: { bundle: BundleRef, }) => call<Job>('firmware.update', path, body),
+    install: (path: { device: DeviceId, }, _query: null, body: { bundle: BundleRef, }) => call<Job>('firmware.install', path, body),
   };
 }
 

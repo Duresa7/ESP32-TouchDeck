@@ -1,4 +1,4 @@
-import type { DeviceRemoved, DeviceSummary, Job, SyncData } from './api.ts';
+import type { DeviceRemoved, DeviceSummary, Job, NewBoard, NewBoardRemoved, SyncData } from './api.ts';
 import type { DevicesStore } from './devices.ts';
 import type { JobsStore } from './jobs.ts';
 import type { Session } from './session.ts';
@@ -43,9 +43,11 @@ type Frame =
   | { type: 'sync'; data: Partial<SyncData> }
   | { type: 'device.added' | 'device.updated'; data: DeviceSummary }
   | { type: 'device.removed'; data: DeviceRemoved }
+  | { type: 'new-board.added'; data: NewBoard }
+  | { type: 'new-board.removed'; data: NewBoardRemoved }
   | { type: 'job.updated'; data: Job };
 
-const HANDLED: ReadonlySet<unknown> = new Set<Frame['type']>(['hello', 'sync', 'device.added', 'device.updated', 'device.removed', 'job.updated']);
+const HANDLED: ReadonlySet<unknown> = new Set<Frame['type']>(['hello', 'sync', 'device.added', 'device.updated', 'device.removed', 'new-board.added', 'new-board.removed', 'job.updated']);
 
 function parse(data: unknown): Frame | null {
   if (typeof data !== 'string') return null;
@@ -77,7 +79,7 @@ export function openEvents(options: EventsOptions): Events {
         break;
       case 'sync':
         failures = 0;
-        store.getState().sync(frame.data.devices ?? [], frame.data.jobs ?? []);
+        store.getState().sync(frame.data.devices ?? [], frame.data.jobs ?? [], frame.data.new_boards ?? []);
         jobs?.getState().sync(frame.data.jobs ?? []);
         break;
       case 'device.added':
@@ -86,6 +88,12 @@ export function openEvents(options: EventsOptions): Events {
         break;
       case 'device.removed':
         store.getState().remove(frame.data.id);
+        break;
+      case 'new-board.added':
+        store.getState().boardAdded(frame.data);
+        break;
+      case 'new-board.removed':
+        store.getState().boardRemoved(frame.data.id);
         break;
       case 'job.updated':
         store.getState().job(frame.data);

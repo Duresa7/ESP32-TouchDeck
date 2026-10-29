@@ -3,6 +3,7 @@ import type { Job } from './api.ts';
 import { createDevicesStore, type DevicesStore } from './devices.ts';
 import { CLOSE_TOO_SLOW, openEvents, type Events } from './events.ts';
 import { createFakeCompanion, type FakeCompanion } from './fake.ts';
+import { newBoard } from './fake-new-boards.ts';
 import { demoLayout, sampleDevice } from './samples.ts';
 import { browserSession, windowSession } from './session.ts';
 
@@ -65,6 +66,17 @@ describe('the devices store', () => {
     store.getState().remove('a');
     expect(names(store)).toEqual(['Studio']);
   });
+
+  test('sync lists the New boards, and added or removed ones change the list', () => {
+    const store = createDevicesStore();
+    store.getState().sync([], [], [newBoard('x', 'COM7')]);
+    store.getState().boardAdded(newBoard('y', 'COM8', 'busy'));
+    store.getState().boardAdded(newBoard('x', 'COM9'));
+    store.getState().boardRemoved('y');
+    expect(store.getState().newBoards.map((b) => [b.id, b.port])).toEqual([['x', 'COM9']]);
+    store.getState().sync([]);
+    expect(store.getState().newBoards).toEqual([]);
+  });
 });
 
 describe('the event stream', () => {
@@ -100,6 +112,17 @@ describe('the event stream', () => {
     fake.publish({ type: 'integration.status', data: {} });
     await settle();
     expect(names(store)).toEqual(['Studio B', 'Stream']);
+  });
+
+  test('New boards arrive with the sync and follow plugs and unplugs', async () => {
+    fake.newBoards.plug(newBoard('mock00ff', 'COM7'));
+    follow();
+    await settle();
+    expect(store.getState().newBoards.map((b) => b.id)).toEqual(['mock00ff']);
+    fake.newBoards.plug(newBoard('mock00fe', 'COM8', 'silent'));
+    fake.newBoards.unplug('mock00ff');
+    await settle();
+    expect(store.getState().newBoards.map((b) => b.id)).toEqual(['mock00fe']);
   });
 
   test('job.updated reaches the store', async () => {

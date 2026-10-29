@@ -3,6 +3,7 @@ import { MotionConfig } from 'motion/react';
 import { Toaster } from 'sonner';
 import { Home } from './screens/Home.tsx';
 import { Integrations } from './screens/Integrations.tsx';
+import { SetupHost } from './screens/onboarding/SetupHost.tsx';
 import { NavCluster } from './shell/NavCluster.tsx';
 import { applyTheme } from './state/theme.ts';
 import { useUi } from './state/ui.ts';
@@ -32,6 +33,7 @@ export function App() {
       )}
       {section === 'integrations' && <Integrations />}
       <NavCluster />
+      <SetupHost />
       <Toaster theme={appearance} position="bottom-right" />
     </MotionConfig>
   );

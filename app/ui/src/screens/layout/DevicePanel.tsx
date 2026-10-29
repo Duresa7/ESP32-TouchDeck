@@ -9,7 +9,7 @@ import { ChevronDown } from 'lucide-react';
 import type { DeviceSummary, Orientation } from '../../companion/api.ts';
 import { useCompanion } from '../../companion/connection.ts';
 import { jobsStore } from '../../companion/jobs.ts';
-import type { FirmwareUpdateStore } from '../../lib/device/firmware.ts';
+import { inProgress, type FirmwareUpdateStore } from '../../lib/device/firmware.ts';
 import { needsFirmwareField } from '../../lib/device/needs-firmware.ts';
 import type { DeviceSettingsStore } from '../../lib/device/settings.ts';
 import { button } from '../../shell/button.ts';
@@ -178,10 +178,11 @@ function FirmwareRow({ device, name, settings, firmware }: PanelProps & { firmwa
   const restart = useStore(settings, (s) => s.restart);
   const version = device.firmware?.version ?? null;
   const live = device.link.state === 'connected';
-  const updating = view.step === 'running' || device.link.state === 'updating';
+  const busy = inProgress(view);
+  const updating = busy || device.link.state === 'updating';
   const status =
-    view.step === 'running' ? view.text : view.step === 'done' ? view.text : offered ? `${offered} available` : version ? 'Up to date' : 'Not reported';
-  const offer = offered !== null && view.step !== 'running' && view.step !== 'done';
+    busy || view.step === 'done' ? view.text : offered ? `${offered} available` : version ? 'Up to date' : 'Not reported';
+  const offer = offered !== null && !busy && view.step !== 'done';
   const progress: CSSProperties = { transform: `scaleX(${(view.step === 'running' ? (view.pct ?? 0) : 100) / 100})` };
   return (
     <div className="panel-firmware" data-testid="device-panel-firmware" data-step={view.step}>

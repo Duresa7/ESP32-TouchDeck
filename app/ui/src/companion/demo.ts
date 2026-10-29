@@ -1,6 +1,7 @@
 import type { DeviceSummary } from './api.ts';
 import type { Environment } from './connection.ts';
 import { createFakeCompanion } from './fake.ts';
+import { freshDevice, newBoard, type Answer, type BoardKind } from './fake-new-boards.ts';
 import { createFakeUpdates, sampleOffer, type FakeUpdates } from './fake-updates.ts';
 import { demoLayout, demoScenario } from './samples.ts';
 import { windowSession, type UpdateCheck } from './session.ts';
@@ -23,6 +24,16 @@ declare global {
       offline(id: string): void;
       device(id: string, change: Partial<Omit<DeviceSummary, 'id' | 'rev'>>): void;
       firmware: { hold(id: string): void; release(id: string): void };
+      fresh(id: string, firmware?: { version: string; protocol: number }): void;
+      newBoards: {
+        plug(id: string, port: string, kind?: BoardKind): void;
+        unplug(id: string): void;
+        answer(id: string, answer: Answer): void;
+        confirming(id: string): boolean;
+        fail(id: string, fail: boolean): void;
+        hold(id: string, pct?: number): void;
+        release(id: string): void;
+      };
       updates: Pick<FakeUpdates, 'script' | 'finish' | 'calls'>;
     };
   }
@@ -46,6 +57,16 @@ export function demoEnvironment(target: Window): Environment {
     offline: (id) => fake.update(id, { link: { state: 'lost', reason: 'unplugged', detail: '', at_ms: Date.UTC(2026, 9, 27, 21, 40) } }),
     device: (id, change) => fake.update(id, change),
     firmware: { hold: fake.firmware.hold, release: fake.firmware.release },
+    fresh: (id, firmware = { version: '1.5.0', protocol: 2 }) => fake.add(freshDevice(id, 'COM9', firmware)),
+    newBoards: {
+      plug: (id, port, kind) => fake.newBoards.plug(newBoard(id, port, kind)),
+      unplug: fake.newBoards.unplug,
+      answer: fake.newBoards.answer,
+      confirming: fake.newBoards.confirming,
+      fail: (id, fail) => fake.newBoards.outcome(id, fail ? 'fail' : 'succeed'),
+      hold: fake.newBoards.hold,
+      release: fake.newBoards.release,
+    },
     updates: { script: updates.script, finish: updates.finish, calls: updates.calls },
   };
   const network = target.fetch.bind(target);

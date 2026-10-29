@@ -1,8 +1,9 @@
-import type { DeviceSummary, Layout, SystemInfo } from './api.ts';
+import type { DeviceSummary, Layout, NewBoard, SystemInfo } from './api.ts';
 import { CLOSE_SESSION, type EventSocket } from './events.ts';
 import { createFakeDeviceSettings } from './fake-device-settings.ts';
 import { createFakeFirmware } from './fake-firmware.ts';
 import { createFakeLayouts } from './fake-layouts.ts';
+import { createFakeNewBoards } from './fake-new-boards.ts';
 import type { FirmwareBuild } from './firmware-api.ts';
 import type { OpenTouchDeckBridge } from './session.ts';
 
@@ -10,7 +11,8 @@ import type { OpenTouchDeckBridge } from './session.ts';
 // `system.ping`, `system.get`, `devices.list`, `devices.get` and `layouts.get` the way
 // docs/companion-api.md says, checks session tokens, and runs the event stream:
 // `hello`, `sync`, then `device.added`, `device.updated`, `device.removed` and `job.updated`. fake-layouts.ts
-// answers the Layouts, Jobs and Assets prune routes and sends `job.updated`.
+// answers the Layouts, Jobs and Assets prune routes and sends `job.updated`. fake-new-boards.ts answers
+// the New board routes and sends `new-board.added` and `new-board.removed`.
 
 export interface FakeCompanionOptions {
   devices?: DeviceSummary[];
@@ -21,6 +23,7 @@ export interface FakeCompanionOptions {
   jobMs?: number;
   brightness?: Record<string, number>;
   bundled?: FirmwareBuild;
+  newBoards?: NewBoard[];
 }
 
 type Frame = Record<string, unknown> & { type: string };
@@ -71,6 +74,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   const layouts = createFakeLayouts({ devices, publish, seed: options.layouts, delayMs: options.jobMs });
   const settings = createFakeDeviceSettings({ devices, publish, brightness: options.brightness });
   const firmware = createFakeFirmware({ devices, publish, bundled: options.bundled, stepMs: options.jobMs });
+  const newBoards = createFakeNewBoards({ devices, publish, bundled: options.bundled ?? { version: '1.5.0', build: 'fake' }, boards: options.newBoards, stepMs: options.jobMs });
 
   function mint() {
     minted += 1;
@@ -100,7 +104,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     const get = request.method === 'GET';
 
     if (path === '/system/ping') return get ? json(200, { api: ['v1'] }) : failure(405, 'route.method_not_allowed', 'Use GET.');
-    if (path.startsWith('/test/')) return (await firmware.test(request, path)) ?? settings.record(path, await layouts.test(request, path));
+    if (path.startsWith('/test/')) return (await firmware.test(request, path)) ?? (await newBoards.test(request, path)) ?? settings.record(path, await layouts.test(request, path));
 
     const auth = request.headers.get('Authorization') ?? '';
     const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
@@ -122,6 +126,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     return (
       (await settings.handle(request, path)) ??
       (await firmware.handle(request, path)) ??
+      (await newBoards.handle(request, path)) ??
       (await layouts.handle(request, path)) ??
       failure(404, 'route.not_found', 'No route with that path.')
     );
@@ -137,7 +142,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     }
     sockets.add(socket);
     socket.send({ type: 'hello', api: 'v1', build: system.build, session: { id: 'fake-session', kind: 'window' } });
-    socket.send({ type: 'sync', data: { devices: [...devices.values()], jobs: [...layouts.jobs(), ...firmware.jobs()] } });
+    socket.send({ type: 'sync', data: { devices: [...devices.values()], jobs: [...layouts.jobs(), ...firmware.jobs(), ...newBoards.jobs()], new_boards: newBoards.boards() } });
     return socket;
   }
 
@@ -147,6 +152,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     bridge,
     layouts,
     firmware,
+    newBoards,
     /** Sessions minted so far through the bridge. */
     get minted() {
       return minted;

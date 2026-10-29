@@ -24,7 +24,7 @@ export function DevicePreview({ preview, live, orientation = 'landscape' }: { pr
           {title && <g className="preview-title"><SceneText view={title} /></g>}
           {page?.tiles.map((tile) => <g key={tile.id} transform={`translate(${tile.rect.x} ${tile.rect.y})`}>
             <rect width={tile.rect.w} height={tile.rect.h} rx={18} className="preview-tile" />
-            {tile.texts.map((view, i) => <SceneText key={i} view={view} />)}
+            {tile.texts.map((view, i) => !view.icon && <SceneText key={i} view={view} />)}
             {tile.bar && <rect {...{ x: tile.bar.x, y: tile.bar.y, width: tile.bar.w, height: tile.bar.h, rx: tile.bar.radius }} className="preview-active" />}
           </g>)}
           {preview && buildDots(g, preview.layout.pages.length, preview.index).map((dot, i) => <rect key={i} x={dot.x} y={dot.y} width={dot.w} height={dot.h} rx={dot.h / 2} className={dot.active ? 'preview-active' : 'preview-idle'} />)}
