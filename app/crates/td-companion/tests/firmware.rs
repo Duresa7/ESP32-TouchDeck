@@ -1,10 +1,17 @@
-use std::sync::{Arc, Condvar, Mutex};
+use std::{
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+};
 use td_companion::{api::NoQuery, features::firmware::*, jobs::JobState, testing::TestCompanion};
 #[derive(Default)]
 struct Prompt {
     answer: Mutex<Option<bool>>,
     wake: Condvar,
     seen: Mutex<Vec<Confirmation>>,
+    closed: AtomicBool,
 }
 impl Prompt {
     fn answer(&self, answer: bool) {
@@ -18,18 +25,23 @@ impl Prompter for Prompt {
             include_bytes!("../../td-link/tests/fixtures/touchdeck-test.tdfw").to_vec(),
         ))
     }
-    fn confirm(&self, c: &Confirmation) -> bool {
+    fn confirm(&self, c: &Confirmation, closed: &(dyn Fn() -> bool + Sync)) -> bool {
         self.seen.lock().unwrap().push(c.clone());
+        let started = Instant::now();
         let mut a = self.answer.lock().unwrap();
         while a.is_none() {
-            let (next, timeout) = self
-                .wake
-                .wait_timeout(a, std::time::Duration::from_secs(10))
-                .unwrap();
-            a = next;
-            if timeout.timed_out() {
+            if closed() {
+                self.closed.store(true, Ordering::SeqCst);
                 return false;
             }
+            if started.elapsed() > Duration::from_secs(10) {
+                return false;
+            }
+            a = self
+                .wake
+                .wait_timeout(a, Duration::from_millis(10))
+                .unwrap()
+                .0;
         }
         a.take().unwrap()
     }
@@ -488,18 +500,21 @@ async fn overlapping_file_pickers_are_rejected() {
     struct Picker(Prompt);
     impl Prompter for Picker {
         fn pick(&self) -> Result<Option<Vec<u8>>, String> {
-            self.0.confirm(&Confirmation {
-                operation: "pick".into(),
-                target: String::new(),
-                name: String::new(),
-                port: String::new(),
-                current: String::new(),
-                version: String::new(),
-                build: String::new(),
-            });
+            self.0.confirm(
+                &Confirmation {
+                    operation: "pick".into(),
+                    target: String::new(),
+                    name: String::new(),
+                    port: String::new(),
+                    current: String::new(),
+                    version: String::new(),
+                    build: String::new(),
+                },
+                &|| false,
+            );
             Ok(None)
         }
-        fn confirm(&self, _: &Confirmation) -> bool {
+        fn confirm(&self, _: &Confirmation, _: &(dyn Fn() -> bool + Sync)) -> bool {
             false
         }
     }
@@ -595,8 +610,8 @@ async fn downgrade_waits_for_exact_consent_and_suppresses_every_device() {
         fn pick(&self) -> Result<Option<Vec<u8>>, String> {
             Ok(Some(include_bytes!("fixtures/firmware-v1.tdfw").to_vec()))
         }
-        fn confirm(&self, c: &Confirmation) -> bool {
-            self.0.confirm(c)
+        fn confirm(&self, c: &Confirmation, closed: &(dyn Fn() -> bool + Sync)) -> bool {
+            self.0.confirm(c, closed)
         }
     }
     for accept in [false, true] {
@@ -915,7 +930,7 @@ async fn pick_refuses_a_long_or_unprintable_version() {
         fn pick(&self) -> Result<Option<Vec<u8>>, String> {
             Ok(Some(self.0.clone()))
         }
-        fn confirm(&self, _: &Confirmation) -> bool {
+        fn confirm(&self, _: &Confirmation, _: &(dyn Fn() -> bool + Sync)) -> bool {
             false
         }
     }
@@ -946,7 +961,7 @@ async fn pick_outlives_the_whole_request_limit() {
                 include_bytes!("../../td-link/tests/fixtures/touchdeck-test.tdfw").to_vec(),
             ))
         }
-        fn confirm(&self, _: &Confirmation) -> bool {
+        fn confirm(&self, _: &Confirmation, _: &(dyn Fn() -> bool + Sync)) -> bool {
             false
         }
     }
@@ -965,4 +980,135 @@ async fn pick_outlives_the_whole_request_limit() {
     assert_eq!(response.status(), 200);
     let picked: PickResult = response.json().await.unwrap();
     assert_eq!(picked.bundle.unwrap().version, "test-only");
+}
+
+async fn waiting_repair(
+    td: &TestCompanion,
+    prompt: Arc<dyn Prompter>,
+) -> (td_companion::devices::DeviceId, td_companion::jobs::Job) {
+    let id = td.plug_device("mocka").await;
+    td.firmware_prompter(prompt);
+    let job = td
+        .call::<Repair>(FirmwareTarget { device: id.clone() }, NoQuery, request())
+        .await
+        .unwrap();
+    td.until(|td| {
+        td.device(&id)
+            .is_some_and(|d| matches!(d.link, td_companion::devices::LinkState::Updating { .. }))
+    })
+    .await;
+    (id, job)
+}
+async fn job_state(td: &TestCompanion, job: &td_companion::jobs::Job) -> serde_json::Value {
+    td.raw()
+        .get(&format!("/api/v1/jobs/{}", job.id))
+        .bearer_auth(&td.token)
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["state"]
+        .clone()
+}
+async fn ended_quickly(
+    td: &TestCompanion,
+    job: &td_companion::jobs::Job,
+) -> td_companion::jobs::Job {
+    tokio::time::timeout(Duration::from_secs(2), td.wait(job))
+        .await
+        .expect("the consent wait ends within 2 s")
+}
+/// Nothing was written, and the Device, the install lock and Device input are free again.
+async fn released_without_writes(td: &TestCompanion, id: &td_companion::devices::DeviceId) {
+    use td_companion::features::system::{Lock, Unlock};
+    let deck = td.deck("mocka");
+    assert_eq!(deck.reboots(), 0);
+    assert!(!deck.received().iter().any(|v| v["m"] == "update.begin"));
+    td.until(|td| {
+        td.device(id)
+            .is_some_and(|d| matches!(d.link, td_companion::devices::LinkState::Connected { .. }))
+    })
+    .await;
+    let lock = td.call::<Lock>((), NoQuery, ()).await.unwrap();
+    td.call::<Unlock>(lock, NoQuery, ()).await.unwrap();
+    deck.emit_key(&serde_json::json!({"type": "kbd", "mods": 0, "keys": [4]}));
+    deck.emit_key(&serde_json::json!({"type": "kbd", "mods": 0, "keys": []}));
+    td.until(|td| td.input_log() == ["down A", "up A"]).await;
+}
+
+#[tokio::test]
+async fn unanswered_consent_expires_after_five_minutes() {
+    let td = TestCompanion::start().await;
+    let _socket = td.events().await;
+    let prompt = Arc::new(Prompt::default());
+    let (id, job) = waiting_repair(&td, prompt.clone()).await;
+    td.clock().advance(Duration::from_secs(299));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(job_state(&td, &job).await, "waiting_for_confirmation");
+    td.clock().advance(Duration::from_secs(2));
+    let done = ended_quickly(&td, &job).await;
+    assert_eq!(done.state, JobState::Failed);
+    assert_eq!(done.error.unwrap().code, "firmware.declined");
+    assert!(prompt.closed.load(Ordering::SeqCst));
+    released_without_writes(&td, &id).await;
+}
+
+#[tokio::test]
+async fn cancel_while_waiting_ends_the_job_and_closes_the_dialog() {
+    use td_companion::features::jobs::{Cancel, JobPath};
+    let td = TestCompanion::start().await;
+    let _socket = td.events().await;
+    let prompt = Arc::new(Prompt::default());
+    let (id, job) = waiting_repair(&td, prompt.clone()).await;
+    td.call::<Cancel>(
+        JobPath {
+            job: job.id.clone(),
+        },
+        NoQuery,
+        (),
+    )
+    .await
+    .unwrap();
+    let done = ended_quickly(&td, &job).await;
+    assert_eq!(done.state, JobState::Cancelled);
+    assert!(prompt.closed.load(Ordering::SeqCst));
+    prompt.answer(true);
+    released_without_writes(&td, &id).await;
+}
+
+#[tokio::test]
+async fn an_answer_after_cancel_writes_nothing() {
+    use td_companion::features::jobs::{Cancel, JobPath};
+    /// Accepts at the moment the dialog is asked to close, as a click that races the close.
+    #[derive(Default)]
+    struct LateAccept(Prompt);
+    impl Prompter for LateAccept {
+        fn pick(&self) -> Result<Option<Vec<u8>>, String> {
+            self.0.pick()
+        }
+        fn confirm(&self, c: &Confirmation, closed: &(dyn Fn() -> bool + Sync)) -> bool {
+            self.0.seen.lock().unwrap().push(c.clone());
+            let started = Instant::now();
+            while !closed() && started.elapsed() < Duration::from_secs(10) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            true
+        }
+    }
+    let td = TestCompanion::start().await;
+    let _socket = td.events().await;
+    let (id, job) = waiting_repair(&td, Arc::new(LateAccept::default())).await;
+    td.call::<Cancel>(
+        JobPath {
+            job: job.id.clone(),
+        },
+        NoQuery,
+        (),
+    )
+    .await
+    .unwrap();
+    let done = ended_quickly(&td, &job).await;
+    assert_eq!(done.state, JobState::Cancelled);
+    released_without_writes(&td, &id).await;
 }

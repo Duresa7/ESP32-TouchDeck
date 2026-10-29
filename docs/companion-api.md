@@ -128,6 +128,7 @@ These initial limits are reversible; changing them requires updating this contra
 | WebSockets | 4 per session, 16 across the Companion |
 | Socket queues | 1024 frames or 4 MiB per socket, whichever comes first; overflow follows Backpressure |
 | Pending approvals | 16 across the Companion, including the displayed request; deny and log new requests above the cap |
+| Firmware consent dialog | 5 minutes, then the Job fails with `firmware.declined` |
 | `approvals.show` | At most once every 5 s per request, shared across sessions |
 
 Size and decode limits return 413 `request.too_large` (or that code in a render Job's error if decoding has begun). Count, aggregate capacity and rate limits return 429 `limits.exceeded`; Device-originated approvals above the cap are denied and logged with that code. Checks reserve capacity atomically before allocating work and release it on failure or completion. Device event floods must not starve Layout Jobs.
@@ -240,6 +241,7 @@ A session can install only two kinds of Firmware bundle: the one bundled with th
 - A second pick while a dialog is open gets 409 `system.dialog_open`.
 - Firmware routes take `{bundle: "bundled" | BundleId}`.
 - `firmware.install` on a New board, every `firmware.repair`, and a `firmware.update` to an older version wait for a native PC confirmation dialog owned by the Companion. It names the exact target, its port, what it runs now if known, and the bundle version. Consent is bound to that target and bundle; no API request can grant it. Until consent, no write starts and the Job state is `waiting_for_confirmation`. Declining fails the Job with `firmware.declined`.
+- A consent dialog nobody answers closes after 5 minutes, as an approval does, and fails the Job with `firmware.declined`. Cancelling the Job while the dialog waits closes the dialog and ends the Job as `cancelled` at once; an answer that lands after the cancel or the deadline is ignored. Either way nothing is written, the Device leaves `updating`, Device input is no longer suppressed and the install lock can be taken again.
 - Updating to the bundled build when it is the same or newer needs no confirmation and stays one click.
 
 Implementation decisions for #77:
@@ -744,7 +746,7 @@ Features add codes as they land. This list is the starting set.
 | `layout.not_found` | 404 | The Device stores no Layout for that orientation |
 | `firmware.bundle_invalid` | 422 | The picked file isn't a valid bundle |
 | `firmware.bundle_not_found` | 404 | The `BundleId` expired, was consumed, belongs to another target or never existed |
-| `firmware.declined` | Job error | The user declined native confirmation; no Firmware write occurred |
+| `firmware.declined` | Job error | The user declined native confirmation, or didn't answer it within 5 minutes; no Firmware write occurred |
 | `firmware.failed` | Job error | The update failed. `details.reason` |
 | `firmware.rolled_back` | Job error | The Device rolled back to its previous Firmware |
 | `firmware.confirm_timeout` | Job error | The new Firmware didn't confirm in time |
@@ -910,7 +912,7 @@ Required integration tests in `crates/td-companion/tests/`:
 10. **Console and input.** Each allowlisted form passes; `keys`, `touch tap`, `ui hold`, state changes, unknown commands, extra arguments, control bytes and lines over 256 bytes get `console.forbidden` and never reach the Device. None inject PC input or answer an approval. While a native dialog shows, input from every mock Device is dropped with key-mirror `outcome: "suppressed"`, never replayed. Full console works only through `test.console`; the release router lacks it.
 11. **Integration origins.** Changing scheme, host or effective port clears the old secret and reports `set: false`; same-origin path changes keep it. No credential reaches the new destination before re-entry, including concurrent refresh. Cross-origin redirects and public plain-HTTP destinations receive no credential. Explicit loopback/private-address HTTP destinations work; a hostname resolving privately does not gain the exception.
 12. **Pairing delivery.** `auth.pair_code` returns only `{expires_ms}`, with no code or URL in any API response. Fake native browser and tray adapters capture delivery for tests. A new code invalidates the previous one, Reset pairing invalidates the pending code, and the Electron renderer gets no code to display or copy.
-13. **Firmware consent.** Install, repair and downgrade stay `waiting_for_confirmation` with no writes until the fake native dialog accepts the exact target and bundle. Decline gives `firmware.declined`. Same-or-newer bundled updates need no confirmation. A picked bundle fails on another target, on reuse and after 10 minutes.
+13. **Firmware consent.** Install, repair and downgrade stay `waiting_for_confirmation` with no writes until the fake native dialog accepts the exact target and bundle. Decline, or 5 minutes of test clock without an answer, gives `firmware.declined`; cancelling while waiting closes the fake dialog and writes nothing. Same-or-newer bundled updates need no confirmation. A picked bundle fails on another target, on reuse and after 10 minutes.
 14. **Saturation.** Flood uploads, WebSockets and Device events separately; assert the per-session and global limits, 413/429 errors, bounded queues and approval denial/logging. Assert decoded dimensions, GIF frames/bytes, two concurrent renders and the 5 s `approvals.show` rate. After each flood, a Layout push still succeeds and capacity is reclaimed.
 15. **Install lock.** A browser gets 403 `auth.forbidden`; another window cannot renew or release the owner's lock. Owner renewal extends the 10-minute lease. Session end, revoke, Reset pairing or lease expiry releases it and allows new Jobs.
 

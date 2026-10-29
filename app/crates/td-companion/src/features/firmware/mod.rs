@@ -22,6 +22,8 @@ use td_link::{
 };
 use ts_rs::TS;
 
+/// How long a consent dialog waits for an answer, as an approval does.
+const CONSENT_WAIT: Duration = Duration::from_secs(300);
 #[derive(Clone, Debug)]
 pub struct Confirmation {
     pub operation: String,
@@ -48,7 +50,8 @@ impl Confirmation {
 }
 pub trait Prompter: Send + Sync {
     fn pick(&self) -> Result<Option<Vec<u8>>, String>;
-    fn confirm(&self, confirmation: &Confirmation) -> bool;
+    /// Shows the consent dialog. Must close it and return once `closed` turns true.
+    fn confirm(&self, confirmation: &Confirmation, closed: &(dyn Fn() -> bool + Sync)) -> bool;
 }
 struct Native;
 impl Prompter for Native {
@@ -69,8 +72,8 @@ impl Prompter for Native {
             })
             .transpose()
     }
-    fn confirm(&self, confirmation: &Confirmation) -> bool {
-        dialogs::confirm(confirmation)
+    fn confirm(&self, confirmation: &Confirmation, closed: &(dyn Fn() -> bool + Sync)) -> bool {
+        dialogs::confirm(confirmation, closed)
     }
 }
 struct Picked {
@@ -407,12 +410,16 @@ fn start<K: JobKind<Progress = FirmwareProgress, Result = FirmwareResult>>(
             job.waiting_for_confirmation();
             let _input = ctx.devices.suppress_input();
             let prompt = ctx.firmware.prompter.lock().clone();
-            if !prompt.confirm(&confirmation) {
+            let deadline = ctx.clock.now() + CONSENT_WAIT;
+            let expired = || ctx.clock.now() >= deadline;
+            let accepted = prompt.confirm(&confirmation, &|| expired() || job.check().is_err());
+            job.check()?;
+            if !accepted || expired() {
                 return Err(FirmwareError::Declined.into());
             }
-            job.check()?;
         }
         job.set_cancellable(false);
+        job.check()?;
         job.running();
         let mut emit = |s| {
             let (phase, pct) = match s {
