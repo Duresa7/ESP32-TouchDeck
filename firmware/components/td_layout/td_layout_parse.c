@@ -645,16 +645,16 @@ static bool check_action(const cJSON *a, const char *tile_where, td_layout_error
     return true;
 }
 
-static bool check_tile(const cJSON *t, int page, int index, td_layout_error_t *err)
+static bool check_tile(const cJSON *t, int page, int index, bool v2, td_layout_error_t *err)
 {
-    static const char *const members[] = { "id", "label", "row", "col", "rowSpan", "colSpan", "icon", "action" };
+    static const char *const members[] = { "id", "label", "row", "col", "rowSpan", "colSpan", "icon", "action", "asset" };
     char where[48];
     char field[64];
     snprintf(where, sizeof where, "/pages/%d/tiles/%d", page, index);
     if (!cJSON_IsObject(t)) {
         return fail(err, "shape.type", "%s must be object", where);
     }
-    if (!check_members(t, where, members, sizeof members / sizeof members[0], err)) {
+    if (!check_some_members(t, where, members, v2 ? 9 : 8, 8, err)) {
         return false;
     }
 #define FIELD(name) (snprintf(field, sizeof field, "%s/%s", where, name), field)
@@ -677,6 +677,17 @@ static bool check_tile(const cJSON *t, int page, int index, td_layout_error_t *e
         }
     }
 #undef FIELD
+    const cJSON *asset = member(t, "asset");
+    if (asset != NULL && !cJSON_IsNull(asset)) {
+        if (!cJSON_IsNull(icon) || !cJSON_IsString(asset) || strlen(asset->valuestring) != 71 || strncmp(asset->valuestring, "sha256:", 7) != 0) {
+            return fail(err, "icon.format", "%s/asset must be a SHA-256 reference with icon null", where);
+        }
+        for (const char *c = asset->valuestring + 7; *c; c++) {
+            if (!((*c >= '0' && *c <= '9') || (*c >= 'a' && *c <= 'f'))) {
+                return fail(err, "icon.format", "%s/asset must use lowercase hex", where);
+            }
+        }
+    }
     return check_action(member(t, "action"), where, err);
 }
 
@@ -686,7 +697,7 @@ static bool is_kind(const cJSON *page, const char *kind)
     return cJSON_IsString(v) && strcmp(v->valuestring, kind) == 0;
 }
 
-static bool check_page(const cJSON *p, int index, td_layout_error_t *err)
+static bool check_page(const cJSON *p, int index, bool v2, td_layout_error_t *err)
 {
     static const char *const grid[] = { "id", "title", "kind", "rows", "cols", "tiles" };
     static const char *const dashboard[] = { "id", "title", "kind", "source" };
@@ -725,7 +736,7 @@ static bool check_page(const cJSON *p, int index, td_layout_error_t *err)
 #undef FIELD
     int i = 0;
     for (const cJSON *t = tiles->child; t != NULL; t = t->next, i++) {
-        if (!check_tile(t, index, i, err)) {
+        if (!check_tile(t, index, i, v2, err)) {
             return false;
         }
     }
@@ -742,7 +753,7 @@ static bool check_schema(const cJSON *root, td_layout_error_t *err)
         return false;
     }
     const cJSON *schema = member(root, "schema");
-    if (!cJSON_IsNumber(schema) || schema->valuedouble != 1) {
+    if (!cJSON_IsNumber(schema) || (schema->valuedouble != 1 && schema->valuedouble != 2)) {
         return fail(err, "layout.schema-version", "/schema must be equal to constant 1");
     }
     if (!check_text(member(root, "name"), "/name", 24, "name.too-long", "name.blank", NULL, err)) {
@@ -767,7 +778,7 @@ static bool check_schema(const cJSON *root, td_layout_error_t *err)
     }
     int i = 0;
     for (const cJSON *p = pages->child; p != NULL; p = p->next, i++) {
-        if (!check_page(p, i, err)) {
+        if (!check_page(p, i, schema->valuedouble == 2, err)) {
             return false;
         }
     }
@@ -992,7 +1003,7 @@ static bool build(const cJSON *root, td_layout_t **out, td_layout_error_t *err)
         const cJSON *tiles = member(p, "tiles");
         for (const cJSON *t = tiles != NULL ? tiles->child : NULL; t != NULL; t = t->next, tile_count++) {
             const cJSON *a = member(t, "action");
-            strings += text_bytes(member(t, "id")) + text_bytes(member(t, "label")) + text_bytes(member(t, "icon"));
+            strings += text_bytes(member(t, "id")) + text_bytes(member(t, "label")) + text_bytes(member(t, "icon")) + text_bytes(member(t, "asset"));
             if (strcmp(member(a, "type")->valuestring, "widget") == 0) {
                 strings += text_bytes(member(a, "source")) + text_bytes(member(a, "field")) +
                            text_bytes(member(a, "account"));
@@ -1014,6 +1025,7 @@ static bool build(const cJSON *root, td_layout_t **out, td_layout_error_t *err)
     ui_tile_t *tile_out = (ui_tile_t *)(arena + head + page_bytes);
     char *next = (char *)(arena + head + page_bytes + tile_bytes);
 
+    layout->schema = (uint8_t)member(root, "schema")->valueint;
     layout->name = put(&next, member(root, "name"));
     layout->orientation = strcmp(member(root, "orientation")->valuestring, "portrait") == 0 ? "portrait" : "landscape";
     layout->full_screen = cJSON_IsTrue(member(root, "fullScreen"));
@@ -1043,9 +1055,9 @@ static bool build(const cJSON *root, td_layout_t **out, td_layout_error_t *err)
             tile_out->col = (uint8_t)member(t, "col")->valueint;
             tile_out->row_span = (uint8_t)member(t, "rowSpan")->valueint;
             tile_out->col_span = (uint8_t)member(t, "colSpan")->valueint;
-            tile_out->icon = put(&next, member(t, "icon"));
+            tile_out->icon = put(&next, cJSON_IsString(member(t, "asset")) ? member(t, "asset") : member(t, "icon"));
             tile_out->action = build_action(member(t, "action"), pages, &next);
-            if (tile_out->icon != NULL && strncmp(tile_out->icon, "file:", 5) == 0) {
+            if (tile_out->icon != NULL && (strncmp(tile_out->icon, "file:", 5) == 0 || strncmp(tile_out->icon, "sha256:", 7) == 0)) {
                 layout->icons_wanted++;
             }
             page_out->tile_count++;

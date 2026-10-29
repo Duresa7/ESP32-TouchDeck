@@ -86,6 +86,7 @@ pub struct Capabilities {
     pub pages: u32,
     pub tiles: u32,
     pub layout_bytes: u32,
+    pub layout_schemas: Vec<u32>,
     pub storage_free: u32,
     pub tile_kinds: Vec<String>,
     pub asset_bytes: u32,
@@ -100,6 +101,7 @@ impl From<&td_link::Capabilities> for Capabilities {
             pages: c.pages,
             tiles: c.tiles,
             layout_bytes: c.layout_bytes,
+            layout_schemas: c.layout_schemas.clone(),
             storage_free: c.free_bytes,
             tile_kinds: c.tile_kinds.clone(),
             asset_bytes: c.asset_bytes,
@@ -312,6 +314,7 @@ impl Event for DeviceEvent {
     }
 }
 
+pub(crate) type ActionHandler = Arc<dyn Fn(&DeviceId, &serde_json::Value) + Send + Sync>;
 /// Makes the sink a Device's key mirror types into.
 pub type InputFactory = Arc<dyn Fn() -> Result<Box<dyn td_host::InputSink>, String> + Send + Sync>;
 /// How the manager reaches ports, PC input and storage. Tests swap in mocks.
@@ -409,7 +412,9 @@ struct Inner {
     wake: Wake,
     stop: AtomicBool,
     dialogs: AtomicUsize,
+    input_gate: Mutex<()>,
     config: OnceLock<Config>,
+    actions: OnceLock<ActionHandler>,
 }
 impl Inner {
     fn config(&self) -> &Config {
@@ -461,6 +466,9 @@ pub struct DeviceManager {
     inner: Arc<Inner>,
 }
 impl DeviceManager {
+    pub(crate) fn action_handler(&self, handler: ActionHandler) {
+        let _ = self.inner.actions.set(handler);
+    }
     pub fn new(events: Events) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -469,7 +477,9 @@ impl DeviceManager {
                 wake: Wake::default(),
                 stop: AtomicBool::new(false),
                 dialogs: AtomicUsize::new(0),
+                input_gate: Mutex::new(()),
                 config: OnceLock::new(),
+                actions: OnceLock::new(),
             }),
         }
     }
@@ -678,6 +688,7 @@ impl DeviceManager {
     /// Suppresses key input from every Device while the guard lives. Approval and Firmware
     /// dialogs hold one, so Device input can't answer them.
     pub fn suppress_input(&self) -> InputSuppressed {
+        let _gate = self.inner.input_gate.lock();
         self.inner.dialogs.fetch_add(1, Ordering::SeqCst);
         InputSuppressed(self.inner.clone())
     }
