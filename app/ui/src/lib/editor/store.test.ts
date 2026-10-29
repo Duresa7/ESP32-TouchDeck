@@ -9,7 +9,7 @@ import { sampleDevice } from '../../companion/samples.ts';
 import { windowSession } from '../../companion/session.ts';
 import { draftKey, type DraftStorage } from './drafts.ts';
 import { createEditorStore, saveState, type EditorDeps, type EditorStore } from './store.ts';
-import { canonical, starterLayout, type GridPage, type Layout } from './validate.ts';
+import { canonical, newLayout, starterLayout, type GridPage, type Layout } from './validate.ts';
 
 const BASE = 'http://127.0.0.1:51234';
 const DESK = { id: 'mock0001', name: 'Desk' };
@@ -187,6 +187,65 @@ describe('editing a draft', () => {
     expect(state(store).orientation).toBe('portrait');
     expect(state(store).status?.text).toBe('Imported “Tall”: 2 Pages, 16 Tiles.');
     expect(state(store).drafts.landscape?.layout.name).toBe('Starter');
+  });
+});
+
+describe('Preset tiles', () => {
+  const preset = { id: 'five_hour_pct', name: 'five hour pct', action: { type: 'widget', source: 'cliproxyapi', field: 'five_hour_pct', account: '' } };
+
+  test('Add to Layout puts a Preset tile in the first free cell of the current Page and selects it', async () => {
+    const store = editor();
+    store.open(DESK);
+    store.startStarter();
+    store.setGrid(3, 3);
+    const status = await store.addPreset(preset);
+    expect(status).toMatchObject({ kind: 'ok', text: "Added to Desk's Layout", event: 'preset-added' });
+    expect(tile(store, state(store).selected!)).toMatchObject({ row: 2, col: 0, rowSpan: 1, colSpan: 1, label: 'Five hour pct', action: preset.action });
+  });
+
+  test('Add to Layout on a full Page says so with the rule message and changes nothing', async () => {
+    const store = editor();
+    store.open(DESK);
+    store.startStarter();
+    const before = canonical(draft(store));
+    expect(await store.addPreset(preset)).toMatchObject({ kind: 'error', text: 'This Page is full. Make its grid bigger or add a Page.', event: 'refused' });
+    expect(canonical(draft(store))).toBe(before);
+  });
+
+  test('Add to Layout with no draft starts from the Layout the Device has', async () => {
+    fake.layouts.store('mock0001', newLayout('landscape'));
+    const store = editor();
+    store.open(DESK);
+    expect(await store.addPreset(preset)).toMatchObject({ kind: 'ok', text: "Added to Desk's Layout" });
+    expect(draft(store).name).toBe(newLayout('landscape').name);
+    expect(page(store).tiles).toEqual([expect.objectContaining({ row: 0, col: 0, action: preset.action })]);
+  });
+
+  test('Add to Layout for a Device with no Layout says so and starts nothing', async () => {
+    const store = editor();
+    store.open({ id: 'mock0002', name: 'Studio' });
+    expect(await store.addPreset(preset)).toMatchObject({ kind: 'error', text: 'Studio has no landscape Layout yet.' });
+    expect(state(store).drafts.landscape).toBeNull();
+  });
+
+  test('a Preset whose action breaks the Layout rules is refused', async () => {
+    const store = editor();
+    store.open(DESK);
+    store.startBlank();
+    const status = await store.addPreset({ ...preset, action: { type: 'widget', source: '', field: 'plan', account: '' } });
+    expect(status).toMatchObject({ kind: 'error', text: 'That change breaks a Layout rule. See Details.' });
+    expect(page(store).tiles).toEqual([]);
+  });
+
+  test('the Add Tile panel places a Preset tile at its target and selects it', () => {
+    const store = editor();
+    store.open(DESK);
+    store.startStarter();
+    store.setGrid(3, 3);
+    store.openAdd({ row: 2, col: 1 });
+    store.placePreset(preset);
+    expect(tile(store, state(store).selected!)).toMatchObject({ row: 2, col: 1, label: 'Five hour pct', action: preset.action });
+    expect(state(store).adding).toBeNull();
   });
 });
 

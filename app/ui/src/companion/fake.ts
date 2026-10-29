@@ -1,5 +1,6 @@
 import type { DeviceSummary, Layout, SystemInfo } from './api.ts';
 import { CLOSE_SESSION, type EventSocket } from './events.ts';
+import { createFakeIntegrations, type FakeIntegrationsOptions } from './fake-integrations.ts';
 import { createFakeLayouts } from './fake-layouts.ts';
 import type { OpenTouchDeckBridge } from './session.ts';
 
@@ -16,6 +17,8 @@ export interface FakeCompanionOptions {
   system?: Partial<SystemInfo>;
   /** How long a fake Job runs. */
   jobMs?: number;
+  /** How CLIProxyAPI starts: not set up unless `configured`. */
+  integrations?: Omit<FakeIntegrationsOptions, 'publish'>;
 }
 
 type Frame = Record<string, unknown> & { type: string };
@@ -64,6 +67,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   let minted = 0;
   let requests = 0;
   const layouts = createFakeLayouts({ devices, publish, seed: options.layouts, delayMs: options.jobMs });
+  const integrations = createFakeIntegrations({ publish, ...options.integrations });
 
   function mint() {
     minted += 1;
@@ -93,6 +97,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     const get = request.method === 'GET';
 
     if (path === '/system/ping') return get ? json(200, { api: ['v1'] }) : failure(405, 'route.method_not_allowed', 'Use GET.');
+    if (path.startsWith('/test/integrations/')) return integrations.test(request, path);
     if (path.startsWith('/test/')) return layouts.test(request, path);
 
     const auth = request.headers.get('Authorization') ?? '';
@@ -112,7 +117,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
       const found = devices.get(decodeURIComponent(device![1]));
       return found ? json(200, found) : failure(404, 'device.not_found', 'No Device with that id.');
     }
-    return (await layouts.handle(request, path)) ?? failure(404, 'route.not_found', 'No route with that path.');
+    return (await layouts.handle(request, path)) ?? (await integrations.handle(request, path)) ?? failure(404, 'route.not_found', 'No route with that path.');
   }
 
   function openSocket(url: string, protocols: string[]): EventSocket {
@@ -125,7 +130,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     }
     sockets.add(socket);
     socket.send({ type: 'hello', api: 'v1', build: system.build, session: { id: 'fake-session', kind: 'window' } });
-    socket.send({ type: 'sync', data: { devices: [...devices.values()], jobs: layouts.jobs() } });
+    socket.send({ type: 'sync', data: { devices: [...devices.values()], jobs: layouts.jobs(), integrations: integrations.list() } });
     return socket;
   }
 
@@ -134,6 +139,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     openSocket,
     bridge,
     layouts,
+    integrations,
     /** Sessions minted so far through the bridge. */
     get minted() {
       return minted;

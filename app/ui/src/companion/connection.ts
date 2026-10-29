@@ -2,6 +2,7 @@ import { createContext, useContext } from 'react';
 import { createClient, type Companion } from './client.ts';
 import { devicesStore, type DevicesStore } from './devices.ts';
 import { openEvents, openWebSocket, type Events, type OpenSocket } from './events.ts';
+import { integrationsStore, type IntegrationsStore } from './integrations.ts';
 import { jobsStore, type JobsStore } from './jobs.ts';
 import { pickSession, type Session } from './session.ts';
 
@@ -33,10 +34,11 @@ export function connect(
   store: DevicesStore = devicesStore,
   onNewBuild = () => window.location.reload(),
   jobs: JobsStore = jobsStore,
+  integrations: IntegrationsStore = integrationsStore,
 ): Connection {
   return {
     companion: createClient(env.base, env.session),
-    events: openEvents({ url: eventsUrl(env.base), session: env.session, store, jobs, open: env.open, onNewBuild }),
+    events: openEvents({ url: eventsUrl(env.base), session: env.session, store, jobs, integrations, open: env.open, onNewBuild }),
   };
 }
 

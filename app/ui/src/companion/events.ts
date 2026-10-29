@@ -1,5 +1,6 @@
-import type { DeviceSummary, Job, SyncData } from './api.ts';
+import type { DeviceSummary, IntegrationSummary, Job, SyncData } from './api.ts';
 import type { DevicesStore } from './devices.ts';
+import type { IntegrationsStore } from './integrations.ts';
 import type { JobsStore } from './jobs.ts';
 import type { Session } from './session.ts';
 
@@ -34,6 +35,7 @@ export interface EventsOptions {
   store: DevicesStore;
   /** Where `job.updated` and the `jobs` key of `sync` go. */
   jobs?: JobsStore;
+  integrations?: IntegrationsStore;
   open?: OpenSocket;
   /** A reconnect met a Companion with a different build, so the page should reload. */
   onNewBuild?: () => void;
@@ -62,7 +64,7 @@ function parse(data: unknown): Frame | null {
  * asks the session for a new token after close 4401.
  */
 export function openEvents(options: EventsOptions): Events {
-  const { url, session, store, jobs, open = openWebSocket, onNewBuild, retryMs = RETRY_MS } = options;
+  const { url, session, store, jobs, integrations, open = openWebSocket, onNewBuild, retryMs = RETRY_MS } = options;
   let socket: EventSocket | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
@@ -81,6 +83,7 @@ export function openEvents(options: EventsOptions): Events {
         failures = 0;
         store.getState().sync((frame.data as SyncData).devices ?? [], (frame.data as SyncData).jobs ?? []);
         jobs?.getState().sync((frame.data as SyncData).jobs ?? []);
+        integrations?.getState().sync((frame.data as SyncData).integrations ?? []);
         break;
       case 'device.added':
       case 'device.updated':
@@ -92,6 +95,9 @@ export function openEvents(options: EventsOptions): Events {
       case 'job.updated':
         store.getState().job(frame.data as Job);
         jobs?.getState().upsert(frame.data as Job);
+        break;
+      case 'integration.status':
+        integrations?.getState().upsert(frame.data as IntegrationSummary);
         break;
       // Clients ignore event types they don't know.
     }

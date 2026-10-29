@@ -3,9 +3,10 @@
 // validate.ts and a refused one leaves the draft as it was. Sending and loading go through the Companion's
 // `layouts.push` Job and `layouts.get`, with `If-Match` set to the last revision the editor saw.
 import { createStore } from 'zustand/vanilla';
-import type { Job, JobMap } from '../../companion/api.ts';
+import type { Job, JobMap, PresetTile } from '../../companion/api.ts';
 import type { Companion } from '../../companion/client.ts';
 import { toApiError, type ApiError } from '../../companion/errors.ts';
+import { parseAction, presetLabel } from '../integrations/model.ts';
 import { isSent, readDraft, writeDraft, type Draft, type DraftStorage } from './drafts.ts';
 import { describeLayout, friendlyFileError, friendlyRefusal, plural, PLUG_IN } from './messages.ts';
 import {
@@ -261,7 +262,31 @@ export function createEditorStore(deps: EditorDeps) {
     );
   }
 
-  return Object.assign(store, {
+  function placeAtTarget(action: Action, label: string): string | null {
+    const draft = current();
+    const where = state().adding;
+    if (!draft || !where) return null;
+    let page = state().page;
+    let layout = draft.layout;
+    let cell = where === 'new-page' ? { row: 0, col: 0 } : where;
+    if (where === 'new-page') {
+      const id = freshId(layout, 'page');
+      const added = addPage(layout, newGridPage(id, `Page ${layout.pages.length + 1}`));
+      if (!added.ok) {
+        say('error', friendlyRefusal(added.reason, layout, name()), { detail: added.reason, event: 'refused' });
+        return null;
+      }
+      layout = added.layout;
+      page = id;
+      cell = { row: 0, col: 0 };
+    }
+    const id = freshId(layout, 'tile');
+    const tile: Tile = { id, label, row: cell.row, col: cell.col, rowSpan: 1, colSpan: 1, icon: null, action };
+    const base = layout;
+    return apply(() => addTile(base, page!, tile), { page, selected: id, adding: null }) === null ? id : null;
+  }
+
+  const api = Object.assign(store, {
     /** Opens a Device's drafts. Opening the same Device again only updates its name. */
     open(device: EditorDevice, orientation: Orientation = 'landscape') {
       if (state().device?.id === device.id) {
@@ -339,28 +364,50 @@ export function createEditorStore(deps: EditorDeps) {
     /** Places a Tile of a kind where Add Tile points, then selects it. */
     place(kind: AddKind) {
       const draft = current();
-      const where = state().adding;
-      if (!draft || !where) return;
+      if (!draft) return;
       const action = defaultAction(kind, draft.layout.pages.map((p) => p.id));
-      let page = state().page;
-      let layout = draft.layout;
-      let cell = where === 'new-page' ? { row: 0, col: 0 } : where;
-      if (where === 'new-page') {
-        const id = freshId(layout, 'page');
-        const added = addPage(layout, newGridPage(id, `Page ${layout.pages.length + 1}`));
-        if (!added.ok) {
-          say('error', friendlyRefusal(added.reason, layout, name()), { detail: added.reason, event: 'refused' });
-          return;
-        }
-        layout = added.layout;
-        page = id;
-        cell = { row: 0, col: 0 };
+      const id = placeAtTarget(action ?? { type: 'none' }, 'Tile');
+      if (id !== null && action === null) set((s) => ({ intents: { ...s.intents, [id]: kind } }));
+    },
+
+    /** Places a Preset tile where Add Tile points, then selects it. */
+    placePreset(preset: PresetTile) {
+      const action = parseAction(preset.action);
+      if (action) placeAtTarget(action, presetLabel(preset.name));
+      else say('error', friendlyRefusal('action.type'), { detail: JSON.stringify(preset.action), event: 'refused' });
+    },
+
+    /**
+     * Add to Layout: puts a Preset tile in the first free cell of the current Page and selects it. With no draft yet,
+     * it loads the Device's Layout first. The status line says what happened either way.
+     */
+    async addPreset(preset: PresetTile): Promise<Status | null> {
+      if (!state().device) return null;
+      if (state().busy) {
+        say('error', `${name()} is busy. Wait a moment, then retry.`, { event: 'refused' });
+        return state().status;
       }
-      const id = freshId(layout, 'tile');
-      const tile: Tile = { id, label: 'Tile', row: cell.row, col: cell.col, rowSpan: 1, colSpan: 1, icon: null, action: action ?? { type: 'none' } };
-      const base = layout;
-      const placed = apply(() => addTile(base, page!, tile), { page, selected: id, adding: null });
-      if (placed === null && action === null) set((s) => ({ intents: { ...s.intents, [id]: kind } }));
+      if (!current()) await api.load();
+      const draft = current();
+      if (!draft) return state().status;
+      const action = parseAction(preset.action);
+      if (!action) {
+        say('error', friendlyRefusal('action.type'), { detail: JSON.stringify(preset.action), event: 'refused' });
+        return state().status;
+      }
+      const shown = gridOf(draft.layout, state().page);
+      const grid = shown ?? draft.layout.pages.find((p): p is GridPage => p.kind === 'grid') ?? null;
+      const cell = grid ? freeCell(draft.layout, grid.id) : null;
+      if (!grid || !cell) {
+        say('error', friendlyRefusal('no free cell on this page', draft.layout, name()), { detail: 'no free cell on this page', event: 'refused' });
+        return state().status;
+      }
+      const id = freshId(draft.layout, 'tile');
+      const tile: Tile = { id, label: presetLabel(preset.name), row: cell[0], col: cell[1], rowSpan: 1, colSpan: 1, icon: null, action };
+      if (apply((l) => addTile(l, grid.id, tile), { page: grid.id, selected: id, adding: null }) === null) {
+        say('ok', `Added to ${name()}'s Layout`, { event: 'preset-added' });
+      }
+      return state().status;
     },
 
     moveTile(tile: string, row: number, col: number) {
@@ -540,6 +587,7 @@ export function createEditorStore(deps: EditorDeps) {
       }
     },
   });
+  return api;
 }
 
 export type EditorStore = ReturnType<typeof createEditorStore>;
