@@ -8,7 +8,7 @@ import { createJobsStore, waitForJob, type JobsStore } from '../../companion/job
 import { sampleDevice } from '../../companion/samples.ts';
 import { windowSession } from '../../companion/session.ts';
 import { draftKey, type DraftStorage } from './drafts.ts';
-import { createEditorStore, saveState, type EditorDeps, type EditorStore } from './store.ts';
+import { createEditorStore, firstProblem, saveState, tileProblems, type EditorDeps, type EditorStore } from './store.ts';
 import { canonical, starterLayout, type GridPage, type Layout, type Page } from './validate.ts';
 
 const BASE = 'http://127.0.0.1:51234';
@@ -114,13 +114,13 @@ describe('editing a draft', () => {
     expect(state(store).adding).toEqual({ row: 2, col: 0 });
   });
 
-  test('a kind that needs a value first starts as Nothing and remembers the kind', () => {
+  test('a kind that needs a value first starts as Nothing, with its empty form kept on the Tile as invalid', () => {
     store.setGrid(3, 3);
     store.openAdd();
     store.place('launch');
     const added = state(store).selected!;
     expect(tile(store, added).action).toEqual({ type: 'none' });
-    expect(state(store).intents[added]).toBe('launch');
+    expect(tileProblems(state(store), added)?.action).toMatchObject({ value: { type: 'launch', path: '' }, reason: expect.stringMatching(/^text\.empty: .*\/action\/path /) });
   });
 
   test('Add Tile on a full Page starts a new Page with the Tile on it', () => {
@@ -191,6 +191,67 @@ describe('editing a draft', () => {
     expect(state(store).orientation).toBe('portrait');
     expect(state(store).status?.text).toBe('Imported “Tall”: 2 Pages, 16 Tiles.');
     expect(state(store).drafts.landscape?.layout.name).toBe('Starter');
+  });
+});
+
+describe('the invalid-Tile rule', () => {
+  let store: EditorStore;
+
+  beforeEach(() => {
+    store = editor();
+    store.open(DESK);
+    store.startStarter();
+    store.setGrid(3, 3);
+  });
+
+  test('an action the rules refuse stays on the Tile with its reason, and a valid one clears it', () => {
+    expect(store.editAction('next', { type: 'command', program: '', args: [], cwd: '', shell: false })).toMatch(/^text\.empty: /);
+    expect(tile(store, 'next').action).toEqual({ type: 'consumer', usage: 181 });
+    expect(tileProblems(state(store), 'next')?.action?.value).toEqual({ type: 'command', program: '', args: [], cwd: '', shell: false });
+
+    expect(store.editAction('next', { type: 'command', program: 'notepad.exe', args: [], cwd: '', shell: false })).toBeNull();
+    expect(tile(store, 'next').action).toEqual({ type: 'command', program: 'notepad.exe', args: [], cwd: '', shell: false });
+    expect(tileProblems(state(store), 'next')).toBeUndefined();
+  });
+
+  test('a refused label stays on the Tile until a valid one replaces it', () => {
+    expect(store.editLabel('next', '   ')).toMatch(/^label\.blank: /);
+    expect(tile(store, 'next').label).toBe('Next');
+    expect(tileProblems(state(store), 'next')?.label?.value).toBe('   ');
+    expect(store.editLabel('next', 'Skip')).toBeNull();
+    expect(tile(store, 'next').label).toBe('Skip');
+    expect(tileProblems(state(store), 'next')).toBeUndefined();
+  });
+
+  test('Send to Device is refused with the rule message and selects the invalid Tile', async () => {
+    store.selectPage('shortcuts');
+    store.editAction('copy', { type: 'open', target: '' });
+    store.selectPage('media');
+    await store.push();
+    expect(state(store).status).toMatchObject({ kind: 'error', text: 'Enter a file, folder or web address.', event: 'refused' });
+    expect(state(store)).toMatchObject({ page: 'shortcuts', selected: 'copy' });
+    expect(fake.layouts.puts).toBe(0);
+
+    store.editAction('copy', { type: 'open', target: 'https://example.com' });
+    expect(firstProblem(state(store))).toBeNull();
+    await store.push();
+    expect(state(store).status?.event).toBe('pushed');
+  });
+
+  test('Clear Tile drops its problems; Duplicate copies them', () => {
+    store.editAction('next', { type: 'launch', path: '', args: [], cwd: '' });
+    store.duplicate('next');
+    const copy = state(store).selected!;
+    expect(tileProblems(state(store), copy)?.action?.value.type).toBe('launch');
+    store.clearTile('next');
+    store.clearTile(copy);
+    expect(state(store).invalid.landscape).toEqual({});
+  });
+
+  test('a new Layout starts with no invalid Tiles', () => {
+    store.editAction('next', { type: 'launch', path: '', args: [], cwd: '' });
+    store.startStarter();
+    expect(firstProblem(state(store))).toBeNull();
   });
 });
 
