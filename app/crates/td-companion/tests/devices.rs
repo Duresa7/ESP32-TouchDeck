@@ -530,3 +530,15 @@ async fn opt_in_frames_need_a_subscription_for_that_device() {
     assert_eq!(event["device"], "mock0002");
     assert_eq!(event["data"]["event"]["tile"], "two");
 }
+
+#[tokio::test]
+async fn mock_summary_carries_hello_diagnostics() {
+    let td = TestCompanion::start().await;
+    let id = td.plug_device("mock0001").await;
+    let summary = td.call::<Get>(path(&id), NoQuery, ()).await.unwrap();
+    let value = serde_json::to_value(summary).unwrap();
+    assert_eq!(
+        value["diagnostics"],
+        json!({"product":"touchdeck", "running_from":"ota_0", "sinks":["log","link"], "current_layout":"builtin"})
+    );
+}

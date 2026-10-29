@@ -1,0 +1,342 @@
+use serde_json::{Value, json};
+use std::sync::{Arc, Mutex};
+use td_host::{
+    integrations::{Environment, Registry, secrets::*},
+    sources::{CliProxy, Fetch, HttpFetch, KeyStore, Source},
+};
+
+#[derive(Default, Clone)]
+struct Recorder(Arc<Mutex<Vec<(String, String)>>>);
+impl Fetch for Recorder {
+    fn get(&self, url: &str, bearer: &str) -> Result<String, String> {
+        self.0.lock().unwrap().push((url.into(), bearer.into()));
+        Ok("[]".into())
+    }
+    fn post_json(&self, _: &str, _: &str, _: &Value) -> Result<String, String> {
+        panic!("empty fixture has no upstream calls")
+    }
+}
+fn registry(recorder: Recorder, file: Option<std::path::PathBuf>) -> Registry {
+    Registry::new(Environment {
+        secrets: Arc::new(MemorySecrets::default()),
+        config_file: file,
+        fetch: Arc::new(move || Box::new(recorder.clone())),
+    })
+    .unwrap()
+}
+fn config(url: &str) -> Value {
+    json!({"enabled":true,"url":url,"interval_s":1})
+}
+
+#[test]
+fn registry_schema_presets_config_and_summaries_never_contain_secret_values() {
+    let root = std::env::temp_dir().join(format!("td-integration-test-{}", std::process::id()));
+    let file = root.join("sources.json");
+    let mut r = registry(Recorder::default(), Some(file.clone()));
+    let summaries = r.list();
+    assert_eq!(summaries.len(), 1);
+    let s = &summaries[0];
+    assert_eq!(s.id, "cliproxyapi");
+    assert!(
+        s.config_schema
+            .iter()
+            .any(|f| f.name == "management_key" && f.secret)
+    );
+    assert!(s.presets.iter().any(|p| p.id == "five_hour_pct"));
+    for summary in summaries {
+        let i = r.get(&summary.id).unwrap();
+        i.configure(config("https://hub.example")).unwrap();
+        i.secret_put("management_key", "fixture-private-value")
+            .unwrap();
+        assert!(
+            !serde_json::to_string(&i.view().unwrap())
+                .unwrap()
+                .contains("fixture-private-value")
+        );
+        let mut bad = config("https://hub.example");
+        bad["management_key"] = "fixture-private-value".into();
+        assert!(i.configure(bad).is_err());
+        assert!(
+            !std::fs::read_to_string(&file)
+                .unwrap()
+                .contains("fixture-private-value")
+        );
+        assert_eq!(i.view().unwrap().config["interval_s"], 60);
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+#[test]
+fn scheme_host_and_effective_port_clear_secrets_but_path_does_not() {
+    for next in [
+        "http://hub.example",
+        "https://other.example",
+        "https://hub.example:8443",
+    ] {
+        let calls = Recorder::default();
+        let mut r = registry(calls.clone(), None);
+        let i = r.get("cliproxyapi").unwrap();
+        i.configure(config("https://hub.example")).unwrap();
+        i.secret_put("management_key", "fixture-key").unwrap();
+        let same = i.configure(config("https://hub.example:443/path")).unwrap();
+        assert!(same.secrets["management_key"].set);
+        i.refresh();
+        assert_eq!(calls.0.lock().unwrap().len(), 1);
+        let changed = i.configure(config(next)).unwrap();
+        assert!(!changed.secrets["management_key"].set);
+        i.tick();
+        assert_eq!(calls.0.lock().unwrap().len(), 1);
+    }
+}
+#[test]
+fn typed_private_http_is_allowed_but_public_http_never_reaches_even_fake_fetch() {
+    for (url, allowed) in [
+        ("http://localhost:8317", true),
+        ("http://127.0.0.1", true),
+        ("http://10.0.0.1", true),
+        ("http://172.16.0.1", true),
+        ("http://192.168.1.1", true),
+        ("http://[::1]", true),
+        ("http://[fd00::1]", true),
+        ("http://public.example", false),
+        ("http://private-resolving.example", false),
+        ("http://192.0.2.1", false),
+        ("https://public.example", true),
+    ] {
+        let calls = Recorder::default();
+        let mut r = registry(calls.clone(), None);
+        let i = r.get("cliproxyapi").unwrap();
+        i.configure(config(url)).unwrap();
+        i.secret_put("management_key", "fixture-key").unwrap();
+        i.refresh();
+        assert_eq!(!calls.0.lock().unwrap().is_empty(), allowed, "{url}");
+    }
+}
+#[test]
+fn old_pollers_cannot_obtain_a_new_origins_secret() {
+    let keys = Arc::new(
+        BoundKeys::new(Arc::new(MemorySecrets::default()), "https://old.example").unwrap(),
+    );
+    keys.set("old-fixture").unwrap();
+    let calls = Recorder::default();
+    let mut old = CliProxy::new("https://old.example", keys.clone(), Box::new(calls.clone()));
+    keys.rebind("https://new.example").unwrap();
+    keys.set("new-fixture").unwrap();
+    old.poll();
+    assert!(calls.0.lock().unwrap().is_empty());
+    assert_eq!(
+        keys.get_for("https://new.example").unwrap().as_deref(),
+        Some("new-fixture")
+    );
+}
+#[test]
+fn real_http_client_does_not_follow_a_cross_origin_redirect() {
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+    };
+    let destination = TcpListener::bind("127.0.0.1:0").unwrap();
+    destination.set_nonblocking(true).unwrap();
+    let redirect = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", redirect.local_addr().unwrap());
+    let target = destination.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = redirect.accept().unwrap();
+        let mut bytes = [0; 4096];
+        let n = stream.read(&mut bytes).unwrap();
+        assert!(String::from_utf8_lossy(&bytes[..n]).contains("fixture-key"));
+        write!(stream, "HTTP/1.1 302 Found\r\nLocation: http://{target}/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+    });
+    assert!(HttpFetch::new().get(&url, "fixture-key").is_err());
+    server.join().unwrap();
+    assert!(matches!(destination.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+}
+
+#[derive(Default)]
+struct LegacyStore {
+    store: MemorySecrets,
+    legacy: Mutex<Option<String>>,
+    fail: Mutex<bool>,
+}
+impl SecretStore for LegacyStore {
+    fn get(&self, i: &str, f: &str) -> Result<Option<Secret>, String> {
+        self.store.get(i, f)
+    }
+    fn put(&self, i: &str, f: &str, s: Secret) -> Result<(), String> {
+        if *self.fail.lock().unwrap() {
+            Err("unavailable".into())
+        } else {
+            self.store.put(i, f, s)
+        }
+    }
+    fn delete(&self, i: &str, f: &str) -> Result<(), String> {
+        self.store.delete(i, f)
+    }
+    fn legacy(&self) -> Result<Option<String>, String> {
+        Ok(self.legacy.lock().unwrap().clone())
+    }
+    fn delete_legacy(&self) -> Result<(), String> {
+        *self.legacy.lock().unwrap() = None;
+        Ok(())
+    }
+}
+#[test]
+fn migration_preserves_legacy_until_the_bound_copy_is_saved() {
+    let store = Arc::new(LegacyStore::default());
+    *store.legacy.lock().unwrap() = Some("legacy-fixture".into());
+    *store.fail.lock().unwrap() = true;
+    let keys = BoundKeys::new(store.clone(), "https://hub.example").unwrap();
+    assert!(keys.get().is_err());
+    assert!(store.legacy.lock().unwrap().is_some());
+    *store.fail.lock().unwrap() = false;
+    assert_eq!(keys.get().unwrap().as_deref(), Some("legacy-fixture"));
+    assert!(store.legacy.lock().unwrap().is_none());
+    assert_eq!(
+        store
+            .get("cliproxyapi", "management_key")
+            .unwrap()
+            .unwrap()
+            .origin,
+        "https://hub.example"
+    );
+}
+
+#[test]
+fn the_contract_publishes_existing_readings_and_device_delivery() {
+    let mut r = registry(Recorder::default(), None);
+    let i = r.get("cliproxyapi").unwrap();
+    i.configure(config("https://hub.example")).unwrap();
+    i.secret_put("management_key", "fixture-key").unwrap();
+    i.refresh();
+    assert!(
+        i.readings()
+            .iter()
+            .any(|r| r.field == "status" && r.value == "none")
+    );
+    i.delivered(td_host::integrations::Delivery {
+        device: "mock0001".into(),
+        sent: 3,
+        error: None,
+    });
+    i.delivered(td_host::integrations::Delivery {
+        device: "mock0002".into(),
+        sent: 0,
+        error: Some("offline".into()),
+    });
+    assert_eq!(i.summary().status.delivery[0].sent, 3);
+    assert_eq!(
+        i.summary().status.delivery[1].error.as_deref(),
+        Some("offline")
+    );
+    i.secret_delete("management_key").unwrap();
+    assert!(i.readings().is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_vault_round_trip_uses_an_isolated_fixture_entry() {
+    let store = OsSecrets;
+    let id = format!(
+        "test-78-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    store
+        .put(
+            &id,
+            "fixture",
+            Secret {
+                origin: "https://hub.example".into(),
+                value: "fixture-only".into(),
+            },
+        )
+        .unwrap();
+    let read = store.get(&id, "fixture");
+    store.delete(&id, "fixture").unwrap();
+    let read = read.unwrap().unwrap();
+    assert_eq!(read.origin, "https://hub.example");
+    assert_eq!(read.value, "fixture-only");
+    assert!(store.get(&id, "fixture").unwrap().is_none());
+}
+
+#[test]
+fn invalid_saved_origin_is_repairable_and_never_sends_a_legacy_secret() {
+    let store = Arc::new(LegacyStore::default());
+    *store.legacy.lock().unwrap() = Some("legacy-fixture".into());
+    let keys = BoundKeys::from_config(store.clone(), "not a URL");
+    assert!(keys.get().is_err());
+    keys.rebind("https://hub.example").unwrap();
+    assert!(keys.get().unwrap().is_none());
+    keys.set("replacement-fixture").unwrap();
+    assert_eq!(keys.get().unwrap().as_deref(), Some("replacement-fixture"));
+}
+
+#[test]
+fn reconfiguring_does_not_bypass_the_manual_refresh_floor() {
+    let calls = Recorder::default();
+    let mut r = registry(calls.clone(), None);
+    let i = r.get("cliproxyapi").unwrap();
+    i.configure(config("https://hub.example")).unwrap();
+    i.secret_put("management_key", "fixture-key").unwrap();
+    i.refresh();
+    i.configure(config("https://hub.example/path")).unwrap();
+    i.refresh();
+    assert_eq!(calls.0.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn repeated_configure_and_tick_preserve_the_poll_deadline() {
+    let calls = Recorder::default();
+    let mut r = registry(calls.clone(), None);
+    let i = r.get("cliproxyapi").unwrap();
+    i.configure(config("https://hub.example")).unwrap();
+    i.secret_put("management_key", "fixture-key").unwrap();
+    for _ in 0..5 {
+        i.configure(config("https://hub.example")).unwrap();
+        i.tick();
+    }
+    assert_eq!(calls.0.lock().unwrap().len(), 1);
+    std::thread::sleep(td_host::sources::PROXY_REFRESH_FLOOR);
+    i.configure(config("https://hub.example")).unwrap();
+    i.tick();
+    assert_eq!(calls.0.lock().unwrap().len(), 1);
+    i.refresh();
+    assert_eq!(calls.0.lock().unwrap().len(), 2);
+}
+#[test]
+fn secret_writes_ticks_and_refresh_share_request_spacing() {
+    let calls = Recorder::default();
+    let mut r = registry(calls.clone(), None);
+    let i = r.get("cliproxyapi").unwrap();
+    i.configure(config("https://hub.example")).unwrap();
+    for _ in 0..5 {
+        i.secret_put("management_key", "fixture-key").unwrap();
+        i.tick();
+        i.configure(config("https://hub.example/path")).unwrap();
+        i.refresh();
+    }
+    assert_eq!(calls.0.lock().unwrap().len(), 1);
+}
+#[test]
+fn secret_stores_reject_ambiguous_target_components() {
+    for store in [&MemorySecrets::default() as &dyn SecretStore, &OsSecrets] {
+        for (i, f) in [("a:b", "c"), ("a", "b:c"), ("", "c"), ("a", "bad field")] {
+            assert!(store.get(i, f).is_err());
+            assert!(
+                store
+                    .put(
+                        i,
+                        f,
+                        Secret {
+                            origin: "https://hub.example".into(),
+                            value: "fixture".into()
+                        }
+                    )
+                    .is_err()
+            );
+            assert!(store.delete(i, f).is_err());
+        }
+    }
+}

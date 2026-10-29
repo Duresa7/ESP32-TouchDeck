@@ -464,6 +464,7 @@ fn response_body(mut response: ureq::http::Response<ureq::Body>) -> Result<Strin
 
 impl Fetch for HttpFetch {
     fn get(&self, url: &str, bearer: &str) -> Result<String, String> {
+        crate::integrations::secrets::credential_transport(url)?;
         response_body(
             self.agent
                 .get(url)
@@ -474,6 +475,7 @@ impl Fetch for HttpFetch {
         )
     }
     fn post_json(&self, url: &str, bearer: &str, body: &Value) -> Result<String, String> {
+        crate::integrations::secrets::credential_transport(url)?;
         response_body(
             self.agent
                 .post(url)
@@ -562,9 +564,10 @@ impl CliProxy {
 
     fn fetch_accounts(&mut self, now: i64) -> Result<Vec<Account>, String> {
         hub_url(&self.base)?;
+        crate::integrations::secrets::credential_transport(&self.base)?;
         let key = self
             .keys
-            .get()
+            .get_for(&self.base)
             .map_err(|_| "could not read the management key from the credential store")?
             .filter(|key| !key.is_empty())
             .ok_or("no management key is set")?;

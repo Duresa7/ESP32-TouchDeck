@@ -94,6 +94,9 @@ pub trait Sink: Send + Sync {
 /// Holds the CLIProxyAPI management key. The app backs it with the OS credential store.
 pub trait KeyStore: Send + Sync {
     fn get(&self) -> Result<Option<String>, String>;
+    fn get_for(&self, _base: &str) -> Result<Option<String>, String> {
+        self.get()
+    }
     fn set(&self, key: &str) -> Result<(), String>;
     fn clear(&self) -> Result<(), String>;
 }
@@ -119,6 +122,9 @@ impl KeyStore for MemoryKeys {
 
 /// The last 4 characters of a key, which is all the app ever shows of it.
 pub fn key_hint(key: &str) -> String {
+    if key.chars().count() <= 4 {
+        return "Set".into();
+    }
     let tail: Vec<char> = key.chars().rev().take(4).collect();
     let tail: String = tail.into_iter().rev().collect();
     format!("…{tail}")

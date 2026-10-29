@@ -132,7 +132,7 @@ test.describe('Troubleshooting', () => {
     await expect(desk.locator('[data-fact="version"] dd')).toHaveText('1.4.0');
     await expect(desk.locator('[data-fact="elf_sha256"] dd')).toHaveText('fake');
     await expect(desk.locator('[data-fact="recovery"] dd')).toHaveText('No');
-    await expect(desk.locator('[data-fact="product"] dd')).toHaveText('Unknown');
+    await expect(desk.locator('[data-fact="product"] dd')).toHaveText('touchdeck');
 
     await page.evaluate(() => window.touchdeckDemo?.offline('mock0001'));
     await expect(desk).toContainText('Lost Desk. Check the USB cable. It reconnects on its own.');

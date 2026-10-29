@@ -7,6 +7,9 @@ rust-version.workspace = true
 
 [dependencies]
 gif = { version = "0.14", default-features = false, features = ["std", "raii_no_panic"] }
+inventory = "0.3"
+keyring = "4"
+ts-rs = { version = "11", features = ["serde-json-impl"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 open = "5"
 resvg = { version = "0.45", default-features = false }

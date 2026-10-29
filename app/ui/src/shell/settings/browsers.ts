@@ -53,13 +53,15 @@ export function createBrowsersStore(companion: Pick<Companion, 'auth'>) {
       },
 
       async forgetAll() {
-        const all = browsers();
-        set({ view: { kind: 'ready', browsers: [] }, problem: null });
-        const results = await Promise.allSettled(all.map((browser) => companion.auth.session_delete({ id: browser.id })));
-        const failed = results.find((result) => result.status === 'rejected');
-        if (!failed) return;
+        set({ problem: null });
+        try {
+          await companion.auth.sessions_delete({}, { kind: 'browser' });
+        } catch (error) {
+          await load();
+          set({ problem: problemText(error, FORGET_ALL_PROBLEM) });
+          return;
+        }
         await load();
-        set({ problem: problemText(failed.reason, FORGET_ALL_PROBLEM) });
       },
 
       async resetPairing() {

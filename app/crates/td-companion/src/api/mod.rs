@@ -28,6 +28,7 @@ use ts_rs::TS;
 #[derive(Clone)]
 pub struct Ctx {
     pub actions: crate::actions::Actions,
+    pub integrations: crate::features::integrations::Service,
     pub(crate) desktop: Arc<crate::tray::Desktop>,
     pub devices: crate::devices::DeviceManager,
     pub firmware: crate::features::firmware::Firmware,
@@ -36,6 +37,7 @@ pub struct Ctx {
     pub links: crate::link::Links,
     pub layouts: crate::store::LayoutStore,
     pub assets: crate::store::AssetStore,
+    pub catalog: Arc<td_host::catalog::Catalog>,
     pub(crate) uploads: crate::features::uploads::Uploads,
     auth: Arc<Mutex<Auth>>,
     pub(crate) clock: Clock,
@@ -75,6 +77,7 @@ impl Ctx {
         let lease_clock = clock.clone();
         Self {
             actions,
+            integrations: crate::features::integrations::Service::new(mock, events.clone()),
             firmware: crate::features::firmware::Firmware::new(mock),
             desktop: Arc::new(crate::tray::Desktop::new(mock)),
             jobs: crate::jobs::Jobs::new(
@@ -85,6 +88,10 @@ impl Ctx {
             links,
             layouts: crate::store::LayoutStore::new(data.join("layouts")),
             assets: crate::store::AssetStore::new(data.join("assets")),
+            catalog: Arc::new(td_host::catalog::Catalog::new(
+                data.join("cache/catalog"),
+                Box::new(td_host::catalog::HttpFetcher),
+            )),
             uploads: Default::default(),
             devices,
             events,
