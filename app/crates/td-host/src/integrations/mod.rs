@@ -89,10 +89,20 @@ inventory::collect!(Registration);
 pub struct Registry(BTreeMap<String, Box<dyn Integration>>);
 impl Registry {
     pub fn new(env: Environment) -> Result<Self, Error> {
+        Self::from_registrations(env, inventory::iter::<Registration>)
+    }
+    fn from_registrations<'a>(env: Environment, registrations: impl IntoIterator<Item = &'a Registration>) -> Result<Self, Error> {
         let mut entries = BTreeMap::new();
-        for r in inventory::iter::<Registration> {
+        for r in registrations {
             let i = (r.0)(&env)?;
-            entries.insert(i.summary().id.clone(), i);
+            let summary = i.summary();
+            secrets::validate_id(&summary.id).map_err(|_| Error::ConfigInvalid)?;
+            for field in &summary.config_schema {
+                secrets::validate_id(&field.name).map_err(|_| Error::ConfigInvalid)?;
+            }
+            if entries.insert(summary.id, i).is_some() {
+                return Err(Error::ConfigInvalid);
+            }
         }
         Ok(Self(entries))
     }
@@ -106,5 +116,20 @@ impl Registry {
         for i in self.0.values_mut() {
             i.tick();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn duplicate_registration_is_rejected() {
+        let env = Environment {
+            secrets: Arc::new(secrets::MemorySecrets::default()),
+            config_file: None,
+            fetch: Arc::new(|| Box::new(crate::sources::HttpFetch::new())),
+        };
+        let registration = inventory::iter::<Registration>.into_iter().next().unwrap();
+        assert!(Registry::from_registrations(env, [registration, registration]).is_err());
     }
 }

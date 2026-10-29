@@ -4,7 +4,7 @@ use secrets::BoundKeys;
 use serde_json::json;
 use std::time::Instant;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Settings {
     enabled: bool,
@@ -19,7 +19,7 @@ struct CliProxyIntegration {
     source: CliProxy,
     fetch: Arc<dyn Fn() -> Box<dyn crate::sources::Fetch> + Send + Sync>,
     next: Option<Instant>,
-    last_refresh: Option<Instant>,
+    last_request: Option<Instant>,
     readings: Vec<crate::sources::Reading>,
     delivery: BTreeMap<String, Delivery>,
 }
@@ -45,7 +45,7 @@ fn create(env: &Environment) -> Result<Box<dyn Integration>, Error> {
         keys,
         fetch: env.fetch.clone(),
         next: Some(Instant::now()),
-        last_refresh: None,
+        last_request: None,
         readings: Vec::new(),
         delivery: BTreeMap::new(),
     }))
@@ -151,8 +151,9 @@ impl Integration for CliProxyIntegration {
         settings.url = settings.url.trim().trim_end_matches('/').into();
         secrets::origin(&settings.url).map_err(|_| Error::ConfigInvalid)?;
         settings.interval_s = settings.interval_s.max(60);
-        // Delete first. A failed save may require re-entry, but never retains a credential
-        // for a different origin. The old source checks its own URL on every poll.
+        if settings == self.settings {
+            return self.view();
+        }
         self.keys
             .rebind(&settings.url)
             .map_err(|_| Error::Credentials)?;
@@ -194,17 +195,22 @@ impl Integration for CliProxyIntegration {
         let now = Instant::now();
         if self.settings.enabled
             && self
-                .last_refresh
+                .last_request
                 .is_none_or(|last| now.duration_since(last) >= crate::sources::PROXY_REFRESH_FLOOR)
         {
-            self.last_refresh = Some(now);
+            self.last_request = Some(now);
             self.readings = self.source.refresh();
             self.next = Instant::now()
                 .checked_add(std::time::Duration::from_secs(self.settings.interval_s));
         }
     }
     fn tick(&mut self) {
-        if self.settings.enabled && self.next.is_some_and(|next| Instant::now() >= next) {
+        let now = Instant::now();
+        if self.settings.enabled
+            && self.next.is_some_and(|next| now >= next)
+            && self.last_request.is_none_or(|last| now.duration_since(last) >= crate::sources::PROXY_REFRESH_FLOOR)
+        {
+            self.last_request = Some(now);
             self.readings = self.source.poll();
             self.next = Instant::now()
                 .checked_add(std::time::Duration::from_secs(self.settings.interval_s));

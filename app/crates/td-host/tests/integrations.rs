@@ -285,3 +285,48 @@ fn reconfiguring_does_not_bypass_the_manual_refresh_floor() {
     i.refresh();
     assert_eq!(calls.0.lock().unwrap().len(), 1);
 }
+
+#[test]
+fn repeated_configure_and_tick_preserve_the_poll_deadline() {
+    let calls = Recorder::default();
+    let mut r = registry(calls.clone(), None);
+    let i = r.get("cliproxyapi").unwrap();
+    i.configure(config("https://hub.example")).unwrap();
+    i.secret_put("management_key", "fixture-key").unwrap();
+    for _ in 0..5 {
+        i.configure(config("https://hub.example")).unwrap();
+        i.tick();
+    }
+    assert_eq!(calls.0.lock().unwrap().len(), 1);
+    std::thread::sleep(td_host::sources::PROXY_REFRESH_FLOOR);
+    i.configure(config("https://hub.example")).unwrap();
+    i.tick();
+    assert_eq!(calls.0.lock().unwrap().len(), 1);
+    i.refresh();
+    assert_eq!(calls.0.lock().unwrap().len(), 2);
+
+}
+#[test]
+fn secret_writes_ticks_and_refresh_share_request_spacing() {
+    let calls = Recorder::default();
+    let mut r = registry(calls.clone(), None);
+    let i = r.get("cliproxyapi").unwrap();
+    i.configure(config("https://hub.example")).unwrap();
+    for _ in 0..5 {
+        i.secret_put("management_key", "fixture-key").unwrap();
+        i.tick();
+        i.configure(config("https://hub.example/path")).unwrap();
+        i.refresh();
+    }
+    assert_eq!(calls.0.lock().unwrap().len(), 1);
+}
+#[test]
+fn secret_stores_reject_ambiguous_target_components() {
+    for store in [&MemorySecrets::default() as &dyn SecretStore, &OsSecrets] {
+        for (i, f) in [("a:b", "c"), ("a", "b:c"), ("", "c"), ("a", "bad field")] {
+            assert!(store.get(i, f).is_err());
+            assert!(store.put(i, f, Secret { origin: "https://hub.example".into(), value: "fixture".into() }).is_err());
+            assert!(store.delete(i, f).is_err());
+        }
+    }
+}
