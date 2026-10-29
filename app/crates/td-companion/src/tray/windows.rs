@@ -1,5 +1,7 @@
 use super::*;
 use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
     ptr::{null, null_mut},
     sync::{OnceLock, mpsc},
 };
@@ -30,6 +32,14 @@ pub(super) fn open(url: &str) -> Result<(), CommonError> {
         Ok(())
     }
 }
+/// The window executable tray Open starts. A packaged Companion always starts the
+/// `Open TouchDeck.exe` beside it; only development honors `TOUCHDECK_WINDOW_BIN`.
+fn window_exe(packaged: bool, dev_override: Option<OsString>, companion: &Path) -> PathBuf {
+    match dev_override {
+        Some(path) if !packaged => PathBuf::from(path),
+        _ => companion.with_file_name("Open TouchDeck.exe"),
+    }
+}
 pub(super) fn notify(message: &str) {
     if let Some(tx) = NOTICES.get() {
         let _ = tx.try_send(message.into());
@@ -43,7 +53,7 @@ fn copy_wide<const N: usize>(out: &mut [u16; N], value: &str) {
         *dest = src;
     }
 }
-pub(super) fn start(ctx: Ctx) {
+pub(super) fn start(ctx: Ctx, packaged: bool) {
     let handle = tokio::runtime::Handle::current();
     let (tx, rx) = mpsc::sync_channel(16);
     let _ = NOTICES.set(tx);
@@ -127,14 +137,9 @@ pub(super) fn start(ctx: Ctx) {
                 DestroyMenu(menu);
                 match action {
                     1 => {
-                        let exe = std::env::var_os("TOUCHDECK_WINDOW_BIN")
-                            .map(std::path::PathBuf::from)
-                            .or_else(|| {
-                                std::env::current_exe()
-                                    .ok()
-                                    .map(|p| p.with_file_name("Open TouchDeck.exe"))
-                            });
-                        if let Some(exe) = exe {
+                        if let Ok(companion) = std::env::current_exe() {
+                            let dev_override = std::env::var_os("TOUCHDECK_WINDOW_BIN");
+                            let exe = window_exe(packaged, dev_override, &companion);
                             let _ = std::process::Command::new(exe).spawn();
                         }
                     }
@@ -163,4 +168,33 @@ pub(super) fn start(ctx: Ctx) {
         KillTimer(hwnd, 1);
         DestroyWindow(hwnd);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const COMPANION: &str = r"C:\Program Files\Open TouchDeck\td-companion.exe";
+    const ADJACENT: &str = r"C:\Program Files\Open TouchDeck\Open TouchDeck.exe";
+    const OVERRIDE: &str = r"D:\dev\electron.exe";
+
+    #[test]
+    fn packaged_open_ignores_the_dev_override() {
+        let companion = Path::new(COMPANION);
+        assert_eq!(
+            window_exe(true, Some(OVERRIDE.into()), companion),
+            Path::new(ADJACENT)
+        );
+        assert_eq!(window_exe(true, None, companion), Path::new(ADJACENT));
+    }
+
+    #[test]
+    fn development_open_uses_the_override_when_set() {
+        let companion = Path::new(COMPANION);
+        assert_eq!(
+            window_exe(false, Some(OVERRIDE.into()), companion),
+            Path::new(OVERRIDE)
+        );
+        assert_eq!(window_exe(false, None, companion), Path::new(ADJACENT));
+    }
 }

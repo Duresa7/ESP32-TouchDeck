@@ -88,12 +88,12 @@ impl TrayNotifier for NativeNotifier {
         }
     }
 }
-pub(crate) fn start(ctx: Ctx) {
+pub(crate) fn start(ctx: Ctx, packaged: bool) {
     #[cfg(windows)]
-    windows::start(ctx);
+    windows::start(ctx, packaged);
     #[cfg(not(windows))]
     {
-        let _ = ctx;
+        let _ = (ctx, packaged);
         eprintln!("Native tray unavailable on this platform.");
     }
 }

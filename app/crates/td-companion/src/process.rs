@@ -64,6 +64,7 @@ async fn bind(root: &Path) -> std::io::Result<tokio::net::TcpListener> {
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let packaged = args == ["--packaged"];
     // How many mock Devices to plug in, when the Companion runs on mock ports.
     let mock_devices: Option<usize> = match args.as_slice() {
         [] | ["--packaged"] => None,
@@ -116,7 +117,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     })
     .await?;
     if !ctx.mock || args.contains(&"--native-desktop") {
-        crate::tray::start(ctx.clone());
+        crate::tray::start(ctx.clone(), packaged);
     }
     if written.is_err() {
         ctx.desktop
@@ -127,7 +128,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .notify("The Companion port changed. Pair your browser again.");
     }
     written.map_err(|e| format!("The runtime file could not be secured: {e}"))?;
-    if args == ["--packaged"] {
+    if packaged {
         let marker = root.join("startup-initialized");
         if !marker.exists() {
             let startup = ctx.desktop.startup.clone();
