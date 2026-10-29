@@ -17,6 +17,23 @@ fn main() {
         println!("cargo:rerun-if-changed=app.manifest");
     }
     embed_ui();
+    println!("cargo:rerun-if-env-changed=TOUCHDECK_FIRMWARE_BUNDLE");
+    let bytes = match env::var_os("TOUCHDECK_FIRMWARE_BUNDLE") {
+        Some(path) => {
+            println!("cargo:rerun-if-changed={}", Path::new(&path).display());
+            let bytes = fs::read(path).expect("read bundled Firmware");
+            if let Err(reason) = td_link::bundle::Bundle::parse(&bytes) {
+                panic!("TOUCHDECK_FIRMWARE_BUNDLE is not a valid Firmware bundle: {reason}");
+            }
+            bytes
+        }
+        None => Vec::new(),
+    };
+    fs::write(
+        Path::new(&env::var_os("OUT_DIR").unwrap()).join("bundled.tdfw"),
+        bytes,
+    )
+    .unwrap();
     for name in ["HEAD", "index"] {
         if let Some(path) = git(&["rev-parse", "--git-path", name]) {
             println!("cargo:rerun-if-changed={path}");

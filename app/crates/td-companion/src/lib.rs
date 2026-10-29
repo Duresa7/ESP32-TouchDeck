@@ -3,6 +3,7 @@ pub mod api;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod bindings;
 pub mod devices;
+mod dialog_text;
 pub mod features;
 pub mod jobs;
 pub mod link;
