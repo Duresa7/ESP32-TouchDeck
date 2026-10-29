@@ -53,7 +53,6 @@ async fn script(td: &TestCompanion, answer: &str) {
         .error_for_status()
         .unwrap();
 }
-/// Commands that append a line to a file each time they run, so a test can count runs.
 struct Runs(tempfile::TempDir);
 impl Runs {
     fn new() -> Self {
@@ -62,18 +61,25 @@ impl Runs {
     fn count(&self) -> usize {
         std::fs::read_to_string(self.0.path().join("runs")).map_or(0, |s| s.lines().count())
     }
-    /// A command that records its run and exits with `code`, or sleeps 3 s unrecorded for -1.
     fn action(&self, code: i32) -> Value {
-        let (program, flag, command) = match (code, cfg!(windows)) {
-            (-1, true) => (
+        if cfg!(windows) {
+            self.command("cmd", "/C", &format!("echo ran>>runs& exit {code}"))
+        } else {
+            self.command("sh", "-c", &format!("echo ran >> runs; exit {code}"))
+        }
+    }
+    fn uncounted_three_second_action(&self) -> Value {
+        if cfg!(windows) {
+            self.command(
                 "powershell.exe",
                 "-Command",
-                "Start-Sleep -Seconds 3; exit 0".into(),
-            ),
-            (-1, false) => ("sh", "-c", "sleep 3; exit 0".into()),
-            (_, true) => ("cmd", "/C", format!("echo ran>>runs& exit {code}")),
-            (_, false) => ("sh", "-c", format!("echo ran >> runs; exit {code}")),
-        };
+                "Start-Sleep -Seconds 3; exit 0",
+            )
+        } else {
+            self.command("sh", "-c", "sleep 3; exit 0")
+        }
+    }
+    fn command(&self, program: &str, flag: &str, command: &str) -> Value {
         json!({"type":"command", "program":program, "args":[flag, command],
             "cwd":self.0.path().to_string_lossy(), "shell":false})
     }
@@ -81,7 +87,6 @@ impl Runs {
         grid((0..count).map(|_| self.action(code)).collect())
     }
 }
-/// One Page with a Tile per action, `t0` onwards.
 fn grid(actions: Vec<Value>) -> Layout {
     let tiles: Vec<_> = actions.into_iter().enumerate().map(|(n, action)| json!({"id": format!("t{n}"), "label": format!("Tile {n}"), "row": n / 6, "col": n % 6, "rowSpan":1, "colSpan":1, "action":action})).collect();
     serde_json::from_value(json!({"schema":1,"name":"Actions","orientation":"landscape","pages":[{"id":"main","title":"Main","kind":"grid","rows":3,"cols":6,"tiles":tiles}]})).unwrap()
@@ -120,8 +125,6 @@ async fn frame(socket: &mut Socket, name: &str) -> Value {
     .await
     .unwrap()
 }
-/// The approval events that arrive until none has for 400 ms, as `requested` or
-/// `resolved <answer>`.
 async fn approval_events(socket: &mut Socket) -> Vec<String> {
     let mut seen = Vec::new();
     while let Ok(Some(Ok(message))) =
@@ -326,7 +329,12 @@ async fn a_slow_action_does_not_block_another_device() {
     let runs = Runs::new();
     td.plug_device("mock0001").await;
     td.plug_device("mock0002").await;
-    layout(&td, "mock0001", &runs.layout(1, -1)).await;
+    layout(
+        &td,
+        "mock0001",
+        &grid(vec![runs.uncounted_three_second_action()]),
+    )
+    .await;
     layout(&td, "mock0002", &runs.layout(1, 7)).await;
     press(&td, "mock0001", 0);
     wait_count(&td, "approvals", 1).await;
@@ -490,7 +498,6 @@ async fn a_failed_prompt_denies() {
     assert_eq!(runs.count(), 0);
 }
 
-/// A grant store whose saves fail, or wait for the test to let them finish.
 struct TestGrants {
     fail: bool,
     entered: Mutex<mpsc::Sender<()>>,

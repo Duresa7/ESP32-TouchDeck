@@ -107,8 +107,6 @@ impl Links {
         let _held = lock.lock();
         self.run(id, work)
     }
-    /// Runs `work` as `with` does, or returns `None` when the Device's earlier work still
-    /// holds it after `wait`.
     pub(crate) fn within<R>(
         &self,
         id: &str,

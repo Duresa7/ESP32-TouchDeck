@@ -23,7 +23,6 @@ use td_core::layout::{Layout, Page};
 use td_host::{actions::Plan, approval::CommandSpec};
 use ts_rs::TS;
 
-/// How long a tap waits for the Device's Layout or Asset transfer before it's dropped.
 const TAP_WAIT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -156,8 +155,7 @@ struct State {
 }
 struct Inner {
     state: Mutex<State>,
-    /// Held across a whole grant change, so changes save one at a time and in order.
-    writing: Mutex<()>,
+    grant_writer: Mutex<()>,
     events: Events,
     clock: Clock,
     devices: DeviceManager,
@@ -171,7 +169,6 @@ struct Inner {
 #[derive(Clone)]
 pub struct Actions(Arc<Inner>);
 impl Actions {
-    /// Blocking: it loads the saved grants. Call it off the async runtime.
     pub(crate) fn new(
         events: Events,
         clock: Clock,
@@ -194,7 +191,7 @@ impl Actions {
         let _ = mock;
         let inner = Arc::new(Inner {
             state: Mutex::new(state),
-            writing: Mutex::new(()),
+            grant_writer: Mutex::new(()),
             events,
             clock,
             devices: devices.clone(),
@@ -245,14 +242,11 @@ impl Actions {
             .cloned()
             .collect()
     }
-    /// Saves the grants `change` makes, then publishes them. Blocking: call it off the async
-    /// runtime. The state lock is free while the store writes. Returns whether `change`
-    /// changed anything.
     fn change_grants(
         &self,
         change: impl FnOnce(&mut Vec<AllowedAction>) -> bool,
     ) -> std::io::Result<bool> {
-        let _writing = self.0.writing.lock();
+        let _one_at_a_time = self.0.grant_writer.lock();
         let (mut next, load_failed) = {
             let state = self.0.state.lock();
             (state.allowed.clone(), state.load_failed)
@@ -339,7 +333,6 @@ impl Actions {
             state.log.pop_front();
         }
     }
-    /// The Tile's action on the Layout the Device shows, or `None` when it has no such Tile.
     fn resolve(
         &self,
         device: &DeviceId,
@@ -387,7 +380,6 @@ impl Actions {
             },
         )))
     }
-    /// Runs on the Device's tap thread. A tap that can't be resolved is logged and dropped.
     fn press(&self, device: &DeviceId, event: &serde_json::Value) {
         let page = event["page"].as_str().unwrap_or_default();
         let tile = event["tile"].as_str().unwrap_or_default();

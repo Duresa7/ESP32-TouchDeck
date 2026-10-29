@@ -48,7 +48,6 @@ pub struct Ctx {
     pub(crate) handler_hits: Arc<std::sync::atomic::AtomicUsize>,
 }
 impl Ctx {
-    /// Blocking: it loads the saved grants. Call it off the async runtime.
     pub(crate) fn new(
         port: u16,
         mock: bool,

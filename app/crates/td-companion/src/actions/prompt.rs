@@ -17,7 +17,6 @@ pub(super) struct Context {
     pub page: String,
     pub tile: String,
 }
-/// Every value from the Device or its Layout goes through [`shown`].
 pub(super) fn dialog_text(context: &Context, spec: &ActionSpec) -> String {
     let args: Vec<_> = spec.args.iter().map(|a| shown(a)).collect();
     format!(
@@ -32,8 +31,7 @@ pub(super) fn dialog_text(context: &Context, spec: &ActionSpec) -> String {
         spec.shell
     )
 }
-/// Unicode's format characters (category Cf).
-const FORMAT: &[RangeInclusive<char>] = &[
+const UNICODE_CATEGORY_CF: &[RangeInclusive<char>] = &[
     '\u{AD}'..='\u{AD}',
     '\u{600}'..='\u{605}',
     '\u{61C}'..='\u{61C}',
@@ -56,8 +54,6 @@ const FORMAT: &[RangeInclusive<char>] = &[
     '\u{E0001}'..='\u{E0001}',
     '\u{E0020}'..='\u{E007F}',
 ];
-/// Quotes `value` and writes every control, format, line separator and paragraph separator
-/// character as `\u{...}`, so nothing in it is invisible or reorders the text around it.
 pub(super) fn shown(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');
@@ -68,7 +64,9 @@ pub(super) fn shown(value: &str) -> String {
                 out.push(c);
             }
             '\u{2028}' | '\u{2029}' => escape(&mut out, c),
-            c if c.is_control() || FORMAT.iter().any(|r| r.contains(&c)) => escape(&mut out, c),
+            c if c.is_control() || UNICODE_CATEGORY_CF.iter().any(|r| r.contains(&c)) => {
+                escape(&mut out, c)
+            }
             c => out.push(c),
         }
     }
