@@ -156,6 +156,12 @@ impl TestCompanion {
     pub fn shutdown_requested(&self) -> bool {
         *self.ctx.shutdown.borrow()
     }
+    pub fn browser_token(&self) -> String {
+        self.ctx.browser_token()
+    }
+    pub fn current_pairing_token(&self) -> String {
+        self.ctx.pairing_token()
+    }
     pub fn clock(&self) -> TestClock {
         TestClock(self.ctx.clone())
     }

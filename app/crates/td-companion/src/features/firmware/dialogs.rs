@@ -1,4 +1,3 @@
-//! Native dialogs have no API route for answering them.
 use super::Confirmation;
 use std::path::PathBuf;
 

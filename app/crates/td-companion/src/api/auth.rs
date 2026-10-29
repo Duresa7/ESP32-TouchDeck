@@ -97,6 +97,12 @@ impl Auth {
             sessions: HashMap::new(),
         }
     }
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn browser_token(&mut self, now: Instant) -> String {
+        let created = self.mint(None, now).unwrap();
+        self.sessions.get_mut(&digest(&created.token)).unwrap().info.kind = SessionKind::Browser;
+        created.token
+    }
     pub(crate) fn pairing(&self) -> &str {
         &self.pairing
     }

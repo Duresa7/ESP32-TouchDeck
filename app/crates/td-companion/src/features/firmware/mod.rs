@@ -1,4 +1,3 @@
-//! PC-owned Firmware selection and consent; no API accepts bytes or answers a dialog.
 mod dialogs;
 use crate::{
     api::{ApiError, CommonError, Ctx, Endpoint, Feature, NoQuery, Registration, Req},
@@ -348,9 +347,7 @@ fn start<K: JobKind<Progress = FirmwareProgress, Result = FirmwareResult>>(
     if !install && ctx.devices.get(&id).is_none() {
         return Err(crate::link::DeviceLinkError::NotFound.into());
     }
-    if !recovery {
-        ctx.links.connected(&id)?;
-    }
+
     let service = ctx.firmware.clone();
     let mut picked = service.picked.lock();
     let bundle = if selection == "bundled" {
@@ -379,6 +376,12 @@ fn start<K: JobKind<Progress = FirmwareProgress, Result = FirmwareResult>>(
     } else {
         JobScope::Device(id.to_string())
     };
+    if let Some(job) = jobs.holding(&scope) {
+        return Err(JobError::Busy(Box::new(job)).into());
+    }
+    if !recovery {
+        ctx.links.connected(&id)?;
+    }
     let job = jobs.start::<K>(scope, true, move |job| {
         let hold = ctx
             .devices

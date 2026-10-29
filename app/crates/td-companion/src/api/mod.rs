@@ -88,6 +88,10 @@ impl Ctx {
     pub(crate) fn pairing_token(&self) -> String {
         self.auth.lock().pairing().to_owned()
     }
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn browser_token(&self) -> String {
+        self.auth.lock().browser_token(self.clock.now())
+    }
     /// Forgets sessions that were revoked or have ended and hold no sockets.
     pub(crate) fn sweep_sessions(&self) -> usize {
         self.auth.lock().sweep(self.clock.now())
