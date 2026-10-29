@@ -30,8 +30,11 @@ export type BundleInfo = { id: string, version: string, build: string, bytes: nu
 export type Capabilities = { screen: [number, number], grid: [number, number], pages: number, tiles: number, layout_bytes: number, layout_schemas: Array<number>, storage_free: number, tile_kinds: Array<string>, asset_bytes: number, formats: Array<string>, image: [number, number], };
 export type ClientInfo = { id: string, kind: SessionKind, };
 export type CompanionStopping = { reason: string, };
+export type ConfigField = { name: string, kind: string, secret: boolean, };
 export type ConsoleLine = { line: string, };
 export type CreateAsset = { source: AssetSource, fit?: Fit, };
+export type DataStream = { id: string, kind: string, unit: string | null, };
+export type Delivery = { device: string, sent: number, error: string | null, };
 export type DeviceAdded = DeviceSummary;
 export type DeviceAssets = { ids: Array<string>, storage_free: number, };
 export type DeviceConsole = { device: DeviceId, line: string, };
@@ -67,6 +70,11 @@ export type FirmwareTarget = { device: DeviceId, };
 export type Fit = "contain" | "cover";
 export type Hello = { api: string, build: string, session: ClientInfo, };
 export type InstallLock = { lock: string, };
+export type IntegrationPath = { integration: string, };
+export type IntegrationStatus = { state: string, message: string | null, delivery: Array<Delivery>, };
+export type IntegrationStatusEvent = IntegrationSummary;
+export type IntegrationSummary = { id: string, name: string, icon: string, enabled: boolean, status: IntegrationStatus, config_schema: Array<ConfigField>, streams: Array<DataStream>, actions: Array<string>, presets: Array<PresetTile>, };
+export type IntegrationView = { summary: IntegrationSummary, config: JsonValue, secrets: { [key in string]?: SecretState }, };
 export type Job = { id: string, kind: string, scope: JobScope, state: JobState, 
 /**
  * Typed per kind in `JobMap`.
@@ -113,6 +121,7 @@ export type PairExpires = { expires_ms: number, };
 export type PairRequest = { code: string, label: string | null, };
 export type PickResult = { bundle: BundleInfo | null, };
 export type PortProbe = { port: string, usb_serial: string | null, id: DeviceId, probed_ms: number | null, } & ({ "status": "pending" } | { "status": "device", protocol: number, version: string, } | { "status": "silent" } | { "status": "busy", detail: string, } | { "status": "other-firmware", product: string, detail: string, });
+export type PresetTile = { id: string, name: string, action: JsonValue, };
 export type Proof = { proof: string, };
 export type ProofRequest = { nonce: string, };
 export type PruneProgress = { removed: number, total: number, };
@@ -130,6 +139,10 @@ export type PushReport = { state: DeviceLayoutState, bytes: number, chunks: numb
  */
 revision: string, };
 export type RenderProgress = { frames_done: number, frames_total: number, };
+export type SecretHint = { hint: string, };
+export type SecretInput = { value: string, };
+export type SecretPath = { integration: string, field: string, };
+export type SecretState = { set: boolean, };
 export type SessionCreated = { id: string, token: string, };
 export type SessionInfo = { id: string, kind: SessionKind, label: string, created_ms: number, last_used_ms: number, current: boolean, };
 export type SessionKind = "window" | "browser";
@@ -184,6 +197,12 @@ export const endpoints = {
   'firmware.pick': { method: 'POST', path: '/firmware/bundles/pick', access: 'session' },
   'firmware.repair': { method: 'POST', path: '/devices/{device}/firmware/repair', access: 'session' },
   'firmware.update': { method: 'POST', path: '/devices/{device}/firmware/update', access: 'session' },
+  'integrations.config_put': { method: 'PUT', path: '/integrations/{integration}/config', access: 'session' },
+  'integrations.get': { method: 'GET', path: '/integrations/{integration}', access: 'session' },
+  'integrations.list': { method: 'GET', path: '/integrations', access: 'session' },
+  'integrations.refresh': { method: 'POST', path: '/integrations/{integration}/refresh', access: 'session' },
+  'integrations.secret_delete': { method: 'DELETE', path: '/integrations/{integration}/secrets/{field}', access: 'session' },
+  'integrations.secret_put': { method: 'PUT', path: '/integrations/{integration}/secrets/{field}', access: 'session' },
   'jobs.cancel': { method: 'DELETE', path: '/jobs/{job}', access: 'session' },
   'jobs.get': { method: 'GET', path: '/jobs/{job}', access: 'session' },
   'jobs.list': { method: 'GET', path: '/jobs', access: 'session' },
@@ -201,10 +220,11 @@ export const endpoints = {
   'system.startup_put': { method: 'PUT', path: '/system/startup', access: 'session' },
   'system.unlock': { method: 'DELETE', path: '/system/lock/{lock}', access: 'session' },
 } as const;
-export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.render_failed' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'companion.installing' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'firmware.bundle_invalid' | 'firmware.bundle_not_found' | 'firmware.confirm_timeout' | 'firmware.declined' | 'firmware.failed' | 'firmware.rolled_back' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.changed' | 'layout.invalid' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'new_board.not_found' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'system.busy' | 'system.dialog_open' | 'upload.not_found';
+export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.render_failed' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'companion.installing' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'firmware.bundle_invalid' | 'firmware.bundle_not_found' | 'firmware.confirm_timeout' | 'firmware.declined' | 'firmware.failed' | 'firmware.rolled_back' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.changed' | 'layout.invalid' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'new_board.not_found' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'system.busy' | 'system.dialog_open' | 'upload.not_found';
 export type SyncData = {
   approvals: Array<ApprovalRequest>,
   devices: Array<DeviceSummary>,
+  integrations: Array<IntegrationSummary>,
   jobs: Array<Job>,
   new_boards: Array<NewBoard>,
 };
@@ -231,6 +251,7 @@ export type EventMap = {
   'device.removed': DeviceRemoved;
   'device.key-mirror': DeviceKeyMirror;
   'device.event': DeviceEvent;
+  'integration.status': IntegrationStatusEvent;
   'job.updated': JobUpdated;
   'new-board.added': NewBoardAdded;
   'new-board.removed': NewBoardRemoved;
@@ -311,6 +332,14 @@ also_keep: Array<string>, }, bearer?: string, headers?: Record<string, string>) 
       pick: (path: Record<string, never> = {}, query: null = null, body: { device: DeviceId, }, bearer?: string, headers?: Record<string, string>) => call<PickResult>('firmware.pick', path, query, body, bearer, headers),
       repair: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, }, bearer?: string, headers?: Record<string, string>) => call<Job>('firmware.repair', path, query, body, bearer, headers),
       update: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, }, bearer?: string, headers?: Record<string, string>) => call<Job>('firmware.update', path, query, body, bearer, headers),
+    },
+    integrations: {
+      config_put: (path: { integration: string, }, query: null = null, body: number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null, bearer?: string, headers?: Record<string, string>) => call<IntegrationView>('integrations.config_put', path, query, body, bearer, headers),
+      get: (path: { integration: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<IntegrationView>('integrations.get', path, query, body, bearer, headers),
+      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<IntegrationSummary>>('integrations.list', path, query, body, bearer, headers),
+      refresh: (path: { integration: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('integrations.refresh', path, query, body, bearer, headers),
+      secret_delete: (path: { integration: string, field: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('integrations.secret_delete', path, query, body, bearer, headers),
+      secret_put: (path: { integration: string, field: string, }, query: null = null, body: { value: string, }, bearer?: string, headers?: Record<string, string>) => call<SecretHint>('integrations.secret_put', path, query, body, bearer, headers),
     },
     jobs: {
       cancel: (path: { job: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Job>('jobs.cancel', path, query, body, bearer, headers),

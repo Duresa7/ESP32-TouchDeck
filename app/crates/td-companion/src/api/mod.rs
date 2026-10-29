@@ -28,6 +28,7 @@ use ts_rs::TS;
 #[derive(Clone)]
 pub struct Ctx {
     pub actions: crate::actions::Actions,
+    pub integrations: crate::features::integrations::Service,
     pub(crate) desktop: Arc<crate::tray::Desktop>,
     pub devices: crate::devices::DeviceManager,
     pub firmware: crate::features::firmware::Firmware,
@@ -75,6 +76,7 @@ impl Ctx {
         let lease_clock = clock.clone();
         Self {
             actions,
+            integrations: crate::features::integrations::Service::new(mock, events.clone()),
             firmware: crate::features::firmware::Firmware::new(mock),
             desktop: Arc::new(crate::tray::Desktop::new(mock)),
             jobs: crate::jobs::Jobs::new(

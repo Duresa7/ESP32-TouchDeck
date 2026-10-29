@@ -26,3 +26,5 @@ pub fn bring_to_front(hwnd: isize) -> bool {
     // SAFETY: Win32 checks the handle and fails the calls on one that names no window.
     unsafe { input_windows::bring_to_front(hwnd as *mut std::ffi::c_void) }
 }
+
+pub mod integrations;

@@ -551,9 +551,9 @@ Feature module `actions`.
 
 ### Integrations
 
-Feature module `integrations`. CLIProxyAPI is the Integration with id `cliproxyapi`.
+Feature module `integrations`. CLIProxyAPI is the Integration with id `cliproxyapi`. Integration and config-field ids must match `[a-z0-9_-]+` at registration and secret-store boundaries. Duplicate Integration ids are rejected.
 
-Each stored secret records the origin (scheme, host and effective port) it was entered for. `integrations.secret_put` binds it to the current configured origin. When `integrations.config_put` changes that origin, the Companion deletes secrets bound to the old origin before making any request to the new one. `integrations.get` then reports `set: false`; the user must enter the secrets again. Changes to a path on the same origin keep them.
+Each stored secret records the origin (scheme, host and effective port) it was entered for. `integrations.secret_put` binds it to the current configured origin. When `integrations.config_put` changes that origin, the Companion deletes secrets bound to the old origin before making any request to the new one. `integrations.get` then reports `set: false`; the user must enter the secrets again. Changes to a path on the same origin keep them. A first-setup draft key becomes bound when the configuration file is successfully saved, even if vault promotion fails. Retrying the same origin may promote it; changing origin discards it and requires re-entry.
 
 Requests carrying a credential never follow a redirect to another origin. They send no credential over plain `http` unless the host is a loopback or private-network address the user typed explicitly; a public hostname resolving to a private address is not this exception. This transport exception is a reversible policy choice. Configuration changes and in-flight requests must not forward an old origin's credential to a new origin.
 
@@ -565,6 +565,10 @@ Requests carrying a credential never follow a redirect to another origin. They s
 | `integrations.secret_put` | `PUT /integrations/{integration}/secrets/{field}` | `{value}` → `{hint}`. Write-only. The value never comes back and is never in `config` |
 | `integrations.secret_delete` | `DELETE /integrations/{integration}/secrets/{field}` | → `()` |
 | `integrations.refresh` | `POST /integrations/{integration}/refresh` | → `()` |
+
+CLIProxyAPI config is `{enabled: boolean, url: string, interval_s: integer}`. The URL is trimmed and the interval has a 60-second floor. Unknown fields, including `management_key`, are rejected in config. Its write-only secret field is `management_key`; the secret-write hint is the constant `Set`, including for short keys. Identical config writes preserve the polling deadline. Background polls, manual refreshes, config resets and secret writes share a 15-second minimum spacing between polling attempts.
+
+`IntegrationSummary` also includes `streams: {id, kind, unit}[]` and `actions: string[]`. Its `status` is `{state: "ok" | "error" | "not_configured", message, delivery: {device, sent, error}[]}`. Delivery entries are supplied by the Device scheduler; an Integration without a bound Device has an empty delivery list. Presets contain `{id, name, action}` with the existing Layout action shape. Live tile readings stay inside the Companion.
 
 Each Integration's Preset tiles are in `presets`. Live tiles get their values through the Device link, never through this API ([ADR 0004](adr/0004-firmware-draws-live-tiles.md)).
 
