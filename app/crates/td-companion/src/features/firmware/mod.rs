@@ -77,11 +77,16 @@ impl Prompter for Native {
         dialogs::confirm(confirmation, closed)
     }
 }
-/// Answers consent from a script and waits once it runs out. Its file picker returns the test
-/// bundle.
+#[cfg(any(test, feature = "test-hooks"))]
+#[derive(Serialize, Deserialize, Clone, Copy, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum ConsentAnswer {
+    Accept,
+    Decline,
+}
 #[cfg(any(test, feature = "test-hooks"))]
 #[derive(Default)]
-struct Scripted(Mutex<std::collections::VecDeque<bool>>);
+struct Scripted(Mutex<std::collections::VecDeque<ConsentAnswer>>);
 #[cfg(any(test, feature = "test-hooks"))]
 impl Prompter for Scripted {
     fn pick(&self) -> Result<Option<Vec<u8>>, String> {
@@ -92,8 +97,8 @@ impl Prompter for Scripted {
             if closed() {
                 return false;
             }
-            if let Some(accept) = self.0.lock().pop_front() {
-                return accept;
+            if let Some(answer) = self.0.lock().pop_front() {
+                return matches!(answer, ConsentAnswer::Accept);
             }
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -134,10 +139,10 @@ impl Firmware {
     pub fn set_prompter(&self, prompter: Arc<dyn Prompter>) {
         *self.prompter.lock() = prompter;
     }
-    /// Replaces the native dialogs with the scripted prompter, which gives these answers in order,
-    /// `true` to accept.
+    /// Replaces the native dialogs with a prompter that gives these answers in order and waits once
+    /// they run out.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn script(&self, answers: Vec<bool>) {
+    pub fn script(&self, answers: Vec<ConsentAnswer>) {
         *self.scripted.0.lock() = answers.into();
         self.set_prompter(self.scripted.clone());
     }

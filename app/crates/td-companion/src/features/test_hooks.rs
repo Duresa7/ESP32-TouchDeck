@@ -346,14 +346,8 @@ impl Endpoint for ApprovalsScript {
 }
 
 #[derive(Serialize, Deserialize, TS)]
-#[serde(rename_all = "lowercase")]
-pub enum ConsentAnswer {
-    Accept,
-    Decline,
-}
-#[derive(Serialize, Deserialize, TS)]
 pub struct ConsentScript {
-    pub answers: Vec<ConsentAnswer>,
+    pub answers: Vec<crate::features::firmware::ConsentAnswer>,
 }
 pub struct FirmwareScript;
 impl Endpoint for FirmwareScript {
@@ -368,13 +362,7 @@ impl Endpoint for FirmwareScript {
     type Error = CommonError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<(), CommonError> {
         ctx.devices.mock().ok_or(CommonError::NotFound)?;
-        let answers = req.body.answers;
-        ctx.firmware.script(
-            answers
-                .into_iter()
-                .map(|answer| matches!(answer, ConsentAnswer::Accept))
-                .collect(),
-        );
+        ctx.firmware.script(req.body.answers);
         Ok(())
     }
 }
