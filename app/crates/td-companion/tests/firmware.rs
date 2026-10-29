@@ -87,12 +87,7 @@ async fn consent_consumes_selection_and_decline_writes_nothing() {
         .await
         .unwrap();
     td.until(|_| !prompt.seen.lock().unwrap().is_empty()).await;
-    assert!(
-        !td.deck("mocka")
-            .received()
-            .iter()
-            .any(|v| v["m"] == "update.begin")
-    );
+    assert_eq!(td.deck("mocka").reboots(), 0);
     {
         let seen = prompt.seen.lock().unwrap();
         assert_eq!(seen[0].target, "mocka");
@@ -113,6 +108,11 @@ async fn consent_consumes_selection_and_decline_writes_nothing() {
     assert_eq!(reused.status(), 404);
     prompt.answer(false);
     let done = td.wait(&job).await;
+    assert_eq!(
+        td.deck("mocka").reboots(),
+        0,
+        "a declined repair wrote Firmware"
+    );
     assert_eq!(done.state, JobState::Failed);
     assert_eq!(done.error.unwrap().code, "firmware.declined");
 }
