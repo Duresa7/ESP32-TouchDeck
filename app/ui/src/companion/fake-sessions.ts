@@ -45,7 +45,8 @@ export function createFakeSessions({ browsers = [], onRevoke }: FakeSessionsOpti
   function handle(request: Request, path: string, caller: string): Response | null {
     if (path === '/auth/sessions') {
       if (request.method === 'DELETE') {
-        if (new URL(request.url).searchParams.get('kind') !== 'browser') return failure(400, 'request.invalid', 'Expected kind=browser.');
+        const kinds = new URL(request.url).searchParams.getAll('kind');
+        if (kinds.length !== 1 || kinds[0] !== 'browser') return failure(400, 'request.invalid', 'Expected kind=browser.');
         if (live.get(caller)?.kind !== 'window') return failure(403, 'auth.forbidden', 'A window session is required.');
         revoke(new Set([...live].filter(([, info]) => info.kind === 'browser').map(([token]) => token)));
         return json(204, null);
