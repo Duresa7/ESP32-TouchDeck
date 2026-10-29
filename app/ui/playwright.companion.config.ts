@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from '@playwright/test';
 import demo from './playwright.config.ts';
 
-// `pnpm e2e:companion` runs companion.spec.ts against the real Companion with one mock
-// Device, through `pnpm dev` and its /api proxy. The Companion gets its own data folder
+// `pnpm e2e:companion` runs companion.spec.ts against the real Companion with three mock
+// Devices, through `pnpm dev` and its /api proxy. The Companion gets its own data folder
 // and a fixed port, so it runs beside the one installed on this PC.
 const COMPANION_PORT = 50734;
 const UI_PORT = 5175;
@@ -24,7 +24,7 @@ export default defineConfig({
   // In order: Vite reads the Companion's port and token once it's up.
   webServer: [
     {
-      command: 'cargo run -p td-companion --features test-hooks -- --mock-devices 1',
+      command: 'cargo run -p td-companion --features test-hooks -- --mock-devices 3',
       cwd: '..',
       env,
       url: `http://127.0.0.1:${COMPANION_PORT}/api/v1/system/ping`,

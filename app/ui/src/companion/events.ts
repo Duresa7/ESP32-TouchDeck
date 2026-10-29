@@ -1,4 +1,4 @@
-import type { DeviceSummary, SyncData } from './api.ts';
+import type { DeviceSummary, Job, SyncData } from './api.ts';
 import type { DevicesStore } from './devices.ts';
 import type { Session } from './session.ts';
 
@@ -76,7 +76,7 @@ export function openEvents(options: EventsOptions): Events {
         break;
       case 'sync':
         failures = 0;
-        store.getState().sync((frame.data as SyncData).devices ?? []);
+        store.getState().sync((frame.data as SyncData).devices ?? [], (frame.data as SyncData).jobs ?? []);
         break;
       case 'device.added':
       case 'device.updated':
@@ -84,6 +84,9 @@ export function openEvents(options: EventsOptions): Events {
         break;
       case 'device.removed':
         store.getState().remove((frame.data as { id: string }).id);
+        break;
+      case 'job.updated':
+        store.getState().job(frame.data as Job);
         break;
       // Clients ignore event types they don't know.
     }
