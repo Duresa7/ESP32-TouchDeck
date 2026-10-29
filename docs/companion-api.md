@@ -188,7 +188,7 @@ The `/pair` page says "Pair this browser again after the Companion restarts." It
 
 - `last_used_ms` stays in Companion memory; no session state is persisted. At most one pairing code is pending, and Reset pairing invalidates it.
 - **Settings → Sessions** lists every session (`GET /auth/sessions`) with its kind, label, created time and last use. The caller's own row is marked. Each row has **Revoke** (`DELETE /auth/sessions/{id}`). **Sign out all browsers** is `DELETE /auth/sessions?kind=browser`. **Reset pairing** is `POST /auth/reset`.
-- Any session may revoke any session or reset pairing, because both only take access away.
+- Any session may revoke one session or reset pairing, because both only take access away. Forget all browsers requires a window session; a browser receives 403 `auth.forbidden`. It revokes all browser sessions under one auth lock, sending each browser socket `auth.revoked` followed by close 4401. Window sessions, including the caller, remain active.
 
 ### Rotation and revoke
 
@@ -327,6 +327,7 @@ pub struct DeviceSummary {
     pub setup: SetupState,                     // NeedsSetup | Ready
     pub link: LinkState,
     pub firmware: Option<FirmwareInfo>,        // {version, protocol, build, recovery, update_available: Option<String>}
+    pub diagnostics: Option<DeviceDiagnostics>,
     pub capabilities: Option<Capabilities>,    // v2 hello: screen, storage_free, tile_kinds. None on v1
     pub orientation: Option<Orientation>,
     pub layout: Option<LayoutSummary>,         // what the Device shows
@@ -336,6 +337,12 @@ pub struct DeviceSummary {
 pub struct NewBoard { pub id: DeviceId, pub port: String, pub probe: BoardProbe, pub seen_ms: u64 }
 pub enum BoardProbe { Silent, Busy { detail: String }, OtherFirmware { product: String, detail: String } }
 ```
+
+`diagnostics` is null until the Device has answered `hello`. Otherwise it is
+`{ product: string, running_from: string, sinks: string[], current_layout: string }`,
+from `hello.product`, `hello.running`, `hello.sinks` and `hello.layout`. `current_layout`
+is the Firmware's Layout id, separate from the Layout JSON in `DeviceSummary.layout`.
+Changes increment `rev` and publish `device.updated`.
 
 ### Rules for several Devices
 
@@ -595,7 +602,7 @@ The auth module mounts these itself. Features can't import it.
 | `auth.pair_code` | `POST /auth/pair-codes` | → `{expires_ms}` only. Window sessions only. The Companion opens `/pair#code=…` in the default browser and shows the manual code only in a native tray notification; replaces any pending code |
 | `auth.sessions` | `GET /auth/sessions` | → `SessionInfo[] {id, kind, label, created_ms, last_used_ms, current}` |
 | `auth.session_delete` | `DELETE /auth/sessions/{id}` | → `()`. `self` means the caller's own session |
-| `auth.sessions_delete` | `DELETE /auth/sessions?kind=browser` | → `()` |
+| `auth.sessions_delete` | `DELETE /auth/sessions?kind=browser` | → `()` (204). Window only; 403 `auth.forbidden` for browsers. Missing or other `kind`: 400 `request.invalid` |
 | `auth.reset` | `POST /auth/reset` | → `()`. Reset pairing |
 
 ### Test hooks

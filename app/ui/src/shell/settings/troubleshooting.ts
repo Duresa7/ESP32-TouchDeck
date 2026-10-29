@@ -1,4 +1,4 @@
-import type { DeviceSummary, JsonValue } from '../../companion/api.ts';
+import type { DeviceSummary } from '../../companion/api.ts';
 
 export interface Fact {
   key: 'product' | 'proto' | 'elf_sha256' | 'version' | 'running' | 'sinks' | 'recovery' | 'layout';
@@ -10,23 +10,17 @@ export const nameOf = (device: DeviceSummary) => device.name ?? 'Unnamed Device'
 
 const yesNo = (value: boolean) => (value ? 'Yes' : 'No');
 
-function layoutName(layout: JsonValue | null): string | null {
-  if (typeof layout !== 'object' || layout === null || Array.isArray(layout)) return null;
-  return typeof layout.name === 'string' ? layout.name : null;
-}
-
-/** `DeviceSummary` doesn't carry the product, the running slot or the key sinks yet, so those read as unknown. */
 export function factsOf(device: DeviceSummary): Fact[] {
-  const firmware = device.firmware;
+  const { firmware, diagnostics } = device;
   return [
-    { key: 'product', label: 'Product', value: null },
+    { key: 'product', label: 'Product', value: diagnostics && diagnostics.product },
     { key: 'proto', label: 'Protocol', value: firmware && String(firmware.protocol) },
     { key: 'elf_sha256', label: 'Firmware build', value: firmware && firmware.build },
     { key: 'version', label: 'Firmware version', value: firmware && firmware.version },
-    { key: 'running', label: 'Running from', value: null },
-    { key: 'sinks', label: 'Sends keys through', value: null },
+    { key: 'running', label: 'Running from', value: diagnostics && diagnostics.running_from },
+    { key: 'sinks', label: 'Sends keys through', value: diagnostics && diagnostics.sinks.join(', ') },
     { key: 'recovery', label: 'Safe mode', value: firmware && yesNo(firmware.recovery) },
-    { key: 'layout', label: 'Current Layout', value: layoutName(device.layout) },
+    { key: 'layout', label: 'Current Layout', value: diagnostics && diagnostics.current_layout },
   ];
 }
 

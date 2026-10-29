@@ -11,20 +11,26 @@ describe('Troubleshooting', () => {
     const device = sampleDevice('a0b1', 'Desk', connected);
     device.layout = { name: 'Streaming', pages: 3 };
     expect(factsOf(device).map((f) => [f.label, f.value])).toEqual([
-      ['Product', null],
+      ['Product', 'touchdeck'],
       ['Protocol', '2'],
       ['Firmware build', 'fake'],
       ['Firmware version', '1.4.0'],
-      ['Running from', null],
-      ['Sends keys through', null],
+      ['Running from', 'ota_0'],
+      ['Sends keys through', 'log, link'],
       ['Safe mode', 'No'],
-      ['Current Layout', 'Streaming'],
+      ['Current Layout', 'builtin'],
     ]);
   });
 
   test('without Firmware details or a Layout summary nothing is invented', () => {
-    const device = { ...sampleDevice('a0b1', 'Desk', connected), firmware: null, layout: ['not', 'a', 'summary'] };
+    const device = { ...sampleDevice('a0b1', 'Desk', connected), firmware: null, diagnostics: null, layout: ['not', 'a', 'summary'] };
     expect(factsOf(device).every((f) => f.value === null)).toBe(true);
+  });
+
+  test('empty hello values remain known rather than becoming Unknown', () => {
+    const device = sampleDevice('a0b1', 'Desk', connected);
+    device.diagnostics = { product: '', running_from: '', sinks: [], current_layout: '' };
+    expect(factsOf(device).filter((fact) => ['product', 'running', 'sinks', 'layout'].includes(fact.key)).map((fact) => fact.value)).toEqual(['', '', '', '']);
   });
 
   test.each<[LinkState, string]>([

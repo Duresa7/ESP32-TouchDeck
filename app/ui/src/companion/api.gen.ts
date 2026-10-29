@@ -25,6 +25,7 @@ sent: Array<string>,
  */
 unavailable: Array<string>, };
 export type AuthRevoked = Record<string, never>;
+export type BrowserKind = "browser";
 export type Builtin = { name: string, label: string, tags: Array<string>, id: string, };
 export type BundleInfo = { id: string, version: string, build: string, bytes: number, };
 export type Capabilities = { screen: [number, number], grid: [number, number], pages: number, tiles: number, layout_bytes: number, layout_schemas: Array<number>, storage_free: number, tile_kinds: Array<string>, asset_bytes: number, formats: Array<string>, image: [number, number], };
@@ -35,6 +36,7 @@ export type CreateAsset = { source: AssetSource, fit?: Fit, };
 export type DeviceAdded = DeviceSummary;
 export type DeviceAssets = { ids: Array<string>, storage_free: number, };
 export type DeviceConsole = { device: DeviceId, line: string, };
+export type DeviceDiagnostics = { product: string, running_from: string, sinks: Array<string>, current_layout: string, };
 export type DeviceEvent = { device: DeviceId, event: JsonValue, };
 export type DeviceId = string;
 export type DeviceKeyMirror = { device: DeviceId, seq: number, report: string, 
@@ -55,7 +57,7 @@ export type DeviceSettings = { idle_timeout_s: number,
  */
 orientation: string, name: string | null, brightness: number | null, };
 export type DeviceSettingsPatch = { idle_timeout_s: number | null, orientation: string | null, name: string | null, brightness: number | null, };
-export type DeviceSummary = { id: DeviceId, rev: number, name: string | null, setup: SetupState, link: LinkState, firmware: FirmwareInfo | null, capabilities: Capabilities | null, orientation: string | null, layout: JsonValue | null, key_mirror: KeyMirrorState, stable_id: boolean, };
+export type DeviceSummary = { id: DeviceId, rev: number, name: string | null, setup: SetupState, link: LinkState, firmware: FirmwareInfo | null, diagnostics: DeviceDiagnostics | null, capabilities: Capabilities | null, orientation: string | null, layout: JsonValue | null, key_mirror: KeyMirrorState, stable_id: boolean, };
 export type DeviceUpdated = DeviceSummary;
 export type ErrorBody = { code: string, message: string, details: JsonValue | null, };
 export type FirmwareBuild = { version: string, build: string, };
@@ -135,6 +137,7 @@ export type SessionInfo = { id: string, kind: SessionKind, label: string, create
 export type SessionKind = "window" | "browser";
 export type SessionPath = { id: string, };
 export type SessionRequest = { kind: SessionKind, label: string | null, };
+export type SessionsDeleteQuery = { kind: BrowserKind, };
 export type SettingsPatched = { settings: DeviceSettings, 
 /**
  * The Device must restart before an orientation change shows.
@@ -170,6 +173,7 @@ export const endpoints = {
   'auth.session_create': { method: 'POST', path: '/auth/sessions', access: 'pairing' },
   'auth.session_delete': { method: 'DELETE', path: '/auth/sessions/{id}', access: 'session' },
   'auth.sessions': { method: 'GET', path: '/auth/sessions', access: 'session' },
+  'auth.sessions_delete': { method: 'DELETE', path: '/auth/sessions', access: 'session' },
   'console.send': { method: 'POST', path: '/devices/{device}/console', access: 'session' },
   'devices.connect': { method: 'POST', path: '/devices/{device}/connect', access: 'session' },
   'devices.disconnect': { method: 'POST', path: '/devices/{device}/disconnect', access: 'session' },
@@ -291,6 +295,7 @@ also_keep: Array<string>, }, bearer?: string, headers?: Record<string, string>) 
       session_create: (path: Record<string, never> = {}, query: null = null, body: { kind: SessionKind, label: string | null, }, bearer?: string, headers?: Record<string, string>) => call<SessionCreated>('auth.session_create', path, query, body, bearer, headers),
       session_delete: (path: { id: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('auth.session_delete', path, query, body, bearer, headers),
       sessions: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<SessionInfo>>('auth.sessions', path, query, body, bearer, headers),
+      sessions_delete: (path: Record<string, never> = {}, query: { kind: BrowserKind, }, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('auth.sessions_delete', path, query, body, bearer, headers),
     },
     console: {
       send: (path: { device: DeviceId, }, query: null = null, body: { line: string, }, bearer?: string, headers?: Record<string, string>) => call<null>('console.send', path, query, body, bearer, headers),
