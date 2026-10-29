@@ -26,8 +26,7 @@ for (const theme of ['light', 'dark'] as const) {
 
     test('an action Tile selected', async ({ page }) => {
       await openLayout(page);
-      await page.getByTestId('start-pull').click();
-      await expect(page.getByTestId('status')).toHaveAttribute('data-event', 'pulled');
+      await page.getByTestId('start-starter').click();
       await page.locator('[data-testid="tile"][data-id="playpause"]').click();
       await expect(page.getByTestId('tile-title')).toHaveText('Play/Pause');
       await page.mouse.move(0, 0);
@@ -36,8 +35,7 @@ for (const theme of ['light', 'dark'] as const) {
 
     test('Add Tile open', async ({ page }) => {
       await openLayout(page);
-      await page.getByTestId('start-pull').click();
-      await expect(page.getByTestId('status')).toHaveAttribute('data-event', 'pulled');
+      await page.getByTestId('start-starter').click();
       await page.getByTestId('page-tab').filter({ hasText: 'Shortcuts' }).click();
       await page.locator('[data-testid="empty-cell"][data-row="2"][data-col="2"]').click();
       await expect(page.getByTestId('add-where')).toHaveText('Row 3, column 3 on the Shortcuts Page');

@@ -539,6 +539,15 @@
   transition: transform 160ms var(--ease-out);
 }
 
+/* The Tile's face clips its label and icon to its corners, as the Device does; the corner dot sits outside it */
+.tile-face {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
 .screen.is-preview .tile {
   touch-action: pan-y;
   transition: none;
