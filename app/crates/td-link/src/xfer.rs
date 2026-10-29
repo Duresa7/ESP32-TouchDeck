@@ -232,7 +232,11 @@ pub fn put_bytes(
     })
 }
 
-fn send_chunks(transfer: &Transfer, xfer: u8, data: &[u8]) -> Result<(u16, u32), XferError> {
+pub(crate) fn send_chunks(
+    transfer: &Transfer,
+    xfer: u8,
+    data: &[u8],
+) -> Result<(u16, u32), XferError> {
     let count = chunk_count(data.len());
     let chunk = |idx: u16| {
         let start = usize::from(idx) * CHUNK_DATA_MAX;

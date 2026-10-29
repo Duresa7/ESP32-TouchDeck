@@ -11,7 +11,7 @@ const ajv = new Ajv2020({ allErrors: true, strict: true, allowUnionTypes: true, 
 ajv.addVocabulary(['x-rules']);
 const checkSchema = ajv.compile(schema);
 
-const generalRules = { type: 'shape.type', required: 'shape.missing-field', additionalProperties: 'shape.unknown-field' };
+const generalRules = { type: 'shape.type', required: 'shape.missing-field', additionalProperties: 'shape.unknown-field', 'false schema': 'shape.unknown-field', if: 'icon.format' };
 const codeRules = [
   'file.utf8',
   'file.json',
@@ -67,7 +67,7 @@ function matchesDiscriminator(error, layout) {
 
 function structuralErrors(layout) {
   const errors = new Map();
-  for (const error of checkSchema.errors.filter((candidate) => matchesDiscriminator(candidate, layout))) {
+  for (const error of checkSchema.errors.filter((candidate) => candidate.keyword !== 'if' && matchesDiscriminator(candidate, layout))) {
     const key = error.parentSchema['x-rules']?.[error.keyword] ?? generalRules[error.keyword];
     if (!key) throw new Error(`schema constraint ${error.keyword} at ${error.schemaPath} has no rule key`);
     const detail = error.params.additionalProperty ?? error.params.missingProperty;
