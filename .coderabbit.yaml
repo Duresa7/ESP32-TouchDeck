@@ -67,7 +67,9 @@ reviews:
           an email address other than noreply or example.com addresses; a hostname of a real machine;
           a real IP address (127.0.0.1, localhost and the documentation ranges 192.0.2.0/24,
           198.51.100.0/24 and 203.0.113.0/24 are fine); or a password, token, API key, signing key or
-          Wi-Fi credential. The maintainer's name is fine. Quote each match with its file and line.
+          Wi-Fi credential. The maintainer's name is fine. Report each match by file, line and kind
+          (for example "email address" or "API token") and never repeat the value itself; at most show
+          it masked, such as the first two characters followed by asterisks.
 
   path_filters:
     - "!app/ui/src/companion/api.gen.ts"
