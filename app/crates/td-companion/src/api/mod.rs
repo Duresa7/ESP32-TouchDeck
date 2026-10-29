@@ -37,6 +37,7 @@ pub struct Ctx {
     pub links: crate::link::Links,
     pub layouts: crate::store::LayoutStore,
     pub assets: crate::store::AssetStore,
+    pub catalog: Arc<td_host::catalog::Catalog>,
     pub(crate) uploads: crate::features::uploads::Uploads,
     auth: Arc<Mutex<Auth>>,
     pub(crate) clock: Clock,
@@ -87,6 +88,10 @@ impl Ctx {
             links,
             layouts: crate::store::LayoutStore::new(data.join("layouts")),
             assets: crate::store::AssetStore::new(data.join("assets")),
+            catalog: Arc::new(td_host::catalog::Catalog::new(
+                data.join("cache/catalog"),
+                Box::new(td_host::catalog::HttpFetcher),
+            )),
             uploads: Default::default(),
             devices,
             events,

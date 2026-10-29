@@ -14,7 +14,7 @@ export type AssetRef = { id: string,
  * `tdi1`, the Device's icon format.
  */
 kind: string, width: number, height: number, bytes: number, };
-export type AssetSource = { "kind": "app", path: string, } | { "kind": "upload", upload: string, };
+export type AssetSource = { "kind": "app", path: string, } | { "kind": "catalog", catalog: string, id: string, variant: CatalogVariant, padding: number, background: [number, number, number, number] | null, tint: [number, number, number] | null, } | { "kind": "upload", upload: string, };
 export type AssetSync = { 
 /**
  * Assets the Layout uses that the Device lacked and the Companion sent.
@@ -29,6 +29,9 @@ export type BrowserKind = "browser";
 export type Builtin = { name: string, label: string, tags: Array<string>, id: string, };
 export type BundleInfo = { id: string, version: string, build: string, bytes: number, };
 export type Capabilities = { screen: [number, number], grid: [number, number], pages: number, tiles: number, layout_bytes: number, layout_schemas: Array<number>, storage_free: number, tile_kinds: Array<string>, asset_bytes: number, formats: Array<string>, image: [number, number], };
+export type CatalogHit = { source: string, name: string, id: string, aliases: Array<string>, hex: string | null, tags: Array<string>, category: string | null, svg: boolean, light: boolean, dark: boolean, license: string, license_url: string | null, guidelines: string | null, attribution_url: string, attribution: string, };
+export type CatalogQuery = { q: string, catalog: string | null, };
+export type CatalogVariant = "base" | "light" | "dark";
 export type ClientInfo = { id: string, kind: SessionKind, };
 export type CompanionStopping = { reason: string, };
 export type ConfigField = { name: string, kind: string, secret: boolean, };
@@ -173,6 +176,7 @@ export const endpoints = {
   'approvals.list': { method: 'GET', path: '/approvals', access: 'session' },
   'approvals.show': { method: 'POST', path: '/approvals/{id}/show', access: 'session' },
   'assets.builtin': { method: 'GET', path: '/assets/builtin', access: 'session' },
+  'assets.catalog_search': { method: 'GET', path: '/assets/catalog/search', access: 'session' },
   'assets.create': { method: 'POST', path: '/assets', access: 'session' },
   'assets.file': { method: 'GET', path: '/assets/{asset}', access: 'session' },
   'assets.on_device': { method: 'GET', path: '/devices/{device}/assets', access: 'session' },
@@ -296,6 +300,7 @@ export function createCompanion(base: string, token: () => string) {
     },
     assets: {
       builtin: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<Builtin>>('assets.builtin', path, query, body, bearer, headers),
+      catalog_search: (path: Record<string, never> = {}, query: { q: string, catalog: string | null, }, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<CatalogHit>>('assets.catalog_search', path, query, body, bearer, headers),
       create: (path: Record<string, never> = {}, query: null = null, body: { source: AssetSource, fit?: Fit, }, bearer?: string, headers?: Record<string, string>) => call<Job>('assets.create', path, query, body, bearer, headers),
       file: (path: { asset: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<AssetBytes>('assets.file', path, query, body, bearer, headers),
       on_device: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<DeviceAssets>('assets.on_device', path, query, body, bearer, headers),
