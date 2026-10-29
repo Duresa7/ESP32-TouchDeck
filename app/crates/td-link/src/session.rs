@@ -455,6 +455,8 @@ impl Session {
         for thread in self.threads.lock().unwrap().drain(..) {
             let _ = thread.join();
         }
+        // Release the OS port even when an actor still holds an Arc to this closed session.
+        *self.shared.writer.lock().unwrap() = Box::new(io::sink());
     }
 }
 

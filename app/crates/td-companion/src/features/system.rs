@@ -53,5 +53,40 @@ fn feature() -> Feature {
     Feature::new("system")
         .endpoint::<Get>()
         .endpoint::<Shutdown>()
+        .endpoint::<Lock>()
+        .endpoint::<LockRenew>()
+        .endpoint::<Unlock>()
 }
 inventory::submit! {Registration(feature)}
+
+#[derive(Serialize, Deserialize, TS)]
+pub struct InstallLock { pub lock: String }
+pub struct Lock;
+impl Endpoint for Lock {
+    const NAME: &'static str = "system.lock";
+    const METHOD: Method = Method::POST;
+    const PATH: &'static str = "/system/lock";
+    type Path = (); type Query = NoQuery; type Body = (); type Ok = InstallLock; type Error = CommonError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
+        if req.client().kind != SessionKind::Window { return Err(CommonError::Forbidden("A window session is required.")); }
+        Ok(InstallLock { lock: ctx.jobs.install_lock(&req.client().id)? })
+    }
+}
+macro_rules! lock_route {
+    ($name:ident, $method:ident, $route:literal, $release:literal) => {
+        pub struct $name;
+        impl Endpoint for $name {
+            const NAME: &'static str = $route;
+            const METHOD: Method = Method::$method;
+            const PATH: &'static str = "/system/lock/{lock}";
+            const STATUS: StatusCode = StatusCode::NO_CONTENT;
+            type Path = InstallLock; type Query = NoQuery; type Body = (); type Ok = (); type Error = CommonError;
+            async fn handle(ctx: Ctx, req: Req<Self>) -> Result<(), CommonError> {
+                if req.client().kind != SessionKind::Window { return Err(CommonError::Forbidden("A window session is required.")); }
+                ctx.jobs.install_renew(&req.client().id, &req.path.lock, $release)
+            }
+        }
+    };
+}
+lock_route!(LockRenew, PUT, "system.lock_renew", false);
+lock_route!(Unlock, DELETE, "system.unlock", true);

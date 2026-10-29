@@ -55,14 +55,17 @@ impl Ctx {
         let events = Events::default();
         let clock = Clock::default();
         let devices = crate::devices::DeviceManager::new(events.clone());
+        let auth = Arc::new(Mutex::new(Auth::new()));
+        let lease_auth = auth.clone();
+        let lease_clock = clock.clone();
         Self {
-            jobs: crate::jobs::Jobs::new(events.clone(), clock.clone()),
+            jobs: crate::jobs::Jobs::new(events.clone(), clock.clone(), Arc::new(move |id| lease_auth.lock().live(id, lease_clock.now()))),
             links: crate::link::Links::new(devices.clone()),
             layouts: crate::store::LayoutStore::new(data.join("layouts")),
             assets: crate::store::AssetStore::new(data.join("assets")),
             devices,
             events,
-            auth: Arc::new(Mutex::new(Auth::new())),
+            auth,
             clock,
             shutdown: tokio::sync::watch::channel(false).0,
             port,

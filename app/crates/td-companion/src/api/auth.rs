@@ -181,6 +181,9 @@ impl Auth {
         );
         Ok(SessionCreated { id, token })
     }
+    pub(crate) fn live(&self, id: &str, now: Instant) -> bool {
+        self.sessions.values().any(|s| s.info.id == id && !s.revoked && !s.expired(now))
+    }
     pub(crate) fn active(&self, id: &str) -> bool {
         self.sessions
             .values()

@@ -44,6 +44,10 @@ pub(crate) fn respond(error: &impl ApiError) -> Response {
 /// Errors the kernel and every feature can return.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum CommonError {
+    #[error("A Job or another install is active.")]
+    SystemBusy,
+    #[error("The Companion installer holds the lock.")]
+    Installing,
     #[error("The Host is not allowed.")]
     Host,
     #[error("The Origin or request site is not allowed.")]
@@ -83,6 +87,8 @@ impl CommonError {
 }
 impl ApiError for CommonError {
     const CODES: &'static [&'static str] = &[
+        "system.busy",
+        "companion.installing",
         "security.host",
         "security.origin",
         "auth.missing",
@@ -100,6 +106,8 @@ impl ApiError for CommonError {
     ];
     fn status(&self) -> StatusCode {
         let status = match self {
+            Self::SystemBusy => 409,
+            Self::Installing => 503,
             Self::Host => 421,
             Self::Origin | Self::Forbidden(_) => 403,
             Self::AuthMissing | Self::AuthInvalid | Self::AuthRevoked(_) => 401,
@@ -116,6 +124,8 @@ impl ApiError for CommonError {
     }
     fn code(&self) -> &'static str {
         match self {
+            Self::SystemBusy => "system.busy",
+            Self::Installing => "companion.installing",
             Self::Host => "security.host",
             Self::Origin => "security.origin",
             Self::AuthMissing => "auth.missing",
