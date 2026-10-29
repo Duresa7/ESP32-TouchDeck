@@ -98,7 +98,6 @@ pub(super) fn start(ctx: Ctx) {
                 copy_wide(&mut icon.szInfoTitle, "Open TouchDeck");
                 icon.dwInfoFlags = NIIF_INFO;
                 Shell_NotifyIconW(NIM_MODIFY, &icon);
-                // Do not retain the manual code in the window's state.
                 icon.szInfo.fill(0);
             }
             if msg.message == WM_APP + 1

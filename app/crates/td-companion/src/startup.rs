@@ -1,4 +1,3 @@
-//! Start at sign-in uses a per-user Run value. Tests never touch the registry.
 use crate::api::{CommonError, Ctx, Endpoint, Feature, NoQuery, Registration, Req};
 use axum::http::Method;
 use serde::{Deserialize, Serialize};
@@ -50,6 +49,12 @@ mod native {
             }
         }
         fn set(&self, enabled: bool) -> Result<(), CommonError> {
+            let command = if enabled {
+                let exe = std::env::current_exe().map_err(|_| CommonError::Internal)?;
+                wide(&format!("\"{}\" --packaged", exe.display()))
+            } else {
+                Vec::new()
+            };
             let mut key = null_mut();
             let result = unsafe {
                 RegCreateKeyExW(
@@ -68,8 +73,6 @@ mod native {
                 return Err(CommonError::Internal);
             }
             let result = if enabled {
-                let exe = std::env::current_exe().map_err(|_| CommonError::Internal)?;
-                let command = wide(&format!("\"{}\" --packaged", exe.display()));
                 unsafe {
                     RegSetValueExW(
                         key,

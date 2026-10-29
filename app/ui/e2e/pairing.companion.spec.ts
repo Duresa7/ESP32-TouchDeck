@@ -13,7 +13,7 @@ let token: string;
 
 test.beforeAll(async ({ request }) => {
   data = await mkdtemp(join(tmpdir(), 'touchdeck-pairing-'));
-  process = spawn(resolve('../target/debug/td-companion.exe'), ['--mock-devices', '2'], {
+  process = spawn(resolve('../target/debug', globalThis.process.platform === 'win32' ? 'td-companion.exe' : 'td-companion'), ['--mock-devices', '2'], {
     env: { ...globalThis.process.env, TOUCHDECK_APP_DATA_DIR: data }, stdio: 'ignore', windowsHide: true,
   });
   const runtimePath = join(data, 'runtime', 'companion.json');

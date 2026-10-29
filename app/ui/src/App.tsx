@@ -1,9 +1,8 @@
 import { lazy, Suspense, useEffect, useLayoutEffect } from 'react';
 import { MotionConfig } from 'motion/react';
-import { Toaster } from 'sonner';
+import { Toaster, toast } from 'sonner';
 import { useCompanion } from './companion/connection.ts';
 import { useDevices } from './companion/devices.ts';
-import { toast } from 'sonner';
 import { Home } from './screens/Home.tsx';
 import { Integrations } from './screens/Integrations.tsx';
 import { NavCluster } from './shell/NavCluster.tsx';
@@ -40,7 +39,7 @@ export function App() {
       )}
       {section === 'integrations' && <Integrations />}
       <NavCluster />
-      {window.openTouchDeck && <button type="button" onClick={() => {
+      {window.openTouchDeck && <button className="open-browser" type="button" onClick={() => {
         void companion.auth.pair_code().catch(() => toast.error("Can't reach the Companion. Check that Open TouchDeck is running in the tray, then retry."));
       }}>Open in browser</button>}
       <Toaster theme={appearance} position="bottom-right" />

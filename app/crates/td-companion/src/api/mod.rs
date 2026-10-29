@@ -77,9 +77,11 @@ impl Ctx {
             handler_hits: Default::default(),
         }
     }
+    #[cfg(windows)]
     pub(crate) async fn pair_browser(&self) -> Result<(), CommonError> {
         auth::pair_code(self.clone()).await.map(|_| ())
     }
+    #[cfg(windows)]
     pub(crate) async fn reset_pairing(&self) -> Result<(), CommonError> {
         auth::reset(self.clone()).await
     }

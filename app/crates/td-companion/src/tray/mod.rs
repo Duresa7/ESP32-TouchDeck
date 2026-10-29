@@ -1,4 +1,3 @@
-//! Native delivery stays outside the API and runs off the async runtime.
 use crate::api::{CommonError, Ctx};
 use parking_lot::Mutex;
 use std::sync::Arc;

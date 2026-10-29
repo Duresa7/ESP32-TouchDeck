@@ -113,7 +113,6 @@ async fn expiry_lockout_and_new_round() {
     let code = mint(&td).await;
     td.clock().advance(Duration::from_secs(120));
     error(pair(&td, &code).await, 401, "auth.code_invalid").await;
-    // Keep the window session alive across the test-clock jump by minting another.
     let window: Value = td
         .raw()
         .post("/api/v1/auth/sessions")
@@ -220,4 +219,25 @@ async fn startup_round_trips_without_native_registry() {
             .unwrap()
             .at_sign_in
     );
+}
+
+#[tokio::test]
+async fn restart_rejects_browser_session_and_pending_code() {
+    let mut td = TestCompanion::start().await;
+    let code = mint(&td).await;
+    let session: Value = pair(&td, &code).await.json().await.unwrap();
+    let pending = mint(&td).await;
+    td.restart().await;
+    error(pair(&td, &pending).await, 401, "auth.code_invalid").await;
+    error(
+        td.raw()
+            .get("/api/v1/system")
+            .bearer_auth(session["token"].as_str().unwrap())
+            .send()
+            .await
+            .unwrap(),
+        401,
+        "auth.invalid",
+    )
+    .await;
 }

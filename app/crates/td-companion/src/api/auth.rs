@@ -439,6 +439,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn code_normalization_accepts_every_alias() {
+        assert_eq!(normalized(" oIiL- abcd 2345 "), "0111ABCD2345");
+    }
+
+    #[test]
     fn a_full_table_prunes_revoked_sessions_without_sockets() {
         let mut auth = Auth::new();
         let now = Instant::now();
