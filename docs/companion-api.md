@@ -953,3 +953,28 @@ Never add a public route, a CORS header, a route that answers approvals, or a ro
 | With Fast User Switching, two Companions try to open the same COM ports | **Reduced** in #74. A COM port opens exclusively, so the Companion that holds a Device keeps it; the other user's Companion shows it `busy` and retries with backoff up to every 10 s, taking it over only once the first lets go. Each user has their own runtime folder, file, lock and port, so the two Companions never share a pairing token |
 | A browser tab can't show the app update icon, because updates live in Electron | **Open.** The browser shows nothing for now |
 | The key monitor's `focus_window` may need to come back | **Open.** If so, one preload call, through security review |
+
+### Tray and startup implementation decisions (#79)
+
+The Companion owns the Windows tray on a dedicated message-loop thread. Open starts
+`Open TouchDeck.exe` beside the Companion; development uses `TOUCHDECK_WINDOW_BIN`.
+Electron's single-instance handler focuses an existing window. Closing that window
+revokes its session and leaves the detached Companion running.
+
+Electron passes `--packaged` only for installed builds. The first packaged start
+registers the current Companion executable with `--packaged` in the per-user Run
+value `Open TouchDeck`, then writes a non-secret `startup-initialized` marker.
+Later starts respect the registry, including an absent value after disabling startup.
+Development and mock starts never enable startup automatically.
+
+| Name | Method | Path | Request | Response | Access |
+|---|---|---|---|---|---|
+| `system.startup_get` | GET | `/system/startup` | — | `{at_sign_in: bool}` | Any session |
+| `system.startup_put` | PUT | `/system/startup` | `{at_sign_in: bool}` | `{at_sign_in: bool}` | Any session |
+
+The Windows shell receives the fragment URL directly. Manual notification delivery
+remains available if the browser drops the fragment. Pairing rejection uses the
+contract's combined wrong-or-expired message because both share `auth.code_invalid`.
+Mock runs capture native delivery in memory. Only test-hook builds register
+`test.pairing_delivery`, which requires a window session and consumes the captures;
+its types appear only in `api.test.gen.ts`.

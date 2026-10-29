@@ -56,6 +56,7 @@ const WINDOW_IDLE: Duration = Duration::from_secs(60);
 /// Revoked sessions are kept so their tokens get `auth.revoked`, until the table is full.
 const MAX_SESSIONS: usize = 1024;
 const MAX_LABEL: usize = 64;
+const BROWSER_IDLE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 struct Session {
     info: SessionInfo,
@@ -63,16 +64,21 @@ struct Session {
     sockets: usize,
     /// When the session last had no open socket.
     idle_since: Instant,
+    last_request: Instant,
 }
 impl Session {
     fn expired(&self, now: Instant) -> bool {
-        self.info.kind == SessionKind::Window
-            && self.sockets == 0
-            && now.saturating_duration_since(self.idle_since) >= WINDOW_IDLE
+        (self.info.kind == SessionKind::Browser
+            && now.saturating_duration_since(self.last_request) >= BROWSER_IDLE)
+            || self.info.kind == SessionKind::Window
+                && self.sockets == 0
+                && now.saturating_duration_since(self.idle_since) >= WINDOW_IDLE
     }
 }
 pub(crate) struct Auth {
     pairing: String,
+    pending: Option<([u8; 32], Instant)>,
+    wrong: u8,
     sessions: HashMap<[u8; 32], Session>,
 }
 pub(crate) fn token(prefix: &str) -> String {
@@ -94,6 +100,8 @@ impl Auth {
     pub(crate) fn new() -> Self {
         Self {
             pairing: token("tdp_"),
+            pending: None,
+            wrong: 0,
             sessions: HashMap::new(),
         }
     }
@@ -135,10 +143,14 @@ impl Auth {
             return Err(CommonError::AuthRevoked("The session was revoked."));
         }
         if session.expired(now) {
+            if session.info.kind == SessionKind::Browser {
+                return Err(CommonError::AuthExpired);
+            }
             session.revoked = true;
             return Err(CommonError::AuthRevoked("The window session ended."));
         }
         session.info.last_used_ms = crate::now_ms();
+        session.last_request = now;
         Ok(ClientInfo {
             id: session.info.id.clone(),
             kind: session.info.kind,
@@ -177,6 +189,7 @@ impl Auth {
                 revoked: false,
                 sockets: 0,
                 idle_since: now,
+                last_request: now,
             },
         );
         Ok(SessionCreated { id, token })
@@ -384,26 +397,32 @@ impl Endpoint for Reset {
     type Ok = ();
     type Error = CommonError;
     async fn handle(ctx: Ctx, _: Req<Self>) -> Result<(), CommonError> {
-        {
-            let mut auth = ctx.auth.lock();
-            auth.pairing = token("tdp_");
-            for s in auth.sessions.values_mut() {
-                s.revoked = true;
-            }
-        }
-        ctx.events.notify();
-        if !crate::process::rewrite_runtime(&ctx).await {
-            let _ = ctx.shutdown.send(true);
-            return Err(CommonError::Internal);
-        }
-        Ok(())
+        reset(ctx).await
     }
+}
+pub(super) async fn reset(ctx: Ctx) -> Result<(), CommonError> {
+    {
+        let mut auth = ctx.auth.lock();
+        auth.pairing = token("tdp_");
+        auth.pending = None;
+        for s in auth.sessions.values_mut() {
+            s.revoked = true;
+        }
+    }
+    ctx.events.notify();
+    if !crate::process::rewrite_runtime(&ctx).await {
+        let _ = ctx.shutdown.send(true);
+        return Err(CommonError::Internal);
+    }
+    Ok(())
 }
 
 fn auth_feature() -> Feature {
     Feature::new("auth")
         .route::<ProofEndpoint>(Access::Public)
         .route::<SessionCreate>(Access::Pairing)
+        .route::<Pair>(Access::Public)
+        .endpoint::<PairCode>()
         .endpoint::<Sessions>()
         .endpoint::<SessionDelete>()
         .endpoint::<Reset>()
@@ -461,5 +480,106 @@ mod tests {
         let left: Vec<_> = auth.sessions.values().map(|s| s.info.id.clone()).collect();
         assert!(left.contains(&connected) && left.contains(&revoked_connected));
         assert!(!left.contains(&idle));
+    }
+}
+
+#[derive(Serialize, Deserialize, TS)]
+pub struct PairRequest {
+    pub code: String,
+    pub label: Option<String>,
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct PairExpires {
+    pub expires_ms: u64,
+}
+fn normalized(code: &str) -> String {
+    code.chars()
+        .filter(|c| !c.is_whitespace() && *c != '-')
+        .map(|c| match c.to_ascii_uppercase() {
+            'O' => '0',
+            'I' | 'L' => '1',
+            c => c,
+        })
+        .collect()
+}
+pub(super) async fn pair_code(ctx: Ctx) -> Result<PairExpires, CommonError> {
+    let mut bytes = [0; 12];
+    getrandom::fill(&mut bytes).map_err(|_| CommonError::Internal)?;
+    let alphabet = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    let raw: String = bytes
+        .iter()
+        .map(|b| alphabet[(b & 31) as usize] as char)
+        .collect();
+    let code = format!("{}-{}-{}", &raw[..4], &raw[4..8], &raw[8..]);
+    {
+        let mut auth = ctx.auth.lock();
+        auth.pending = Some((digest(&raw), ctx.clock.now() + Duration::from_secs(120)));
+        auth.wrong = 0;
+    }
+    let expires_ms = crate::now_ms() + 120_000;
+    let desktop = ctx.desktop.clone();
+    let port = ctx.port;
+    tokio::task::spawn_blocking(move || desktop.deliver(port, &code))
+        .await
+        .map_err(|_| CommonError::Internal)??;
+    Ok(PairExpires { expires_ms })
+}
+pub struct PairCode;
+impl Endpoint for PairCode {
+    const NAME: &'static str = "auth.pair_code";
+    const METHOD: Method = Method::POST;
+    const PATH: &'static str = "/auth/pair-codes";
+    type Path = ();
+    type Query = NoQuery;
+    type Body = ();
+    type Ok = PairExpires;
+    type Error = CommonError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
+        if req.client().kind != SessionKind::Window {
+            return Err(CommonError::Forbidden("A window session is required."));
+        }
+        pair_code(ctx).await
+    }
+}
+pub struct Pair;
+impl Endpoint for Pair {
+    const NAME: &'static str = "auth.pair";
+    const METHOD: Method = Method::POST;
+    const PATH: &'static str = "/auth/pair";
+    const BODY_LIMIT: usize = PUBLIC_BODY_LIMIT;
+    type Path = ();
+    type Query = NoQuery;
+    type Body = PairRequest;
+    type Ok = SessionCreated;
+    type Error = CommonError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
+        let mut auth = ctx.auth.lock();
+        if auth.wrong >= 5 {
+            return Err(CommonError::CodeLocked);
+        }
+        let now = ctx.clock.now();
+        let supplied = digest(&normalized(&req.body.code));
+        if !auth
+            .pending
+            .as_ref()
+            .is_some_and(|(hash, until)| now < *until && bool::from(hash.ct_eq(&supplied)))
+        {
+            auth.wrong += 1;
+            if auth.wrong == 5 {
+                auth.pending = None;
+                ctx.desktop
+                    .notify("Pairing was blocked after wrong codes. Start pairing again.");
+            }
+            return Err(CommonError::CodeInvalid);
+        }
+        auth.pending = None;
+        auth.wrong = 0;
+        let created = auth.mint(req.body.label.or(Some("Browser".into())), now)?;
+        auth.sessions
+            .get_mut(&digest(&created.token))
+            .unwrap()
+            .info
+            .kind = SessionKind::Browser;
+        Ok(created)
     }
 }

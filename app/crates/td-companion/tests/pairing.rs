@@ -1,0 +1,223 @@
+use serde_json::{Value, json};
+use std::time::Duration;
+use td_companion::testing::TestCompanion;
+async fn mint(td: &TestCompanion) -> String {
+    let response = td
+        .raw()
+        .post("/api/v1/auth/pair-codes")
+        .bearer_auth(&td.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = response.text().await.unwrap();
+    let (url, code) = td.pairing_delivery();
+    let code = code.unwrap();
+    let url = url.unwrap();
+    assert!(url.ends_with(&format!("/pair#code={code}")));
+    assert!(!body.contains(&code));
+    assert!(!body.contains(&url));
+    let body: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(body.as_object().unwrap().len(), 1);
+    assert!(body["expires_ms"].as_u64().is_some());
+    code
+}
+async fn pair(td: &TestCompanion, code: &str) -> reqwest::Response {
+    td.raw()
+        .post("/api/v1/auth/pair")
+        .json(&json!({"code":code,"label":"Edge\n on Windows"}))
+        .send()
+        .await
+        .unwrap()
+}
+async fn error(response: reqwest::Response, status: u16, code: &str) {
+    assert_eq!(response.status(), status);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["error"]["code"],
+        code
+    );
+}
+#[tokio::test]
+async fn delivery_single_use_browser_permissions_and_reset() {
+    let td = TestCompanion::start().await;
+    let first = mint(&td).await;
+    let second = mint(&td).await;
+    error(pair(&td, &first).await, 401, "auth.code_invalid").await;
+    let normalized = second
+        .to_lowercase()
+        .replace('-', " ")
+        .replace('0', "o")
+        .replace('1', "l");
+    let response = pair(&td, &normalized).await;
+    assert_eq!(response.status(), 200);
+    let body = response.text().await.unwrap();
+    assert!(!body.contains(&second));
+    let session: Value = serde_json::from_str(&body).unwrap();
+    let token = session["token"].as_str().unwrap();
+    error(pair(&td, &second).await, 401, "auth.code_invalid").await;
+    error(
+        td.raw()
+            .post("/api/v1/auth/pair-codes")
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap(),
+        403,
+        "auth.forbidden",
+    )
+    .await;
+    let sessions: Value = td
+        .raw()
+        .get("/api/v1/auth/sessions")
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let browser = sessions
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["kind"] == "browser")
+        .unwrap();
+    assert_eq!(browser["label"], "Edge on Windows");
+    let pending = mint(&td).await;
+    assert_eq!(
+        td.raw()
+            .post("/api/v1/auth/reset")
+            .bearer_auth(&td.token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        204
+    );
+    error(pair(&td, &pending).await, 401, "auth.code_invalid").await;
+    error(
+        td.raw()
+            .get("/api/v1/system")
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap(),
+        401,
+        "auth.revoked",
+    )
+    .await;
+}
+#[tokio::test]
+async fn expiry_lockout_and_new_round() {
+    let td = TestCompanion::start().await;
+    let code = mint(&td).await;
+    td.clock().advance(Duration::from_secs(120));
+    error(pair(&td, &code).await, 401, "auth.code_invalid").await;
+    // Keep the window session alive across the test-clock jump by minting another.
+    let window: Value = td
+        .raw()
+        .post("/api/v1/auth/sessions")
+        .bearer_auth(&td.pairing_token)
+        .json(&json!({"kind":"window"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        td.raw()
+            .post("/api/v1/auth/pair-codes")
+            .bearer_auth(window["token"].as_str().unwrap())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    let (_, code) = td.pairing_delivery();
+    for _ in 0..5 {
+        error(pair(&td, "wrong").await, 401, "auth.code_invalid").await;
+    }
+    error(pair(&td, &code.unwrap()).await, 429, "auth.code_locked").await;
+    assert_eq!(
+        td.pairing_delivery().1.unwrap(),
+        "Pairing was blocked after wrong codes. Start pairing again."
+    );
+    assert_eq!(
+        td.raw()
+            .post("/api/v1/auth/pair-codes")
+            .bearer_auth(window["token"].as_str().unwrap())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    let (_, code) = td.pairing_delivery();
+    assert_eq!(pair(&td, &code.unwrap()).await.status(), 200);
+}
+#[tokio::test]
+async fn browser_idle_expiry_uses_last_request() {
+    let td = TestCompanion::start().await;
+    let code = mint(&td).await;
+    let session: Value = pair(&td, &code).await.json().await.unwrap();
+    let token = session["token"].as_str().unwrap();
+    td.clock().advance(Duration::from_secs(6 * 86400));
+    assert_eq!(
+        td.raw()
+            .get("/api/v1/system")
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    td.clock().advance(Duration::from_secs(6 * 86400));
+    assert_eq!(
+        td.raw()
+            .get("/api/v1/system")
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    td.clock().advance(Duration::from_secs(7 * 86400));
+    error(
+        td.raw()
+            .get("/api/v1/system")
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap(),
+        401,
+        "auth.expired",
+    )
+    .await;
+}
+#[tokio::test]
+async fn startup_round_trips_without_native_registry() {
+    let mut td = TestCompanion::start().await;
+    use td_companion::{
+        api::NoQuery,
+        startup::{Get, Put, StartupSetting},
+    };
+    assert!(!td.call::<Get>((), NoQuery, ()).await.unwrap().at_sign_in);
+    assert!(
+        td.call::<Put>((), NoQuery, StartupSetting { at_sign_in: true })
+            .await
+            .unwrap()
+            .at_sign_in
+    );
+    td.restart().await;
+    assert!(td.call::<Get>((), NoQuery, ()).await.unwrap().at_sign_in);
+    assert!(
+        !td.call::<Put>((), NoQuery, StartupSetting { at_sign_in: false })
+            .await
+            .unwrap()
+            .at_sign_in
+    );
+}

@@ -27,6 +27,7 @@ use ts_rs::TS;
 
 #[derive(Clone)]
 pub struct Ctx {
+    pub(crate) desktop: Arc<crate::tray::Desktop>,
     pub devices: crate::devices::DeviceManager,
     pub events: Events,
     pub jobs: crate::jobs::Jobs,
@@ -57,6 +58,7 @@ impl Ctx {
         let clock = Clock::default();
         let devices = crate::devices::DeviceManager::new(events.clone());
         Self {
+            desktop: Arc::new(crate::tray::Desktop::new(mock)),
             jobs: crate::jobs::Jobs::new(events.clone(), clock.clone()),
             links: crate::link::Links::new(devices.clone()),
             layouts: crate::store::LayoutStore::new(data.join("layouts")),
@@ -74,6 +76,12 @@ impl Ctx {
             #[cfg(any(test, feature = "test-hooks"))]
             handler_hits: Default::default(),
         }
+    }
+    pub(crate) async fn pair_browser(&self) -> Result<(), CommonError> {
+        auth::pair_code(self.clone()).await.map(|_| ())
+    }
+    pub(crate) async fn reset_pairing(&self) -> Result<(), CommonError> {
+        auth::reset(self.clone()).await
     }
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn pairing_token(&self) -> String {

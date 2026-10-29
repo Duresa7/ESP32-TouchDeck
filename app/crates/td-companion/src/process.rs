@@ -19,7 +19,12 @@ pub(crate) async fn rewrite_runtime(ctx: &Ctx) -> bool {
 /// false when the Companion must stop.
 pub(crate) async fn maintain(ctx: &Ctx) -> bool {
     ctx.sweep_sessions();
-    rewrite_runtime(ctx).await
+    let ok = rewrite_runtime(ctx).await;
+    if !ok {
+        ctx.desktop
+            .notify("The runtime file failed its check. Restart Open TouchDeck.");
+    }
+    ok
 }
 fn root() -> std::io::Result<PathBuf> {
     std::env::var_os("TOUCHDECK_APP_DATA_DIR")
@@ -61,7 +66,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     // How many mock Devices to plug in, when the Companion runs on mock ports.
     let mock_devices: Option<usize> = match args.as_slice() {
-        [] => None,
+        [] | ["--packaged"] => None,
         #[cfg(feature = "test-hooks")]
         ["--emit-ts", path] => {
             if let Some(parent) = Path::new(path).parent() {
@@ -73,7 +78,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         #[cfg(feature = "test-hooks")]
-        ["--mock-devices", count] => Some(count.parse()?),
+        ["--mock-devices", count] | ["--mock-devices", count, "--native-desktop"] => {
+            Some(count.parse()?)
+        }
         _ => return Err("Unknown Companion argument.".into()),
     };
     let root = root()?;
@@ -89,22 +96,45 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .join("touchdeck"),
     };
     let runtime = Arc::new(Runtime::open(&dir)?);
+    let old_port = std::fs::read(root.join("companion-settings.json")).ok();
     let listener = bind(&root).await?;
     assert!(listener.local_addr()?.ip().is_loopback());
-    let ctx = Ctx::new(
+    let mut ctx = Ctx::new(
         listener.local_addr()?.port(),
         mock_devices.is_some(),
         Some(runtime.clone()),
         crate::Limits::default(),
         &root,
     );
+    if args.contains(&"--native-desktop") {
+        ctx.desktop = Arc::new(crate::tray::Desktop::new(false));
+    }
     let initial = ctx.clone();
     let written = tokio::task::spawn_blocking(move || {
         let value = initial.runtime_value();
         initial.runtime.as_ref().unwrap().repair(&value)
     })
     .await?;
+    if !ctx.mock || args.contains(&"--native-desktop") {
+        crate::tray::start(ctx.clone());
+    }
+    if written.is_err() {
+        ctx.desktop
+            .notify("The runtime file failed its check. Restart Open TouchDeck.");
+    }
+    if old_port.is_some() && old_port != std::fs::read(root.join("companion-settings.json")).ok() {
+        ctx.desktop
+            .notify("The Companion port changed. Pair your browser again.");
+    }
     written.map_err(|e| format!("The runtime file could not be secured: {e}"))?;
+    if args == ["--packaged"] {
+        let marker = root.join("startup-initialized");
+        if !marker.exists() {
+            let startup = ctx.desktop.startup.clone();
+            tokio::task::spawn_blocking(move || startup.set(true)).await??;
+            std::fs::write(marker, b"1")?;
+        }
+    }
     match mock_devices {
         None => ctx.devices.start(Config::real(&root)),
         #[cfg(feature = "test-hooks")]
