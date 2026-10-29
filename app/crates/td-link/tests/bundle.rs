@@ -61,3 +61,50 @@ fn unsafe_offsets_are_refused() {
             .contains("unsafe offset")
     );
 }
+fn with_version(version: &str) -> Vec<u8> {
+    let mut text = String::new();
+    zip::ZipArchive::new(Cursor::new(FIXTURE))
+        .unwrap()
+        .by_name("manifest.json")
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    let mut manifest: serde_json::Value = serde_json::from_str(&text).unwrap();
+    manifest["version"] = version.into();
+    changed(
+        "manifest.json",
+        Some(&serde_json::to_vec(&manifest).unwrap()),
+    )
+}
+#[test]
+fn printable_ascii_versions_up_to_64_bytes_parse() {
+    for version in ["1.0.0", "v2.3.4-rc.1+build.7", &"9".repeat(64)] {
+        assert_eq!(
+            Bundle::parse(&with_version(version))
+                .unwrap()
+                .manifest
+                .version,
+            version
+        );
+    }
+}
+#[test]
+fn long_or_unprintable_versions_are_refused() {
+    for version in [
+        String::new(),
+        "9".repeat(65),
+        "1.0.0\n2.0.0".into(),
+        "1.0.0 2.0.0".into(),
+        "1.0.0\u{2028}".into(),
+        "1.0.0\u{202E}".into(),
+        "1.0.0\u{7F}".into(),
+        "1.0.0é".into(),
+    ] {
+        assert!(
+            Bundle::parse(&with_version(&version))
+                .unwrap_err()
+                .contains("version"),
+            "{version:?}"
+        );
+    }
+}

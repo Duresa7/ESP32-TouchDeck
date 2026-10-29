@@ -70,7 +70,7 @@ export function createFakeDeviceSettings(options: FakeDeviceSettingsOptions) {
     if (orientation !== null && orientation !== 'landscape' && orientation !== 'portrait') return invalid('orientation is landscape or portrait');
     if (idle !== null && (typeof idle !== 'number' || !Number.isInteger(idle) || idle < 1 || idle > 86400)) return invalid('idle_timeout_s is out of range');
     if (name !== null && (typeof name !== 'string' || !validName(name))) return invalid('name is empty, too long or has control characters');
-    if (brightness !== null && (typeof brightness !== 'number' || !Number.isInteger(brightness) || brightness < 0 || brightness > 255)) return invalid('brightness is out of range');
+    if (brightness !== null && (typeof brightness !== 'number' || !Number.isInteger(brightness) || brightness < 0 || brightness > 100)) return invalid('brightness is a percentage from 0 to 100');
     const settings = settingsOf(device);
     if (brightness !== null && settings.brightness === null) return failure(409, 'device.needs_firmware', 'This needs newer Firmware on the Device.', { field: 'brightness', version: null });
     if (name !== null && !v2(device)) return failure(409, 'device.needs_firmware', 'This needs newer Firmware on the Device.', { field: 'name', version: null });

@@ -1,15 +1,15 @@
 import { createStore } from 'zustand/vanilla';
-import type { ErrorBody, Job } from '../../companion/api.ts';
+import type { ErrorBody, FirmwareProgress, FirmwareRequest, FirmwareResult, Job } from '../../companion/api.ts';
 import type { Companion } from '../../companion/client.ts';
 import { toApiError } from '../../companion/errors.ts';
-import type { BundleRef, FirmwarePhase, FirmwareProgress, FirmwareResult } from '../../companion/firmware-api.ts';
 import type { JobsStore } from '../../companion/jobs.ts';
 
 export type JobView =
   | { step: 'waiting'; text: string; raw: string }
   | { step: 'running'; text: string; raw: string; pct: number | null }
   | { step: 'done'; text: string; raw: string; version: string }
-  | { step: 'failed'; text: string; raw: string; code: string };
+  | { step: 'failed'; text: string; raw: string; code: string }
+  | { step: 'cancelled'; text: string; raw: string };
 
 export type UpdateView = { step: 'idle' } | JobView;
 
@@ -18,14 +18,18 @@ export interface UpdateContext {
   version: string;
 }
 
-const PHASES: readonly FirmwarePhase[] = ['checking', 'sending', 'rebooting', 'confirming', 'recovering'];
-const RAW: Record<FirmwarePhase, string> = { checking: 'Checking', sending: 'Sending', rebooting: 'Rebooting', confirming: 'Confirming', recovering: 'Recovering' };
+type BundleRef = FirmwareRequest['bundle'];
+const PHASES = ['checking', 'sending', 'rebooting', 'confirming', 'recovering'] as const;
+type Phase = (typeof PHASES)[number];
+export type PhaseProgress = Pick<FirmwareProgress, 'pct'> & { phase: Phase };
 
-function progressOf(value: unknown): FirmwareProgress | null {
+const RAW: Record<Phase, string> = { checking: 'Checking', sending: 'Sending', rebooting: 'Rebooting', confirming: 'Confirming', recovering: 'Recovering' };
+
+function progressOf(value: unknown): PhaseProgress | null {
   if (typeof value !== 'object' || value === null || !('phase' in value)) return null;
   const phase = PHASES.find((p) => p === value.phase);
   if (!phase) return null;
-  return 'pct' in value && typeof value.pct === 'number' ? { phase, pct: value.pct } : { phase };
+  return { phase, pct: 'pct' in value && typeof value.pct === 'number' ? value.pct : null };
 }
 
 function resultOf(value: unknown): FirmwareResult | null {
@@ -36,7 +40,7 @@ function resultOf(value: unknown): FirmwareResult | null {
 const reasonOf = (details: unknown): string =>
   typeof details === 'object' && details !== null && 'reason' in details && typeof details.reason === 'string' ? details.reason : '';
 
-export function phaseText(progress: FirmwareProgress | null): string {
+export function phaseText(progress: PhaseProgress | null): string {
   if (!progress) return 'Updating…';
   const pct = Math.round(progress.pct ?? 0);
   switch (progress.phase) {
@@ -93,7 +97,7 @@ export function doneText(result: FirmwareResult): string {
 
 export interface FirmwareWords {
   waiting: string;
-  progress(progress: FirmwareProgress | null): string;
+  progress(progress: PhaseProgress | null): string;
   done(result: FirmwareResult): string;
   failed(error: { code: string; details: unknown }, context: UpdateContext): string;
 }
@@ -117,11 +121,12 @@ export function viewOf(job: Job, context: UpdateContext, words: FirmwareWords = 
       const result = resultOf(job.result) ?? { message: 'Firmware updated', version: context.version };
       return { step: 'done', text: words.done(result), raw: result.message, version: result.version };
     }
-    case 'failed':
-    case 'cancelled': {
-      const error: ErrorBody = job.error ?? { code: job.state === 'cancelled' ? 'job.cancelled' : 'internal', message: `The Job ended as ${job.state}.`, details: null };
+    case 'failed': {
+      const error: ErrorBody = job.error ?? { code: 'internal', message: 'The Job ended as failed.', details: null };
       return { step: 'failed', text: words.failed(error, context), raw: `Failed: ${error.message}`, code: error.code };
     }
+    case 'cancelled':
+      return { step: 'cancelled', text: words.failed({ code: 'job.cancelled', details: null }, context), raw: 'Cancelled' };
     default: {
       const _exhaustive: never = job.state;
       return _exhaustive;

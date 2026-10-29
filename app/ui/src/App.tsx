@@ -1,6 +1,8 @@
-import { lazy, Suspense, useLayoutEffect } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect } from 'react';
 import { MotionConfig } from 'motion/react';
-import { Toaster } from 'sonner';
+import { Toaster, toast } from 'sonner';
+import { useCompanion } from './companion/connection.ts';
+import { useDevices } from './companion/devices.ts';
 import { Home } from './screens/Home.tsx';
 import { Integrations } from './screens/Integrations.tsx';
 import { SetupHost } from './screens/onboarding/SetupHost.tsx';
@@ -18,6 +20,11 @@ const Layout = lazy(() => import('./screens/Layout.tsx').then((screen) => ({ def
  * handles them.
  */
 export function App() {
+  const companion = useCompanion();
+  const status = useDevices(s => s.status);
+  useEffect(() => {
+    if (status === 'unpaired' && !window.openTouchDeck) location.replace('/pair');
+  }, [status]);
   const section = useUi((s) => s.section);
   const appearance = useUi((s) => s.appearance);
 
@@ -34,6 +41,9 @@ export function App() {
       {section === 'integrations' && <Integrations />}
       <NavCluster />
       <SetupHost />
+      {window.openTouchDeck && <button className="open-browser" type="button" onClick={() => {
+        void companion.auth.pair_code().catch(() => toast.error("Can't reach the Companion. Check that Open TouchDeck is running in the tray, then retry."));
+      }}>Open in browser</button>}
       <Toaster theme={appearance} position="bottom-right" />
     </MotionConfig>
   );

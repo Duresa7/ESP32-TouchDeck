@@ -6,6 +6,15 @@ use std::{
     time::Duration,
 };
 
+/// Drops pooled connections before the Companion's 5 s header-read limit closes them, so a
+/// request never goes out on a connection the server is closing at that moment.
+fn client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .pool_idle_timeout(Duration::from_secs(4))
+        .build()
+        .unwrap()
+}
+
 struct Process(Child);
 impl Drop for Process {
     fn drop(&mut self) {
@@ -127,7 +136,7 @@ fn owner_only(path: &Path) -> bool {
 async fn one_companion_per_runtime_folder() {
     let root = tempfile::tempdir().unwrap();
     let other = tempfile::tempdir().unwrap();
-    let client = reqwest::Client::new();
+    let client = client();
     let mut first = launch(root.path());
     let info = runtime(root.path()).await;
     let (status, stderr) = refused(launch(root.path())).await;
@@ -150,7 +159,7 @@ async fn one_companion_per_runtime_folder() {
 #[tokio::test]
 async fn runtime_file_lifecycle_and_restart() {
     let root = tempfile::tempdir().unwrap();
-    let client = reqwest::Client::new();
+    let client = client();
     let mut first = launch(root.path());
     let info = runtime(root.path()).await;
     let token = session(&client, &info).await;
@@ -217,7 +226,7 @@ async fn a_folder_with_only_modify_access_works() {
         "$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; icacls $env:TD_DIR /inheritance:r /grant:r \"*$($sid):(OI)(CI)M\" | Out-Null; exit $LASTEXITCODE",
         &[("TD_DIR", restricted.path())],
     ));
-    let client = reqwest::Client::new();
+    let client = client();
     let mut companion = launch(restricted.path());
     let info = runtime(restricted.path()).await;
     assert!(owner_only(&restricted.path().join("runtime")));
@@ -253,4 +262,153 @@ async fn a_runtime_folder_another_account_owns_refuses_start() {
         &[("TD_DIR", &dir)],
     ));
     assert!(!dir.join("companion.json").exists());
+}
+
+fn drain(mut pipe: impl Read + Send + 'static) -> std::thread::JoinHandle<String> {
+    std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = pipe.read_to_string(&mut text);
+        text
+    })
+}
+struct Pairing {
+    client: reqwest::Client,
+    base: String,
+    window: String,
+    bodies: Vec<String>,
+    secrets: Vec<String>,
+}
+impl Pairing {
+    async fn send(&mut self, request: reqwest::RequestBuilder) -> u16 {
+        let response = request.send().await.unwrap();
+        let status = response.status().as_u16();
+        self.bodies.push(response.text().await.unwrap());
+        status
+    }
+    async fn mint(&mut self) -> String {
+        let request = self
+            .client
+            .post(format!("{}/api/v1/auth/pair-codes", self.base))
+            .bearer_auth(&self.window);
+        assert_eq!(self.send(request).await, 200);
+        let delivery: Value = self
+            .client
+            .get(format!("{}/api/v1/test/pairing-delivery", self.base))
+            .bearer_auth(&self.window)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let code = delivery["notification"].as_str().unwrap().to_owned();
+        let link = delivery["url"].as_str().unwrap().to_owned();
+        assert!(link.ends_with(&format!("#code={code}")));
+        self.secrets
+            .extend([code.replace('-', ""), link, code.clone()]);
+        code
+    }
+    async fn pair(&mut self, code: &str) -> u16 {
+        let request = self
+            .client
+            .post(format!("{}/api/v1/auth/pair", self.base))
+            .json(&json!({"code": code, "label": "Secrecy check"}));
+        self.send(request).await
+    }
+    async fn post(&mut self, path: &str, body: Option<Value>) -> u16 {
+        let mut request = self
+            .client
+            .post(format!("{}/api/v1{path}", self.base))
+            .bearer_auth(&self.window);
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        self.send(request).await
+    }
+}
+
+#[tokio::test]
+async fn pairing_codes_reach_only_the_delivery_capture() {
+    use futures_util::StreamExt;
+    use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
+    let root = tempfile::tempdir().unwrap();
+    let mut child = Process(
+        Command::new(env!("CARGO_BIN_EXE_td-companion"))
+            .args(["--mock-devices", "2"])
+            .env("TOUCHDECK_APP_DATA_DIR", root.path())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let stdout = drain(child.0.stdout.take().unwrap());
+    let stderr = drain(child.0.stderr.take().unwrap());
+    let info = runtime(root.path()).await;
+    let client = client();
+    let mut p = Pairing {
+        window: session(&client, &info).await,
+        client: client.clone(),
+        base: url(&info),
+        bodies: Vec::new(),
+        secrets: Vec::new(),
+    };
+
+    let first = p.mint().await;
+    let mut request = format!("{}/api/v1/events", p.base.replace("http:", "ws:"))
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "sec-websocket-protocol",
+        format!("touchdeck.v1, touchdeck.bearer.{}", p.window)
+            .parse()
+            .unwrap(),
+    );
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    let frames = tokio::spawn(async move {
+        let mut frames = Vec::new();
+        while let Some(Ok(message)) = socket.next().await {
+            if let Message::Text(text) = message {
+                frames.push(text.to_string());
+            }
+        }
+        frames
+    });
+    let replacement = p.mint().await;
+    assert_eq!(p.pair(&first).await, 401);
+    assert_eq!(p.pair("ZZZZ-ZZZZ-ZZZZ").await, 401);
+    assert_eq!(p.pair(&replacement).await, 200);
+    let expired = p.mint().await;
+    assert_eq!(
+        p.post("/test/clock", Some(json!({"advance_ms": 121_000})))
+            .await,
+        204
+    );
+    assert_eq!(p.pair(&expired).await, 401);
+    let locked = p.mint().await;
+    for _ in 0..5 {
+        assert_eq!(p.pair("ZZZZ-ZZZZ-ZZZZ").await, 401);
+    }
+    assert_eq!(p.pair(&locked).await, 429);
+    let pending = p.mint().await;
+    assert_eq!(p.post("/auth/reset", None).await, 204);
+    assert_eq!(p.pair(&pending).await, 401);
+
+    let frames = tokio::time::timeout(Duration::from_secs(5), frames)
+        .await
+        .expect("reset closes the socket")
+        .unwrap();
+    assert!(frames[1].contains("\"sync\""));
+    assert!(frames.last().unwrap().contains("auth.revoked"));
+    let info = runtime(root.path()).await;
+    let token = session(&client, &info).await;
+    stop(&mut child, &client, &info, &token).await;
+    let logs = [stdout.join().unwrap(), stderr.join().unwrap()];
+    assert!(!logs[1].is_empty(), "the mock Devices log to stderr");
+
+    let seen: Vec<&String> = p.bodies.iter().chain(&frames).chain(&logs).collect();
+    assert_eq!((p.secrets.len(), p.bodies.len()), (15, 18));
+    for secret in &p.secrets {
+        let leaked = seen.iter().position(|text| text.contains(secret.as_str()));
+        assert_eq!(leaked, None, "a pairing code or link leaked");
+    }
 }

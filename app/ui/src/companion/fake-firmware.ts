@@ -1,5 +1,4 @@
-import type { DeviceSummary, ErrorBody, Job, LinkState } from './api.ts';
-import type { BundleInfo, FirmwareBuild, FirmwareProgress, FirmwareResult } from './firmware-api.ts';
+import type { BundleInfo, DeviceSummary, ErrorBody, FirmwareBuild, FirmwareProgress, FirmwareResult, Job, LinkState } from './api.ts';
 
 type Frame = Record<string, unknown> & { type: string };
 
@@ -19,6 +18,10 @@ const json = (status: number, body: unknown) =>
 const failure = (status: number, code: string, message: string, details: unknown = null) => json(status, { error: { code, message, details } });
 
 const SENDING = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+const BUNDLE_BYTES = 1_572_864;
+
+const phase = (name: 'checking' | 'rebooting' | 'confirming'): FirmwareProgress => ({ phase: name, pct: null, bytes: 0 });
+const sending = (pct: number): FirmwareProgress => ({ phase: 'sending', pct, bytes: Math.round((BUNDLE_BYTES * pct) / 100) });
 
 export function createFakeFirmware(options: FakeFirmwareOptions) {
   const { devices, publish, stepMs = 120 } = options;
@@ -67,9 +70,7 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
   function run(id: string, device: DeviceSummary, port: string, target: { version: string }) {
     const mode = modes.get(device.id) ?? 'normal-update';
     const same = device.firmware?.version === target.version;
-    const steps: FirmwareProgress[] = same
-      ? [{ phase: 'checking' }]
-      : [{ phase: 'checking' }, ...SENDING.map((pct): FirmwareProgress => ({ phase: 'sending', pct })), { phase: 'rebooting' }, { phase: 'confirming' }];
+    const steps: FirmwareProgress[] = same ? [phase('checking')] : [phase('checking'), ...SENDING.map(sending), phase('rebooting'), phase('confirming')];
     let at = 0;
     const tick = () => {
       const job = jobs.get(id);
@@ -90,6 +91,13 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
       else finish(id, port, { result: { message: 'Firmware updated', version: target.version } }, target.version);
     };
     setTimeout(tick, stepMs);
+  }
+
+  function cancel(job: Job): Job {
+    const device = devices.get(job.scope.kind === 'device' ? job.scope.id : '');
+    if (device && device.link.state === 'updating') setDevice(device.id, { link: connected(ports.get(job.id) ?? '') });
+    const error = { code: 'job.cancelled', message: 'The Job was cancelled.', details: null };
+    return update(job, { state: 'cancelled', error, cancellable: false, finished_ms: Date.now() });
   }
 
   async function startUpdate(request: Request, id: string): Promise<Response> {
@@ -114,7 +122,7 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
       kind: 'firmware.update',
       scope: { kind: 'device', id },
       state: 'running',
-      progress: { phase: 'checking' },
+      progress: phase('checking'),
       result: null,
       error: null,
       cancellable: true,
@@ -141,7 +149,7 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
         const device = typeof body === 'object' && body !== null && 'device' in body && typeof body.device === 'string' ? body.device : '';
         if (!devices.has(device)) return failure(404, 'device.not_found', 'No Device with that id.');
         minted += 1;
-        const info: BundleInfo = { id: `bundle_fake${String(minted).padStart(8, '0')}`, version: bundled.version, build: bundled.build, bytes: 1_572_864 };
+        const info: BundleInfo = { id: `bundle_fake${String(minted).padStart(8, '0')}`, version: bundled.version, build: bundled.build, bytes: BUNDLE_BYTES };
         bundles.set(info.id, { ...info, device });
         return json(200, { bundle: info });
       }
@@ -154,10 +162,7 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
         if (method === 'GET') return json(200, job);
         if (method !== 'DELETE') return failure(405, 'route.method_not_allowed', 'Use GET or DELETE.');
         if (!job.cancellable || job.finished_ms !== null) return failure(409, 'job.not_cancellable', "The Job's current phase can't be cancelled.");
-        const device = devices.get(job.scope.kind === 'device' ? job.scope.id : '');
-        if (device && device.link.state === 'updating') setDevice(device.id, { link: connected(ports.get(job.id) ?? '') });
-        const error = { code: 'job.cancelled', message: 'The Job was cancelled.', details: null };
-        return json(200, update(job, { state: 'cancelled', error, cancellable: false, finished_ms: Date.now() }));
+        return json(200, cancel(job));
       }
       return null;
     },
@@ -175,6 +180,10 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
 
     jobs: () => [...jobs.values()],
     hold: (device: string, pct = 40) => void held.set(device, pct),
+    cancel(device: string) {
+      const job = active(device);
+      if (job?.cancellable) cancel(job);
+    },
     release(device: string) {
       held.delete(device);
       waiting.get(device)?.();

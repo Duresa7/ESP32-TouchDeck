@@ -1,9 +1,8 @@
 import { createCompanion } from './api.ts';
 import { ApiError, isSessionError, toApiError } from './errors.ts';
-import { createFirmwareRoutes, type FirmwareRoutes } from './firmware-api.ts';
 import type { Session } from './session.ts';
 
-export type Companion = ReturnType<typeof createCompanion> & { firmware: FirmwareRoutes };
+export type Companion = ReturnType<typeof createCompanion>;
 
 export async function request<T>(session: Session, send: () => Promise<T>): Promise<T> {
   let token: string | null;
@@ -39,6 +38,8 @@ function guard<T extends object>(api: T, session: Session): T {
 }
 
 export function createClient(base: string, session: Session): Companion {
-  const token = () => session.current() ?? '';
-  return guard({ ...createCompanion(base, token), firmware: createFirmwareRoutes(base, token) }, session);
+  return guard(
+    createCompanion(base, () => session.current() ?? ''),
+    session,
+  );
 }

@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { DeviceSummary, Job } from '../../companion/api.ts';
+import type { DeviceSummary, FirmwareProgress, Job } from '../../companion/api.ts';
 import { createClient, type Companion } from '../../companion/client.ts';
 import { ApiError } from '../../companion/errors.ts';
 import { createFakeCompanion, type FakeCompanion } from '../../companion/fake.ts';
 import { createJobsStore, type JobsStore } from '../../companion/jobs.ts';
 import { sampleDevice } from '../../companion/samples.ts';
 import { windowSession } from '../../companion/session.ts';
-import { createFirmwareUpdate, doneText, failureText, phaseText, viewOf, type FirmwareUpdateStore } from './firmware.ts';
+import { createFirmwareUpdate, doneText, failureText, phaseText, viewOf, type FirmwareUpdateStore, type PhaseProgress } from './firmware.ts';
 
 const BASE = 'http://127.0.0.1:51234';
 const STUDIO = { device: 'Studio', version: '1.4.0' };
@@ -16,13 +16,15 @@ const studio: DeviceSummary = {
   firmware: { version: '1.4.0', protocol: 2, build: 'fake', recovery: false, update_available: '1.5.0' },
 };
 
+const progress = (phase: string, pct: number | null = null): FirmwareProgress => ({ phase, pct, bytes: pct === null ? 0 : pct * 15_729 });
+
 function job(change: Partial<Job>): Job {
   return {
     id: 'job_firmware00000001',
     kind: 'firmware.update',
     scope: { kind: 'device', id: 'mock0002' },
     state: 'running',
-    progress: { phase: 'checking' },
+    progress: progress('checking'),
     result: null,
     error: null,
     cancellable: true,
@@ -36,16 +38,16 @@ function job(change: Partial<Job>): Job {
 const failed = (code: string) => job({ state: 'failed', error: { code, message: `Failed with ${code}.`, details: null }, finished_ms: 1 });
 
 describe('phases', () => {
-  test.each([
-    [{ phase: 'checking' as const }, 'Checking the file…'],
-    [{ phase: 'sending' as const, pct: 40 }, 'Updating… 40%'],
-    [{ phase: 'sending' as const, pct: 33.6 }, 'Updating… 34%'],
-    [{ phase: 'recovering' as const, pct: 25 }, 'Repairing… 25%'],
-    [{ phase: 'rebooting' as const }, 'Restarting…'],
-    [{ phase: 'confirming' as const }, 'Checking that it started…'],
+  test.each<[PhaseProgress | null, string]>([
+    [{ phase: 'checking', pct: null }, 'Checking the file…'],
+    [{ phase: 'sending', pct: 40 }, 'Updating… 40%'],
+    [{ phase: 'sending', pct: 33.6 }, 'Updating… 34%'],
+    [{ phase: 'recovering', pct: 25 }, 'Repairing… 25%'],
+    [{ phase: 'rebooting', pct: null }, 'Restarting…'],
+    [{ phase: 'confirming', pct: null }, 'Checking that it started…'],
     [null, 'Updating…'],
-  ])('%j reads %j', (progress, text) => {
-    expect(phaseText(progress)).toBe(text);
+  ])('%j reads %j', (phase, text) => {
+    expect(phaseText(phase)).toBe(text);
   });
 });
 
@@ -76,8 +78,20 @@ describe('failures', () => {
     });
   });
 
-  test('a cancelled Job without an error reads as stopped', () => {
-    expect(viewOf(job({ state: 'cancelled', finished_ms: 1 }), STUDIO)).toMatchObject({ step: 'failed', code: 'job.cancelled', text: 'Update stopped. Studio still runs 1.4.0.' });
+  test('a cancelled Job reads as stopped, not failed', () => {
+    const cancelled = { code: 'job.cancelled', message: 'The Job was cancelled.', details: null };
+    expect(viewOf(job({ state: 'cancelled', error: cancelled, finished_ms: 1 }), STUDIO)).toEqual({ step: 'cancelled', text: 'Update stopped. Studio still runs 1.4.0.', raw: 'Cancelled' });
+    expect(viewOf(job({ state: 'cancelled', finished_ms: 1 }), STUDIO)).toEqual({ step: 'cancelled', text: 'Update stopped. Studio still runs 1.4.0.', raw: 'Cancelled' });
+  });
+
+  test('a consent nobody answers ends as declined, with the declined sentence', () => {
+    const declined = { code: 'firmware.declined', message: 'Firmware confirmation was declined.', details: null };
+    expect(viewOf(job({ state: 'failed', error: declined, finished_ms: 1 }), STUDIO)).toEqual({
+      step: 'failed',
+      text: 'Declined on this PC. Studio still runs 1.4.0.',
+      raw: 'Failed: Firmware confirmation was declined.',
+      code: 'firmware.declined',
+    });
   });
 
   test('a failed Job without an error reads as a plain failure', () => {
@@ -96,12 +110,12 @@ describe('the Job view', () => {
   });
 
   test('running reads the phase and the percent', () => {
-    expect(viewOf(job({ progress: { phase: 'sending', pct: 30 } }), STUDIO)).toEqual({ step: 'running', text: 'Updating… 30%', raw: 'Sending 30%', pct: 30 });
-    expect(viewOf(job({ progress: { phase: 'rebooting' } }), STUDIO)).toEqual({ step: 'running', text: 'Restarting…', raw: 'Rebooting', pct: null });
+    expect(viewOf(job({ progress: progress('sending', 30) }), STUDIO)).toEqual({ step: 'running', text: 'Updating… 30%', raw: 'Sending 30%', pct: 30 });
+    expect(viewOf(job({ progress: progress('rebooting') }), STUDIO)).toEqual({ step: 'running', text: 'Restarting…', raw: 'Rebooting', pct: null });
   });
 
   test('progress it cannot read still reads as updating', () => {
-    expect(viewOf(job({ progress: { phase: 'warping' } }), STUDIO)).toEqual({ step: 'running', text: 'Updating…', raw: 'Running', pct: null });
+    expect(viewOf(job({ progress: progress('warping') }), STUDIO)).toEqual({ step: 'running', text: 'Updating…', raw: 'Running', pct: null });
   });
 
   test.each([
@@ -155,11 +169,10 @@ describe('the update runner', () => {
     const log = update.getState().log;
     expect(log[0]).toBe('Checking');
     expect(log.at(-1)).toBe('Firmware updated');
-    // Polling can miss a short phase, so check that the phases seen come in order.
-    const order = ['Checking', 'Sending', 'Rebooting', 'Confirming', 'Firmware updated'];
-    const ranks = log.map((line) => order.findIndex((step) => line.startsWith(step)));
-    expect(ranks).not.toContain(-1);
-    expect(ranks).toEqual([...ranks].sort((a, b) => a - b));
+    const phaseOrder = ['Checking', 'Sending', 'Rebooting', 'Confirming', 'Firmware updated'];
+    const seenPhases = log.map((line) => phaseOrder.findIndex((step) => line.startsWith(step)));
+    expect(seenPhases).not.toContain(-1);
+    expect(seenPhases).toEqual([...seenPhases].sort((a, b) => a - b));
     expect((await companion.devices.get({ device: 'mock0002' })).firmware?.version).toBe('1.5.0');
   });
 
@@ -238,11 +251,42 @@ describe('the update runner', () => {
     expect(update.getState()).toEqual({ view: { step: 'idle' }, job: null, log: [] });
   });
 
+  test('a consent that expires while waiting shows the declined sentence, and a cancel while waiting shows it stopped', () => {
+    const update = createFirmwareUpdate({ companion, jobs, context: () => ({ id: 'mock0002', ...STUDIO }), pollMs: 60_000 });
+    runners.push(update);
+    update.attach(job({ state: 'waiting_for_confirmation' }));
+    expect(update.getState().view).toMatchObject({ step: 'running', text: 'Confirm on this PC to continue.' });
+    jobs.getState().upsert(job({ state: 'failed', error: { code: 'firmware.declined', message: 'Firmware confirmation was declined.', details: null }, finished_ms: 1, rev: 2 }));
+    expect(update.getState().view).toMatchObject({ step: 'failed', code: 'firmware.declined', text: 'Declined on this PC. Studio still runs 1.4.0.' });
+
+    const waiting = job({ id: 'job_firmware00000002', state: 'waiting_for_confirmation' });
+    update.attach(waiting);
+    jobs.getState().upsert({ ...waiting, state: 'cancelled', error: { code: 'job.cancelled', message: 'The Job was cancelled.', details: null }, finished_ms: 2, rev: 2 });
+    expect(update.getState().view).toEqual({ step: 'cancelled', text: 'Update stopped. Studio still runs 1.4.0.', raw: 'Cancelled' });
+    expect(update.getState().log).toEqual(['Waiting for confirmation', 'Cancelled']);
+  });
+
+  test('a cancelled update stops, gives the Device back, and can start again', async () => {
+    fake.firmware.hold('mock0002');
+    const update = runner();
+    await update.start('bundled');
+    await vi.waitFor(() => expect(update.getState().view).toMatchObject({ step: 'running', pct: 40 }));
+    fake.firmware.cancel('mock0002');
+    await vi.waitFor(() => expect(update.getState().view.step).toBe('cancelled'));
+    expect(update.getState().view).toMatchObject({ text: 'Update stopped. Studio still runs 1.4.0.' });
+    const device = await companion.devices.get({ device: 'mock0002' });
+    expect(device.link.state).toBe('connected');
+    expect(device.firmware?.version).toBe('1.4.0');
+    fake.firmware.release('mock0002');
+    await update.start('bundled');
+    await vi.waitFor(() => expect(update.getState().view.step).toBe('done'));
+  });
+
   test('job.updated events move the view without waiting for a poll', () => {
     const update = createFirmwareUpdate({ companion, jobs, context: () => ({ id: 'mock0002', ...STUDIO }), pollMs: 60_000 });
     runners.push(update);
-    update.attach(job({ progress: { phase: 'checking' } }));
-    jobs.getState().upsert(job({ progress: { phase: 'sending', pct: 10 }, rev: 2 }));
+    update.attach(job({ progress: progress('checking') }));
+    jobs.getState().upsert(job({ progress: progress('sending', 10), rev: 2 }));
     expect(update.getState().view).toMatchObject({ text: 'Updating… 10%' });
     jobs.getState().upsert(job({ state: 'succeeded', result: { message: 'Firmware updated', version: '1.5.0' }, finished_ms: 1, rev: 3 }));
     expect(update.getState().view).toMatchObject({ step: 'done', text: 'Updated to 1.5.0' });
