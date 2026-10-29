@@ -65,14 +65,21 @@ struct Session {
     /// When the session last had no open socket.
     idle_since: Instant,
     last_request: Instant,
+    /// Set by the sweep once the session expired, so it stays ended while its sockets close.
+    lapsed: bool,
 }
 impl Session {
+    /// The one expiry check for HTTP, sockets, the session list and the sweep.
     fn expired(&self, now: Instant) -> bool {
-        (self.info.kind == SessionKind::Browser
-            && now.saturating_duration_since(self.last_request) >= BROWSER_IDLE)
+        self.lapsed
+            || (self.info.kind == SessionKind::Browser
+                && now.saturating_duration_since(self.last_request) >= BROWSER_IDLE)
             || self.info.kind == SessionKind::Window
                 && self.sockets == 0
                 && now.saturating_duration_since(self.idle_since) >= WINDOW_IDLE
+    }
+    fn live(&self, now: Instant) -> bool {
+        !self.revoked && !self.expired(now)
     }
 }
 pub(crate) struct Auth {
@@ -190,23 +197,25 @@ impl Auth {
                 sockets: 0,
                 idle_since: now,
                 last_request: now,
+                lapsed: false,
             },
         );
         Ok(SessionCreated { id, token })
     }
-    pub(crate) fn active(&self, id: &str) -> bool {
+    /// Whether the session may still receive events. A socket checks this before every frame.
+    pub(crate) fn active(&self, id: &str, now: Instant) -> bool {
         self.sessions
             .values()
-            .any(|s| s.info.id == id && !s.revoked)
+            .any(|s| s.info.id == id && s.live(now))
     }
-    pub(crate) fn socket_open(&mut self, id: &str) -> Result<(), CommonError> {
+    pub(crate) fn socket_open(&mut self, id: &str, now: Instant) -> Result<(), CommonError> {
         if self.sessions.values().map(|s| s.sockets).sum::<usize>() >= 16 {
             return Err(CommonError::Limits("The Companion has too many sockets."));
         }
         let s = self
             .sessions
             .values_mut()
-            .find(|s| s.info.id == id && !s.revoked)
+            .find(|s| s.info.id == id && s.live(now))
             .ok_or(CommonError::AuthRevoked("The session was revoked."))?;
         if s.sockets >= 4 {
             return Err(CommonError::Limits("The session has too many sockets."));
@@ -214,12 +223,20 @@ impl Auth {
         s.sockets += 1;
         Ok(())
     }
-    /// Drops sessions that were revoked or have ended once their last socket is gone, so a
-    /// later use of the token reads as unknown. Returns how many rows remain.
-    pub(crate) fn sweep(&mut self, now: Instant) -> usize {
+    /// Marks expired sessions as ended, then drops sessions that were revoked or have ended
+    /// once their last socket is gone, so a later use of the token reads as unknown. Returns
+    /// whether a session that still has sockets ended, so the caller wakes them to close.
+    pub(crate) fn sweep(&mut self, now: Instant) -> bool {
+        let mut ended_with_sockets = false;
+        for s in self.sessions.values_mut() {
+            if !s.revoked && !s.lapsed && s.expired(now) {
+                s.lapsed = true;
+                ended_with_sockets |= s.sockets > 0;
+            }
+        }
         self.sessions
             .retain(|_, s| s.sockets > 0 || !(s.revoked || s.expired(now)));
-        self.sessions.len()
+        ended_with_sockets
     }
     pub(crate) fn socket_close(&mut self, id: &str, now: Instant) {
         if let Some(s) = self.sessions.values_mut().find(|s| s.info.id == id) {
@@ -345,7 +362,7 @@ impl Endpoint for Sessions {
             .lock()
             .sessions
             .values()
-            .filter(|s| !s.revoked && !s.expired(now))
+            .filter(|s| s.live(now))
             .map(|s| SessionInfo {
                 current: s.info.id == *own,
                 ..s.info.clone()
@@ -452,7 +469,7 @@ mod tests {
             ids.push(auth.mint(None, now).unwrap().id);
         }
         assert!(auth.mint(None, now).is_err());
-        auth.socket_open(&ids[0]).unwrap();
+        auth.socket_open(&ids[0], now).unwrap();
         for s in auth.sessions.values_mut() {
             s.revoked = true;
         }
@@ -461,7 +478,7 @@ mod tests {
         assert_eq!(auth.sessions.len(), 2);
         let open: usize = auth.sessions.values().map(|s| s.sockets).sum();
         assert_eq!(open, 1);
-        assert!(auth.active(&fresh.id));
+        assert!(auth.active(&fresh.id, now));
     }
 
     #[test]
@@ -472,16 +489,18 @@ mod tests {
         let idle = auth.mint(None, start).unwrap().id;
         let connected = auth.mint(None, start).unwrap().id;
         let revoked_connected = auth.mint(None, start).unwrap().id;
-        auth.socket_open(&connected).unwrap();
-        auth.socket_open(&revoked_connected).unwrap();
+        auth.socket_open(&connected, start).unwrap();
+        auth.socket_open(&revoked_connected, start).unwrap();
         for s in auth.sessions.values_mut() {
             if s.info.id == revoked || s.info.id == revoked_connected {
                 s.revoked = true;
             }
         }
-        assert_eq!(auth.sweep(start), 3);
+        auth.sweep(start);
+        assert_eq!(auth.sessions.len(), 3);
         let later = start + WINDOW_IDLE;
-        assert_eq!(auth.sweep(later), 2);
+        auth.sweep(later);
+        assert_eq!(auth.sessions.len(), 2);
         let left: Vec<_> = auth.sessions.values().map(|s| s.info.id.clone()).collect();
         assert!(left.contains(&connected) && left.contains(&revoked_connected));
         assert!(!left.contains(&idle));

@@ -241,3 +241,103 @@ async fn restart_rejects_browser_session_and_pending_code() {
     )
     .await;
 }
+type Socket = tokio_tungstenite::WebSocketStream<
+    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+>;
+async fn browser(td: &TestCompanion) -> String {
+    let code = mint(td).await;
+    let session: Value = pair(td, &code).await.json().await.unwrap();
+    session["token"].as_str().unwrap().into()
+}
+/// Opens the events socket with `token` and checks the `hello` and `sync` frames.
+async fn events(td: &TestCompanion, token: &str) -> Socket {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut request = format!("{}/api/v1/events", td.url.replace("http:", "ws:"))
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "sec-websocket-protocol",
+        format!("touchdeck.v1, touchdeck.bearer.{token}")
+            .parse()
+            .unwrap(),
+    );
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    for expected in ["hello", "sync"] {
+        assert_eq!(frame(&mut socket).await.unwrap()["type"], expected);
+    }
+    socket
+}
+async fn frame(socket: &mut Socket) -> Option<Value> {
+    use futures_util::StreamExt;
+    use tokio_tungstenite::tungstenite::Message;
+    loop {
+        let message = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .expect("a frame within 2 s");
+        match message {
+            Some(Ok(Message::Text(text))) => return Some(serde_json::from_str(&text).unwrap()),
+            Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return None,
+            Some(Ok(_)) => {}
+        }
+    }
+}
+/// Reads for up to 2 s until the socket closes. Returns the frame types it saw and the close
+/// code, or no code when the socket stayed open.
+async fn until_closed(socket: &mut Socket) -> (Vec<String>, Option<u16>) {
+    use futures_util::StreamExt;
+    use tokio_tungstenite::tungstenite::Message;
+    let mut types = Vec::new();
+    let code = tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(message) = socket.next().await {
+            match message {
+                Ok(Message::Text(text)) => {
+                    let value: Value = serde_json::from_str(&text).unwrap();
+                    types.push(value["type"].as_str().unwrap().to_owned());
+                }
+                Ok(Message::Close(frame)) => return frame.map(|f| u16::from(f.code)),
+                Ok(_) => {}
+                Err(_) => return None,
+            }
+        }
+        None
+    })
+    .await
+    .ok()
+    .flatten();
+    (types, code)
+}
+#[tokio::test]
+async fn an_expired_browser_socket_closes_before_the_next_event() {
+    let td = TestCompanion::start().await;
+    let mut window = td.events().await;
+    let token = browser(&td).await;
+    let mut socket = events(&td, &token).await;
+    td.clock().advance(Duration::from_secs(7 * 86400));
+    td.plug_device("mock0001").await;
+    assert_eq!(frame(&mut window).await.unwrap()["type"], "device.added");
+    let (types, code) = until_closed(&mut socket).await;
+    assert!(!types.iter().any(|t| t == "device.added"), "{types:?}");
+    assert_eq!(code, Some(4401));
+}
+#[tokio::test]
+async fn maintenance_closes_an_expired_browser_socket() {
+    let td = TestCompanion::start().await;
+    let token = browser(&td).await;
+    let mut socket = events(&td, &token).await;
+    td.clock().advance(Duration::from_secs(7 * 86400));
+    td.maintain().await;
+    let (types, code) = until_closed(&mut socket).await;
+    assert!(!types.iter().any(|t| t == "device.added"), "{types:?}");
+    assert_eq!(code, Some(4401));
+    error(
+        td.raw()
+            .get("/api/v1/system")
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap(),
+        401,
+        "auth.expired",
+    )
+    .await;
+}

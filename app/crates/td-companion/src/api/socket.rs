@@ -193,7 +193,7 @@ pub(super) async fn upgrade(
     ctx.handler_hits
         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let ws = ws.map_err(|e| CommonError::invalid("upgrade", e.body_text()))?;
-    ctx.auth.lock().socket_open(&client.id)?;
+    ctx.auth.lock().socket_open(&client.id, ctx.clock.now())?;
     let lease = Lease {
         ctx: ctx.clone(),
         id: client.id.clone(),
@@ -252,7 +252,7 @@ async fn serve(socket: WebSocket, ctx: Ctx, client: ClientInfo) {
     // `Some(code)` closes with that code. `None` drops the connection: a send already failed,
     // so a close frame would stall too.
     let close: Option<u16> = loop {
-        if !ctx.auth.lock().active(&client.id) {
+        if !ctx.auth.lock().active(&client.id, ctx.clock.now()) {
             let revoked = numbered(frame(&AuthRevoked {}), &mut seq);
             break send(&mut sink, revoked).await.then_some(4401);
         }
