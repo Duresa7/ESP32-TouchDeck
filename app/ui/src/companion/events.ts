@@ -1,6 +1,7 @@
 import type { ActionsStore } from './actions.ts';
-import type { ActionLog, Answer, ApprovalRequest, ApprovalResolved, DeviceConsole, DeviceKeyMirror, DeviceRemoved, DeviceSummary, Job, SyncData, Topic } from './api.ts';
+import type { ActionLog, Answer, ApprovalRequest, ApprovalResolved, DeviceConsole, DeviceKeyMirror, DeviceRemoved, DeviceSummary, IntegrationSummary, Job, SyncData, Topic } from './api.ts';
 import type { DevicesStore } from './devices.ts';
+import type { IntegrationsStore } from './integrations.ts';
 import type { JobsStore } from './jobs.ts';
 import type { Session } from './session.ts';
 
@@ -41,6 +42,7 @@ export interface EventsOptions {
   store: DevicesStore;
   jobs?: JobsStore;
   actions?: ActionsStore;
+  integrations?: IntegrationsStore;
   open?: OpenSocket;
   onNewBuild?: () => void;
   retryMs?: readonly number[];
@@ -59,6 +61,7 @@ type Frame =
   | { type: 'device.removed'; data: DeviceRemoved }
   | { type: 'job.updated'; data: Job }
   | { type: 'device.console'; data: DeviceConsole }
+  | { type: 'integration.status'; data: IntegrationSummary }
   | { type: 'approval.requested' | 'approval.resolved' | 'action.logged' | 'device.key-mirror'; data: unknown };
 
 const HANDLED: ReadonlySet<unknown> = new Set<Frame['type']>([
@@ -73,6 +76,7 @@ const HANDLED: ReadonlySet<unknown> = new Set<Frame['type']>([
   'approval.resolved',
   'action.logged',
   'device.key-mirror',
+  'integration.status',
 ]);
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -147,7 +151,7 @@ function parse(data: unknown): Frame | null {
 }
 
 export function openEvents(options: EventsOptions): Events {
-  const { url, session, store, jobs, actions, open = openWebSocket, onNewBuild, retryMs = RETRY_MS } = options;
+  const { url, session, store, jobs, actions, integrations, open = openWebSocket, onNewBuild, retryMs = RETRY_MS } = options;
   let socket: EventSocket | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
@@ -185,6 +189,7 @@ export function openEvents(options: EventsOptions): Events {
         store.getState().sync(frame.data.devices ?? [], frame.data.jobs ?? []);
         jobs?.getState().sync(frame.data.jobs ?? []);
         actions?.getState().syncApprovals(syncedApprovals(frame.data.approvals));
+        integrations?.getState().sync(frame.data.integrations ?? []);
         break;
       case 'device.added':
       case 'device.updated':
@@ -211,6 +216,9 @@ export function openEvents(options: EventsOptions): Events {
         break;
       case 'device.key-mirror':
         if (isKeyMirror(frame.data)) actions?.getState().mirrored(frame.data);
+        break;
+      case 'integration.status':
+        integrations?.getState().upsert(frame.data);
         break;
       default: {
         const _exhaustive: never = frame;
