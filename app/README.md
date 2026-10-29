@@ -36,6 +36,8 @@ updating deck firmware in the **Update** tab. App updates use releases signed
 with the project's updater key. Source builds carry no updater key, so
 their **Check for updates** reports that release signing is not configured.
 
+The Companion embeds `ui/dist` at compile time: run `pnpm build:ui` before building Rust. Without that directory it serves a small "UI not built" page.
+
 ## Build the desktop app
 
 Use Node.js **24**, pnpm **12.12.1** as pinned in [package.json](package.json),
@@ -102,6 +104,24 @@ icons, Sources messages, and firmware update scenarios. Tests can emit key and
 press events, drop messages, or close the connection. Fake input records key
 operations without typing into the host session. Mock checks do not verify real
 serial permissions, keyboard input, credential storage, or physical panel behavior.
+
+### Electron shell
+
+`electron/` is the thin Electron window that loads the UI the Companion serves.
+`pnpm dev:electron` builds the Companion with `--features test-hooks`, starts it
+with one mock Device in a scratch data directory, starts the UI dev server
+(`ui/`), and opens the window on it. Unpackaged builds load the UI dev server
+when `TOUCHDECK_UI_DEV_URL` names it (`http://127.0.0.1:PORT/` only); the
+window session is still handed only to the Companion's own origin. The
+window's end-to-end tests need that build too:
+
+```sh
+cargo build -p td-companion --features test-hooks
+pnpm --filter @touchdeck/electron e2e
+```
+
+The shell starts the Companion from `TOUCHDECK_COMPANION_BIN` in development and
+tests, and from `td-companion` next to the app executable when packaged.
 
 ## Repository layout
 

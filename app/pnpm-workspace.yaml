@@ -1,9 +1,11 @@
 packages:
+  - electron
   - ui
 
 allowBuilds:
   edgedriver: false
   esbuild: true
+  electron: true
   geckodriver: false
 
 minimumReleaseAgeExclude:
