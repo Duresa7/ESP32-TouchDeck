@@ -71,7 +71,7 @@ fn invalid_names_preserve_the_committed_name() {
 fn selection_and_unsupported_requests_have_stable_errors() {
     let device = MockDeck::v2();
     let session = open(&device);
-    let request = json!({"m":"v2.asset.stat"});
+    let request = json!({"m":"v2.idle.get"});
     assert_eq!(
         session.call(&request, TIMEOUT).unwrap().fields["reason"],
         "not-negotiated"
