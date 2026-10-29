@@ -11,7 +11,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use td_core::{Layout, Orientation, layout::Action};
-use td_host::{icon_pack, icons};
+use td_host::{catalog, icon_pack, icons};
 use td_link::xfer::{self, XferError};
 use ts_rs::TS;
 
@@ -196,6 +196,16 @@ pub enum AssetSource {
     App {
         path: String,
     },
+    Catalog {
+        catalog: String,
+        id: String,
+        #[serde(default)]
+        variant: CatalogVariant,
+        #[serde(default)]
+        padding: u32,
+        background: Option<[u8; 4]>,
+        tint: Option<[u8; 3]>,
+    },
     Upload {
         upload: String,
     },
@@ -275,6 +285,32 @@ fn render(
         AssetSource::App { path } => {
             icons::app_icon(std::path::Path::new(&path)).map_err(AssetError::RenderFailed)?
         }
+        AssetSource::Catalog {
+            catalog,
+            id,
+            variant,
+            padding,
+            background,
+            tint,
+        } => ctx
+            .catalog
+            .render(
+                &catalog,
+                &id,
+                match variant {
+                    CatalogVariant::Base => catalog::Variant::Base,
+                    CatalogVariant::Light => catalog::Variant::Light,
+                    CatalogVariant::Dark => catalog::Variant::Dark,
+                },
+                catalog::Options {
+                    cover: matches!(fit, Fit::Cover),
+                    padding,
+                    background,
+                    tint,
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| AssetError::RenderFailed(e.to_string()))?,
         AssetSource::Upload { upload } => {
             let bytes = ctx
                 .uploads
@@ -405,6 +441,7 @@ fn prune(
 
 fn feature() -> Feature {
     Feature::new("assets")
+        .endpoint::<CatalogSearch>()
         .endpoint::<super::uploads::Upload>()
         .endpoint::<OnDevice>()
         .endpoint::<BuiltinList>()
@@ -417,6 +454,57 @@ fn feature() -> Feature {
 }
 inventory::submit! { Registration(feature) }
 
+#[derive(Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum CatalogVariant {
+    #[default]
+    Base,
+    Light,
+    Dark,
+}
+#[derive(Default, Serialize, Deserialize, TS)]
+pub struct CatalogQuery {
+    #[serde(default)]
+    pub q: String,
+    pub catalog: Option<String>,
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct CatalogHit {
+    pub source: String,
+    pub name: String,
+    pub id: String,
+    pub aliases: Vec<String>,
+    pub hex: Option<String>,
+    pub tags: Vec<String>,
+    pub category: Option<String>,
+    pub svg: bool,
+    pub light: bool,
+    pub dark: bool,
+    pub license: String,
+    pub license_url: Option<String>,
+    pub guidelines: Option<String>,
+    pub attribution_url: String,
+    pub attribution: String,
+}
+pub struct CatalogSearch;
+impl Endpoint for CatalogSearch {
+    const NAME: &'static str = "assets.catalog_search";
+    const METHOD: Method = Method::GET;
+    const PATH: &'static str = "/assets/catalog/search";
+    type Path = ();
+    type Query = CatalogQuery;
+    type Body = ();
+    type Ok = Vec<CatalogHit>;
+    type Error = CommonError;
+    async fn handle(_: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
+        blocking(move || catalog::search(&req.query.q, req.query.catalog.as_deref()).into_iter().map(|e| CatalogHit {
+            source: e.source.clone(), name: e.name.clone(), id: e.id.clone(), aliases: e.aliases.clone(), hex: e.hex.clone(),
+            tags: e.tags.clone(), category: e.category.clone(), svg: e.svg, light: e.light, dark: e.dark,
+            license: e.license.clone(), license_url: e.license_url.clone(), guidelines: e.guidelines.clone(), attribution_url: e.attribution_url.clone(),
+            attribution: if e.source == "selfhst" { "Icons by selfh.st (CC BY 4.0); resized, padded or tinted. Logos belong to their owners." } else { "Icons by Simple Icons; see individual license and brand guidelines. Logos belong to their owners." }.into(),
+        }).collect()).await
+    }
+}
 #[derive(Serialize, Deserialize, TS)]
 pub struct DeviceAssets {
     pub ids: Vec<String>,

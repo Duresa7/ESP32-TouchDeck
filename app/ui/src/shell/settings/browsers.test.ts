@@ -65,10 +65,16 @@ describe('Paired browsers', () => {
     expect(live()).toHaveLength(2);
   });
 
-  test('Forget all forgets every browser one by one, since the Companion has no bulk route', async () => {
+  test('Forget all sends one bulk request then reloads the list', async () => {
+    const fetch = vi.fn(fake.fetch);
+    vi.stubGlobal('fetch', fetch);
     await browsers.getState().forgetAll();
     expect(labels()).toEqual([]);
     expect(live()).toEqual([]);
+    expect(fetch.mock.calls.map(([input, init]) => [String(input), init?.method])).toEqual([
+      [`${BASE}/api/v1/auth/sessions?kind=browser`, 'DELETE'],
+      [`${BASE}/api/v1/auth/sessions`, 'GET'],
+    ]);
   });
 
   test('a failed Forget all shows what the Companion still has', async () => {
