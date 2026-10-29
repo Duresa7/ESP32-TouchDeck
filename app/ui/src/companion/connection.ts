@@ -4,16 +4,18 @@ import { devicesStore, type DevicesStore } from './devices.ts';
 import { openEvents, openWebSocket, type Events, type OpenSocket } from './events.ts';
 import { jobsStore, type JobsStore } from './jobs.ts';
 import { pickSession, type Session } from './session.ts';
+import type { UpdatesBridge } from '../state/updates.ts';
 
 /** Where the UI finds its Companion: the page's own origin, unless the demo fakes one. */
 export interface Environment {
   base: string;
   session: Session;
   open: OpenSocket;
+  updates?: UpdatesBridge;
 }
 
 export function pageEnvironment(target: Window): Environment {
-  return { base: target.location.origin, session: pickSession(target), open: openWebSocket };
+  return { base: target.location.origin, session: pickSession(target), open: openWebSocket, updates: target.openTouchDeck?.updates };
 }
 
 export function eventsUrl(base: string): string {
