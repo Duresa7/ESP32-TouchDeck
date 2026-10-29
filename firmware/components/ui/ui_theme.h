@@ -12,7 +12,7 @@
  * green. */
 #define UI_RGB565(r, g, b) ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
 
-/* The screen colors of docs/design.md, "Colors in RGB565", one macro per token. */
+/* The screen colors of app/ui/src/styles/tokens.css in RGB565, one macro per token. */
 #define UI_SCREEN_BG UI_RGB565(8, 16, 24)
 #define UI_SCREEN_TILE UI_RGB565(24, 32, 48)
 #define UI_SCREEN_TILE_RAISED UI_RGB565(32, 44, 64)
@@ -36,7 +36,7 @@
 #define UI_TILE_ACCENT_CORAL UI_RGB565(255, 136, 104)
 #define UI_TILE_ACCENT_MINT UI_RGB565(96, 212, 192)
 
-/* The Archivo instances of docs/design.md, "Fonts on the Device", generated into fonts/. */
+/* The Archivo instances in fonts/, generated as docs/firmware.md, "Fonts", says. */
 LV_FONT_DECLARE(ui_font_medium_22)
 LV_FONT_DECLARE(ui_font_medium_26)
 LV_FONT_DECLARE(ui_font_medium_44)

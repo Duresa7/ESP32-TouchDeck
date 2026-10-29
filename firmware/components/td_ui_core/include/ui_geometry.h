@@ -32,7 +32,7 @@ typedef struct {
  * as the screen less the title strip above it and the pager strip below it. The grid sits inside the band with a
  * margin. The title, the pager, the gap, the slop and the swipe threshold scale with the short side, which is 600
  * in both orientations. The dashboard's value and bar columns sit at the same fractions of the grid width. Landscape
- * gives the screen pixels of the Geometry table in docs/design.md exactly.
+ * gives the design's screen pixels exactly.
  *
  * The pager is a row of dot_size dots, dot_gap apart and centred on the screen, whose middle sits dot_y down. The
  * current Page's dot is a pill dot_current wide. dot_y leaves the pager's bottom edge the design's 18 px above the
