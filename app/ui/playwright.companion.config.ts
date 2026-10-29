@@ -19,7 +19,7 @@ const env = { TOUCHDECK_APP_DATA_DIR: DATA_DIR };
 export default defineConfig({
   ...demo,
   testIgnore: [],
-  testMatch: ['companion.spec.ts', 'pairing.companion.spec.ts'],
+  testMatch: ['companion.spec.ts', 'pairing.companion.spec.ts', 'integrations.companion.spec.ts'],
   use: { ...demo.use, baseURL: `http://127.0.0.1:${UI_PORT}/` },
   // In order: Vite reads the Companion's port and token once it's up.
   webServer: [

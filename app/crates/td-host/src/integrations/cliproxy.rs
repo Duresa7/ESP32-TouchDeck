@@ -12,6 +12,8 @@ struct Settings {
     interval_s: u64,
 }
 struct CliProxyIntegration {
+    revision: u64,
+    detail: Option<CliProxyDetail>,
     settings: Settings,
     legacy: Config,
     file: Option<PathBuf>,
@@ -34,6 +36,8 @@ fn create(env: &Environment) -> Result<Box<dyn Integration>, Error> {
         &legacy.cliproxy_url,
     ));
     Ok(Box::new(CliProxyIntegration {
+        revision: 0,
+        detail: None,
         settings: Settings {
             enabled: legacy.cliproxy,
             url: legacy.cliproxy_url.clone(),
@@ -56,6 +60,37 @@ impl CliProxyIntegration {
         self.source = CliProxy::new(&self.settings.url, self.keys.clone(), (self.fetch)());
         self.next = Some(Instant::now());
         self.readings.clear();
+        self.update_detail();
+    }
+    fn update_detail(&mut self) {
+        let Info::Proxy(info) = self.source.info();
+        let window = |w: crate::sources::cliproxy::Window| UsageWindow {
+            pct: w.pct,
+            resets_at_ms: w.resets_at.and_then(|at| at.checked_mul(1000)),
+        };
+        let detail = info.polled.map(|polled_ms| CliProxyDetail {
+            polled_ms,
+            accounts: info
+                .accounts
+                .into_iter()
+                .map(|a| AccountUsage {
+                    provider: a.provider,
+                    account: a.email,
+                    status: a.status,
+                    success: a.success,
+                    failed: a.failed,
+                    recent_10m: a.recent_10m,
+                    plan: a.plan,
+                    five_hour: a.five_hour.map(window),
+                    seven_day: a.seven_day.map(window),
+                    error: a.usage_error,
+                })
+                .collect(),
+        });
+        if self.detail != detail {
+            self.detail = detail;
+            self.revision = self.revision.saturating_add(1);
+        }
     }
     fn field(field: &str) -> Result<(), Error> {
         if field == "management_key" {
@@ -97,15 +132,26 @@ impl Integration for CliProxyIntegration {
             unit: unit.map(str::to_owned),
         })
         .collect::<Vec<_>>();
-        let presets = streams
-            .iter()
-            .map(|s| PresetTile {
-                id: s.id.clone(),
-                name: s.id.replace('_', " "),
-                action: json!({"type":"widget","source":"cliproxyapi","field":s.id,"account":""}),
-            })
-            .collect();
+        let presets = [
+            ("status", "Account status"),
+            ("success", "Requests OK"),
+            ("failed", "Requests failed"),
+            ("recent_10m", "Requests in 10 min"),
+            ("five_hour_pct", "5-hour limit used"),
+            ("seven_day_pct", "7-day limit used"),
+            ("five_hour_reset", "5-hour reset in"),
+            ("seven_day_reset", "7-day reset in"),
+            ("plan", "Plan"),
+        ]
+        .into_iter()
+        .map(|(id, name)| PresetTile {
+            id: id.into(),
+            name: name.into(),
+            action: json!({"type":"widget","source":"cliproxyapi","field":id,"account":""}),
+        })
+        .collect();
         IntegrationSummary {
+            revision: self.revision,
             id: "cliproxyapi".into(),
             name: "CLIProxyAPI".into(),
             icon: "activity".into(),
@@ -135,6 +181,7 @@ impl Integration for CliProxyIntegration {
     }
     fn view(&self) -> Result<IntegrationView, Error> {
         Ok(IntegrationView {
+            detail: self.detail.clone(),
             summary: self.summary(),
             config: serde_json::to_value(&self.settings).unwrap(),
             secrets: BTreeMap::from([(
@@ -200,6 +247,7 @@ impl Integration for CliProxyIntegration {
         {
             self.last_request = Some(now);
             self.readings = self.source.refresh();
+            self.update_detail();
             self.next = Instant::now()
                 .checked_add(std::time::Duration::from_secs(self.settings.interval_s));
         }
@@ -214,6 +262,7 @@ impl Integration for CliProxyIntegration {
         {
             self.last_request = Some(now);
             self.readings = self.source.poll();
+            self.update_detail();
             self.next = Instant::now()
                 .checked_add(std::time::Duration::from_secs(self.settings.interval_s));
         }

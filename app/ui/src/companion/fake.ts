@@ -1,5 +1,6 @@
 import type { DeviceSummary, Layout, SystemInfo } from './api.ts';
 import { CLOSE_SESSION, type EventSocket } from './events.ts';
+import { createFakeIntegrations } from './fake-integrations.ts';
 import { createFakeActions } from './fake-actions.ts';
 import { createFakeConsole } from './fake-console.ts';
 import { createFakeLayouts } from './fake-layouts.ts';
@@ -96,6 +97,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   let minted = 0;
   let requests = 0;
   const layouts = createFakeLayouts({ devices, publish, seed: options.layouts, delayMs: options.jobMs });
+  const integrations = createFakeIntegrations({ publish });
   const actions = createFakeActions({ devices, publish, stored: layouts.stored });
   const sessions = createFakeSessions({ browsers: options.browsers, onRevoke: signOut });
   const startup = createFakeStartup(options.startAtSignIn);
@@ -143,7 +145,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     if (status === 'revoked') return failure(401, 'auth.revoked', 'The session was revoked.');
     if (status === 'unknown') return failure(401, 'auth.invalid', 'The session token is unknown.');
 
-    const routed = sessions.handle(request, path, token) ?? (await startup.handle(request, path)) ?? (await consoles.handle(request, path));
+    const routed = (await integrations.handle(request, path)) ?? sessions.handle(request, path, token) ?? (await startup.handle(request, path)) ?? (await consoles.handle(request, path));
     if (routed) return routed;
     const device = /^\/devices\/([^/]+)$/.exec(path);
     if (path === '/system' || path === '/devices' || device) {
@@ -166,7 +168,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     }
     sockets.add(socket);
     socket.push({ type: 'hello', api: 'v1', build: system.build, session: { id: 'fake-session', kind: 'window' } });
-    socket.push({ type: 'sync', data: { devices: [...devices.values()], jobs: layouts.jobs(), approvals: actions.pending() } });
+    socket.push({ type: 'sync', data: { devices: [...devices.values()], jobs: layouts.jobs(), integrations: integrations.list(), approvals: actions.pending() } });
     return socket;
   }
 

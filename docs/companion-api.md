@@ -560,7 +560,7 @@ Requests carrying a credential never follow a redirect to another origin. They s
 | Name | Method and path | Request → Response |
 |---|---|---|
 | `integrations.list` | `GET /integrations` | → `IntegrationSummary[] {id, name, icon, enabled, status, config_schema, presets}`. `status` reports delivery per Device as `{device, sent, error}` |
-| `integrations.get` | `GET /integrations/{integration}` | → `{summary, config, secrets: {[field]: {set, hint?}}}` |
+| `integrations.get` | `GET /integrations/{integration}` | → `{summary, config, secrets: {[field]: {set}}, detail}` |
 | `integrations.config_put` | `PUT /integrations/{integration}/config` | Config, checked against the Integration's schema → the same view as `integrations.get` |
 | `integrations.secret_put` | `PUT /integrations/{integration}/secrets/{field}` | `{value}` → `{hint}`. Write-only. The value never comes back and is never in `config` |
 | `integrations.secret_delete` | `DELETE /integrations/{integration}/secrets/{field}` | → `()` |
@@ -569,6 +569,26 @@ Requests carrying a credential never follow a redirect to another origin. They s
 CLIProxyAPI config is `{enabled: boolean, url: string, interval_s: integer}`. The URL is trimmed and the interval has a 60-second floor. Unknown fields, including `management_key`, are rejected in config. Its write-only secret field is `management_key`; the secret-write hint is the constant `Set`, including for short keys. Identical config writes preserve the polling deadline. Background polls, manual refreshes, config resets and secret writes share a 15-second minimum spacing between polling attempts.
 
 `IntegrationSummary` also includes `streams: {id, kind, unit}[]` and `actions: string[]`. Its `status` is `{state: "ok" | "error" | "not_configured", message, delivery: {device, sent, error}[]}`. Delivery entries are supplied by the Device scheduler; an Integration without a bound Device has an empty delivery list. Presets contain `{id, name, action}` with the existing Layout action shape. Live tile readings stay inside the Companion.
+
+CLIProxyAPI `detail` is read-only and null until the first poll (and after config or secret resets). Otherwise it is `{accounts, polled_ms}`, with a Unix-millisecond poll timestamp. Each account is `{provider, account, status, success, failed, recent_10m, plan, five_hour, seven_day, error}`. `account` is the display label; `plan` and `error` are nullable strings. Each window is null or `{pct, resets_at_ms}`, with a nullable Unix-millisecond reset timestamp. Failed polls retain the last account data, with the failure in summary status. No credential, token, auth index or secret hint is included.
+
+`IntegrationSummary.revision` increases when detail changes, including resets. The existing `integration.status` event carries this revision so clients can refetch `integrations.get`; sync carries the current summary revision.
+
+CLIProxyAPI Preset tiles have this fixed order and copy names:
+
+| id | name |
+|---|---|
+| `status` | Account status |
+| `success` | Requests OK |
+| `failed` | Requests failed |
+| `recent_10m` | Requests in 10 min |
+| `five_hour_pct` | 5-hour limit used |
+| `seven_day_pct` | 7-day limit used |
+| `five_hour_reset` | 5-hour reset in |
+| `seven_day_reset` | 7-day reset in |
+| `plan` | Plan |
+
+With `test-hooks`, mock Integrations use real HTTP only for explicitly configured `http://127.0.0.1:PORT` stub URLs. Other mock URLs retain the empty fixture transport. This permits local stub tests with mock Devices and memory-only credentials.
 
 Each Integration's Preset tiles are in `presets`. Live tiles get their values through the Device link, never through this API ([ADR 0004](adr/0004-firmware-draws-live-tiles.md)).
 
