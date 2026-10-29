@@ -143,8 +143,14 @@ struct Entry {
     job: Job,
     cancel: Arc<AtomicBool>,
 }
+struct InstallLease {
+    id: String,
+    owner: String,
+    until: Instant,
+}
 #[derive(Default)]
 struct Table {
+    lease: Option<InstallLease>,
     active: BTreeMap<String, Entry>,
     finished: VecDeque<(Instant, Job)>,
 }
@@ -174,18 +180,61 @@ pub struct Jobs {
     table: Arc<Mutex<Table>>,
     events: Events,
     clock: Clock,
+    session_active: Arc<dyn Fn(&str) -> bool + Send + Sync>,
     #[cfg(any(test, feature = "test-hooks"))]
     gate: Arc<Gate>,
 }
 impl Jobs {
-    pub(crate) fn new(events: Events, clock: Clock) -> Self {
+    pub(crate) fn new(
+        events: Events,
+        clock: Clock,
+        session_active: Arc<dyn Fn(&str) -> bool + Send + Sync>,
+    ) -> Self {
         Self {
             table: Default::default(),
             events,
             clock,
+            session_active,
             #[cfg(any(test, feature = "test-hooks"))]
             gate: Default::default(),
         }
+    }
+    fn expire_lease(&self, table: &mut Table) {
+        if table
+            .lease
+            .as_ref()
+            .is_some_and(|l| self.clock.now() >= l.until || !(self.session_active)(&l.owner))
+        {
+            table.lease = None;
+        }
+    }
+    pub fn install_lock(&self, owner: &str) -> Result<String, CommonError> {
+        let mut table = self.table.lock();
+        self.expire_lease(&mut table);
+        if !table.active.is_empty() || table.lease.is_some() {
+            return Err(CommonError::SystemBusy);
+        }
+        let id = new_id("lock");
+        table.lease = Some(InstallLease {
+            id: id.clone(),
+            owner: owner.into(),
+            until: self.clock.now() + KEEP_FOR,
+        });
+        Ok(id)
+    }
+    pub fn install_renew(&self, owner: &str, id: &str, release: bool) -> Result<(), CommonError> {
+        let mut table = self.table.lock();
+        self.expire_lease(&mut table);
+        let lease = table
+            .lease
+            .as_mut()
+            .filter(|l| l.owner == owner && l.id == id)
+            .ok_or(CommonError::Forbidden("Only the lock owner may change it."))?;
+        lease.until = self.clock.now() + KEEP_FOR;
+        if release {
+            table.lease = None;
+        }
+        Ok(())
     }
     /// Active Jobs, then the finished ones that are kept, oldest first.
     pub fn list(&self) -> Vec<Job> {
@@ -246,6 +295,10 @@ impl Jobs {
         let job = {
             let mut table = self.table.lock();
             table.prune(self.clock.now());
+            self.expire_lease(&mut table);
+            if table.lease.is_some() {
+                return Err(CommonError::Installing.into());
+            }
             if scope == JobScope::Companion {
                 let running = table
                     .active
@@ -261,7 +314,7 @@ impl Jobs {
                 return Err(JobError::Busy(Box::new(e.job.clone())));
             }
             let job = Job {
-                id: new_id(),
+                id: new_id("job"),
                 kind: K::NAME.into(),
                 scope,
                 state: JobState::Queued,
@@ -367,6 +420,15 @@ pub struct JobHandle<K: JobKind> {
     kind: PhantomData<fn() -> K>,
 }
 impl<K: JobKind> JobHandle<K> {
+    pub fn waiting_for_confirmation(&self) {
+        self.update(|j| j.state = JobState::WaitingForConfirmation);
+    }
+    pub fn running(&self) {
+        self.update(|j| j.state = JobState::Running);
+    }
+    pub fn id(&self) -> &str {
+        &self.id
+    }
     pub fn progress(&self, progress: &K::Progress) {
         let value = serde_json::to_value(progress).unwrap();
         self.update(|j| j.progress = value);
@@ -388,8 +450,7 @@ impl<K: JobKind> JobHandle<K> {
     }
 }
 
-/// `job_` and 16 random lowercase letters and digits.
-fn new_id() -> String {
+fn new_id(prefix: &str) -> String {
     const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).expect("the OS random source works");
@@ -397,5 +458,5 @@ fn new_id() -> String {
         .iter()
         .map(|b| ALPHABET[usize::from(*b) % ALPHABET.len()] as char)
         .collect();
-    format!("job_{tail}")
+    format!("{prefix}_{tail}")
 }

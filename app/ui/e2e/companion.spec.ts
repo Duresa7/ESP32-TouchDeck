@@ -1,5 +1,6 @@
 import { join } from 'node:path';
-import { expect, test, type APIRequestContext } from '@playwright/test';
+import { expect, test, type APIRequestContext, type Locator, type Page, type Response } from '@playwright/test';
+import type { ActionLog, AllowedAction, ApprovalRequest } from '../src/companion/api.ts';
 import type { Layout } from '../src/lib/editor/validate.ts';
 import { exportText, menu, openLayout, sorted, status, tile, waitEvent } from './layout-helpers.ts';
 
@@ -9,7 +10,7 @@ async function companion(request: APIRequestContext) {
   const minted = await request.post('/__companion/session', { headers: { 'X-TouchDeck-Dev': '1' } });
   expect(minted.status()).toBe(200);
   const { token } = (await minted.json()) as { token: string };
-  return (method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string, data?: unknown) =>
+  return (method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, data?: unknown) =>
     request.fetch(`/api/v1${path}`, { method, data, headers: { Authorization: `Bearer ${token}` } });
 }
 
@@ -172,4 +173,152 @@ test('the Device panel renames a mock Device, switches its orientation with a re
 
   const restored = await api('PATCH', '/devices/mock0003/settings', { idle_timeout_s: null, orientation: 'landscape', name: 'Mock Device mock0003', brightness: null });
   expect(restored.status()).toBe(200);
+});
+
+const NO_SUCH_PROGRAM = 'touchdeck-e2e-no-such-program';
+const RLO_ARG = 'report‮gpj.exe';
+const RLO_SHOWN = 'report\\u{202E}gpj.exe';
+
+const actionsLayout = {
+  schema: 1, name: 'Actions', orientation: 'landscape',
+  pages: [
+    { id: 'main', title: 'Main', kind: 'grid', rows: 2, cols: 2, tiles: [
+      { id: 'run', label: 'Run', row: 0, col: 0, rowSpan: 1, colSpan: 1, icon: null, action: { type: 'command', program: NO_SUCH_PROGRAM, args: [RLO_ARG], cwd: '', shell: false } },
+      { id: 'copy', label: 'Copy', row: 0, col: 1, rowSpan: 1, colSpan: 1, icon: null, action: { type: 'key', usage: 6, mods: ['ctrl'] } },
+    ] },
+  ],
+};
+
+const called = (method: string, route: RegExp) => (r: Response) => r.request().method() === method && route.test(new URL(r.url()).pathname);
+
+async function call(api: Api, method: 'POST' | 'DELETE', path: string, data?: unknown) {
+  expect((await api(method, path, data)).status()).toBe(204);
+}
+
+const pressRun = (api: Api) => call(api, 'POST', '/test/devices/mock0001/press', { page: 'main', tile: 'run', kind: 'command' });
+const answer = (api: Api, answers: string[]) => call(api, 'POST', '/test/approvals/script', { answers });
+const emitKeys = (api: Api, events: Record<string, unknown>[]) => call(api, 'POST', '/test/devices/mock0001/emit', { events: events.map((event) => ({ m: 'key.report', ...event })) });
+
+async function expectSuppressedOnceTheDialogShows(api: Api, reports: Locator) {
+  await expect(async () => {
+    const before = await reports.count();
+    await emitKeys(api, [{ type: 'con', usage: 233 }]);
+    await expect(reports).toHaveCount(before + 1, { timeout: 1_000 });
+    await expect(reports.last()).toHaveAttribute('data-outcome', 'suppressed', { timeout: 100 });
+  }).toPass();
+}
+
+async function forgetGrants(api: Api) {
+  const allowed: AllowedAction[] = await (await api('GET', '/actions/allowed')).json();
+  for (const grant of allowed) if (grant.program === NO_SUCH_PROGRAM) await call(api, 'DELETE', `/actions/allowed/${grant.hash}`);
+}
+
+async function openActions(page: Page, api: Api) {
+  await forgetGrants(api);
+  await pushElsewhere(api, 'mock0001', actionsLayout);
+  await openLayout(page);
+  await page.getByTestId('start-pull').click();
+  await waitEvent(page, 'pulled', 30_000);
+}
+
+test('a pressed command Tile waits for approval on this PC with its arguments escaped, and clears when the dialog answers', async ({ page, request }) => {
+  const api = await companion(request);
+  await openActions(page, api);
+  await tile(page, 'run').click();
+  await expect(page.getByTestId('command-line')).toHaveText(`${NO_SUCH_PROGRAM} ${RLO_SHOWN}`);
+
+  await pressRun(api);
+  const pending = page.getByTestId('approval-pending');
+  await expect(pending).toContainText('Waiting for approval on this PC');
+  await expect(pending).toContainText('Run on the Main Page of Mock Device mock0001');
+  await expect(pending.getByTestId('approval-program')).toHaveText(NO_SUCH_PROGRAM);
+  await expect(pending.getByTestId('approval-args').locator('li')).toHaveText([RLO_SHOWN]);
+  expect(await pending.textContent()).not.toContain('‮');
+  await expect(pending.getByRole('button')).toHaveCount(1);
+
+  const listed = page.waitForResponse(called('GET', /^\/api\/v1\/approvals$/));
+  await openLayout(page);
+  const requests: ApprovalRequest[] = await (await listed).json();
+  expect(requests.map((r) => ({ tile: r.tile, args: r.args }))).toEqual([{ tile: 'run', args: [RLO_ARG] }]);
+  await expect(pending).toBeVisible();
+
+  const shown = page.waitForResponse(called('POST', /^\/api\/v1\/approvals\/[^/]+\/show$/));
+  await pending.getByTestId('approval-show').click();
+  expect((await shown).status()).toBe(204);
+
+  await answer(api, ['deny']);
+  await expect(pending).toHaveCount(0);
+  await tile(page, 'run').click();
+  await page.getByTestId('action-log-panel').locator('summary').click();
+  await expect(page.getByTestId('action-entry').first()).toHaveAttribute('data-status', 'denied');
+});
+
+test('Always allow lists the action, the Action log reads and follows the presses, and Remove makes the next press ask', async ({ page, request }) => {
+  const api = await companion(request);
+  await openActions(page, api);
+  await tile(page, 'run').click();
+  await page.getByTestId('action-log-panel').locator('summary').click();
+
+  await answer(api, ['always']);
+  await pressRun(api);
+  const allowed = page.getByTestId('allowed-action');
+  await expect(allowed).toHaveCount(1);
+  await expect(allowed).toHaveAttribute('data-mine', 'true');
+  await expect(allowed.locator('.command-line')).toHaveText(`${NO_SUCH_PROGRAM} ${RLO_SHOWN}`);
+  expect(await allowed.textContent()).not.toContain('‮');
+  await expect(page.getByTestId('action-entry').first()).toHaveAttribute('data-status', 'failed');
+  await expect(page.getByTestId('approval-pending')).toHaveCount(0);
+
+  const logged = page.waitForResponse(called('GET', /^\/api\/v1\/actions\/log$/));
+  await openLayout(page);
+  await tile(page, 'run').click();
+  await page.getByTestId('action-log-panel').locator('summary').click();
+  const log = await logged;
+  expect(new URL(log.url()).searchParams.get('device')).toBe('mock0001');
+  const entries: ActionLog[] = await log.json();
+  expect(entries.at(-1)).toMatchObject({ tile: 'run', status: 'failed' });
+  await expect(page.getByTestId('action-entry').first()).toHaveAttribute('data-status', 'failed');
+
+  const removed = page.waitForResponse(called('DELETE', /^\/api\/v1\/actions\/allowed\/[^/]+$/));
+  await page.getByTestId('allowed-remove').click();
+  expect((await removed).status()).toBe(204);
+  await expect(page.getByTestId('allowed-actions')).toHaveCount(0);
+  expect(await (await api('GET', '/actions/allowed')).json()).toEqual([]);
+
+  await pressRun(api);
+  await expect(page.getByTestId('approval-pending')).toBeVisible();
+  await answer(api, ['deny']);
+  await expect(page.getByTestId('approval-pending')).toHaveCount(0);
+  await expect(page.getByTestId('action-entry').first()).toHaveAttribute('data-status', 'denied');
+});
+
+test("Key test shows the mock Device's key reports from the key-mirror topic, suppressed while the dialog waits", async ({ page, request }) => {
+  const api = await companion(request);
+  const ops: string[] = [];
+  page.on('websocket', (ws) => ws.on('framesent', ({ payload }) => typeof payload === 'string' && payload.includes('key-mirror') && ops.push(payload)));
+  await openActions(page, api);
+  await tile(page, 'copy').click();
+  await page.getByTestId('key-test-panel').locator('summary').click();
+  await expect.poll(() => ops.map((op): unknown => JSON.parse(op))).toContainEqual({ op: 'subscribe', topic: 'key-mirror', device: 'mock0001' });
+
+  const reports = page.getByTestId('key-report');
+  await expect(async () => {
+    await emitKeys(api, [{ type: 'kbd', mods: 0, keys: [] }]);
+    await expect(reports.first()).toBeVisible({ timeout: 1_000 });
+  }).toPass();
+  await page.getByTestId('key-monitor-clear').click();
+  await expect(reports).toHaveCount(0);
+
+  await emitKeys(api, [{ type: 'kbd', mods: 1, keys: [6] }, { type: 'kbd', mods: 0, keys: [] }]);
+  await expect(reports).toHaveCount(2);
+  await expect(reports.first()).toHaveAttribute('data-outcome', 'typed');
+
+  await pressRun(api);
+  await expect(page.getByTestId('approval-pending')).toBeVisible();
+  await expectSuppressedOnceTheDialogShows(api, reports);
+  await answer(api, ['deny']);
+  await expect(page.getByTestId('approval-pending')).toHaveCount(0);
+
+  await page.getByTestId('key-test-panel').locator('summary').click();
+  await expect.poll(() => ops.map((op): unknown => JSON.parse(op))).toContainEqual({ op: 'unsubscribe', topic: 'key-mirror', device: 'mock0001' });
 });

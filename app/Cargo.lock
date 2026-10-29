@@ -5165,6 +5165,7 @@ dependencies = [
  "libc",
  "parking_lot",
  "reqwest 0.12.28",
+ "semver",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -5181,6 +5182,7 @@ dependencies = [
  "tokio-tungstenite",
  "ts-rs",
  "windows-sys 0.61.2",
+ "zip 9.1.1",
 ]
 
 [[package]]

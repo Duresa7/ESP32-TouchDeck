@@ -16,6 +16,11 @@ const checks = {
 
 const isCheckName = (name: string | null): name is keyof typeof checks => name !== null && Object.hasOwn(checks, name);
 
+const browsers = [
+  { label: 'Edge on Windows', created_ms: Date.UTC(2026, 9, 26, 17, 5), last_used_ms: Date.UTC(2026, 9, 28, 20, 41) },
+  { label: 'Firefox on Windows', created_ms: Date.UTC(2026, 9, 27, 9, 30), last_used_ms: Date.UTC(2026, 9, 27, 9, 52) },
+];
+
 declare global {
   interface Window {
     touchdeckDemo?: {
@@ -24,6 +29,8 @@ declare global {
       device(id: string, change: Partial<Omit<DeviceSummary, 'id' | 'rev'>>): void;
       firmware: { hold(id: string): void; release(id: string): void };
       updates: Pick<FakeUpdates, 'script' | 'finish' | 'calls'>;
+      /** The opt-in topics every open event socket subscribed to, as `topic/device`. */
+      topics(): string[];
     };
   }
 }
@@ -38,6 +45,7 @@ export function demoEnvironment(target: Window): Environment {
     layouts: Object.fromEntries(devices.map((d) => [d.id, demoLayout()])),
     system: { build: 'demo' },
     brightness: Object.fromEntries(devices.filter((_, i) => i % 3 !== 2).map((d) => [d.id, 80])),
+    browsers: params.get('browsers') === '0' ? [] : browsers,
   });
   const update = params.get('update');
   const updates = createFakeUpdates({ check: isCheckName(update) ? checks[update] : checks.none });
@@ -47,6 +55,7 @@ export function demoEnvironment(target: Window): Environment {
     device: (id, change) => fake.update(id, change),
     firmware: { hold: fake.firmware.hold, release: fake.firmware.release },
     updates: { script: updates.script, finish: updates.finish, calls: updates.calls },
+    topics: () => fake.topics.flat(),
   };
   const network = target.fetch.bind(target);
   target.fetch = (input, init) => {

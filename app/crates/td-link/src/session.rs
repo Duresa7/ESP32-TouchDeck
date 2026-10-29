@@ -465,6 +465,7 @@ impl Session {
         for thread in self.threads.lock().unwrap().drain(..) {
             let _ = thread.join();
         }
+        *self.shared.writer.lock().unwrap() = Box::new(io::sink());
     }
 }
 
