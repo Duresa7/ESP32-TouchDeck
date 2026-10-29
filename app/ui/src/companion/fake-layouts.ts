@@ -2,16 +2,16 @@
 // with its revision, `layouts.push` as a Job with `If-Match`, the 412, 422 and busy answers, `assets.prune`, and
 // `job.updated` on the event stream. It also answers a few test routes the real Companion's test hooks mirror, so the
 // demo's Playwright specs can change a Device behind the editor's back.
-import { canonical, starterLayout, validateSource, type Layout, type Orientation } from '../lib/editor/validate.ts';
-import type { DeviceSummary, Job, JobScope, LinkState, PushReport } from './api.ts';
+import { canonical, validateSource, type Layout, type Orientation } from '../lib/editor/validate.ts';
+import type { DeviceSummary, Job, JobScope, Layout as StoredLayout, LinkState, PushReport } from './api.ts';
 
 type Frame = Record<string, unknown> & { type: string };
 
 export interface FakeLayoutsOptions {
   devices: Map<string, DeviceSummary>;
   publish(frame: Frame): void;
-  /** Layouts the Devices store at the start. */
-  seed?: { device: string; layout: Layout }[];
+  /** The Layout each Device stores at the start, by Device id. */
+  seed?: Record<string, StoredLayout>;
   /** How long a Job runs before it finishes. */
   delayMs?: number;
 }
@@ -36,14 +36,6 @@ export function revisionOf(text: string): string {
 
 const ORIENTATIONS: readonly string[] = ['landscape', 'portrait'];
 
-/** The Layouts the demo's Devices start with. */
-export function demoStoredLayouts(): { device: string; layout: Layout }[] {
-  return [
-    { device: 'mock0001', layout: starterLayout('landscape') },
-    { device: 'mock0002', layout: { ...starterLayout('landscape'), name: 'Studio desk' } },
-  ];
-}
-
 export function createFakeLayouts(options: FakeLayoutsOptions) {
   const { devices, publish, delayMs = 150 } = options;
   const stored = new Map<string, string>();
@@ -55,7 +47,7 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
   const releases = new Map<string, () => void>();
 
   const slot = (device: string, orientation: string) => `${device}/${orientation}`;
-  for (const { device, layout } of options.seed ?? []) stored.set(slot(device, layout.orientation), canonical(layout));
+  for (const [device, layout] of Object.entries(options.seed ?? {})) stored.set(slot(device, layout.orientation), JSON.stringify(layout));
 
   function update(job: Job, change: Partial<Job>) {
     const next = { ...job, ...change, rev: job.rev + 1 };
@@ -236,6 +228,27 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
     stored: (device: string, orientation: Orientation) => stored.get(slot(device, orientation)) ?? null,
     /** Stores a Layout on a Device, as another program would. */
     store: (device: string, layout: Layout) => void stored.set(slot(device, layout.orientation), canonical(layout)),
+    /** A `layouts.push` Job that another client ran: the Device stores `layout` and the Job succeeds. */
+    pushed(device: string, layout: StoredLayout) {
+      stored.set(slot(device, layout.orientation), JSON.stringify(layout));
+      puts += 1;
+      minted += 1;
+      const job: Job = {
+        id: `job_fake${String(minted).padStart(12, '0')}`,
+        kind: 'layouts.push',
+        scope: { kind: 'device', id: device },
+        state: 'succeeded',
+        progress: null,
+        result: null,
+        error: null,
+        cancellable: false,
+        created_ms: Date.now(),
+        finished_ms: Date.now(),
+        rev: 1,
+      };
+      jobs.set(job.id, job);
+      publish({ type: 'job.updated', data: job });
+    },
     /** Keeps the Device's next Job running until `release`. */
     hold: (device: string) => void held.add(device),
     release: (device: string) => {

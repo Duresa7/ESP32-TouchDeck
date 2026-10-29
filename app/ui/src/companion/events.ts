@@ -79,7 +79,7 @@ export function openEvents(options: EventsOptions): Events {
         break;
       case 'sync':
         failures = 0;
-        store.getState().sync((frame.data as SyncData).devices ?? []);
+        store.getState().sync((frame.data as SyncData).devices ?? [], (frame.data as SyncData).jobs ?? []);
         jobs?.getState().sync((frame.data as SyncData).jobs ?? []);
         break;
       case 'device.added':
@@ -90,6 +90,7 @@ export function openEvents(options: EventsOptions): Events {
         store.getState().remove((frame.data as { id: string }).id);
         break;
       case 'job.updated':
+        store.getState().job(frame.data as Job);
         jobs?.getState().upsert(frame.data as Job);
         break;
       // Clients ignore event types they don't know.

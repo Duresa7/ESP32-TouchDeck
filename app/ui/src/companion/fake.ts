@@ -1,20 +1,19 @@
-import type { Layout } from '../lib/editor/validate.ts';
-import type { DeviceSummary, SystemInfo } from './api.ts';
+import type { DeviceSummary, Layout, SystemInfo } from './api.ts';
 import { CLOSE_SESSION, type EventSocket } from './events.ts';
 import { createFakeLayouts } from './fake-layouts.ts';
 import type { OpenTouchDeckBridge } from './session.ts';
 
 // An in-memory Companion for tests and the demo mode of `pnpm dev:ui`. It answers
-// `system.ping`, `system.get`, `devices.list` and `devices.get` the way
+// `system.ping`, `system.get`, `devices.list`, `devices.get` and `layouts.get` the way
 // docs/companion-api.md says, checks session tokens, and runs the event stream:
-// `hello`, `sync`, then `device.added`, `device.updated` and `device.removed`. fake-layouts.ts adds the
-// Layouts, Jobs and Assets prune routes and `job.updated`.
+// `hello`, `sync`, then `device.added`, `device.updated`, `device.removed` and `job.updated`. fake-layouts.ts
+// answers the Layouts, Jobs and Assets prune routes and sends `job.updated`.
 
 export interface FakeCompanionOptions {
   devices?: DeviceSummary[];
+  /** The Layout each Device stores at the start, by Device id. */
+  layouts?: Record<string, Layout>;
   system?: Partial<SystemInfo>;
-  /** Layouts the Devices store at the start. */
-  layouts?: { device: string; layout: Layout }[];
   /** How long a fake Job runs. */
   jobMs?: number;
 }
@@ -159,6 +158,10 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
       devices.set(id, next);
       publish({ type: 'device.updated', device: id, data: next });
       return next;
+    },
+    /** A `layouts.push` Job puts `layout` on a Device and succeeds: `job.updated`. */
+    setLayout(id: string, layout: Layout) {
+      layouts.pushed(id, layout);
     },
     /** A Device is forgotten: `device.removed`. */
     remove(id: string) {

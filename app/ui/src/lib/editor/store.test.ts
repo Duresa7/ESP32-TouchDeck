@@ -42,7 +42,7 @@ const tile = (store: EditorStore, id: string) => page(store).tiles.find((t) => t
 beforeEach(() => {
   fake = createFakeCompanion({
     devices: [sampleDevice('mock0001', 'Desk', connected), sampleDevice('mock0002', 'Studio', connected)],
-    layouts: [{ device: 'mock0001', layout: starterLayout('landscape') }],
+    layouts: { mock0001: starterLayout('landscape') },
     jobMs: 5,
   });
   vi.stubGlobal('fetch', fake.fetch);

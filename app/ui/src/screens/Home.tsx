@@ -1,73 +1,52 @@
 import clsx from 'clsx';
-import { Cable } from 'lucide-react';
+import { ArrowUpCircle, Cable } from 'lucide-react';
 import type { DeviceSummary } from '../companion/api.ts';
 import { useDevices } from '../companion/devices.ts';
 import { button } from '../shell/button.ts';
 import { useUi } from '../state/ui.ts';
+import { DevicePreview } from './DevicePreview.tsx';
+import { useDeviceLayout } from './home-layouts.ts';
+import { deviceWidth, firmwareUpdate, lastSeen, orientationOf, previewOf, statusOf } from './home-model.ts';
+import './home.css';
 
-// The card's status words, from docs/copy.md, Home. Compared as a string so a
-// link state the Companion adds later reads as "Not connected".
-function statusOf(device: DeviceSummary): { words: string; live: boolean } {
-  const state: string = device.link.state;
-  switch (state) {
-    case 'connected':
-      return { words: 'Connected', live: true };
-    case 'connecting':
-      return { words: 'Connecting…', live: false };
-    case 'busy':
-      return { words: 'In use by another program', live: false };
-    case 'updating':
-      return { words: 'Updating…', live: false };
-    default:
-      return { words: 'Not connected', live: false };
-  }
-}
-
-function DeviceCard({ device }: { device: DeviceSummary }) {
-  const status = statusOf(device);
+function DeviceCard({ device, width }: { device: DeviceSummary; width: number }) {
+  const openDevice = useUi((s) => s.openDevice);
+  const status = statusOf(device.link.state);
   const name = device.name ?? 'Unnamed Device';
-  return (
-    <li className="device-card">
-      <span className="device-name" title={name}>
-        {name}
+  const seen = !status.live && lastSeen(device);
+  const layout = useDeviceLayout(device);
+  return <li className="device-figure" style={{ width }}>
+    <button type="button" className="device-hit" title="Edit Layout" aria-label={`Edit ${name}`} onClick={() => openDevice(device.id)}>
+      <DevicePreview preview={previewOf(layout)} live={status.live} orientation={orientationOf(device)} />
+    </button>
+    <div className="device-caption">
+      <span className="device-name" title={name}>{name}</span>
+      <span className="device-meta">
+        <span className={clsx('status', status.live && 'is-live')}><i className="led" aria-hidden />{status.words}</span>
+        {seen && <span className="device-seen">{seen}</span>}
+        {firmwareUpdate(device) && <span className="badge-signal"><ArrowUpCircle size={14} aria-hidden />Firmware update</span>}
       </span>
-      <span className={clsx('status', status.live && 'is-live')}>
-        <i className="led" aria-hidden />
-        {status.words}
-      </span>
-    </li>
-  );
+    </div>
+  </li>;
 }
 
 function NoDevices() {
-  const openSettings = useUi((s) => s.setSettingsOpen);
-  return (
-    <div className="empty">
-      <h1 className="empty-title">Plug in your Device</h1>
-      <p className="empty-text">Connect an Open TouchDeck to this PC with a USB data cable.</p>
-      <button type="button" className={button()} onClick={() => openSettings(true)}>
-        <Cable size={16} strokeWidth={1.9} aria-hidden />
-        Connection help
-      </button>
-    </div>
-  );
+  const openHelp = useUi((s) => s.openTroubleshooting);
+  return <div className="empty">
+    <div className="device-ghost"><DevicePreview preview={null} live={false} /></div>
+    <h1 className="empty-title">Plug in your Device</h1>
+    <p className="empty-text">Connect an Open TouchDeck to this PC with a USB data cable.</p>
+    <p className="empty-text quiet">New board? Plug it in the same way and you’ll be offered a Firmware install.</p>
+    <button type="button" className={button()} onClick={openHelp}><Cable size={16} strokeWidth={1.9} aria-hidden />Connection help</button>
+  </div>;
 }
 
-/** Home, the first screen: every Device by name, with its status. #81 builds the real one. */
 export function Home() {
   const devices = useDevices((s) => s.devices);
   const live = useDevices((s) => s.status === 'live');
-  return (
-    <main className="home">
-      {devices.length > 0 ? (
-        <ul className="device-cards" aria-label="Devices">
-          {devices.map((d) => (
-            <DeviceCard key={d.id} device={d} />
-          ))}
-        </ul>
-      ) : (
-        live && <NoDevices />
-      )}
-    </main>
-  );
+  return <main className={clsx('home', devices.length === 1 && 'home-single')}>
+    {devices.length ? <ul className="device-row" aria-label="Devices">
+      {devices.map((device) => <DeviceCard key={device.id} device={device} width={deviceWidth(devices.length)} />)}
+    </ul> : live && <NoDevices />}
+  </main>;
 }

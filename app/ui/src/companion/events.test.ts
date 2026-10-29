@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import type { Job } from './api.ts';
 import { createDevicesStore, type DevicesStore } from './devices.ts';
 import { CLOSE_TOO_SLOW, openEvents, type Events } from './events.ts';
 import { createFakeCompanion, type FakeCompanion } from './fake.ts';
-import { sampleDevice } from './samples.ts';
+import { demoLayout, sampleDevice } from './samples.ts';
 import { browserSession, windowSession } from './session.ts';
 
 const URL = 'ws://127.0.0.1:51234/api/v1/events';
@@ -39,6 +40,22 @@ describe('the devices store', () => {
     store.getState().upsert({ ...sampleDevice('a', 'Same rev'), rev: 5 });
     expect(store.getState().devices).toBe(before);
     expect(names(store)).toEqual(['Desk']);
+  });
+
+  test('a succeeded layouts.push Job marks its Device; other Jobs do not', () => {
+    const store = createDevicesStore();
+    const job = (id: string, finished: number, change: Partial<Job> = {}): Job => ({
+      id, kind: 'layouts.push', scope: { kind: 'device', id: 'a' }, state: 'succeeded', progress: null, result: null,
+      error: null, cancellable: false, created_ms: 0, finished_ms: finished, rev: 1, ...change,
+    });
+    store.getState().sync([sampleDevice('a', 'Desk')], [job('job_2', 20), job('job_1', 10), job('job_3', 30, { state: 'failed' })]);
+    expect(store.getState().layoutPushes).toEqual({ a: 'job_2' });
+    store.getState().job(job('job_4', 40, { state: 'running' }));
+    store.getState().job(job('job_5', 50, { kind: 'assets.prune' }));
+    store.getState().job(job('job_6', 60, { scope: { kind: 'companion' } }));
+    expect(store.getState().layoutPushes).toEqual({ a: 'job_2' });
+    store.getState().job(job('job_7', 70));
+    expect(store.getState().layoutPushes).toEqual({ a: 'job_7' });
   });
 
   test('an added Device goes last and a removed one goes away', () => {
@@ -83,6 +100,14 @@ describe('the event stream', () => {
     fake.publish({ type: 'integration.status', data: {} });
     await settle();
     expect(names(store)).toEqual(['Studio B', 'Stream']);
+  });
+
+  test('job.updated reaches the store', async () => {
+    follow();
+    await settle();
+    fake.setLayout('mock0002', demoLayout());
+    await settle();
+    expect(Object.keys(store.getState().layoutPushes)).toEqual(['mock0002']);
   });
 
   test('a delta older than the store is ignored', async () => {

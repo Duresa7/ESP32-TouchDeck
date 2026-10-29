@@ -15,6 +15,7 @@ import { PageTabs } from './layout/PageTabs.tsx';
 import { ReplaceDialog } from './layout/ReplaceDialog.tsx';
 import { StartLayout } from './layout/StartLayout.tsx';
 import { StatusLine } from './layout/StatusLine.tsx';
+import { useUi } from '../state/ui.ts';
 import '../styles/layout.css';
 
 /** The Device's long side fits the canvas between these, as docs/design.md asks. */
@@ -97,7 +98,7 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
   const openPicker = () => picker.current?.click();
 
   return (
-    <main className={clsx('editor', !layout && 'is-empty')} data-testid="editor">
+    <main className={clsx('editor', !layout && 'is-empty')} data-testid="editor" data-device-id={device.id}>
       <h1 className="visually-hidden">Layout</h1>
       <EditorHeader store={store} device={device} onImport={openPicker} onExport={() => void exportLayout(store)} />
       <div ref={canvas} className={clsx('canvas', actualSize && preview && 'is-actual')}>
@@ -165,7 +166,9 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
 export function Layout() {
   const companion = useCompanion();
   const store = editorFor(companion);
-  const device = useDevices((s) => s.devices.find((d) => d.name !== null));
+  // The Device Home opened, or the first named one.
+  const deviceId = useUi((s) => s.deviceId);
+  const device = useDevices((s) => (deviceId ? s.devices.find((d) => d.id === deviceId) : s.devices.find((d) => d.name !== null)));
   const id = device?.id;
   const name = device?.name;
   const orientation = device?.orientation;
@@ -176,7 +179,7 @@ export function Layout() {
 
   if (!device) {
     return (
-      <main className="screen">
+      <main className="screen" data-device-id={deviceId}>
         <header className="page-head">
           <h1 className="page-title">Layout</h1>
         </header>
