@@ -202,7 +202,7 @@ test('64 tiles fit and a 65th tile fails the tile count', () => {
 });
 
 for (const [name, mutate, key] of [
-  ['unsupported version', (x) => { x.schema = 2; }, 'layout.schema-version'],
+  ['unsupported version', (x) => { x.schema = 3; }, 'layout.schema-version'],
   ['string version', (x) => { x.schema = '1'; }, 'layout.schema-version'],
   ['unknown orientation', (x) => { x.orientation = 'upside_down'; }, 'layout.orientation'],
   ['no pages', (x) => { x.pages = []; }, 'layout.page-count'],
@@ -607,4 +607,22 @@ test('CLI dedupes paths and finds invalid/ whatever the drive-letter and folder 
   );
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stdout, new RegExp(`3 valid, ${invalidFiles.length} invalid as expected, 0 problems`));
+});
+
+test('schema 2 accepts Asset references and forbids mixing icons', () => {
+  const layout = copy();
+  layout.schema = 2;
+  const tile = layout.pages[0].tiles[0];
+  tile.icon = null;
+  tile.asset = `sha256:${'a'.repeat(64)}`;
+  assert.deepEqual(keys(layout), []);
+  tile.icon = 'file:0123456789abcdef';
+  assert.ok(keys(layout).includes('icon.format'));
+  tile.icon = null;
+  tile.asset = `sha256:${'A'.repeat(64)}`;
+  assert.ok(keys(layout).includes('icon.format'));
+  tile.asset = null;
+  assert.deepEqual(keys(layout), []);
+  layout.schema = 1;
+  assert.ok(keys(layout).includes('shape.unknown-field'));
 });

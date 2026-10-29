@@ -286,7 +286,10 @@
           "then": {
             "properties": {
               "icon": {
-                "type": "null"
+                "type": "null",
+                "x-rules": {
+                  "type": "icon.format"
+                }
               }
             }
           }

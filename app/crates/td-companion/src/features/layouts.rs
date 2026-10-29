@@ -322,11 +322,11 @@ fn push(
         let wanted = td_host::icons::asset_ids(layout);
         if layout.schema == 2 {
             let (summary, _) = ctx.links.connected(device)?;
-            if !summary
-                .capabilities
-                .as_ref()
-                .is_some_and(|c| c.layout_schemas.contains(&2))
-            {
+            if !summary.capabilities.as_ref().is_some_and(|c| {
+                c.layout_schemas.contains(&2)
+                    && c.formats.iter().any(|f| f == "tdi1")
+                    && c.asset_bytes >= td_host::icon_pack::FILE_BYTES as u32
+            }) {
                 return Err(DeviceLinkError::Link(
                     "The Device needs Firmware with schema 2 Asset support.".into(),
                 )

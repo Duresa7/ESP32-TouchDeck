@@ -231,8 +231,12 @@ esp_err_t td_store_info(td_store_info_t *out)
 
 esp_err_t td_store_budget(td_store_info_t *out)
 {
-    if (!td_store_mounted() || s_budget_total == 0 || s_budget_used < 0) return ESP_ERR_INVALID_STATE;
+    if (!td_store_mounted()) return ESP_ERR_INVALID_STATE;
     lock();
+    if (s_budget_total == 0 || s_budget_used < 0) {
+        unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
     out->total_bytes = s_budget_total;
     out->used_bytes = s_budget_used > UINT32_MAX ? UINT32_MAX : (uint32_t)s_budget_used;
     unlock();

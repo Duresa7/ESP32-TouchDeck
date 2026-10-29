@@ -108,7 +108,6 @@ fn orientation(rest: &[String]) -> Result<Option<Orientation>, String> {
 
 fn transport(args: &Args) -> Result<Box<dyn Transport>, String> {
     if args.mock {
-        // Assets need protocol 2, so the asset commands talk to a v2 mock Device.
         let device = if args.command == "asset" {
             MockDeck::v2()
         } else {

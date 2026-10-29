@@ -11,7 +11,6 @@
 #define ICON_BYTES 12300
 #define CHUNK 1021
 
-/* These tests run on the Device's own volume, so each one removes the Assets it made. */
 static void mount(void)
 {
     if (!td_store_mounted()) {
@@ -43,7 +42,6 @@ static void id_of(const uint8_t *data, size_t len, char id[TD_ASSET_ID_LEN + 1])
     }
 }
 
-/* Streams the file in link-sized chunks and commits it. */
 static td_asset_result_t put(const char *id, const uint8_t *data, size_t len)
 {
     td_asset_result_t r = td_asset_upload_begin(id, len, TD_ASSET_FMT_TDI1);
@@ -81,7 +79,6 @@ static bool temp_exists(void)
     return stat(TD_ASSET_DIR "/upload.tmp", &st) == 0;
 }
 
-/* Whether the id's shard directory exists. The tests run on an otherwise empty Asset store. */
 static bool shard_exists(const char *id)
 {
     char shard[sizeof TD_ASSET_DIR + 2];
@@ -113,8 +110,7 @@ TEST_CASE("Asset put commits by hash, a duplicate is present, and delete removes
     TEST_ASSERT_EQUAL(TD_ASSET_OK, td_asset_space(&after));
     TEST_ASSERT_LESS_THAN_UINT32(before.free_bytes, after.free_bytes);
 
-    /* The link answers a second put of the same bytes from this check, with no transfer. */
-    TEST_ASSERT_TRUE(td_asset_present(id, NULL, NULL));
+        TEST_ASSERT_TRUE(td_asset_present(id, NULL, NULL));
 
     TEST_ASSERT_EQUAL(TD_ASSET_OK, td_asset_delete(id, &deleted));
     TEST_ASSERT_TRUE(deleted);
@@ -253,6 +249,7 @@ TEST_CASE("Asset admission cost stays bounded as the store grows", "[td_asset]")
     mount();
     char ids[64][TD_ASSET_ID_LEN + 1];
     int64_t empty = 0, populated = 0;
+    int64_t empty_put = 0, populated_put = 0;
     for (unsigned count = 0; count <= 64; count++) {
         if (count == 0 || count == 64) {
             int64_t start = esp_timer_get_time();
@@ -262,6 +259,17 @@ TEST_CASE("Asset admission cost stays bounded as the store grows", "[td_asset]")
             }
             if (count == 0) empty = esp_timer_get_time() - start;
             else populated = esp_timer_get_time() - start;
+            uint8_t *probe = icon(200);
+            char probe_id[TD_ASSET_ID_LEN + 1];
+            id_of(probe, ICON_BYTES, probe_id);
+            free(probe);
+            start = esp_timer_get_time();
+            for (unsigned n = 0; n < 5; n++) {
+                TEST_ASSERT_EQUAL(TD_ASSET_OK, td_asset_upload_begin(probe_id, ICON_BYTES, TD_ASSET_FMT_TDI1));
+                td_asset_upload_abort();
+            }
+            if (count == 0) empty_put = esp_timer_get_time() - start;
+            else populated_put = esp_timer_get_time() - start;
         }
         if (count < 64) {
             uint8_t *file = icon(100 + count);
@@ -276,4 +284,6 @@ TEST_CASE("Asset admission cost stays bounded as the store grows", "[td_asset]")
     }
     printf("Asset space checks (100): empty=%lld us, 64 Assets=%lld us\n", (long long)empty, (long long)populated);
     TEST_ASSERT_TRUE(populated < empty * 2 + 1000);
+    printf("Asset put admission (5): empty=%lld us, 64 Assets=%lld us\n", (long long)empty_put, (long long)populated_put);
+    TEST_ASSERT_TRUE(populated_put < empty_put * 2 + 25000);
 }

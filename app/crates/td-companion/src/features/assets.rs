@@ -1,5 +1,3 @@
-//! Assets: the built-in icons, icons taken from programs, Asset files, and removing the Assets
-//! no stored Layout uses. Uploads, catalogs and the Device's Asset list come with #93.
 use crate::{
     api::{ApiError, CommonError, Ctx, Endpoint, Feature, JobKind, NoQuery, Registration, Req},
     features::devices::DevicePath,

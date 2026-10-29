@@ -44,7 +44,6 @@ static struct {
     uint32_t last_ms;
     uint8_t last_id;
     uint8_t tx_seq;
-    /* Why the sink of an Asset put failed, or NULL. */
     const char *asset_failure;
     char asset_id[TD_ASSET_ID_LEN + 1];
 } s;
@@ -792,7 +791,6 @@ void td_link_asset_end(const cJSON *request, cJSON *reply)
     }
 }
 
-/* Why a stored Layout keeps the Asset, or NULL. Runs under the store lock, as a Layout commit does. */
 static const char *asset_in_use(const char *id)
 {
     static const char *const orientations[] = { "landscape", "portrait" };

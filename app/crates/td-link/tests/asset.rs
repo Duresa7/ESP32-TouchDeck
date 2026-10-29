@@ -275,7 +275,6 @@ fn a_put_while_another_transfer_is_open_is_busy() {
     )
     .unwrap_err();
     assert_eq!(incomplete.reason(), Some(&AssetReason::Incomplete));
-    // A new selection discards the open upload, so the slot is free again.
     session.identity(TIMEOUT).unwrap();
     put_asset(&session, &icon(10), AssetFormat::Tdi1).unwrap();
 }
