@@ -57,6 +57,7 @@ CONFIG_LV_DEF_REFR_PERIOD=15
 # render threads compete for PSRAM with the panel's bounce buffer copy.
 CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1
 CONFIG_LV_USE_SNAPSHOT=y
+# Montserrat 14 is LVGL's default font. Montserrat 48 carries the LVGL symbols that `lv:` icons draw. Every text the
+# deck shows is Archivo, generated into components/ui/fonts.
 CONFIG_LV_FONT_MONTSERRAT_14=y
 CONFIG_LV_FONT_MONTSERRAT_48=y
-CONFIG_LV_FONT_MONTSERRAT_28=y

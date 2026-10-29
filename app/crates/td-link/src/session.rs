@@ -8,7 +8,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use td_core::{Body, Frame, Hello, Item, Reply, ReplyError, Request, Role, StreamDecoder};
+use td_core::{Body, Frame, Hello, Item, Pong, Reply, ReplyError, Request, Role, StreamDecoder};
 
 use crate::Transport;
 use crate::xfer::LayoutState;
@@ -20,6 +20,9 @@ const LAYOUT_REPLY_GRACE: Duration = Duration::from_secs(3);
 pub struct SessionConfig {
     pub ping_every: Option<Duration>,
     pub ping_timeout: Duration,
+    /// Closes the session when a ping reply's uptime goes backwards, so the caller can say
+    /// `hello` again: a restarted deck counts the app as offline until it does.
+    pub close_on_restart: bool,
 }
 
 impl Default for SessionConfig {
@@ -27,6 +30,7 @@ impl Default for SessionConfig {
         SessionConfig {
             ping_every: Some(Duration::from_secs(2)),
             ping_timeout: Duration::from_secs(2),
+            close_on_restart: false,
         }
     }
 }
@@ -334,7 +338,7 @@ impl Session {
         if let Some(every) = config.ping_every {
             let shared = shared.clone();
             threads.push(thread::spawn(move || {
-                ping_loop(&shared, &stopped, every, config.ping_timeout)
+                ping_loop(&shared, &stopped, every, config)
             }));
         }
         Ok((
@@ -497,13 +501,22 @@ fn read_loop(shared: &Shared, mut reader: Box<dyn Read + Send>) {
     }
 }
 
-fn ping_loop(shared: &Shared, stop: &Receiver<()>, every: Duration, timeout: Duration) {
+fn ping_loop(shared: &Shared, stop: &Receiver<()>, every: Duration, config: SessionConfig) {
+    let mut uptime = 0;
     for n in 1u64.. {
         if !matches!(stop.recv_timeout(every), Err(RecvTimeoutError::Timeout)) {
             return;
         }
-        match shared.request(&Request::Ping { n: Some(n) }, timeout) {
-            Ok(_) => {}
+        match shared.request(&Request::Ping { n: Some(n) }, config.ping_timeout) {
+            Ok(reply) => {
+                let Ok(Pong { t, .. }) = reply.fields() else {
+                    continue;
+                };
+                if config.close_on_restart && t < uptime {
+                    return shared.shutdown("the deck restarted");
+                }
+                uptime = t;
+            }
             Err(LinkError::Timeout(_)) => {
                 return shared.shutdown("the deck stopped answering ping");
             }
@@ -516,12 +529,13 @@ fn ping_loop(shared: &Shared, stop: &Receiver<()>, every: Duration, timeout: Dur
 mod tests {
     use super::*;
     use crate::MockDeck;
-    use td_core::{Event, IconPage, Pong};
+    use td_core::{Event, IconPage};
 
     fn quiet() -> SessionConfig {
         SessionConfig {
             ping_every: None,
             ping_timeout: Duration::from_millis(200),
+            close_on_restart: false,
         }
     }
 
@@ -655,6 +669,7 @@ mod tests {
         let config = SessionConfig {
             ping_every: Some(Duration::from_millis(10)),
             ping_timeout: Duration::from_millis(100),
+            close_on_restart: false,
         };
         let (session, events) = Session::open(Box::new(BrokenTransport), config).unwrap();
         let closed = events.recv_timeout(Duration::from_secs(1)).unwrap();
@@ -677,6 +692,7 @@ mod tests {
         let config = SessionConfig {
             ping_every: Some(Duration::from_millis(100)),
             ping_timeout: Duration::from_millis(100),
+            close_on_restart: false,
         };
         let (session, events) = Session::open(Box::new(deck.connect()), config).unwrap();
         session.hello(Duration::from_secs(1)).unwrap();
@@ -704,6 +720,31 @@ mod tests {
         });
         assert_eq!(reason, "the deck closed the stream");
         assert!(!session.is_open());
+    }
+
+    #[test]
+    fn a_restart_closes_the_session_only_when_asked() {
+        for close_on_restart in [true, false] {
+            let deck = MockDeck::new();
+            let config = SessionConfig {
+                ping_every: Some(Duration::from_millis(50)),
+                ping_timeout: Duration::from_millis(500),
+                close_on_restart,
+            };
+            let (session, events) = Session::open(Box::new(deck.connect()), config).unwrap();
+            thread::sleep(Duration::from_millis(200));
+            session.send_line("reboot").unwrap();
+            if close_on_restart {
+                let reason = until(&events, |item| match item {
+                    Incoming::Closed(reason) => Some(reason),
+                    _ => None,
+                });
+                assert_eq!(reason, "the deck restarted");
+            } else {
+                thread::sleep(Duration::from_millis(300));
+                assert!(session.is_open());
+            }
+        }
     }
 
     #[test]

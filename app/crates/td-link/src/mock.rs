@@ -209,6 +209,16 @@ impl MockDeck {
         device
     }
 
+    /// Sets the name a v2 hello reports, as a Device someone already named.
+    pub fn set_name(&self, name: &str) {
+        self.state().device_name = name.into();
+    }
+
+    /// Answers `hello` as a board running other Firmware with this product.
+    pub fn set_product(&self, product: &str) {
+        self.state().hello.product = product.into();
+    }
+
     pub fn usb_serial(&self) -> &'static str {
         "02:00:00:00:00:01"
     }
@@ -1583,5 +1593,21 @@ mod tests {
             deck.dispatch("layout.nope", &Map::new()),
             Err("unknown message".to_owned())
         );
+    }
+
+    #[test]
+    fn a_named_v2_device_and_other_firmware_answer_as_set() {
+        let deck = MockDeck::v2();
+        deck.set_name("Desk left");
+        let (session, _) =
+            Session::open(Box::new(deck.connect()), SessionConfig::default()).unwrap();
+        let identity = session.identity(Duration::from_secs(1)).unwrap();
+        assert_eq!(identity.name.as_deref(), Some("Desk left"));
+        let other = MockDeck::new();
+        other.set_product("esp-at");
+        assert!(matches!(
+            crate::probe_transport(Box::new(other.connect())),
+            crate::Probe::NotDeck { detail } if detail.contains("esp-at")
+        ));
     }
 }
