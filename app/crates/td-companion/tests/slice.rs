@@ -2,33 +2,30 @@ use futures_util::StreamExt;
 use serde_json::{Value, json};
 use td_companion::{
     api::NoQuery,
-    features::devices::{DevicePath, Get, List},
+    features::devices::{DevicePath, Forget, Get, List},
     testing::TestCompanion,
 };
 #[tokio::test]
 async fn pairing_listing_and_removal() {
     let td = TestCompanion::start().await;
     let mut events = td.events().await;
-    td.plug_device("mock0001").await;
+    let first = td.plug_device("mock0001").await;
     let devices = td.call::<List>((), NoQuery, ()).await.unwrap();
     assert_eq!(devices.len(), 1);
     assert_eq!(devices[0].id, "mock0001");
+    let path = || DevicePath {
+        device: first.clone(),
+    };
     assert_eq!(
-        td.call::<Get>(
-            DevicePath {
-                device: "mock0001".into()
-            },
-            NoQuery,
-            ()
-        )
-        .await
-        .unwrap()
-        .id,
+        td.call::<Get>(path(), NoQuery, ()).await.unwrap().id,
         "mock0001"
     );
     td.plug_device("mock0002").await;
     assert_eq!(td.call::<List>((), NoQuery, ()).await.unwrap().len(), 2);
+    // An unplugged Device stays known until it's forgotten.
     td.unplug("mock0001").await;
+    assert_eq!(td.call::<List>((), NoQuery, ()).await.unwrap().len(), 2);
+    td.call::<Forget>(path(), NoQuery, ()).await.unwrap();
     let removed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
             let message = events.next().await.unwrap().unwrap();

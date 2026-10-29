@@ -1,0 +1,389 @@
+//! Each Device's Layout: read it from the Device with its revision, and push one as a Job.
+use crate::{
+    api::{ApiError, CommonError, Ctx, Endpoint, Feature, JobKind, NoQuery, Registration, Req},
+    jobs::{Job, JobError, JobHandle, JobScope, Stop},
+    link::DeviceLinkError,
+};
+use axum::{
+    http::{HeaderMap, Method, StatusCode, header},
+    response::{IntoResponse, Response},
+};
+use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
+use td_core::{Layout, Orientation, ReplyError};
+use td_link::{
+    LinkError, Session,
+    xfer::{self, XferError},
+};
+use ts_rs::TS;
+
+#[derive(Serialize, Deserialize, TS)]
+pub struct LayoutPath {
+    pub device: String,
+    pub orientation: Orientation,
+}
+/// A Layout body, kept as sent so `td_core::Layout` validation sees the exact text once.
+#[derive(Serialize, Deserialize, TS)]
+#[ts(type = "Layout")]
+pub struct LayoutBody(pub Box<RawValue>);
+impl LayoutBody {
+    pub fn new(layout: &Layout) -> Self {
+        Self(RawValue::from_string(String::from_utf8(layout.to_canonical_json()).unwrap()).unwrap())
+    }
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct LayoutRead {
+    pub layout: Layout,
+    /// The Device's CRC-32 of the stored Layout as 8 hex digits, also sent as `ETag`.
+    pub revision: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct LayoutIssue {
+    /// The rule key from `schema/README.md`, such as `tile.overlap`.
+    pub rule: String,
+    /// A JSON pointer into the Layout when the rule names one, otherwise empty.
+    pub path: String,
+    pub message: String,
+}
+fn issues(errors: Vec<td_core::layout::LayoutError>) -> Vec<LayoutIssue> {
+    errors
+        .into_iter()
+        .map(|e| LayoutIssue {
+            rule: e.rule.key().into(),
+            path: e
+                .message
+                .split_whitespace()
+                .next()
+                .filter(|w| w.starts_with('/'))
+                .unwrap_or_default()
+                .into(),
+            message: e.message,
+        })
+        .collect()
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum LayoutError {
+    #[error("The Layout has {} problems.", .0.len())]
+    Invalid(Vec<LayoutIssue>),
+    #[error("The path and the Layout name different orientations.")]
+    OrientationMismatch,
+    #[error("The Device's Layout changed since it was loaded.")]
+    Changed { revision: Option<String> },
+    #[error("The Device stores no Layout for this orientation.")]
+    NotFound,
+    #[error("The Layout stored on the Device fails validation.")]
+    StoredInvalid(Vec<LayoutIssue>),
+    #[error(transparent)]
+    Device(#[from] DeviceLinkError),
+    #[error(transparent)]
+    Job(#[from] JobError),
+    #[error(transparent)]
+    Common(#[from] CommonError),
+}
+impl ApiError for LayoutError {
+    const CODES: &'static [&'static str] = &[
+        "layout.invalid",
+        "layout.orientation_mismatch",
+        "layout.changed",
+        "layout.not_found",
+        "layout.stored_invalid",
+        "device.not_found",
+        "device.not_connected",
+        "device.timeout",
+        "device.link",
+        "device.busy",
+    ];
+    fn status(&self) -> StatusCode {
+        match self {
+            Self::Invalid(_) | Self::OrientationMismatch => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::Changed { .. } => StatusCode::PRECONDITION_FAILED,
+            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::StoredInvalid(_) => StatusCode::BAD_GATEWAY,
+            Self::Device(e) => e.status(),
+            Self::Job(e) => e.status(),
+            Self::Common(e) => e.status(),
+        }
+    }
+    fn code(&self) -> &'static str {
+        match self {
+            Self::Invalid(_) => "layout.invalid",
+            Self::OrientationMismatch => "layout.orientation_mismatch",
+            Self::Changed { .. } => "layout.changed",
+            Self::NotFound => "layout.not_found",
+            Self::StoredInvalid(_) => "layout.stored_invalid",
+            Self::Device(e) => e.code(),
+            Self::Job(e) => e.code(),
+            Self::Common(e) => e.code(),
+        }
+    }
+    fn details(&self) -> Option<serde_json::Value> {
+        match self {
+            Self::Invalid(issues) | Self::StoredInvalid(issues) => {
+                Some(serde_json::json!({ "issues": issues }))
+            }
+            Self::Changed { revision } => Some(serde_json::json!({ "revision": revision })),
+            Self::Device(e) => e.details(),
+            Self::Job(e) => e.details(),
+            Self::Common(e) => e.details(),
+            _ => None,
+        }
+    }
+}
+
+fn revision(crc32: u32) -> String {
+    format!("{crc32:08x}")
+}
+/// The Layout the Device stores for `orientation` and its revision, or `None` for an empty slot.
+fn read(
+    session: &Session,
+    orientation: Orientation,
+) -> Result<Option<(Vec<u8>, String)>, LayoutError> {
+    match xfer::get_layout(session, orientation) {
+        Ok(report) => Ok(Some((report.data, revision(report.crc32)))),
+        Err(XferError::Link(LinkError::Reply(ReplyError::Failed(reason))))
+            if reason.starts_with("no stored layout") =>
+        {
+            Ok(None)
+        }
+        Err(e) => Err(DeviceLinkError::from_xfer(e).into()),
+    }
+}
+
+/// `If-Match` as sent: `*` matches any stored Layout, otherwise one of the listed revisions.
+struct IfMatch(Vec<String>);
+impl IfMatch {
+    fn from_headers(headers: &HeaderMap) -> Option<Self> {
+        let value = headers.get(header::IF_MATCH)?.to_str().unwrap_or("");
+        Some(Self(
+            value
+                .split(',')
+                .map(|tag| {
+                    let tag = tag.trim();
+                    let tag = tag.strip_prefix("W/").unwrap_or(tag);
+                    tag.trim_matches('"').to_ascii_lowercase()
+                })
+                .collect(),
+        ))
+    }
+    fn check(&self, current: Option<String>) -> Result<(), LayoutError> {
+        let matched = current
+            .as_ref()
+            .is_some_and(|c| self.0.iter().any(|tag| tag == "*" || tag == c));
+        if matched {
+            Ok(())
+        } else {
+            Err(LayoutError::Changed { revision: current })
+        }
+    }
+}
+
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, CommonError> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|_| CommonError::Internal)
+}
+
+/// Reads the Layout the Device stores for an orientation, with its revision.
+pub struct Get;
+impl Endpoint for Get {
+    const NAME: &'static str = "layouts.get";
+    const METHOD: Method = Method::GET;
+    const PATH: &'static str = "/devices/{device}/layouts/{orientation}";
+    type Path = LayoutPath;
+    type Query = NoQuery;
+    type Body = ();
+    type Ok = LayoutRead;
+    type Error = LayoutError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
+        let LayoutPath {
+            device,
+            orientation,
+        } = req.path;
+        ctx.links.connected(&device)?;
+        blocking(move || {
+            let (data, revision) = ctx
+                .links
+                .with(&device, |session| read(session, orientation))??
+                .ok_or(LayoutError::NotFound)?;
+            let layout = Layout::parse(&data).map_err(|e| LayoutError::StoredInvalid(issues(e)))?;
+            let _ = ctx.layouts.put(&device, &layout);
+            Ok(LayoutRead { layout, revision })
+        })
+        .await?
+    }
+    fn respond(value: LayoutRead) -> Response {
+        let etag = format!("\"{}\"", value.revision);
+        (StatusCode::OK, [(header::ETAG, etag)], axum::Json(value)).into_response()
+    }
+}
+
+#[derive(Default, Serialize, Deserialize, TS)]
+pub struct PushProgress {
+    pub assets_sent: u32,
+    pub assets_total: u32,
+    pub bytes_sent: u64,
+    pub bytes_total: u64,
+}
+/// The Device's `layout state` after the put.
+#[derive(Serialize, Deserialize, TS)]
+pub struct DeviceLayoutState {
+    pub source: String,
+    pub name: String,
+    pub orientation: Orientation,
+    pub pages: u32,
+    pub tiles: u32,
+    pub icons_loaded: Option<u32>,
+    pub icons_missing: Option<u32>,
+    pub bytes: Option<u32>,
+    pub load_ms: Option<u64>,
+    pub error: Option<String>,
+}
+#[derive(Default, Serialize, Deserialize, TS)]
+pub struct AssetSync {
+    /// Assets the Layout uses that the Device lacked and the Companion sent.
+    pub sent: Vec<String>,
+    /// Assets the Layout uses that the Device lacked and the Companion has no file for.
+    pub unavailable: Vec<String>,
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct PushReport {
+    pub state: DeviceLayoutState,
+    pub bytes: u64,
+    pub chunks: u16,
+    pub retransmits: u32,
+    pub elapsed_ms: u64,
+    pub assets: AssetSync,
+    /// The pushed Layout's revision, for the next `If-Match`.
+    pub revision: String,
+}
+pub struct PushJob;
+impl JobKind for PushJob {
+    const NAME: &'static str = "layouts.push";
+    type Progress = PushProgress;
+    type Result = PushReport;
+}
+
+/// Validates the Layout, checks `If-Match`, then pushes it as a Job.
+pub struct Push;
+impl Endpoint for Push {
+    const NAME: &'static str = "layouts.push";
+    const METHOD: Method = Method::PUT;
+    const PATH: &'static str = "/devices/{device}/layouts/{orientation}";
+    const STATUS: StatusCode = StatusCode::ACCEPTED;
+    type Path = LayoutPath;
+    type Query = NoQuery;
+    type Body = LayoutBody;
+    type Ok = Job;
+    type Error = LayoutError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
+        let LayoutPath {
+            device,
+            orientation,
+        } = req.path;
+        let layout = Layout::parse(req.body.0.get().as_bytes())
+            .map_err(|e| LayoutError::Invalid(issues(e)))?;
+        if layout.orientation != orientation {
+            return Err(LayoutError::OrientationMismatch);
+        }
+        ctx.links.connected(&device)?;
+        let scope = JobScope::Device(device.clone());
+        if let Some(job) = ctx.jobs.holding(&scope) {
+            return Err(JobError::Busy(Box::new(job)).into());
+        }
+        let expected = IfMatch::from_headers(&req.headers);
+        if let Some(expected) = &expected {
+            let (link, id) = (ctx.links.clone(), device.clone());
+            let current = blocking(move || link.with(&id, |s| read(s, orientation))).await???;
+            expected.check(current.map(|(_, revision)| revision))?;
+        }
+        let work = ctx.clone();
+        Ok(ctx.jobs.start::<PushJob>(scope, true, move |job| {
+            push(&work, &device, &layout, expected, job)
+        })?)
+    }
+}
+fn push(
+    ctx: &Ctx,
+    device: &str,
+    layout: &Layout,
+    expected: Option<IfMatch>,
+    job: &JobHandle<PushJob>,
+) -> Result<PushReport, Stop> {
+    let link = |e: XferError| Stop::from(DeviceLinkError::from_xfer(e));
+    let report = ctx.links.with(device, |session| {
+        // The Device may have changed between the request's check and this Job.
+        if let Some(expected) = &expected {
+            expected.check(read(session, layout.orientation)?.map(|(_, r)| r))?;
+        }
+        let assets = send_missing_assets(ctx, session, layout, job)?;
+        job.check()?;
+        job.set_cancellable(false);
+        let put = xfer::put_layout(session, layout.orientation, layout).map_err(link)?;
+        let state = serde_json::from_value(serde_json::to_value(&put.state).unwrap())
+            .map_err(|_| CommonError::Internal)?;
+        Ok::<_, Stop>(PushReport {
+            state,
+            bytes: put.bytes as u64,
+            chunks: put.chunks,
+            retransmits: put.retransmits,
+            elapsed_ms: put.elapsed_ms,
+            assets,
+            revision: revision(xfer::crc32(&layout.to_canonical_json())),
+        })
+    })??;
+    let _ = ctx.layouts.put(device, layout);
+    Ok(report)
+}
+/// Sends the Assets the Layout uses that the Device lacks, before the Layout itself.
+///
+/// This is the hook for #93: icons still go over today's v1 `icon.*` messages, and the v2
+/// Asset store replaces this body without changing the Job's progress or result.
+fn send_missing_assets(
+    ctx: &Ctx,
+    session: &Session,
+    layout: &Layout,
+    job: &JobHandle<PushJob>,
+) -> Result<AssetSync, Stop> {
+    let link = |e: XferError| Stop::from(DeviceLinkError::from_xfer(e));
+    let wanted = td_host::icons::file_ids(layout);
+    let stored = xfer::list_icons(session).map_err(link)?;
+    let missing: Vec<(String, Option<Vec<u8>>)> = wanted
+        .difference(&stored)
+        .map(|id| (id.clone(), ctx.assets.get(id)))
+        .collect();
+    let mut progress = PushProgress {
+        assets_total: missing.iter().filter(|(_, f)| f.is_some()).count() as u32,
+        bytes_total: missing
+            .iter()
+            .flat_map(|(_, f)| f)
+            .map(|f| f.len() as u64)
+            .sum(),
+        ..Default::default()
+    };
+    job.progress(&progress);
+    let mut sync = AssetSync::default();
+    for (id, file) in missing {
+        job.check()?;
+        let Some(file) = file else {
+            sync.unavailable.push(id);
+            continue;
+        };
+        xfer::put_icon(session, &id, &file).map_err(link)?;
+        progress.assets_sent += 1;
+        progress.bytes_sent += file.len() as u64;
+        job.progress(&progress);
+        sync.sent.push(id);
+    }
+    Ok(sync)
+}
+
+fn feature() -> Feature {
+    Feature::new("layouts")
+        .endpoint::<Get>()
+        .endpoint::<Push>()
+        .job::<PushJob>()
+}
+inventory::submit! { Registration(feature) }

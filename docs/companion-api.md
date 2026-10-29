@@ -248,7 +248,7 @@ Image uploads for Assets stay on the API (`POST /uploads`). The Companion decode
 - **`DeviceId`** is the USB serial number from `serialport::UsbPortInfo.serial_number`, which is the chip's MAC on the ESP32-S3 USB-Serial/JTAG, lowercased with separators removed, such as `a0b1c2d3e4f5`.
   - It's an opaque string matching `^[0-9a-z]{1,32}$`. The `DevicePath` extractor checks it once, and handlers receive a typed `DeviceId`.
   - Protocol v2 `hello` also reports the id, and the Companion compares the two. If they disagree, the USB serial wins and the Companion logs a warning. v1 Firmware has no id in `hello`, and the USB serial still identifies it.
-  - If a driver reports no serial number, the id falls back to `port-<sanitized port name>`, and the summary sets `stable_id: false`.
+  - If a driver reports no serial number, the id falls back to `port` followed by the port name lowercased with everything but letters and digits removed, such as `portcom7`, and the summary sets `stable_id: false`. #74 dropped the hyphen this rule used to have, so the fallback matches the id pattern.
   - If two Devices' ids come out the same, the one that already holds it keeps it. The other gets the first 27 characters, `x`, and 4 hex digits of its port name's SHA-256, such as `a0b1c2d3e4f5x9c1e`. That id holds while the Device stays on that port, so its summary sets `stable_id: false`.
   - Mock Devices use `mock0001`, `mock0002` and so on.
 - **The port** (`COM7`) is for diagnostics only. It appears in `DeviceSummary.link.port` and never in a route. Every command that took a `port` today takes a `DeviceId` instead.
@@ -285,6 +285,27 @@ pub enum LostReason { Unplugged, Timeout, IoError, Closed }
 ```
 
 `Lost` and `Disconnected` are separate variants, so the UI can't confuse "Connection lost" with "Device not connected".
+
+How the Device manager (#74) moves between them:
+
+| From | Event | To |
+|---|---|---|
+| `offline`, `lost` with `unplugged` | Its port appears | `connecting` |
+| `connecting`, `lost` | `hello` answers | `connected` |
+| `connecting` | Still silent 3 s after the port appeared (the boot grace), or answers as other Firmware | `unresponsive` |
+| `connecting`, `unresponsive` | The port is held by another program | `busy` |
+| `connected` | The session ends on its own: missed pings, an I/O error, a closed stream, or a ping that shows the Device restarted | `lost` with `timeout`, `io-error` or `closed`. The Companion keeps probing; silence keeps it `lost` |
+| `connected` | `devices.restart` | `connecting`, then `connected` with a fresh `hello` once it boots |
+| `connected`, `lost` | Its port leaves | `lost` with `unplugged`, until replug or restart |
+| `connecting`, `busy`, `unresponsive`, `disconnected` | Its port leaves | `offline`. Unplugging also ends a Disconnect |
+| any | `devices.disconnect` | `disconnected` |
+| `disconnected` | `devices.connect` | `connecting` if plugged in, else `offline` |
+
+- The scan thread wakes on a USB change (`CM_Register_Notification` on Windows) and polls every second as a fallback. Each port is probed with `hello` at a 500 ms timeout. A port that isn't a Device is probed again after 0.25 s, doubling up to 10 s; `ports.rescan`, `devices.connect`, a lost link and a replug reset that.
+- A probe that finds a Device keeps its session, so a Device connects with one open. The session and its blocking calls live on that Device's actor thread.
+- A silent board stays unclassified during the boot grace, so a Device being plugged in doesn't flash `unresponsive` or a New board.
+- On Windows a Device that restarts keeps its COM port open, so the session would outlive the restart and the Device would count the app as offline until the next `hello`. So `devices.restart` closes the link after sending `reboot`, and a ping whose uptime went backwards closes it too. Both start a fresh probe under a new boot grace.
+- A Device found by `hello` is `setup: "ready"`. `needs-setup` is for a New board that just got Firmware (#77). Known Devices and their names are saved in `devices.json`; at start they load as `offline`.
 
 ```rust
 pub struct DeviceSummary {
@@ -328,7 +349,7 @@ pub enum BoardProbe { Silent, Busy { detail: String }, OtherFirmware { product: 
 
 ### Topics
 
-The client sends `{"op": "subscribe", "topic": "console", "device": "a0b1c2d3e4f5"}` or the same with `"op": "unsubscribe"`. Until the first opt-in topic ships, the Companion accepts these and ignores them, and the socket stays open.
+The client sends `{"op": "subscribe", "topic": "console", "device": "a0b1c2d3e4f5"}` or the same with `"op": "unsubscribe"`. Each socket keeps its own set of topic and Device pairs. A request with an unknown op or topic, an invalid Device id, or the `state` topic changes nothing, and the socket stays open. There's no reply, so a client that needs the first frame retries until it arrives.
 
 | Topic | Default | Carries |
 |---|---|---|
@@ -397,6 +418,15 @@ pub struct Job {
 - **One active Job per Device or New board scope**, including `waiting_for_confirmation`. A second one gets 409 `device.busy` with `details.job` set to the active Job, so a double click can attach to it. There's no queue. Companion-scoped Asset render Jobs instead share the two-Job limit in Limits.
 - `GET /jobs` lists active Jobs and the last 50 finished ones, kept for 10 minutes. `GET /jobs/{id}` reads one. `DELETE /jobs/{id}` cancels one, or returns 409 `job.not_cancellable`.
 - In TypeScript, `companion.jobs.wait(job)` resolves with the typed `result` on `succeeded` and rejects with the `ApiError` on `failed`. It follows `job.updated` events and re-reads `GET /jobs/{id}` after a reconnect.
+- **As built in #75.** The generated `companion.jobs.wait<K>(job)` reads `GET /jobs/{id}` every 250 ms until the Job finishes; the UI's event client can resolve it from `job.updated` instead. A cancelled Job ends in `cancelled` with the error `job.cancelled`, and `wait` rejects with it. A Companion-scoped kind at its limit gets 429 `limits.exceeded`, not a queue.
+
+Feature module `jobs`.
+
+| Name | Method and path | Request → Response |
+|---|---|---|
+| `jobs.list` | `GET /jobs` | → `Job[]`: active Jobs, then the finished ones kept, oldest first. Also the `jobs` key of `sync` |
+| `jobs.get` | `GET /jobs/{job}` | → `Job`. 404 `job.not_found` |
+| `jobs.cancel` | `DELETE /jobs/{job}` | → `Job`, with its current state. The Job reads `cancelled` once its work notices. 409 `job.not_cancellable` when the phase or a finished Job forbids it |
 - **Crash halfway.** Jobs aren't saved. OTA rollback covers a Firmware Job lost mid-flash: the Device reconnects on its old or new build, and the UI shows its version. A lost Layout push leaves the Device's previous Layout, because the put is atomic on the Device (`xfer.end`).
 - **Uploads aren't Jobs.** `POST /uploads` returns an id after upload validation; `POST /firmware/bundles/pick` returns after the native file dialog closes, and Jobs then refer to that id.
 
@@ -414,7 +444,7 @@ Feature modules `devices`, `ports` and `console`.
 | `devices.get` | `GET /devices/{device}` | → `DeviceSummary` |
 | `devices.connect` | `POST /devices/{device}/connect` | → `DeviceSummary`. Turns auto-connect back on after a Disconnect |
 | `devices.disconnect` | `POST /devices/{device}/disconnect` | → `DeviceSummary` with `link.state: "disconnected"`. Releases the port until replug or Connect |
-| `devices.forget` | `DELETE /devices/{device}` | → `()`. Only for a Device that isn't connected |
+| `devices.forget` | `DELETE /devices/{device}` | → `()`. Only for a Device that isn't connected; a connected one gives 409 `device.connected` |
 | `devices.restart` | `POST /devices/{device}/restart` | → `()`, then `device.updated` events |
 | `devices.settings_get` | `GET /devices/{device}/settings` | → `DeviceSettings {idle_timeout_s, orientation, name?, brightness?}`. v2 fields are `null` on v1 Firmware |
 | `devices.settings_patch` | `PATCH /devices/{device}/settings` | `DeviceSettingsPatch`, every field optional → `{settings, restart_required}`. A v2 field on v1 Firmware gives 409 `device.needs_firmware` |
@@ -449,6 +479,16 @@ Feature module `layouts`.
 
 The `Layout` body extractor runs `td_core::Layout` validation once. On failure it returns 422 `layout.invalid` with `details.issues: [{path, message}]`.
 
+As built in #75:
+
+- **Revision.** The CRC-32 of the stored bytes as 8 lowercase hex digits, such as `"1c291ca3"`. `ETag` sends it quoted. `PushReport.revision` gives the pushed Layout's revision, so the next push can send it without a read.
+- **`If-Match`.** Quoted or bare revisions, comma-separated, or `*` for any stored Layout. The Companion reads the Device's revision before it accepts the push, and the Job reads it again before the put. A mismatch before the Job is 412 `layout.changed` with `details.revision` (the current one, or `null` for an empty slot). A mismatch the Job finds fails it with the same error.
+- **An empty slot.** `layouts.get` returns 404 `layout.not_found`.
+- **Issues.** Each issue also has `rule`, the rule key from `schema/README.md`. `path` is the JSON pointer when the rule's message starts with one, otherwise empty.
+- **The Layout store.** The Companion keeps each Device's Layouts as `layouts/<device>/<orientation>.json` under its data folder, in canonical form. A Layout lands there after a successful push or read. Today's app keeps no Layout on the PC, so there's nothing to read from it; #91 owns migration.
+- **Sessions.** Layout and Asset work runs on the session the Device manager keeps for each Device (#74), one operation at a time per Device, through `link::Links::with`. The port is never opened twice. The actor's own requests can interleave with it, since a session matches replies to requests by sequence number.
+- **Assets on push.** The Job sends the icons the Layout names that the Device lacks over today's v1 `icon.*` messages, then puts the Layout. #93 replaces that step with the v2 Asset store.
+
 ### Firmware
 
 Feature module `firmware`.
@@ -477,6 +517,12 @@ Feature module `assets`. Assets reach a Device only through `layouts.push`, whic
 | `assets.catalog_search` | `GET /assets/catalog/search?q=&catalog=` | → `CatalogHit[]`. The Companion fetches and caches catalogs |
 | `assets.on_device` | `GET /devices/{device}/assets` | → `{ids: AssetId[], storage_free}` |
 | `assets.prune` | `POST /devices/{device}/assets/prune` | `{also_keep: AssetId[]}` → 202 Job `assets.prune`. Removes Assets no stored Layout uses |
+
+As built in #75:
+
+- `assets.create` takes the `app` source only; #93 adds `upload` and `catalog`. `fit` is `"contain"` (the default: the whole image inside the Tile) or `"cover"` (cropped to a centered square first). The result's `kind` is `tdi1`, 64 by 64. A third render while two run gets 429 `limits.exceeded`.
+- `assets.prune` keeps the Assets that `also_keep` names, that the Companion's stored Layouts for the Device use, and that the Device's own stored Layouts use, as today's `remove_unused_icons` does.
+- `assets.file` reads built-in icons and the Companion's Asset files, kept as `assets/<id>.bin` under its data folder. The generated client returns a `Blob` for it.
 
 ### Actions and approvals
 
@@ -679,15 +725,17 @@ Features add codes as they land. This list is the starting set.
 | `route.method_not_allowed` | 405 | The path exists with another method |
 | `device.not_found` | 404 | No Device with that id |
 | `device.not_connected` | 409 | The Device is known but offline, disconnected, busy or unresponsive. `details.link` |
+| `device.connected` | 409 | `devices.forget` on a connected Device. Disconnect it first |
 | `device.busy` | 409 | A Job holds the Device. `details.job` |
 | `device.timeout` | 504 | The Device didn't reply in time |
 | `device.link` | 502 | Link I/O failed or the Device refused. `details.reason` |
-| `device.needs_firmware` | 409 | The feature needs newer Firmware. `details.version` |
+| `device.needs_firmware` | 409 | The feature needs newer Firmware. `details.field` names the setting; `details.version` is the version that adds it, or `null` while no released Firmware has it (brightness today) |
 | `new_board.not_found` | 404 | No New board with that id |
 | `layout.invalid` | 422 | The Layout fails validation. `details.issues` |
 | `layout.orientation_mismatch` | 422 | The path and body orientations differ |
 | `layout.changed` | 412 | The Device's Layout changed since it was loaded |
 | `layout.stored_invalid` | 502 | The Layout stored on the Device fails validation |
+| `layout.not_found` | 404 | The Device stores no Layout for that orientation |
 | `firmware.bundle_invalid` | 422 | The picked file isn't a valid bundle |
 | `firmware.bundle_not_found` | 404 | The `BundleId` expired, was consumed, belongs to another target or never existed |
 | `firmware.declined` | Job error | The user declined native confirmation; no Firmware write occurred |
@@ -699,6 +747,7 @@ Features add codes as they land. This list is the starting set.
 | `upload.not_found` | 404 | The upload expired or never existed |
 | `job.not_found` | 404 | No Job with that id |
 | `job.not_cancellable` | 409 | The Job's current phase can't be cancelled |
+| `job.cancelled` | Job error | The Job was cancelled |
 | `approval.not_found` | 404 | The request was answered or expired |
 | `action.not_found` | 404 | No always-allowed action with that hash |
 | `integration.not_found` | 404 | No Integration with that id |
@@ -736,7 +785,7 @@ pub struct Req<E: Endpoint> { pub path: E::Path, pub query: E::Query, pub body: 
 
 ### Generated TypeScript
 
-ts-rs derives each type. The Companion's generator writes `<ui>/src/companion/api.gen.ts` with every type, an endpoint table, typed wrappers `companion.<feature>.<action>()`, the `EventMap`, the `JobMap`, the `ErrorCode` union and `SyncData`. The file starts with `// Generated from td-companion. Do not edit.` and uses LF endings. `pnpm gen:api` runs `cargo run -p td-companion --features test-hooks -- --emit-ts <path>`.
+ts-rs derives each type. The Companion's generator writes `<ui>/src/companion/api.gen.ts` with every type, an endpoint table, typed wrappers `companion.<feature>.<action>()`, the `EventMap`, the `JobMap`, the `ErrorCode` union and `SyncData`. Each wrapper takes optional request headers after the bearer, such as `If-Match`. A response that isn't JSON comes back as a `Blob`. The file starts with `// Generated from td-companion. Do not edit.` and uses LF endings. `pnpm gen:api` runs `cargo run -p td-companion --features test-hooks -- --emit-ts <path>`.
 
 `td-core` gains an optional `ts` feature that adds `#[cfg_attr(feature = "ts", derive(TS))]` to `Layout`, `Hello`, `Settings`, `Orientation` and the other types the API carries.
 
@@ -803,6 +852,8 @@ axum 0.8 on tokio. tokio, hyper, tower and tower-http are already in `Cargo.lock
 | Growth over the empty tokio program | 2,162,688 B (2.06 MiB) | 1,103,360 B (1.05 MiB) |
 
 Under the workspace's default release profile the growth is over the 1.5 MB budget. With the size settings it's under. The workspace profile also builds the Tauri app, so #71 leaves it alone, and the packaging ticket picks the Companion's shipping profile.
+
+**Measured again in #74.** The Device manager brings in `td-host` for the key mirror. The Companion is 4,566,016 B under the default release profile and 2,059,264 B with the size settings. That's 1,809,408 B (1.73 MiB) over the empty tokio program, so it's now over the budget even with the size settings. Most of the growth is `td-host`. The packaging ticket decides whether to trim it or raise the budget.
 
 Rejected: actix-web (a second runtime layered on tokio), warp (filter types make per-feature routes and error mapping awkward), poem (a much smaller community, and its OpenAPI story uses the attribute-declared responses rejected above), tiny_http with tungstenite (a thread per connection, and hand-built upgrade, limits and middleware), and raw hyper (every layer above it would be ours).
 
@@ -902,7 +953,7 @@ Never add a public route, a CORS header, a route that answers approvals, or a ro
 | A tray program's dialog may not get the foreground on Windows | **Reduced.** The tray notification and `approvals.show`. The approval waits up to 5 minutes |
 | `assets.create` with `kind: "app"` takes any path, so a session can learn whether a file exists | **Accepted.** The Companion returns only a rendered icon, never file contents |
 | The build-script registry may confuse rust-analyzer | **Resolved.** #71 uses `inventory` (see Feature modules) |
-| `td-link`'s blocking `Session` under async handlers needs one actor thread per Device | **Open**, the Device manager ticket (#74) builds it |
-| With Fast User Switching, two Companions try to open the same COM ports | **Open.** The second sees the port as `busy`. #74 decides whether to back off |
+| `td-link`'s blocking `Session` under async handlers needs one actor thread per Device | **Resolved** in #74. Each Device's actor thread owns its session and runs requests one at a time; probes run on the scan thread |
+| With Fast User Switching, two Companions try to open the same COM ports | **Reduced** in #74. A COM port opens exclusively, so the Companion that holds a Device keeps it; the other user's Companion shows it `busy` and retries with backoff up to every 10 s, taking it over only once the first lets go. Each user has their own runtime folder, file, lock and port, so the two Companions never share a pairing token |
 | A browser tab can't show the app update icon, because updates live in Electron | **Open.** The browser shows nothing for now |
 | The key monitor's `focus_window` may need to come back | **Open.** If so, one preload call, through security review |

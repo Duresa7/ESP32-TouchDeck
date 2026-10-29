@@ -3,9 +3,12 @@ pub mod api;
 pub mod bindings;
 pub mod devices;
 pub mod features;
+pub mod jobs;
+pub mod link;
 mod process;
 mod runtime;
 mod serve;
+pub mod store;
 pub use serve::Limits;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod testing;
