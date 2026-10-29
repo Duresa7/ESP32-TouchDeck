@@ -193,7 +193,7 @@ pub(super) async fn upgrade(
     ctx.handler_hits
         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let ws = ws.map_err(|e| CommonError::invalid("upgrade", e.body_text()))?;
-    ctx.auth.lock().socket_open(&client.id)?;
+    ctx.auth.lock().socket_open(&client.id, ctx.clock.now())?;
     let lease = Lease {
         ctx: ctx.clone(),
         id: client.id.clone(),
@@ -226,12 +226,6 @@ async fn serve(socket: WebSocket, ctx: Ctx, client: ClientInfo) {
     let subscriber = ctx.events.subscribe();
     let (mut sink, mut stream) = socket.split();
     let mut seq = 0u64;
-    let mut snapshot = serde_json::Map::new();
-    for feature in super::registry() {
-        for entry in feature.snapshots {
-            snapshot.insert(entry.key.into(), (entry.read)(&ctx));
-        }
-    }
     let mut hello = serde_json::to_value(Hello {
         api: "v1".into(),
         build: env!("TD_BUILD").into(),
@@ -239,9 +233,17 @@ async fn serve(socket: WebSocket, ctx: Ctx, client: ClientInfo) {
     })
     .unwrap();
     hello["type"] = Hello::NAME.into();
-    let sync = frame(&Sync(snapshot));
-    for value in [hello, sync] {
-        if !send(&mut sink, numbered(value, &mut seq)).await {
+    if !send(&mut sink, numbered(hello, &mut seq)).await {
+        return;
+    }
+    if ctx.auth.lock().active(&client.id, ctx.clock.now()) {
+        let mut snapshot = serde_json::Map::new();
+        for feature in super::registry() {
+            for entry in feature.snapshots {
+                snapshot.insert(entry.key.into(), (entry.read)(&ctx));
+            }
+        }
+        if !send(&mut sink, numbered(frame(&Sync(snapshot)), &mut seq)).await {
             return;
         }
     }
@@ -252,7 +254,7 @@ async fn serve(socket: WebSocket, ctx: Ctx, client: ClientInfo) {
     // `Some(code)` closes with that code. `None` drops the connection: a send already failed,
     // so a close frame would stall too.
     let close: Option<u16> = loop {
-        if !ctx.auth.lock().active(&client.id) {
+        if !ctx.auth.lock().active(&client.id, ctx.clock.now()) {
             let revoked = numbered(frame(&AuthRevoked {}), &mut seq);
             break send(&mut sink, revoked).await.then_some(4401);
         }

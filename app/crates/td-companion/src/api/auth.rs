@@ -56,6 +56,7 @@ const WINDOW_IDLE: Duration = Duration::from_secs(60);
 /// Revoked sessions are kept so their tokens get `auth.revoked`, until the table is full.
 const MAX_SESSIONS: usize = 1024;
 const MAX_LABEL: usize = 64;
+const BROWSER_IDLE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 struct Session {
     info: SessionInfo,
@@ -63,16 +64,26 @@ struct Session {
     sockets: usize,
     /// When the session last had no open socket.
     idle_since: Instant,
+    last_request: Instant,
+    marked_expired: bool,
 }
 impl Session {
     fn expired(&self, now: Instant) -> bool {
-        self.info.kind == SessionKind::Window
-            && self.sockets == 0
-            && now.saturating_duration_since(self.idle_since) >= WINDOW_IDLE
+        self.marked_expired
+            || (self.info.kind == SessionKind::Browser
+                && now.saturating_duration_since(self.last_request) >= BROWSER_IDLE)
+            || self.info.kind == SessionKind::Window
+                && self.sockets == 0
+                && now.saturating_duration_since(self.idle_since) >= WINDOW_IDLE
+    }
+    fn live(&self, now: Instant) -> bool {
+        !self.revoked && !self.expired(now)
     }
 }
 pub(crate) struct Auth {
     pairing: String,
+    pending: Option<([u8; 32], Instant)>,
+    wrong: u8,
     sessions: HashMap<[u8; 32], Session>,
 }
 pub(crate) fn token(prefix: &str) -> String {
@@ -94,6 +105,8 @@ impl Auth {
     pub(crate) fn new() -> Self {
         Self {
             pairing: token("tdp_"),
+            pending: None,
+            wrong: 0,
             sessions: HashMap::new(),
         }
     }
@@ -135,10 +148,14 @@ impl Auth {
             return Err(CommonError::AuthRevoked("The session was revoked."));
         }
         if session.expired(now) {
+            if session.info.kind == SessionKind::Browser {
+                return Err(CommonError::AuthExpired);
+            }
             session.revoked = true;
             return Err(CommonError::AuthRevoked("The window session ended."));
         }
         session.info.last_used_ms = crate::now_ms();
+        session.last_request = now;
         Ok(ClientInfo {
             id: session.info.id.clone(),
             kind: session.info.kind,
@@ -177,23 +194,25 @@ impl Auth {
                 revoked: false,
                 sockets: 0,
                 idle_since: now,
+                last_request: now,
+                marked_expired: false,
             },
         );
         Ok(SessionCreated { id, token })
     }
-    pub(crate) fn active(&self, id: &str) -> bool {
+    pub(crate) fn active(&self, id: &str, now: Instant) -> bool {
         self.sessions
             .values()
-            .any(|s| s.info.id == id && !s.revoked)
+            .any(|s| s.info.id == id && s.live(now))
     }
-    pub(crate) fn socket_open(&mut self, id: &str) -> Result<(), CommonError> {
+    pub(crate) fn socket_open(&mut self, id: &str, now: Instant) -> Result<(), CommonError> {
         if self.sessions.values().map(|s| s.sockets).sum::<usize>() >= 16 {
             return Err(CommonError::Limits("The Companion has too many sockets."));
         }
         let s = self
             .sessions
             .values_mut()
-            .find(|s| s.info.id == id && !s.revoked)
+            .find(|s| s.info.id == id && s.live(now))
             .ok_or(CommonError::AuthRevoked("The session was revoked."))?;
         if s.sockets >= 4 {
             return Err(CommonError::Limits("The session has too many sockets."));
@@ -201,17 +220,17 @@ impl Auth {
         s.sockets += 1;
         Ok(())
     }
-    pub(crate) fn active_at(&self, id: &str, now: Instant) -> bool {
-        self.sessions
-            .values()
-            .any(|s| s.info.id == id && !s.revoked && !s.expired(now))
-    }
-    /// Drops sessions that were revoked or have ended once their last socket is gone, so a
-    /// later use of the token reads as unknown. Returns how many rows remain.
-    pub(crate) fn sweep(&mut self, now: Instant) -> usize {
+    pub(crate) fn sweep(&mut self, now: Instant) -> bool {
+        let mut ended_with_sockets = false;
+        for s in self.sessions.values_mut() {
+            if !s.revoked && !s.marked_expired && s.expired(now) {
+                s.marked_expired = true;
+                ended_with_sockets |= s.sockets > 0;
+            }
+        }
         self.sessions
             .retain(|_, s| s.sockets > 0 || !(s.revoked || s.expired(now)));
-        self.sessions.len()
+        ended_with_sockets
     }
     pub(crate) fn socket_close(&mut self, id: &str, now: Instant) {
         if let Some(s) = self.sessions.values_mut().find(|s| s.info.id == id) {
@@ -337,7 +356,7 @@ impl Endpoint for Sessions {
             .lock()
             .sessions
             .values()
-            .filter(|s| !s.revoked && !s.expired(now))
+            .filter(|s| s.live(now))
             .map(|s| SessionInfo {
                 current: s.info.id == *own,
                 ..s.info.clone()
@@ -389,26 +408,32 @@ impl Endpoint for Reset {
     type Ok = ();
     type Error = CommonError;
     async fn handle(ctx: Ctx, _: Req<Self>) -> Result<(), CommonError> {
-        {
-            let mut auth = ctx.auth.lock();
-            auth.pairing = token("tdp_");
-            for s in auth.sessions.values_mut() {
-                s.revoked = true;
-            }
-        }
-        ctx.events.notify();
-        if !crate::process::rewrite_runtime(&ctx).await {
-            let _ = ctx.shutdown.send(true);
-            return Err(CommonError::Internal);
-        }
-        Ok(())
+        reset(ctx).await
     }
+}
+pub(super) async fn reset(ctx: Ctx) -> Result<(), CommonError> {
+    {
+        let mut auth = ctx.auth.lock();
+        auth.pairing = token("tdp_");
+        auth.pending = None;
+        for s in auth.sessions.values_mut() {
+            s.revoked = true;
+        }
+    }
+    ctx.events.notify();
+    if !crate::process::rewrite_runtime(&ctx).await {
+        let _ = ctx.shutdown.send(true);
+        return Err(CommonError::Internal);
+    }
+    Ok(())
 }
 
 fn auth_feature() -> Feature {
     Feature::new("auth")
         .route::<ProofEndpoint>(Access::Public)
         .route::<SessionCreate>(Access::Pairing)
+        .route::<Pair>(Access::Public)
+        .endpoint::<PairCode>()
         .endpoint::<Sessions>()
         .endpoint::<SessionDelete>()
         .endpoint::<Reset>()
@@ -425,6 +450,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn code_normalization_accepts_every_alias() {
+        assert_eq!(normalized(" oIiL- abcd 2345 "), "0111ABCD2345");
+    }
+
+    #[test]
     fn a_full_table_prunes_revoked_sessions_without_sockets() {
         let mut auth = Auth::new();
         let now = Instant::now();
@@ -433,7 +463,7 @@ mod tests {
             ids.push(auth.mint(None, now).unwrap().id);
         }
         assert!(auth.mint(None, now).is_err());
-        auth.socket_open(&ids[0]).unwrap();
+        auth.socket_open(&ids[0], now).unwrap();
         for s in auth.sessions.values_mut() {
             s.revoked = true;
         }
@@ -442,7 +472,7 @@ mod tests {
         assert_eq!(auth.sessions.len(), 2);
         let open: usize = auth.sessions.values().map(|s| s.sockets).sum();
         assert_eq!(open, 1);
-        assert!(auth.active(&fresh.id));
+        assert!(auth.active(&fresh.id, now));
     }
 
     #[test]
@@ -453,18 +483,121 @@ mod tests {
         let idle = auth.mint(None, start).unwrap().id;
         let connected = auth.mint(None, start).unwrap().id;
         let revoked_connected = auth.mint(None, start).unwrap().id;
-        auth.socket_open(&connected).unwrap();
-        auth.socket_open(&revoked_connected).unwrap();
+        auth.socket_open(&connected, start).unwrap();
+        auth.socket_open(&revoked_connected, start).unwrap();
         for s in auth.sessions.values_mut() {
             if s.info.id == revoked || s.info.id == revoked_connected {
                 s.revoked = true;
             }
         }
-        assert_eq!(auth.sweep(start), 3);
+        auth.sweep(start);
+        assert_eq!(auth.sessions.len(), 3);
         let later = start + WINDOW_IDLE;
-        assert_eq!(auth.sweep(later), 2);
+        auth.sweep(later);
+        assert_eq!(auth.sessions.len(), 2);
         let left: Vec<_> = auth.sessions.values().map(|s| s.info.id.clone()).collect();
         assert!(left.contains(&connected) && left.contains(&revoked_connected));
         assert!(!left.contains(&idle));
+    }
+}
+
+#[derive(Serialize, Deserialize, TS)]
+pub struct PairRequest {
+    pub code: String,
+    pub label: Option<String>,
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct PairExpires {
+    pub expires_ms: u64,
+}
+fn normalized(code: &str) -> String {
+    code.chars()
+        .filter(|c| !c.is_whitespace() && *c != '-')
+        .map(|c| match c.to_ascii_uppercase() {
+            'O' => '0',
+            'I' | 'L' => '1',
+            c => c,
+        })
+        .collect()
+}
+pub(super) async fn pair_code(ctx: Ctx) -> Result<PairExpires, CommonError> {
+    let mut bytes = [0; 12];
+    getrandom::fill(&mut bytes).map_err(|_| CommonError::Internal)?;
+    let alphabet = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    let raw: String = bytes
+        .iter()
+        .map(|b| alphabet[(b & 31) as usize] as char)
+        .collect();
+    let code = format!("{}-{}-{}", &raw[..4], &raw[4..8], &raw[8..]);
+    {
+        let mut auth = ctx.auth.lock();
+        auth.pending = Some((digest(&raw), ctx.clock.now() + Duration::from_secs(120)));
+        auth.wrong = 0;
+    }
+    let expires_ms = crate::now_ms() + 120_000;
+    let desktop = ctx.desktop.clone();
+    let port = ctx.port;
+    tokio::task::spawn_blocking(move || desktop.deliver(port, &code))
+        .await
+        .map_err(|_| CommonError::Internal)??;
+    Ok(PairExpires { expires_ms })
+}
+pub struct PairCode;
+impl Endpoint for PairCode {
+    const NAME: &'static str = "auth.pair_code";
+    const METHOD: Method = Method::POST;
+    const PATH: &'static str = "/auth/pair-codes";
+    type Path = ();
+    type Query = NoQuery;
+    type Body = ();
+    type Ok = PairExpires;
+    type Error = CommonError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
+        if req.client().kind != SessionKind::Window {
+            return Err(CommonError::Forbidden("A window session is required."));
+        }
+        pair_code(ctx).await
+    }
+}
+pub struct Pair;
+impl Endpoint for Pair {
+    const NAME: &'static str = "auth.pair";
+    const METHOD: Method = Method::POST;
+    const PATH: &'static str = "/auth/pair";
+    const BODY_LIMIT: usize = PUBLIC_BODY_LIMIT;
+    type Path = ();
+    type Query = NoQuery;
+    type Body = PairRequest;
+    type Ok = SessionCreated;
+    type Error = CommonError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
+        let mut auth = ctx.auth.lock();
+        if auth.wrong >= 5 {
+            return Err(CommonError::CodeLocked);
+        }
+        let now = ctx.clock.now();
+        let supplied = digest(&normalized(&req.body.code));
+        if !auth
+            .pending
+            .as_ref()
+            .is_some_and(|(hash, until)| now < *until && bool::from(hash.ct_eq(&supplied)))
+        {
+            auth.wrong += 1;
+            if auth.wrong == 5 {
+                auth.pending = None;
+                ctx.desktop
+                    .notify("Pairing was blocked after wrong codes. Start pairing again.");
+            }
+            return Err(CommonError::CodeInvalid);
+        }
+        auth.pending = None;
+        auth.wrong = 0;
+        let created = auth.mint(req.body.label.or(Some("Browser".into())), now)?;
+        auth.sessions
+            .get_mut(&digest(&created.token))
+            .unwrap()
+            .info
+            .kind = SessionKind::Browser;
+        Ok(created)
     }
 }
