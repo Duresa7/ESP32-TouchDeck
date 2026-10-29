@@ -170,11 +170,10 @@ describe('the update runner', () => {
     const log = update.getState().log;
     expect(log[0]).toBe('Checking');
     expect(log.at(-1)).toBe('Firmware updated');
-    // Polling can miss a short phase, so check that the phases seen come in order.
-    const order = ['Checking', 'Sending', 'Rebooting', 'Confirming', 'Firmware updated'];
-    const ranks = log.map((line) => order.findIndex((step) => line.startsWith(step)));
-    expect(ranks).not.toContain(-1);
-    expect(ranks).toEqual([...ranks].sort((a, b) => a - b));
+    const phaseOrder = ['Checking', 'Sending', 'Rebooting', 'Confirming', 'Firmware updated'];
+    const seenPhases = log.map((line) => phaseOrder.findIndex((step) => line.startsWith(step)));
+    expect(seenPhases).not.toContain(-1);
+    expect(seenPhases).toEqual([...seenPhases].sort((a, b) => a - b));
     expect((await companion.devices.get({ device: 'mock0002' })).firmware?.version).toBe('1.5.0');
   });
 

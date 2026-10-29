@@ -18,10 +18,10 @@ export interface UpdateContext {
 }
 
 type BundleRef = FirmwareRequest['bundle'];
-type Phase = 'checking' | 'sending' | 'rebooting' | 'confirming' | 'recovering';
+const PHASES = ['checking', 'sending', 'rebooting', 'confirming', 'recovering'] as const;
+type Phase = (typeof PHASES)[number];
 export type PhaseProgress = Pick<FirmwareProgress, 'pct'> & { phase: Phase };
 
-const PHASES: readonly Phase[] = ['checking', 'sending', 'rebooting', 'confirming', 'recovering'];
 const RAW: Record<Phase, string> = { checking: 'Checking', sending: 'Sending', rebooting: 'Rebooting', confirming: 'Confirming', recovering: 'Recovering' };
 
 function progressOf(value: unknown): PhaseProgress | null {
