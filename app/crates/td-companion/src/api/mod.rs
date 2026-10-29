@@ -47,27 +47,31 @@ pub struct Ctx {
     pub(crate) handler_hits: Arc<std::sync::atomic::AtomicUsize>,
 }
 impl Ctx {
+    /// Blocking: it loads the saved grants. Call it off the async runtime.
     pub(crate) fn new(
         port: u16,
         mock: bool,
         runtime: Option<Arc<crate::runtime::Runtime>>,
         limits: crate::Limits,
         data: &std::path::Path,
+        grants: Arc<dyn crate::actions::GrantStore>,
     ) -> Self {
         let events = Events::default();
         let clock = Clock::default();
         let devices = crate::devices::DeviceManager::new(events.clone());
+        let links = crate::link::Links::new(devices.clone());
         let actions = crate::actions::Actions::new(
             events.clone(),
             clock.clone(),
             devices.clone(),
-            data.join("allowed-actions.json"),
+            links.clone(),
+            grants,
             mock,
         );
         Self {
             actions,
             jobs: crate::jobs::Jobs::new(events.clone(), clock.clone()),
-            links: crate::link::Links::new(devices.clone()),
+            links,
             layouts: crate::store::LayoutStore::new(data.join("layouts")),
             assets: crate::store::AssetStore::new(data.join("assets")),
             devices,

@@ -1,12 +1,20 @@
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
-use std::time::Duration;
+use std::{
+    sync::{Arc, Mutex, mpsc},
+    time::Duration,
+};
 use td_companion::{
+    actions::{ActionSpec, AllowedAction, GrantStore},
     api::NoQuery,
     features::layouts::{LayoutBody, LayoutPath, Push},
+    jobs::{Job, JobState},
     testing::TestCompanion,
 };
 use td_core::{Layout, Orientation};
+
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn get(td: &TestCompanion, path: &str) -> Value {
     td.raw()
@@ -45,59 +53,60 @@ async fn script(td: &TestCompanion, answer: &str) {
         .error_for_status()
         .unwrap();
 }
-async fn layout(td: &TestCompanion, device: &str, count: usize, code: i32) {
-    let program = if code == -1 && cfg!(windows) {
-        "powershell.exe"
-    } else if cfg!(windows) {
-        "cmd"
-    } else {
-        "sh"
-    };
-    let flag = if code == -1 && cfg!(windows) {
-        "-Command"
-    } else if cfg!(windows) {
-        "/C"
-    } else {
-        "-c"
-    };
-    let command = if code == -1 {
-        if cfg!(windows) {
-            "Start-Sleep -Seconds 3; exit 0".into()
-        } else {
-            "sleep 3; exit 0".into()
-        }
-    } else {
-        format!("exit {code}")
-    };
-    let tiles: Vec<_> = (0..count).map(|n| json!({"id": format!("t{n}"), "label": format!("Tile {n}"), "row": n / 6, "col": n % 6, "rowSpan":1, "colSpan":1,
-        "action":{"type":"command", "program":program, "args": [flag, command], "cwd":"", "shell":false}})).collect();
-    let layout: Layout = serde_json::from_value(json!({"schema":1,"name":"Actions","orientation":"landscape","pages":[{"id":"main","title":"Main","kind":"grid","rows":3,"cols":6,"tiles":tiles}]})).unwrap();
-    let job = td
-        .call::<Push>(
-            LayoutPath {
-                device: device.into(),
-                orientation: Orientation::Landscape,
-            },
-            NoQuery,
-            LayoutBody::new(&layout),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        td.wait(&job).await.state,
-        td_companion::jobs::JobState::Succeeded
-    );
+/// Commands that append a line to a file each time they run, so a test can count runs.
+struct Runs(tempfile::TempDir);
+impl Runs {
+    fn new() -> Self {
+        Self(tempfile::tempdir().unwrap())
+    }
+    fn count(&self) -> usize {
+        std::fs::read_to_string(self.0.path().join("runs")).map_or(0, |s| s.lines().count())
+    }
+    /// A command that records its run and exits with `code`, or sleeps 3 s unrecorded for -1.
+    fn action(&self, code: i32) -> Value {
+        let (program, flag, command) = match (code, cfg!(windows)) {
+            (-1, true) => (
+                "powershell.exe",
+                "-Command",
+                "Start-Sleep -Seconds 3; exit 0".into(),
+            ),
+            (-1, false) => ("sh", "-c", "sleep 3; exit 0".into()),
+            (_, true) => ("cmd", "/C", format!("echo ran>>runs& exit {code}")),
+            (_, false) => ("sh", "-c", format!("echo ran >> runs; exit {code}")),
+        };
+        json!({"type":"command", "program":program, "args":[flag, command],
+            "cwd":self.0.path().to_string_lossy(), "shell":false})
+    }
+    fn layout(&self, count: usize, code: i32) -> Layout {
+        grid((0..count).map(|_| self.action(code)).collect())
+    }
+}
+/// One Page with a Tile per action, `t0` onwards.
+fn grid(actions: Vec<Value>) -> Layout {
+    let tiles: Vec<_> = actions.into_iter().enumerate().map(|(n, action)| json!({"id": format!("t{n}"), "label": format!("Tile {n}"), "row": n / 6, "col": n % 6, "rowSpan":1, "colSpan":1, "action":action})).collect();
+    serde_json::from_value(json!({"schema":1,"name":"Actions","orientation":"landscape","pages":[{"id":"main","title":"Main","kind":"grid","rows":3,"cols":6,"tiles":tiles}]})).unwrap()
+}
+async fn push_layout(td: &TestCompanion, device: &str, layout: &Layout) -> Job {
+    td.call::<Push>(
+        LayoutPath {
+            device: device.into(),
+            orientation: Orientation::Landscape,
+        },
+        NoQuery,
+        LayoutBody::new(layout),
+    )
+    .await
+    .unwrap()
+}
+async fn layout(td: &TestCompanion, device: &str, layout: &Layout) {
+    let job = push_layout(td, device, layout).await;
+    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
 }
 fn press(td: &TestCompanion, device: &str, tile: usize) {
     td.deck(device)
         .emit_press("main", &format!("t{tile}"), "command");
 }
-async fn frame(
-    socket: &mut tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
-    name: &str,
-) -> Value {
+async fn frame(socket: &mut Socket, name: &str) -> Value {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let value: Value =
@@ -111,25 +120,47 @@ async fn frame(
     .await
     .unwrap()
 }
+/// The approval events that arrive until none has for 400 ms, as `requested` or
+/// `resolved <answer>`.
+async fn approval_events(socket: &mut Socket) -> Vec<String> {
+    let mut seen = Vec::new();
+    while let Ok(Some(Ok(message))) =
+        tokio::time::timeout(Duration::from_millis(400), socket.next()).await
+    {
+        let Ok(value) = serde_json::from_str::<Value>(message.to_text().unwrap_or_default()) else {
+            continue;
+        };
+        match value["type"].as_str() {
+            Some("approval.requested") => seen.push("requested".to_owned()),
+            Some("approval.resolved") => seen.push(format!(
+                "resolved {}",
+                value["data"]["answer"].as_str().unwrap()
+            )),
+            _ => {}
+        }
+    }
+    seen
+}
 #[tokio::test]
 async fn approval_answers_repeats_changed_arguments_and_revocation() {
     let td = TestCompanion::start().await;
+    let runs = Runs::new();
     td.plug_device("mock0001").await;
-    layout(&td, "mock0001", 1, 0).await;
+    layout(&td, "mock0001", &runs.layout(1, 0)).await;
     let mut socket = td.events().await;
     press(&td, "mock0001", 0);
-    frame(&mut socket, "approval.requested").await;
     let pending = wait_count(&td, "approvals", 1).await;
-    assert_eq!(get(&td, "actions/log").await, json!([]));
     press(&td, "mock0001", 0);
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(approval_events(&mut socket).await, ["requested"]);
     assert_eq!(get(&td, "approvals").await, pending);
+    assert_eq!(get(&td, "actions/log").await, json!([]));
+    assert_eq!(runs.count(), 0);
+
     script(&td, "once").await;
-    assert_eq!(
-        frame(&mut socket, "approval.resolved").await["data"]["answer"],
-        "once"
-    );
     assert_eq!(wait_count(&td, "actions/log", 1).await[0]["exit_code"], 0);
+    assert_eq!(approval_events(&mut socket).await, ["resolved once"]);
+    assert_eq!(runs.count(), 1);
+
     press(&td, "mock0001", 0);
     wait_count(&td, "approvals", 1).await;
     script(&td, "deny").await;
@@ -137,6 +168,12 @@ async fn approval_answers_repeats_changed_arguments_and_revocation() {
         wait_count(&td, "actions/log", 2).await[1]["status"],
         "denied"
     );
+    assert_eq!(
+        approval_events(&mut socket).await,
+        ["requested", "resolved deny"]
+    );
+    assert_eq!(runs.count(), 1);
+
     press(&td, "mock0001", 0);
     wait_count(&td, "approvals", 1).await;
     script(&td, "always").await;
@@ -144,11 +181,23 @@ async fn approval_answers_repeats_changed_arguments_and_revocation() {
     press(&td, "mock0001", 0);
     wait_count(&td, "actions/log", 4).await;
     assert_eq!(get(&td, "approvals").await, json!([]));
-    layout(&td, "mock0001", 1, 3).await;
+    assert_eq!(
+        approval_events(&mut socket).await,
+        ["requested", "resolved always"]
+    );
+    assert_eq!(runs.count(), 3);
+
+    layout(&td, "mock0001", &runs.layout(1, 3)).await;
     press(&td, "mock0001", 0);
     wait_count(&td, "approvals", 1).await;
     script(&td, "deny").await;
     wait_count(&td, "actions/log", 5).await;
+    assert_eq!(
+        approval_events(&mut socket).await,
+        ["requested", "resolved deny"]
+    );
+    assert_eq!(runs.count(), 3);
+
     let hash = get(&td, "actions/allowed").await[0]["hash"]
         .as_str()
         .unwrap()
@@ -164,7 +213,7 @@ async fn approval_answers_repeats_changed_arguments_and_revocation() {
         .unwrap()
         .error_for_status()
         .unwrap();
-    layout(&td, "mock0001", 1, 0).await;
+    layout(&td, "mock0001", &runs.layout(1, 0)).await;
     press(&td, "mock0001", 0);
     wait_count(&td, "approvals", 1).await;
     td.clock().advance(Duration::from_secs(301));
@@ -172,23 +221,28 @@ async fn approval_answers_repeats_changed_arguments_and_revocation() {
         wait_count(&td, "actions/log", 6).await[5]["status"],
         "expired"
     );
+    assert_eq!(
+        approval_events(&mut socket).await,
+        ["requested", "resolved expired"]
+    );
+    assert_eq!(runs.count(), 3);
 }
 #[tokio::test]
 async fn flooding_is_bounded_and_all_device_keys_are_suppressed() {
     let td = TestCompanion::start().await;
+    let runs = Runs::new();
     td.plug_device("mock0001").await;
     td.plug_device("mock0002").await;
-    layout(&td, "mock0001", 17, 0).await;
+    layout(&td, "mock0001", &runs.layout(17, 0)).await;
     let mut socket = td.events().await;
     for n in 0..17 {
         press(&td, "mock0001", n);
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
     wait_count(&td, "approvals", 16).await;
-    assert_eq!(
-        wait_count(&td, "actions/log", 1).await[0]["detail"],
-        "limits.exceeded"
-    );
+    let overflow = wait_count(&td, "actions/log", 1).await;
+    assert_eq!(overflow[0]["status"], "denied");
+    assert_eq!(overflow[0]["detail"], "limits.exceeded");
     for device in ["mock0001", "mock0002"] {
         socket
             .send(tokio_tungstenite::tungstenite::Message::text(
@@ -209,13 +263,15 @@ async fn flooding_is_bounded_and_all_device_keys_are_suppressed() {
     wait_count(&td, "approvals", 0).await;
     wait_count(&td, "actions/log", 17).await;
     assert!(td.input_log().is_empty());
+    assert_eq!(runs.count(), 0);
 }
 #[tokio::test]
 async fn two_devices_resolve_their_own_actions() {
     let td = TestCompanion::start().await;
+    let runs = Runs::new();
     for (device, code) in [("mock0001", 3), ("mock0002", 7)] {
         td.plug_device(device).await;
-        layout(&td, device, 1, code).await;
+        layout(&td, device, &runs.layout(1, code)).await;
     }
     for device in ["mock0001", "mock0002"] {
         press(&td, device, 0);
@@ -267,10 +323,11 @@ async fn release_router_answers_no_approvals() {
 #[tokio::test]
 async fn a_slow_action_does_not_block_another_device() {
     let td = TestCompanion::start().await;
+    let runs = Runs::new();
     td.plug_device("mock0001").await;
     td.plug_device("mock0002").await;
-    layout(&td, "mock0001", 1, -1).await;
-    layout(&td, "mock0002", 1, 7).await;
+    layout(&td, "mock0001", &runs.layout(1, -1)).await;
+    layout(&td, "mock0002", &runs.layout(1, 7)).await;
     press(&td, "mock0001", 0);
     wait_count(&td, "approvals", 1).await;
     script(&td, "once").await;
@@ -295,22 +352,7 @@ async fn launches_and_file_opens_require_native_consent() {
         json!({"type":"open", "target":"file:///must-not-open"}),
         json!({"type":"open", "target":"custom:must-not-open"}),
     ] {
-        let value: Layout = serde_json::from_value(json!({"schema":1,"name":"Consent","orientation":"landscape","pages":[{"id":"main","title":"Main","kind":"grid","rows":3,"cols":6,"tiles":[{"id":"t0","label":"Consent","row":0,"col":0,"rowSpan":1,"colSpan":1,"action":action}]}]})).unwrap();
-        let job = td
-            .call::<Push>(
-                LayoutPath {
-                    device: "mock0001".into(),
-                    orientation: Orientation::Landscape,
-                },
-                NoQuery,
-                LayoutBody::new(&value),
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            td.wait(&job).await.state,
-            td_companion::jobs::JobState::Succeeded
-        );
+        layout(&td, "mock0001", &grid(vec![action])).await;
         press(&td, "mock0001", 0);
         let pending = wait_count(&td, "approvals", 1).await;
         assert!(
@@ -360,4 +402,188 @@ async fn launches_and_file_opens_require_native_consent() {
             .iter()
             .all(|l| l["status"] == "denied")
     );
+}
+
+#[tokio::test]
+async fn tap_during_layout_push_waits_and_resolves_updated_action() {
+    let td = TestCompanion::start().await;
+    let runs = Runs::new();
+    td.plug_device("mock0001").await;
+    layout(&td, "mock0001", &runs.layout(1, 0)).await;
+    let deck = td.deck("mock0001");
+    let before = deck.received().len();
+    deck.delay_replies(Duration::from_millis(150));
+    let job = push_layout(&td, "mock0001", &runs.layout(1, 7)).await;
+    td.until(|_| {
+        deck.received()[before..]
+            .iter()
+            .any(|v| v["m"] == "layout.put")
+    })
+    .await;
+    press(&td, "mock0001", 0);
+    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    let pending = wait_count(&td, "approvals", 1).await;
+    assert!(pending[0]["args"][1].as_str().unwrap().ends_with("exit 7"));
+    script(&td, "once").await;
+    assert_eq!(wait_count(&td, "actions/log", 1).await[0]["exit_code"], 7);
+    assert_eq!(runs.count(), 1);
+}
+
+#[tokio::test]
+async fn dialog_escapes_invisible_characters_and_grants_the_raw_value() {
+    let td = TestCompanion::start().await;
+    let runs = Runs::new();
+    td.plug_device("mock0001").await;
+    let raw = "report\u{202E}gpj.exe\u{202C}";
+    let mut action = runs.action(0);
+    action["args"].as_array_mut().unwrap().push(json!(raw));
+    layout(&td, "mock0001", &grid(vec![action.clone()])).await;
+    press(&td, "mock0001", 0);
+    let pending = wait_count(&td, "approvals", 1).await;
+    script(&td, "always").await;
+    wait_count(&td, "actions/log", 1).await;
+
+    let text = td.prompted().pop().unwrap();
+    assert!(
+        text.contains(r#""report\u{202E}gpj.exe\u{202C}""#),
+        "{text}"
+    );
+    assert!(!text.contains(['\u{202E}', '\u{202C}']), "{text}");
+
+    let spec = ActionSpec {
+        kind: "command".into(),
+        program: action["program"].as_str().unwrap().into(),
+        args: serde_json::from_value(action["args"].clone()).unwrap(),
+        cwd: action["cwd"].as_str().unwrap().into(),
+        shell: false,
+    };
+    assert_eq!(spec.args[2], raw);
+    let allowed = get(&td, "actions/allowed").await;
+    assert_eq!(allowed[0]["hash"], spec.hash());
+    assert_eq!(pending[0]["hash"], spec.hash());
+    assert_eq!(allowed[0]["args"][2], raw);
+}
+
+#[tokio::test]
+async fn a_failed_prompt_denies() {
+    let td = TestCompanion::start().await;
+    let runs = Runs::new();
+    td.plug_device("mock0001").await;
+    layout(&td, "mock0001", &runs.layout(1, 0)).await;
+    let mut socket = td.events().await;
+    press(&td, "mock0001", 0);
+    wait_count(&td, "approvals", 1).await;
+    script(&td, "fail").await;
+    let log = wait_count(&td, "actions/log", 1).await;
+    assert_eq!(log[0]["status"], "denied");
+    assert!(
+        log[0]["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("The approval prompt failed")
+    );
+    assert_eq!(
+        approval_events(&mut socket).await,
+        ["requested", "resolved deny"]
+    );
+    assert_eq!(get(&td, "actions/allowed").await, json!([]));
+    assert_eq!(runs.count(), 0);
+}
+
+/// A grant store whose saves fail, or wait for the test to let them finish.
+struct TestGrants {
+    fail: bool,
+    entered: Mutex<mpsc::Sender<()>>,
+    release: Mutex<mpsc::Receiver<()>>,
+}
+impl TestGrants {
+    fn new(fail: bool) -> (Arc<Self>, mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (entered, saving) = mpsc::channel();
+        let (finish, release) = mpsc::channel();
+        let store = Self {
+            fail,
+            entered: Mutex::new(entered),
+            release: Mutex::new(release),
+        };
+        (Arc::new(store), saving, finish)
+    }
+}
+impl GrantStore for TestGrants {
+    fn load(&self) -> std::io::Result<Vec<AllowedAction>> {
+        Ok(Vec::new())
+    }
+    fn save(&self, _: &[AllowedAction]) -> std::io::Result<()> {
+        if self.fail {
+            return Err(std::io::Error::other("the disk is full"));
+        }
+        let _ = self.entered.lock().unwrap().send(());
+        let _ = self
+            .release
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(10));
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_failed_grant_write_denies() {
+    let (grants, _, _) = TestGrants::new(true);
+    let td = TestCompanion::start_with_grants(grants).await;
+    let runs = Runs::new();
+    td.plug_device("mock0001").await;
+    layout(&td, "mock0001", &runs.layout(1, 0)).await;
+    let mut socket = td.events().await;
+    press(&td, "mock0001", 0);
+    wait_count(&td, "approvals", 1).await;
+    script(&td, "always").await;
+    let log = wait_count(&td, "actions/log", 1).await;
+    assert_eq!(log[0]["status"], "denied");
+    assert!(
+        log[0]["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("The allowed action couldn't be saved")
+    );
+    assert_eq!(
+        approval_events(&mut socket).await,
+        ["requested", "resolved deny"]
+    );
+    assert_eq!(get(&td, "actions/allowed").await, json!([]));
+    assert_eq!(runs.count(), 0);
+    press(&td, "mock0001", 0);
+    wait_count(&td, "approvals", 1).await;
+    assert_eq!(runs.count(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reads_answer_while_a_grant_saves() {
+    let (grants, saving, finish) = TestGrants::new(false);
+    let td = TestCompanion::start_with_grants(grants).await;
+    let runs = Runs::new();
+    td.plug_device("mock0001").await;
+    layout(&td, "mock0001", &runs.layout(1, 0)).await;
+    press(&td, "mock0001", 0);
+    wait_count(&td, "approvals", 1).await;
+    script(&td, "always").await;
+    tokio::task::spawn_blocking(move || saving.recv_timeout(Duration::from_secs(10)))
+        .await
+        .unwrap()
+        .expect("the grant starts saving");
+
+    let read = |path| tokio::time::timeout(Duration::from_secs(1), get(&td, path));
+    let pending = read("approvals").await.expect("approvals.list answers");
+    let allowed = read("actions/allowed")
+        .await
+        .expect("actions.allowed answers");
+    let log = read("actions/log").await.expect("actions.log answers");
+    assert_eq!(pending.as_array().unwrap().len(), 1);
+    assert_eq!(allowed, json!([]));
+    assert_eq!(log, json!([]));
+    assert_eq!(runs.count(), 0);
+
+    finish.send(()).unwrap();
+    wait_count(&td, "actions/allowed", 1).await;
+    assert_eq!(wait_count(&td, "actions/log", 1).await[0]["exit_code"], 0);
+    assert_eq!(runs.count(), 1);
 }

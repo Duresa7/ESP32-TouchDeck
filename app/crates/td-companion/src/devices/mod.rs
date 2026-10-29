@@ -312,7 +312,7 @@ impl Event for DeviceEvent {
     }
 }
 
-pub(crate) type ActionHandler = Arc<dyn Fn(&DeviceId, &Session, &serde_json::Value) + Send + Sync>;
+pub(crate) type ActionHandler = Arc<dyn Fn(&DeviceId, &serde_json::Value) + Send + Sync>;
 /// Makes the sink a Device's key mirror types into.
 pub type InputFactory = Arc<dyn Fn() -> Result<Box<dyn td_host::InputSink>, String> + Send + Sync>;
 /// How the manager reaches ports, PC input and storage. Tests swap in mocks.

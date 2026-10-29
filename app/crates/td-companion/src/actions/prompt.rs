@@ -1,15 +1,82 @@
-use super::{Answer, ApprovalRequest};
+use super::{ActionSpec, Answer, ApprovalRequest};
 use serde::{Deserialize, Serialize};
+use std::{fmt::Write, ops::RangeInclusive};
 use ts_rs::TS;
 pub trait ApprovalPrompter: Send + Sync {
-    /// Runs on the approval thread. Must close when `expired` becomes true.
+    /// Runs on the approval thread. Must close when `expired` becomes true. An error denies.
     fn prompt(
         &self,
         request: &ApprovalRequest,
-        context: &str,
+        text: &str,
         expired: &(dyn Fn() -> bool + Sync),
-    ) -> Answer;
+    ) -> Result<Answer, String>;
     fn show(&self, id: &str);
+}
+pub(super) struct Context {
+    pub device: String,
+    pub page: String,
+    pub tile: String,
+}
+/// Every value from the Device or its Layout goes through [`shown`].
+pub(super) fn dialog_text(context: &Context, spec: &ActionSpec) -> String {
+    let args: Vec<_> = spec.args.iter().map(|a| shown(a)).collect();
+    format!(
+        "Device: {}\nPage: {}\nTile: {}\nKind: {}\nProgram: {}\nArguments: [{}]\nWorking folder: {}\nShell: {}",
+        shown(&context.device),
+        shown(&context.page),
+        shown(&context.tile),
+        spec.kind,
+        shown(&spec.program),
+        args.join(", "),
+        shown(&spec.cwd),
+        spec.shell
+    )
+}
+/// Unicode's format characters (category Cf).
+const FORMAT: &[RangeInclusive<char>] = &[
+    '\u{AD}'..='\u{AD}',
+    '\u{600}'..='\u{605}',
+    '\u{61C}'..='\u{61C}',
+    '\u{6DD}'..='\u{6DD}',
+    '\u{70F}'..='\u{70F}',
+    '\u{890}'..='\u{891}',
+    '\u{8E2}'..='\u{8E2}',
+    '\u{180E}'..='\u{180E}',
+    '\u{200B}'..='\u{200F}',
+    '\u{202A}'..='\u{202E}',
+    '\u{2060}'..='\u{2064}',
+    '\u{2066}'..='\u{206F}',
+    '\u{FEFF}'..='\u{FEFF}',
+    '\u{FFF9}'..='\u{FFFB}',
+    '\u{110BD}'..='\u{110BD}',
+    '\u{110CD}'..='\u{110CD}',
+    '\u{13430}'..='\u{1343F}',
+    '\u{1BCA0}'..='\u{1BCA3}',
+    '\u{1D173}'..='\u{1D17A}',
+    '\u{E0001}'..='\u{E0001}',
+    '\u{E0020}'..='\u{E007F}',
+];
+/// Quotes `value` and writes every control, format, line separator and paragraph separator
+/// character as `\u{...}`, so nothing in it is invisible or reorders the text around it.
+pub(super) fn shown(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for c in value.chars() {
+        match c {
+            '"' | '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '\u{2028}' | '\u{2029}' => escape(&mut out, c),
+            c if c.is_control() || FORMAT.iter().any(|r| r.contains(&c)) => escape(&mut out, c),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+fn escape(out: &mut String, c: char) {
+    let _ = write!(out, "\\u{{{:04X}}}", u32::from(c));
 }
 pub trait TrayNotifier: Send + Sync {
     fn waiting(&self, request: &ApprovalRequest);
@@ -25,30 +92,44 @@ pub enum ScriptAnswer {
     Once,
     Always,
     Deny,
+    /// The prompt fails to show.
+    Fail,
     Never,
 }
 #[cfg(any(test, feature = "test-hooks"))]
 #[derive(Default)]
 pub struct FakePrompter {
     answers: parking_lot::Mutex<std::collections::VecDeque<ScriptAnswer>>,
+    texts: parking_lot::Mutex<Vec<String>>,
 }
 #[cfg(any(test, feature = "test-hooks"))]
 impl FakePrompter {
     pub fn script(&self, answers: Vec<ScriptAnswer>) {
         *self.answers.lock() = answers.into();
     }
+    /// The text of every dialog it was asked to show, oldest first.
+    pub fn texts(&self) -> Vec<String> {
+        self.texts.lock().clone()
+    }
 }
 #[cfg(any(test, feature = "test-hooks"))]
 impl ApprovalPrompter for FakePrompter {
-    fn prompt(&self, _: &ApprovalRequest, _: &str, expired: &(dyn Fn() -> bool + Sync)) -> Answer {
+    fn prompt(
+        &self,
+        _: &ApprovalRequest,
+        text: &str,
+        expired: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Answer, String> {
+        self.texts.lock().push(text.into());
         loop {
             if expired() {
-                return Answer::Expired;
+                return Ok(Answer::Expired);
             }
             match self.answers.lock().pop_front() {
-                Some(ScriptAnswer::Once) => return Answer::Once,
-                Some(ScriptAnswer::Always) => return Answer::Always,
-                Some(ScriptAnswer::Deny) => return Answer::Deny,
+                Some(ScriptAnswer::Once) => return Ok(Answer::Once),
+                Some(ScriptAnswer::Always) => return Ok(Answer::Always),
+                Some(ScriptAnswer::Deny) => return Ok(Answer::Deny),
+                Some(ScriptAnswer::Fail) => return Err("The scripted prompt failed.".into()),
                 Some(ScriptAnswer::Never) | None => {}
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -77,9 +158,14 @@ impl NativePrompter {
 }
 #[cfg(not(windows))]
 impl ApprovalPrompter for NativePrompter {
-    fn prompt(&self, request: &ApprovalRequest, _: &str, _: &(dyn Fn() -> bool + Sync)) -> Answer {
+    fn prompt(
+        &self,
+        request: &ApprovalRequest,
+        _: &str,
+        _: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Answer, String> {
         self.notifier.waiting(request);
-        Answer::Deny
+        Err("This system has no native approval prompt.".into())
     }
     fn show(&self, _: &str) {}
 }
@@ -126,19 +212,12 @@ mod windows {
         fn prompt(
             &self,
             request: &ApprovalRequest,
-            context: &str,
+            text: &str,
             expired: &(dyn Fn() -> bool + Sync),
-        ) -> Answer {
+        ) -> Result<Answer, String> {
             let title = wide("Open TouchDeck - approve action");
             let heading = wide("Allow this action on this PC?");
-            let content = wide(&format!(
-                "{context}\nKind: {}\nProgram: {}\nArguments: {}\nWorking folder: {}\nShell: {}",
-                request.spec.kind,
-                serde_json::to_string(&request.spec.program).unwrap(),
-                serde_json::to_string(&request.spec.args).unwrap(),
-                serde_json::to_string(&request.spec.cwd).unwrap(),
-                request.spec.shell
-            ));
+            let content = wide(text);
             let once = wide("Run once");
             let always = wide("Always allow");
             let deny = wide("Deny");
@@ -183,18 +262,17 @@ mod windows {
                     std::ptr::null_mut(),
                 )
             };
-            if result < 0 || expired() {
-                return if expired() {
-                    Answer::Expired
-                } else {
-                    Answer::Deny
-                };
+            if expired() {
+                return Ok(Answer::Expired);
             }
-            match selected {
+            if result < 0 {
+                return Err(format!("The native prompt failed with {result:#x}."));
+            }
+            Ok(match selected {
                 100 => Answer::Once,
                 101 => Answer::Always,
                 _ => Answer::Deny,
-            }
+            })
         }
         fn show(&self, id: &str) {
             let active = self.active.lock();
@@ -204,5 +282,74 @@ mod windows {
                 }
             }
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::shown;
+
+    fn escaped(c: char) -> String {
+        format!("\"a\\u{{{:04X}}}b\"", u32::from(c))
+    }
+
+    #[test]
+    fn control_characters_are_escaped() {
+        for c in [
+            '\0', '\t', '\n', '\r', '\u{1B}', '\u{7F}', '\u{85}', '\u{9F}',
+        ] {
+            assert_eq!(shown(&format!("a{c}b")), escaped(c));
+        }
+    }
+
+    #[test]
+    fn direction_controls_are_escaped() {
+        for c in ('\u{202A}'..='\u{202E}').chain('\u{2066}'..='\u{2069}') {
+            assert_eq!(shown(&format!("a{c}b")), escaped(c));
+        }
+        assert_eq!(
+            shown("report\u{202E}gpj.exe\u{202C}"),
+            "\"report\\u{202E}gpj.exe\\u{202C}\""
+        );
+    }
+
+    #[test]
+    fn zero_width_and_byte_order_marks_are_escaped() {
+        for c in ('\u{200B}'..='\u{200F}').chain(['\u{2060}', '\u{FEFF}', '\u{AD}']) {
+            assert_eq!(shown(&format!("a{c}b")), escaped(c));
+        }
+    }
+
+    #[test]
+    fn other_format_characters_are_escaped() {
+        for c in [
+            '\u{600}',
+            '\u{61C}',
+            '\u{180E}',
+            '\u{FFF9}',
+            '\u{E0001}',
+            '\u{E007F}',
+        ] {
+            assert_eq!(shown(&format!("a{c}b")), escaped(c));
+        }
+    }
+
+    #[test]
+    fn line_and_paragraph_separators_are_escaped() {
+        for c in ['\u{2028}', '\u{2029}'] {
+            assert_eq!(shown(&format!("a{c}b")), escaped(c));
+        }
+    }
+
+    #[test]
+    fn quotes_and_backslashes_cannot_forge_an_escape() {
+        assert_eq!(shown(r#"say "\u{202E}""#), r#""say \"\\u{202E}\"""#);
+    }
+
+    #[test]
+    fn visible_text_is_unchanged() {
+        assert_eq!(
+            shown("C:/Tools/run.exe --name=Zoë 日本 🙂"),
+            "\"C:/Tools/run.exe --name=Zoë 日本 🙂\""
+        );
     }
 }

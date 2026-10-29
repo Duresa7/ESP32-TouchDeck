@@ -2,6 +2,7 @@ mod prompt;
 use crate::{
     api::{Clock, Event, Events},
     devices::{DeviceId, DeviceManager},
+    link::Links,
 };
 use parking_lot::Mutex;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -21,6 +22,9 @@ use std::{
 use td_core::layout::{Layout, Page};
 use td_host::{actions::Plan, approval::CommandSpec};
 use ts_rs::TS;
+
+/// How long a tap waits for the Device's Layout or Asset transfer before it's dropped.
+const TAP_WAIT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct ActionSpec {
@@ -105,11 +109,42 @@ impl Event for ActionLog {
         Some(&self.device)
     }
 }
+/// Where "Always allow" answers are kept. Blocking: call it off the async runtime.
+pub trait GrantStore: Send + Sync {
+    /// The saved grants; none when nothing was saved yet.
+    fn load(&self) -> std::io::Result<Vec<AllowedAction>>;
+    /// Replaces the saved grants. A failed save must leave the previous ones in place.
+    fn save(&self, allowed: &[AllowedAction]) -> std::io::Result<()>;
+}
+/// Grants in one JSON file, replaced by writing a sibling file and renaming it over.
+pub struct FileGrants(PathBuf);
+impl FileGrants {
+    pub fn new(path: PathBuf) -> Self {
+        Self(path)
+    }
+}
+impl GrantStore for FileGrants {
+    fn load(&self) -> std::io::Result<Vec<AllowedAction>> {
+        match std::fs::read(&self.0) {
+            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+    fn save(&self, allowed: &[AllowedAction]) -> std::io::Result<()> {
+        if let Some(parent) = self.0.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let tmp = self.0.with_extension("tmp");
+        std::fs::write(&tmp, serde_json::to_vec(allowed)?)?;
+        std::fs::rename(tmp, &self.0)
+    }
+}
 struct Pending {
     request: ApprovalRequest,
     deadline: Instant,
     shown: Option<Instant>,
-    context: String,
+    text: String,
 }
 #[derive(Default)]
 struct State {
@@ -121,10 +156,13 @@ struct State {
 }
 struct Inner {
     state: Mutex<State>,
+    /// Held across a whole grant change, so changes save one at a time and in order.
+    writing: Mutex<()>,
     events: Events,
     clock: Clock,
     devices: DeviceManager,
-    path: PathBuf,
+    links: Links,
+    grants: Arc<dyn GrantStore>,
     prompter: Arc<dyn ApprovalPrompter>,
     running: AtomicUsize,
     #[cfg(any(test, feature = "test-hooks"))]
@@ -133,20 +171,18 @@ struct Inner {
 #[derive(Clone)]
 pub struct Actions(Arc<Inner>);
 impl Actions {
+    /// Blocking: it loads the saved grants. Call it off the async runtime.
     pub(crate) fn new(
         events: Events,
         clock: Clock,
         devices: DeviceManager,
-        path: PathBuf,
+        links: Links,
+        grants: Arc<dyn GrantStore>,
         mock: bool,
     ) -> Self {
         let mut state = State::default();
-        match std::fs::read(&path) {
-            Ok(bytes) => match serde_json::from_slice(&bytes) {
-                Ok(allowed) => state.allowed = allowed,
-                Err(_) => state.load_failed = true,
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        match grants.load() {
+            Ok(allowed) => state.allowed = allowed,
             Err(_) => state.load_failed = true,
         }
         let prompter: Arc<dyn ApprovalPrompter> = Arc::new(NativePrompter::default());
@@ -158,19 +194,21 @@ impl Actions {
         let _ = mock;
         let inner = Arc::new(Inner {
             state: Mutex::new(state),
+            writing: Mutex::new(()),
             events,
             clock,
             devices: devices.clone(),
-            path,
+            links,
+            grants,
             prompter,
             running: AtomicUsize::new(0),
             #[cfg(any(test, feature = "test-hooks"))]
             fake,
         });
         let weak = Arc::downgrade(&inner);
-        devices.action_handler(Arc::new(move |device, session, event| {
+        devices.action_handler(Arc::new(move |device, event| {
             if let Some(inner) = weak.upgrade() {
-                Actions(inner).press(device, session, event);
+                Actions(inner).press(device, event);
             }
         }));
         let weak = Arc::downgrade(&inner);
@@ -207,24 +245,37 @@ impl Actions {
             .cloned()
             .collect()
     }
-    fn save(&self, allowed: &[AllowedAction]) -> std::io::Result<()> {
-        if let Some(parent) = self.0.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let tmp = self.0.path.with_extension("tmp");
-        std::fs::write(&tmp, serde_json::to_vec(allowed)?)?;
-        std::fs::rename(tmp, &self.0.path)
-    }
-    pub fn remove(&self, hash: &str) -> Result<bool, std::io::Error> {
-        let mut state = self.0.state.lock();
-        let mut next = state.allowed.clone();
-        next.retain(|a| a.hash != hash);
-        if next.len() == state.allowed.len() {
+    /// Saves the grants `change` makes, then publishes them. Blocking: call it off the async
+    /// runtime. The state lock is free while the store writes. Returns whether `change`
+    /// changed anything.
+    fn change_grants(
+        &self,
+        change: impl FnOnce(&mut Vec<AllowedAction>) -> bool,
+    ) -> std::io::Result<bool> {
+        let _writing = self.0.writing.lock();
+        let (mut next, load_failed) = {
+            let state = self.0.state.lock();
+            (state.allowed.clone(), state.load_failed)
+        };
+        if !change(&mut next) {
             return Ok(false);
         }
-        self.save(&next)?;
-        state.allowed = next;
+        if load_failed {
+            return Err(std::io::Error::other(
+                "The saved allowed actions could not be read.",
+            ));
+        }
+        self.0.grants.save(&next)?;
+        self.0.state.lock().allowed = next;
         Ok(true)
+    }
+    /// Blocking: call it off the async runtime.
+    pub fn remove(&self, hash: &str) -> Result<bool, std::io::Error> {
+        self.change_grants(|allowed| {
+            let before = allowed.len();
+            allowed.retain(|a| a.hash != hash);
+            allowed.len() != before
+        })
     }
     pub fn show(&self, id: &str) -> Result<(), crate::features::actions::ActionError> {
         use crate::{api::CommonError, features::actions::ActionError};
@@ -256,6 +307,10 @@ impl Actions {
             false
         }
     }
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn prompted(&self) -> Vec<String> {
+        self.0.fake.as_ref().map(|f| f.texts()).unwrap_or_default()
+    }
     fn logged(
         &self,
         request: &ApprovalRequest,
@@ -284,45 +339,58 @@ impl Actions {
             state.log.pop_front();
         }
     }
-    fn press(&self, device: &DeviceId, session: &td_link::Session, event: &serde_json::Value) {
+    /// The Tile's action on the Layout the Device shows, or `None` when it has no such Tile.
+    fn resolve(
+        &self,
+        device: &DeviceId,
+        session: &td_link::Session,
+        page: &str,
+        tile: &str,
+    ) -> Result<Option<(Plan, prompt::Context)>, String> {
+        let shown = session
+            .layout_state(Duration::from_secs(2))
+            .map_err(|e| format!("The Device didn't report its Layout: {e}"))?;
+        let bytes = match shown.source.as_str() {
+            "builtin" => include_bytes!("../../../../../schema/examples/builtin.json").to_vec(),
+            "storage" => {
+                td_link::xfer::get_layout(session, shown.orientation)
+                    .map_err(|e| format!("The Device's Layout couldn't be read: {e}"))?
+                    .data
+            }
+            _ => return Ok(None),
+        };
+        let layout =
+            Layout::parse(&bytes).map_err(|_| "The Device's Layout isn't valid.".to_owned())?;
+        let Some(found) = td_host::actions::find_tile(&layout, page, tile) else {
+            return Ok(None);
+        };
+        let title = layout
+            .pages
+            .iter()
+            .find_map(|p| match p {
+                Page::Grid { id, title, .. } if id == page => Some(title.as_str()),
+                _ => None,
+            })
+            .unwrap_or(page);
+        let name = self
+            .0
+            .devices
+            .get(device)
+            .and_then(|d| d.name)
+            .unwrap_or_else(|| device.to_string());
+        Ok(Some((
+            Plan::of(&found.action),
+            prompt::Context {
+                device: name,
+                page: title.into(),
+                tile: found.label.clone(),
+            },
+        )))
+    }
+    /// Runs on the Device's tap thread. A tap that can't be resolved is logged and dropped.
+    fn press(&self, device: &DeviceId, event: &serde_json::Value) {
         let page = event["page"].as_str().unwrap_or_default();
         let tile = event["tile"].as_str().unwrap_or_default();
-        let resolve_device_layout_action = || -> Option<(Plan, String)> {
-            let shown = session.layout_state(Duration::from_secs(2)).ok()?;
-            let layout = match shown.source.as_str() {
-                "builtin" => Layout::parse(include_bytes!(
-                    "../../../../../schema/examples/builtin.json"
-                ))
-                .ok()?,
-                "storage" => Layout::parse(
-                    &td_link::xfer::get_layout(session, shown.orientation)
-                        .ok()?
-                        .data,
-                )
-                .ok()?,
-                _ => return None,
-            };
-            let tile = td_host::actions::find_tile(&layout, page, tile)?;
-            let title = layout
-                .pages
-                .iter()
-                .find_map(|p| match p {
-                    Page::Grid { id, title, .. } if id == page => Some(title.as_str()),
-                    _ => None,
-                })
-                .unwrap_or(page);
-            let name = self
-                .0
-                .devices
-                .get(device)
-                .and_then(|d| d.name)
-                .unwrap_or_else(|| device.to_string());
-            Some((
-                Plan::of(&tile.action),
-                format!("Device: {name}\nPage: {title}\nTile: {}", tile.label),
-            ))
-        };
-        let resolved = resolve_device_layout_action();
         let mut request = ApprovalRequest {
             id: String::new(),
             device: device.clone(),
@@ -338,15 +406,32 @@ impl Actions {
             },
             created_ms: crate::now_ms(),
         };
-        let Some((plan, context)) = resolved else {
-            self.logged(
-                &request,
-                "unknown",
-                "No matching Tile in the Device's Layout.".into(),
-                None,
-                None,
-            );
-            return;
+        let resolved = match self.0.links.within(device, TAP_WAIT, |session| {
+            self.resolve(device, session, page, tile)
+        }) {
+            Some(Ok(resolved)) => resolved,
+            Some(Err(link)) => Err(link.to_string()),
+            None => Err(
+                "The Device stayed busy with a Layout or Asset transfer, so the tap was dropped."
+                    .into(),
+            ),
+        };
+        let (plan, context) = match resolved {
+            Ok(Some(found)) => found,
+            Ok(None) => {
+                self.logged(
+                    &request,
+                    "unknown",
+                    "No matching Tile in the Device's Layout.".into(),
+                    None,
+                    None,
+                );
+                return;
+            }
+            Err(reason) => {
+                self.logged(&request, "failed", reason, None, None);
+                return;
+            }
         };
         let approval = match plan {
             Plan::Deck => return, // Key and media reports are already typed by the Device's mirror.
@@ -382,6 +467,7 @@ impl Actions {
             }
         };
         request.hash = request.spec.hash();
+        let text = prompt::dialog_text(&context, &request.spec);
         let mut state = self.0.state.lock();
         if state.pending.iter().any(|p| {
             p.request.device == *device && p.request.page == page && p.request.tile == tile
@@ -405,7 +491,7 @@ impl Actions {
             request,
             deadline: self.0.clock.now() + Duration::from_secs(300),
             shown: None,
-            context,
+            text,
         });
     }
     fn prompt_next(&self) {
@@ -415,33 +501,46 @@ impl Actions {
             .lock()
             .pending
             .front()
-            .map(|p| (p.request.clone(), p.deadline, p.context.clone()));
-        let Some((request, deadline, context)) = next else {
+            .map(|p| (p.request.clone(), p.deadline, p.text.clone()));
+        let Some((request, deadline, text)) = next else {
             return;
         };
         let expired = || self.0.clock.now() >= deadline || Arc::strong_count(&self.0) == 1;
-        let answer = if expired() {
-            Answer::Expired
+        let prompted = if expired() {
+            Ok(Answer::Expired)
         } else {
             let _suppressed = self.0.devices.suppress_input();
-            self.0.prompter.prompt(&request, &context, &expired)
+            self.0.prompter.prompt(&request, &text, &expired)
         };
-        let mut answer = if expired() { Answer::Expired } else { answer };
-        let mut state = self.0.state.lock();
-        if answer == Answer::Always {
-            let mut allowed = state.allowed.clone();
-            allowed.retain(|a| a.hash != request.hash);
-            allowed.push(AllowedAction {
-                hash: request.hash.clone(),
-                spec: request.spec.clone(),
-                granted_ms: crate::now_ms(),
-            });
-            if state.load_failed || self.save(&allowed).is_err() {
-                answer = Answer::Deny;
-            } else {
-                state.allowed = allowed;
+        let (answer, detail) = match prompted {
+            _ if expired() => (Answer::Expired, "Approval expired.".to_owned()),
+            Ok(Answer::Always) => {
+                let grant = AllowedAction {
+                    hash: request.hash.clone(),
+                    spec: request.spec.clone(),
+                    granted_ms: crate::now_ms(),
+                };
+                let saved = self.change_grants(|allowed| {
+                    allowed.retain(|a| a.hash != grant.hash);
+                    allowed.push(grant);
+                    true
+                });
+                match saved {
+                    Ok(_) => (Answer::Always, String::new()),
+                    Err(e) => (
+                        Answer::Deny,
+                        format!("The allowed action couldn't be saved, so it was denied: {e}"),
+                    ),
+                }
             }
-        }
+            Ok(Answer::Deny) => (Answer::Deny, "Denied on this PC.".to_owned()),
+            Ok(answer) => (answer, String::new()),
+            Err(e) => (
+                Answer::Deny,
+                format!("The approval prompt failed, so the action was denied: {e}"),
+            ),
+        };
+        let mut state = self.0.state.lock();
         state.pending.pop_front();
         self.0.events.publish(&ApprovalResolved {
             id: request.id.clone(),
@@ -450,17 +549,8 @@ impl Actions {
         drop(state);
         match answer {
             Answer::Once | Answer::Always => self.execute(request),
-            Answer::Deny => self.logged(
-                &request,
-                "denied",
-                "Denied on this PC, unavailable native prompt, or allowed-actions storage failure."
-                    .into(),
-                None,
-                None,
-            ),
-            Answer::Expired => {
-                self.logged(&request, "expired", "Approval expired.".into(), None, None)
-            }
+            Answer::Deny => self.logged(&request, "denied", detail, None, None),
+            Answer::Expired => self.logged(&request, "expired", detail, None, None),
         }
     }
     fn execute(&self, request: ApprovalRequest) {

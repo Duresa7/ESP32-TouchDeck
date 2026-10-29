@@ -9,7 +9,7 @@ use crate::{
 };
 use axum::http::StatusCode;
 use parking_lot::Mutex;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use td_link::{LinkError, Session, xfer::XferError};
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -103,8 +103,26 @@ impl Links {
         id: &str,
         work: impl FnOnce(&Session) -> R,
     ) -> Result<R, DeviceLinkError> {
-        let lock = self.locks.lock().entry(id.into()).or_default().clone();
+        let lock = self.lock(id);
         let _held = lock.lock();
+        self.run(id, work)
+    }
+    /// Runs `work` as `with` does, or returns `None` when the Device's earlier work still
+    /// holds it after `wait`.
+    pub(crate) fn within<R>(
+        &self,
+        id: &str,
+        wait: Duration,
+        work: impl FnOnce(&Session) -> R,
+    ) -> Option<Result<R, DeviceLinkError>> {
+        let lock = self.lock(id);
+        let _held = lock.try_lock_for(wait)?;
+        Some(self.run(id, work))
+    }
+    fn lock(&self, id: &str) -> Arc<Mutex<()>> {
+        self.locks.lock().entry(id.into()).or_default().clone()
+    }
+    fn run<R>(&self, id: &str, work: impl FnOnce(&Session) -> R) -> Result<R, DeviceLinkError> {
         let (device, _) = self.connected(id)?;
         let session = self
             .devices

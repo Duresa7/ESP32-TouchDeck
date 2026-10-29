@@ -47,11 +47,10 @@ pub(super) fn spawn(
     let (presses, taps) = mpsc::sync_channel(16);
     let action_inner = inner.clone();
     let action_id = id.clone();
-    let action_session = session.clone();
     thread::spawn(move || {
         for event in taps {
             if let Some(handler) = action_inner.actions.get() {
-                handler(&action_id, &action_session, &event);
+                handler(&action_id, &event);
             }
         }
     });
