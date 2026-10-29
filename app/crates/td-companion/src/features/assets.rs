@@ -321,7 +321,7 @@ impl Endpoint for Prune {
     type Ok = Job;
     type Error = AssetError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
-        let device = req.path.device;
+        let device = req.path.device.as_str().to_owned();
         ctx.links.connected(&device)?;
         let keep: BTreeSet<String> = req.body.also_keep.into_iter().collect();
         let scope = JobScope::Device(device.clone());

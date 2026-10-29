@@ -1,48 +1,16 @@
 //! Link sessions for Layout and Asset work, one user per Device at a time.
 //!
-//! Until the Device manager keeps a session per Device on its own actor (#74), each use opens
-//! a session to the Device's port and closes it afterwards. `Links::with` is the seam: the
-//! actor's session replaces `Sessions::open` behind it.
+//! The work runs on the session the Device manager keeps for the Device, since the port can
+//! only be open once. The actor's own requests (settings, console) can interleave with it: a
+//! session matches replies to requests by sequence number.
 use crate::{
     api::{ApiError, CommonError},
-    devices::{DeviceManager, DeviceSummary, LinkState},
+    devices::{DeviceManager, DeviceSummary, LinkState, Reach},
 };
 use axum::http::StatusCode;
 use parking_lot::Mutex;
 use std::{collections::HashMap, sync::Arc};
-use td_link::{LinkError, Session, SessionConfig, xfer::XferError};
-
-/// Opens a link session to a connected Device's port. Blocking.
-pub trait Sessions: Send + Sync + 'static {
-    fn open(&self, device: &DeviceSummary, port: &str) -> Result<Session, String>;
-}
-
-/// Today's serial ports.
-pub struct SerialSessions;
-impl Sessions for SerialSessions {
-    fn open(&self, _: &DeviceSummary, port: &str) -> Result<Session, String> {
-        let serial = td_link::Serial::open(port).map_err(|e| format!("{port}: {e}"))?;
-        open(Box::new(serial))
-    }
-}
-fn open(transport: Box<dyn td_link::Transport>) -> Result<Session, String> {
-    let config = SessionConfig {
-        ping_every: None,
-        ..SessionConfig::default()
-    };
-    Session::open(transport, config)
-        .map(|(session, _incoming)| session)
-        .map_err(|e| e.to_string())
-}
-#[cfg(any(test, feature = "test-hooks"))]
-impl Sessions for crate::devices::MockPorts {
-    fn open(&self, device: &DeviceSummary, _: &str) -> Result<Session, String> {
-        let deck = self
-            .deck(&device.id)
-            .ok_or_else(|| format!("{} is not plugged in", device.id))?;
-        open(Box::new(deck.connect()))
-    }
-}
+use td_link::{LinkError, Session, xfer::XferError};
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum DeviceLinkError {
@@ -103,14 +71,12 @@ impl ApiError for DeviceLinkError {
 #[derive(Clone)]
 pub struct Links {
     devices: DeviceManager,
-    sessions: Arc<dyn Sessions>,
     locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
 }
 impl Links {
-    pub(crate) fn new(devices: DeviceManager, sessions: Arc<dyn Sessions>) -> Self {
+    pub(crate) fn new(devices: DeviceManager) -> Self {
         Self {
             devices,
-            sessions,
             locks: Default::default(),
         }
     }
@@ -130,7 +96,7 @@ impl Links {
             other => Err(DeviceLinkError::NotConnected(Box::new(other.clone()))),
         }
     }
-    /// Runs `work` with a session to the Device. Blocking: call it off the async runtime.
+    /// Runs `work` with the Device's session. Blocking: call it off the async runtime.
     /// Work on one Device waits for the work before it; other Devices don't wait.
     pub fn with<R>(
         &self,
@@ -139,13 +105,14 @@ impl Links {
     ) -> Result<R, DeviceLinkError> {
         let lock = self.locks.lock().entry(id.into()).or_default().clone();
         let _held = lock.lock();
-        let (device, port) = self.connected(id)?;
+        let (device, _) = self.connected(id)?;
         let session = self
-            .sessions
-            .open(&device, &port)
-            .map_err(DeviceLinkError::Link)?;
-        let out = work(&session);
-        session.close();
-        Ok(out)
+            .devices
+            .session(&device.id)
+            .map_err(|reach| match reach {
+                Reach::NotFound => DeviceLinkError::NotFound,
+                Reach::NotConnected(link) => DeviceLinkError::NotConnected(Box::new(link)),
+            })?;
+        Ok(work(&session))
     }
 }

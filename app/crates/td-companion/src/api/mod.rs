@@ -20,7 +20,7 @@ use axum::{
 pub use error::{ApiError, CommonError, ErrorBody};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-pub use socket::{Event, Events};
+pub use socket::{Event, Events, Topic};
 use std::{collections::HashMap, future::Future, sync::Arc};
 use ts_rs::TS;
 
@@ -51,14 +51,13 @@ impl Ctx {
         runtime: Option<Arc<crate::runtime::Runtime>>,
         limits: crate::Limits,
         data: &std::path::Path,
-        sessions: Arc<dyn crate::link::Sessions>,
     ) -> Self {
         let events = Events::default();
         let clock = Clock::default();
         let devices = crate::devices::DeviceManager::new(events.clone());
         Self {
             jobs: crate::jobs::Jobs::new(events.clone(), clock.clone()),
-            links: crate::link::Links::new(devices.clone(), sessions),
+            links: crate::link::Links::new(devices.clone()),
             layouts: crate::store::LayoutStore::new(data.join("layouts")),
             assets: crate::store::AssetStore::new(data.join("assets")),
             devices,

@@ -1,0 +1,695 @@
+//! The Device manager. It watches the USB ports, probes each Espressif port with `hello` and
+//! sorts it into a Device, a New board or a busy port. Each connected Device gets an actor
+//! thread that owns its link session. Blocking `td-link` work never runs on the async runtime:
+//! probes run on the scan thread and requests on each Device's actor thread.
+mod actor;
+pub mod console;
+mod ports;
+mod scan;
+mod store;
+
+#[cfg(any(test, feature = "test-hooks"))]
+pub use ports::{BoardKind, MockPorts};
+pub use ports::{PortInfo, PortSource, RealPorts};
+
+use crate::api::{Event, Events, Topic};
+use parking_lot::{Condvar, Mutex};
+use serde::{Deserialize, Deserializer, Serialize};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    path::PathBuf,
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    time::{Duration, Instant},
+};
+use td_link::Session;
+use ts_rs::TS;
+
+/// A Device or New board id: the USB serial number, lowercased with separators removed. It
+/// matches `^[0-9a-z]{1,32}$`, so it's safe in a path.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, TS)]
+pub struct DeviceId(String);
+impl DeviceId {
+    pub fn parse(id: &str) -> Option<Self> {
+        let valid = !id.is_empty()
+            && id.len() <= 32
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+        valid.then(|| Self(id.into()))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+impl<'de> Deserialize<'de> for DeviceId {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let id = String::deserialize(d)?;
+        Self::parse(&id).ok_or_else(|| {
+            serde::de::Error::custom("a Device id is 1 to 32 lowercase letters and digits")
+        })
+    }
+}
+impl fmt::Display for DeviceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::ops::Deref for DeviceId {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+impl PartialEq<&str> for DeviceId {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct FirmwareInfo {
+    pub version: String,
+    pub protocol: u32,
+    pub build: String,
+    pub recovery: bool,
+    pub update_available: Option<String>,
+}
+/// What a v2 `hello` says the Device can show and store.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Capabilities {
+    pub screen: [u32; 2],
+    pub grid: [u32; 2],
+    pub pages: u32,
+    pub tiles: u32,
+    pub layout_bytes: u32,
+    pub storage_free: u32,
+    pub tile_kinds: Vec<String>,
+    pub asset_bytes: u32,
+    pub formats: Vec<String>,
+    pub image: [u32; 2],
+}
+impl From<&td_link::Capabilities> for Capabilities {
+    fn from(c: &td_link::Capabilities) -> Self {
+        Self {
+            screen: c.screen,
+            grid: c.grid,
+            pages: c.pages,
+            tiles: c.tiles,
+            layout_bytes: c.layout_bytes,
+            storage_free: c.free_bytes,
+            tile_kinds: c.tile_kinds.clone(),
+            asset_bytes: c.asset_bytes,
+            formats: c.formats.clone(),
+            image: c.image,
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "state", rename_all = "kebab-case")]
+pub enum LinkState {
+    Connected {
+        port: String,
+        since_ms: u64,
+        protocol: u32,
+    },
+    Connecting {
+        port: String,
+    },
+    /// Known, not plugged in.
+    Offline,
+    /// The link dropped on its own. The Companion keeps retrying.
+    Lost {
+        reason: LostReason,
+        detail: String,
+        at_ms: u64,
+    },
+    /// The user chose Disconnect. No auto-connect until replug or Connect.
+    Disconnected,
+    /// Another program holds the port.
+    Busy {
+        port: String,
+        detail: String,
+    },
+    /// A known serial that doesn't answer `hello`.
+    Unresponsive {
+        port: String,
+    },
+    /// A Firmware Job owns the port.
+    Updating {
+        job: String,
+    },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum LostReason {
+    Unplugged,
+    Timeout,
+    IoError,
+    Closed,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum SetupState {
+    NeedsSetup,
+    Ready,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct KeyMirrorState {
+    pub enabled: bool,
+    pub reason: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeviceSummary {
+    pub id: DeviceId,
+    pub rev: u64,
+    pub name: Option<String>,
+    pub setup: SetupState,
+    pub link: LinkState,
+    pub firmware: Option<FirmwareInfo>,
+    pub capabilities: Option<Capabilities>,
+    pub orientation: Option<String>,
+    pub layout: Option<serde_json::Value>,
+    pub key_mirror: KeyMirrorState,
+    pub stable_id: bool,
+}
+/// A board with the Espressif USB ids that doesn't answer as Open TouchDeck Firmware.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct NewBoard {
+    pub id: DeviceId,
+    pub port: String,
+    #[serde(flatten)]
+    pub probe: BoardProbe,
+    pub seen_ms: u64,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "probe", rename_all = "kebab-case")]
+pub enum BoardProbe {
+    Silent,
+    Busy { detail: String },
+    OtherFirmware { product: String, detail: String },
+}
+/// One port's last probe, for troubleshooting.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct PortProbe {
+    pub port: String,
+    pub usb_serial: Option<String>,
+    pub id: DeviceId,
+    #[serde(flatten)]
+    pub status: PortStatus,
+    pub probed_ms: Option<u64>,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "status", rename_all = "kebab-case")]
+pub enum PortStatus {
+    /// Not probed yet, or waiting to retry.
+    Pending,
+    Device {
+        protocol: u32,
+        version: String,
+    },
+    Silent,
+    Busy {
+        detail: String,
+    },
+    OtherFirmware {
+        product: String,
+        detail: String,
+    },
+}
+
+#[derive(Serialize, Deserialize, TS)]
+pub struct DeviceAdded(pub DeviceSummary);
+impl Event for DeviceAdded {
+    const NAME: &'static str = "device.added";
+    fn device(&self) -> Option<&str> {
+        Some(self.0.id.as_str())
+    }
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct DeviceUpdated(pub DeviceSummary);
+impl Event for DeviceUpdated {
+    const NAME: &'static str = "device.updated";
+    fn device(&self) -> Option<&str> {
+        Some(self.0.id.as_str())
+    }
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct DeviceRemoved {
+    pub id: DeviceId,
+}
+impl Event for DeviceRemoved {
+    const NAME: &'static str = "device.removed";
+    fn device(&self) -> Option<&str> {
+        Some(self.id.as_str())
+    }
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct NewBoardAdded(pub NewBoard);
+impl Event for NewBoardAdded {
+    const NAME: &'static str = "new-board.added";
+    fn device(&self) -> Option<&str> {
+        Some(self.0.id.as_str())
+    }
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct NewBoardRemoved {
+    pub id: DeviceId,
+}
+impl Event for NewBoardRemoved {
+    const NAME: &'static str = "new-board.removed";
+    fn device(&self) -> Option<&str> {
+        Some(self.id.as_str())
+    }
+}
+/// One console line from a Device.
+#[derive(Serialize, Deserialize, TS)]
+pub struct DeviceConsole {
+    pub device: DeviceId,
+    pub line: String,
+}
+impl Event for DeviceConsole {
+    const NAME: &'static str = "device.console";
+    const TOPIC: Topic = Topic::Console;
+    fn device(&self) -> Option<&str> {
+        Some(self.device.as_str())
+    }
+}
+/// One mirrored key report and what the PC did with it.
+#[derive(Serialize, Deserialize, TS)]
+pub struct DeviceKeyMirror {
+    pub device: DeviceId,
+    pub seq: u32,
+    pub report: String,
+    /// `typed`, `duplicate`, `off`, `unknown` or `suppressed`.
+    pub outcome: String,
+    /// The sequence numbers that never arrived, whose held keys were released.
+    pub gap: Option<[u32; 2]>,
+    pub errors: Vec<String>,
+    pub arrived_ms: u64,
+}
+impl Event for DeviceKeyMirror {
+    const NAME: &'static str = "device.key-mirror";
+    const TOPIC: Topic = Topic::KeyMirror;
+    fn device(&self) -> Option<&str> {
+        Some(self.device.as_str())
+    }
+}
+/// A raw Device event, for diagnostics.
+#[derive(Serialize, Deserialize, TS)]
+pub struct DeviceEvent {
+    pub device: DeviceId,
+    pub event: serde_json::Value,
+}
+impl Event for DeviceEvent {
+    const NAME: &'static str = "device.event";
+    const TOPIC: Topic = Topic::DeviceEvents;
+    fn device(&self) -> Option<&str> {
+        Some(self.device.as_str())
+    }
+}
+
+/// Makes the sink a Device's key mirror types into.
+pub type InputFactory = Arc<dyn Fn() -> Result<Box<dyn td_host::InputSink>, String> + Send + Sync>;
+/// How the manager reaches ports, PC input and storage. Tests swap in mocks.
+pub struct Config {
+    pub source: Arc<dyn PortSource>,
+    pub input: InputFactory,
+    /// `devices.json`. `None` keeps known Devices in memory only.
+    pub store: Option<PathBuf>,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub mock: Option<(MockPorts, td_host::FakeSink)>,
+}
+impl Config {
+    /// The real ports, the PC's input and `devices.json` under `root`.
+    pub fn real(root: &std::path::Path) -> Self {
+        Self {
+            source: Arc::new(RealPorts::default()),
+            input: Arc::new(td_host::input::system_sink),
+            store: Some(root.join("devices.json")),
+            #[cfg(any(test, feature = "test-hooks"))]
+            mock: None,
+        }
+    }
+    /// Mock ports and a fake input sink that records what it would type.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn mock(store: Option<PathBuf>) -> Self {
+        let ports = MockPorts::default();
+        let sink = td_host::FakeSink::default();
+        let factory = sink.clone();
+        Self {
+            source: Arc::new(ports.clone()),
+            input: Arc::new(move || Ok(Box::new(factory.clone()) as Box<dyn td_host::InputSink>)),
+            store,
+            mock: Some((ports, sink)),
+        }
+    }
+}
+
+/// Why a request can't reach a Device's link.
+#[derive(Debug)]
+pub enum Reach {
+    NotFound,
+    NotConnected(LinkState),
+}
+#[derive(Debug)]
+pub enum Forget {
+    NotFound,
+    Connected,
+}
+
+struct Entry {
+    summary: DeviceSummary,
+    actor: Option<actor::Handle>,
+    /// Off after Disconnect, until replug or Connect.
+    auto: bool,
+}
+struct PortRecord {
+    info: PortInfo,
+    id: DeviceId,
+    stable: bool,
+    status: PortStatus,
+    probed_ms: Option<u64>,
+    appeared: Instant,
+    due: Instant,
+    backoff: Duration,
+}
+#[derive(Default)]
+struct Registry {
+    devices: BTreeMap<DeviceId, Entry>,
+    boards: BTreeMap<DeviceId, NewBoard>,
+    ports: BTreeMap<String, PortRecord>,
+    generation: u64,
+}
+/// Wakes the scan thread early: a USB change, a rescan, a Connect or a lost link.
+#[derive(Default)]
+struct Wake {
+    kicked: Mutex<bool>,
+    cv: Condvar,
+}
+impl Wake {
+    fn kick(&self) {
+        *self.kicked.lock() = true;
+        self.cv.notify_all();
+    }
+    fn wait(&self, timeout: Duration) {
+        let mut kicked = self.kicked.lock();
+        if !*kicked {
+            self.cv.wait_for(&mut kicked, timeout);
+        }
+        *kicked = false;
+    }
+}
+struct Inner {
+    events: Events,
+    reg: Mutex<Registry>,
+    wake: Wake,
+    stop: AtomicBool,
+    dialogs: AtomicUsize,
+    config: OnceLock<Config>,
+}
+impl Inner {
+    fn config(&self) -> &Config {
+        self.config.get().expect("the Device manager has started")
+    }
+    /// Applies `change` to a Device's summary and publishes it if anything changed.
+    fn update(&self, reg: &mut Registry, id: &DeviceId, change: impl FnOnce(&mut DeviceSummary)) {
+        let Some(entry) = reg.devices.get_mut(id) else {
+            return;
+        };
+        let mut next = entry.summary.clone();
+        change(&mut next);
+        if next == entry.summary {
+            return;
+        }
+        next.rev = entry.summary.rev + 1;
+        entry.summary = next;
+        self.events.publish(&DeviceUpdated(entry.summary.clone()));
+    }
+    fn set_link(&self, reg: &mut Registry, id: &DeviceId, link: LinkState) {
+        self.update(reg, id, |d| d.link = link);
+    }
+    /// Writes `devices.json`. Called off the async runtime.
+    fn save(&self, reg: &Registry) {
+        let Some(path) = &self.config().store else {
+            return;
+        };
+        let saved: Vec<_> = reg
+            .devices
+            .values()
+            .map(|e| store::Saved {
+                id: e.summary.id.clone(),
+                name: e.summary.name.clone(),
+                setup: e.summary.setup,
+            })
+            .collect();
+        if let Err(error) = store::save(path, &saved) {
+            eprintln!("Companion: couldn't save {}: {error}", path.display());
+        }
+    }
+    fn input_suppressed(&self) -> bool {
+        self.dialogs.load(Ordering::SeqCst) > 0
+    }
+}
+
+/// Finds and runs every Device. Cloning shares the same manager.
+#[derive(Clone)]
+pub struct DeviceManager {
+    inner: Arc<Inner>,
+}
+impl DeviceManager {
+    pub fn new(events: Events) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                events,
+                reg: Mutex::new(Registry::default()),
+                wake: Wake::default(),
+                stop: AtomicBool::new(false),
+                dialogs: AtomicUsize::new(0),
+                config: OnceLock::new(),
+            }),
+        }
+    }
+    /// Loads the known Devices and starts the scan thread. Later calls do nothing.
+    pub fn start(&self, config: Config) {
+        if self.inner.config.set(config).is_err() {
+            return;
+        }
+        if let Some(path) = &self.inner.config().store {
+            let mut reg = self.inner.reg.lock();
+            for saved in store::load(path) {
+                let summary = DeviceSummary {
+                    id: saved.id.clone(),
+                    rev: 1,
+                    name: saved.name,
+                    setup: saved.setup,
+                    link: LinkState::Offline,
+                    firmware: None,
+                    capabilities: None,
+                    orientation: None,
+                    layout: None,
+                    key_mirror: KeyMirrorState {
+                        enabled: false,
+                        reason: None,
+                    },
+                    stable_id: true,
+                };
+                reg.devices.insert(
+                    saved.id,
+                    Entry {
+                        summary,
+                        actor: None,
+                        auto: true,
+                    },
+                );
+            }
+        }
+        let inner = self.inner.clone();
+        std::thread::Builder::new()
+            .name("td-device-scan".into())
+            .spawn(move || scan::run(inner))
+            .expect("the scan thread starts");
+    }
+    /// Stops the scan thread, which then closes every link.
+    pub fn stop(&self) {
+        self.inner.stop.store(true, Ordering::SeqCst);
+        self.inner.wake.kick();
+    }
+    pub fn summaries(&self) -> Vec<DeviceSummary> {
+        let reg = self.inner.reg.lock();
+        reg.devices.values().map(|e| e.summary.clone()).collect()
+    }
+    pub fn get(&self, id: &DeviceId) -> Option<DeviceSummary> {
+        let reg = self.inner.reg.lock();
+        reg.devices.get(id).map(|e| e.summary.clone())
+    }
+    pub fn new_boards(&self) -> Vec<NewBoard> {
+        self.inner.reg.lock().boards.values().cloned().collect()
+    }
+    /// The last probe of every Espressif port. Reading it never opens a port.
+    pub fn ports(&self) -> Vec<PortProbe> {
+        let reg = self.inner.reg.lock();
+        reg.ports
+            .values()
+            .map(|r| PortProbe {
+                port: r.info.port.clone(),
+                usb_serial: r.info.usb_serial.clone(),
+                id: r.id.clone(),
+                status: r.status.clone(),
+                probed_ms: r.probed_ms,
+            })
+            .collect()
+    }
+    /// Probes every port that isn't linked again now.
+    pub fn rescan(&self) {
+        let mut reg = self.inner.reg.lock();
+        let now = Instant::now();
+        for record in reg.ports.values_mut() {
+            record.due = now;
+            record.backoff = scan::FIRST_RETRY;
+        }
+        drop(reg);
+        self.inner.wake.kick();
+    }
+    /// Turns auto-connect back on after a Disconnect.
+    pub fn connect(&self, id: &DeviceId) -> Option<DeviceSummary> {
+        let mut reg = self.inner.reg.lock();
+        let entry = reg.devices.get_mut(id)?;
+        entry.auto = true;
+        let linked = entry.actor.is_some();
+        let port = reg.ports.values_mut().find(|r| &r.id == id);
+        if !linked {
+            let link = match port {
+                Some(record) => {
+                    record.due = Instant::now();
+                    record.backoff = scan::FIRST_RETRY;
+                    LinkState::Connecting {
+                        port: record.info.port.clone(),
+                    }
+                }
+                None => LinkState::Offline,
+            };
+            self.inner.set_link(&mut reg, id, link);
+        }
+        let summary = reg.devices[id].summary.clone();
+        drop(reg);
+        self.inner.wake.kick();
+        Some(summary)
+    }
+    /// Closes the link and keeps the Device down until replug or Connect.
+    pub fn disconnect(&self, id: &DeviceId) -> Option<DeviceSummary> {
+        let mut reg = self.inner.reg.lock();
+        let entry = reg.devices.get_mut(id)?;
+        entry.auto = false;
+        // Dropping the handle ends the actor thread, which closes the session and the port.
+        let actor = entry.actor.take();
+        self.inner.set_link(&mut reg, id, LinkState::Disconnected);
+        let summary = reg.devices[id].summary.clone();
+        drop(reg);
+        drop(actor);
+        Some(summary)
+    }
+    /// Forgets a Device that isn't connected. Blocking: it writes `devices.json`.
+    pub fn forget(&self, id: &DeviceId) -> Result<(), Forget> {
+        let mut reg = self.inner.reg.lock();
+        let entry = reg.devices.get(id).ok_or(Forget::NotFound)?;
+        if entry.actor.is_some() {
+            return Err(Forget::Connected);
+        }
+        reg.devices.remove(id);
+        self.inner.events.publish(&DeviceRemoved { id: id.clone() });
+        self.inner.save(&reg);
+        Ok(())
+    }
+    /// Runs `work` on the Device's actor thread with its session.
+    pub async fn call<T: Send + 'static>(
+        &self,
+        id: &DeviceId,
+        work: impl FnOnce(&Session) -> T + Send + 'static,
+    ) -> Result<T, Reach> {
+        let not_connected = || {
+            self.get(id)
+                .map_or(Reach::NotFound, |d| Reach::NotConnected(d.link))
+        };
+        let sender = {
+            let reg = self.inner.reg.lock();
+            let entry = reg.devices.get(id).ok_or(Reach::NotFound)?;
+            match &entry.actor {
+                Some(actor) => actor.sender(),
+                None => return Err(Reach::NotConnected(entry.summary.link.clone())),
+            }
+        };
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        let job: actor::Work = Box::new(move |session| {
+            let _ = reply.send(work(session));
+        });
+        sender.send(job).map_err(|_| not_connected())?;
+        answer.await.map_err(|_| not_connected())
+    }
+    /// The connected Device's live session, for blocking work off the async runtime that
+    /// runs alongside the actor's. Requests on one session are matched by sequence number.
+    pub fn session(&self, id: &DeviceId) -> Result<Arc<Session>, Reach> {
+        let reg = self.inner.reg.lock();
+        let entry = reg.devices.get(id).ok_or(Reach::NotFound)?;
+        match (&entry.actor, &entry.summary.link) {
+            (Some(actor), LinkState::Connected { .. }) => Ok(actor.session()),
+            (_, link) => Err(Reach::NotConnected(link.clone())),
+        }
+    }
+    /// Restarts the Device and closes its link, so it comes back with a fresh `hello`: a
+    /// restarted Device counts the app as offline until it gets one.
+    pub async fn restart(&self, id: &DeviceId) -> Result<Result<(), td_link::LinkError>, Reach> {
+        if let Err(error) = self.call(id, |s| s.send_line("reboot")).await? {
+            return Ok(Err(error));
+        }
+        let mut reg = self.inner.reg.lock();
+        let actor = reg.devices.get_mut(id).and_then(|e| e.actor.take());
+        let now = Instant::now();
+        let port = reg.ports.values_mut().find(|r| &r.id == id).map(|record| {
+            record.status = PortStatus::Pending;
+            record.appeared = now;
+            record.due = now + scan::FIRST_RETRY;
+            record.backoff = scan::FIRST_RETRY;
+            record.info.port.clone()
+        });
+        if actor.is_some()
+            && let Some(port) = port
+        {
+            self.inner
+                .set_link(&mut reg, id, LinkState::Connecting { port });
+        }
+        drop(reg);
+        drop(actor);
+        self.inner.wake.kick();
+        Ok(Ok(()))
+    }
+    /// Records a name the Device accepted.
+    pub(crate) fn named(&self, id: &DeviceId, name: String) {
+        let mut reg = self.inner.reg.lock();
+        self.inner.update(&mut reg, id, |d| {
+            d.name = Some(name);
+            d.setup = SetupState::Ready;
+        });
+        self.inner.save(&reg);
+    }
+    /// Suppresses key input from every Device while the guard lives. Approval and Firmware
+    /// dialogs hold one, so Device input can't answer them.
+    pub fn suppress_input(&self) -> InputSuppressed {
+        self.inner.dialogs.fetch_add(1, Ordering::SeqCst);
+        InputSuppressed(self.inner.clone())
+    }
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn mock(&self) -> Option<&(MockPorts, td_host::FakeSink)> {
+        self.inner.config.get()?.mock.as_ref()
+    }
+}
+/// Key input stays suppressed until every guard drops.
+pub struct InputSuppressed(Arc<Inner>);
+impl Drop for InputSuppressed {
+    fn drop(&mut self) {
+        self.0.dialogs.fetch_sub(1, Ordering::SeqCst);
+    }
+}

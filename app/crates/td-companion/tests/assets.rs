@@ -87,7 +87,7 @@ async fn prune_keeps_what_stored_layouts_and_the_caller_use() {
     }))
     .unwrap();
     let path = LayoutPath {
-        device: a.clone(),
+        device: a.to_string(),
         orientation: Orientation::Landscape,
     };
     let job = td
@@ -125,7 +125,7 @@ async fn prune_keeps_what_stored_layouts_and_the_caller_use() {
         kept
     });
     let missing = DevicePath {
-        device: "mock0009".into(),
+        device: td_companion::devices::DeviceId::parse("mock0009").unwrap(),
     };
     let (status, error) =
         failure(td.request::<Prune>(missing, NoQuery, &PruneRequest::default())).await;
