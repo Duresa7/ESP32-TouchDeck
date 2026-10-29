@@ -89,10 +89,9 @@ impl Ctx {
     pub(crate) fn pairing_token(&self) -> String {
         self.auth.lock().pairing().to_owned()
     }
-    /// Ends expired sessions and wakes their sockets so they close with 4401, then forgets
-    /// sessions that were revoked or have ended and hold no sockets.
     pub(crate) fn sweep_sessions(&self) {
-        if self.auth.lock().sweep(self.clock.now()) {
+        let ended_with_sockets = self.auth.lock().sweep(self.clock.now());
+        if ended_with_sockets {
             self.events.notify();
         }
     }

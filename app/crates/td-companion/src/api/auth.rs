@@ -65,13 +65,11 @@ struct Session {
     /// When the session last had no open socket.
     idle_since: Instant,
     last_request: Instant,
-    /// Set by the sweep once the session expired, so it stays ended while its sockets close.
-    lapsed: bool,
+    marked_expired: bool,
 }
 impl Session {
-    /// The one expiry check for HTTP, sockets, the session list and the sweep.
     fn expired(&self, now: Instant) -> bool {
-        self.lapsed
+        self.marked_expired
             || (self.info.kind == SessionKind::Browser
                 && now.saturating_duration_since(self.last_request) >= BROWSER_IDLE)
             || self.info.kind == SessionKind::Window
@@ -197,12 +195,11 @@ impl Auth {
                 sockets: 0,
                 idle_since: now,
                 last_request: now,
-                lapsed: false,
+                marked_expired: false,
             },
         );
         Ok(SessionCreated { id, token })
     }
-    /// Whether the session may still receive events. A socket checks this before every frame.
     pub(crate) fn active(&self, id: &str, now: Instant) -> bool {
         self.sessions
             .values()
@@ -223,14 +220,11 @@ impl Auth {
         s.sockets += 1;
         Ok(())
     }
-    /// Marks expired sessions as ended, then drops sessions that were revoked or have ended
-    /// once their last socket is gone, so a later use of the token reads as unknown. Returns
-    /// whether a session that still has sockets ended, so the caller wakes them to close.
     pub(crate) fn sweep(&mut self, now: Instant) -> bool {
         let mut ended_with_sockets = false;
         for s in self.sessions.values_mut() {
-            if !s.revoked && !s.lapsed && s.expired(now) {
-                s.lapsed = true;
+            if !s.revoked && !s.marked_expired && s.expired(now) {
+                s.marked_expired = true;
                 ended_with_sockets |= s.sockets > 0;
             }
         }

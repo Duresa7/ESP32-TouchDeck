@@ -266,9 +266,7 @@ struct Pairing {
     client: reqwest::Client,
     base: String,
     window: String,
-    /// Every response and error body, except the fake delivery capture's.
     bodies: Vec<String>,
-    /// Every code the capture saw, formatted and normalized, and every link.
     secrets: Vec<String>,
 }
 impl Pairing {
@@ -297,7 +295,8 @@ impl Pairing {
         let code = delivery["notification"].as_str().unwrap().to_owned();
         let link = delivery["url"].as_str().unwrap().to_owned();
         assert!(link.ends_with(&format!("#code={code}")));
-        self.secrets.extend([code.replace('-', ""), link, code.clone()]);
+        self.secrets
+            .extend([code.replace('-', ""), link, code.clone()]);
         code
     }
     async fn pair(&mut self, code: &str) -> u16 {
@@ -400,7 +399,6 @@ async fn pairing_codes_reach_only_the_delivery_capture() {
     let seen: Vec<&String> = p.bodies.iter().chain(&frames).chain(&logs).collect();
     assert_eq!((p.secrets.len(), p.bodies.len()), (15, 18));
     for secret in &p.secrets {
-        // Never print the secret itself, only where it leaked.
         let leaked = seen.iter().position(|text| text.contains(secret.as_str()));
         assert_eq!(leaked, None, "a pairing code or link leaked");
     }

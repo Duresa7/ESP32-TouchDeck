@@ -32,8 +32,6 @@ pub(super) fn open(url: &str) -> Result<(), CommonError> {
         Ok(())
     }
 }
-/// The window executable tray Open starts. A packaged Companion always starts the
-/// `Open TouchDeck.exe` beside it; only development honors `TOUCHDECK_WINDOW_BIN`.
 fn window_exe(packaged: bool, dev_override: Option<OsString>, companion: &Path) -> PathBuf {
     match dev_override {
         Some(path) if !packaged => PathBuf::from(path),

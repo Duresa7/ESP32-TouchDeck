@@ -241,15 +241,13 @@ async fn restart_rejects_browser_session_and_pending_code() {
     )
     .await;
 }
-type Socket = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 async fn browser(td: &TestCompanion) -> String {
     let code = mint(td).await;
     let session: Value = pair(td, &code).await.json().await.unwrap();
     session["token"].as_str().unwrap().into()
 }
-/// Opens the events socket with `token` and checks the `hello` and `sync` frames.
 async fn events(td: &TestCompanion, token: &str) -> Socket {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     let mut request = format!("{}/api/v1/events", td.url.replace("http:", "ws:"))
@@ -281,8 +279,6 @@ async fn frame(socket: &mut Socket) -> Option<Value> {
         }
     }
 }
-/// Reads for up to 2 s until the socket closes. Returns the frame types it saw and the close
-/// code, or no code when the socket stayed open.
 async fn until_closed(socket: &mut Socket) -> (Vec<String>, Option<u16>) {
     use futures_util::StreamExt;
     use tokio_tungstenite::tungstenite::Message;
