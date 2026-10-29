@@ -1,4 +1,3 @@
-//! Offline catalogs and fetch-on-pick images. Raw downloads are independent of Device Assets.
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -268,7 +267,6 @@ impl Catalog {
                 index().selfhst_commit
             )
         };
-        // The immutable URL includes source, version, slug, variant and format.
         let bytes = self.cache.get_or_fetch(&url, &url, self.fetcher.as_ref())?;
         fit(&bytes, entry.svg, options)
     }
@@ -532,7 +530,6 @@ mod tests {
     }
     #[test]
     fn fits_both_orientations_and_all_grid_spans() {
-        // Match geometry.ts cell edges, including position-dependent integer rounding.
         let mut sizes = std::collections::BTreeSet::new();
         for (screen_w, screen_h) in [(1024, 600), (600, 1024)] {
             for fullscreen in [false, true] {

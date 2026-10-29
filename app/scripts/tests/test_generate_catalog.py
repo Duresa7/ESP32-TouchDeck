@@ -1,4 +1,3 @@
-"""Offline catalog generation contract."""
 import importlib.util
 import json
 from pathlib import Path

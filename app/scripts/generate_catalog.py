@@ -39,7 +39,6 @@ def generate(simple, selfhst):
             license="CC-BY-4.0", license_url="https://creativecommons.org/licenses/by/4.0/",
             guidelines=None, attribution_url="https://selfh.st/icons/"))
     entries.sort(key=lambda e: (e["name"].lower(), e["source"], e["id"]))
-    # Omit empty optional values; Rust supplies their defaults.
     entries = [{k: v for k, v in e.items() if v not in (None, [], False)} for e in entries]
     return (json.dumps(dict(simple_icons_version=SIMPLE, selfhst_commit=SELFHST, entries=entries), ensure_ascii=False, separators=(",", ":")) + "\n").encode()
 
