@@ -32,6 +32,7 @@ pub struct Ctx {
     pub links: crate::link::Links,
     pub layouts: crate::store::LayoutStore,
     pub assets: crate::store::AssetStore,
+    pub catalog: Arc<td_host::catalog::Catalog>,
     auth: Arc<Mutex<Auth>>,
     pub(crate) clock: Clock,
     pub(crate) shutdown: tokio::sync::watch::Sender<bool>,
@@ -60,6 +61,10 @@ impl Ctx {
             links: crate::link::Links::new(devices.clone()),
             layouts: crate::store::LayoutStore::new(data.join("layouts")),
             assets: crate::store::AssetStore::new(data.join("assets")),
+            catalog: Arc::new(td_host::catalog::Catalog::new(
+                data.join("cache/catalog"),
+                Box::new(td_host::catalog::HttpFetcher),
+            )),
             devices,
             events,
             auth: Arc::new(Mutex::new(Auth::new())),

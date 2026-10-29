@@ -161,3 +161,59 @@ async fn at_most_two_renders_run_at_once() {
     let third = td.call::<Create>((), NoQuery, create()).await.unwrap();
     td.wait(&third).await;
 }
+
+struct CatalogFetch;
+impl td_host::catalog::Fetcher for CatalogFetch {
+    fn fetch(&self, url: &str) -> Result<Vec<u8>, td_host::catalog::Error> {
+        assert!(url.contains("simple-icons@16.36.0/icons/github.svg"));
+        Ok(br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><path d="M0 0h10v10H0z"/></svg>"#.to_vec())
+    }
+}
+#[tokio::test]
+async fn catalog_search_and_render_jobs() {
+    use td_companion::features::assets::{CatalogQuery, CatalogSearch};
+    let td = TestCompanion::start_with_catalog(Default::default(), Box::new(CatalogFetch)).await;
+    let hits = td
+        .call::<CatalogSearch>(
+            (),
+            CatalogQuery {
+                q: "github".into(),
+                catalog: None,
+            },
+            (),
+        )
+        .await
+        .unwrap();
+    for source in ["simple-icons", "selfhst"] {
+        assert!(hits.iter().any(|e| e.source == source));
+    }
+    let create = || {
+        serde_json::from_value::<CreateAsset>(json!({"source":{"kind":"catalog","catalog":"simple-icons","id":"github","padding":4,"tint":[255,0,0]}})).unwrap()
+    };
+    let job = td.call::<Create>((), NoQuery, create()).await.unwrap();
+    assert_eq!(job.kind, "assets.render");
+    let done = td.wait(&job).await;
+    assert_eq!(done.state, JobState::Succeeded, "{done:?}");
+    let result = done.result.unwrap();
+    assert_eq!(result["width"], 64);
+    assert_eq!(result["height"], 64);
+    let response = td
+        .request::<File>(
+            AssetPath {
+                asset: result["id"].as_str().unwrap().into(),
+            },
+            NoQuery,
+            &(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert!(td_host::icon_pack::is_icon(
+        &response.bytes().await.unwrap()
+    ));
+    let td = TestCompanion::start().await;
+    let job = td.call::<Create>((), NoQuery, create()).await.unwrap();
+    let done = td.wait(&job).await;
+    assert_eq!(done.state, JobState::Failed);
+    assert_eq!(done.error.unwrap().code, "asset.render_failed");
+}

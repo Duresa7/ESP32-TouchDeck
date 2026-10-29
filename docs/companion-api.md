@@ -514,13 +514,13 @@ Feature module `assets`. Assets reach a Device only through `layouts.push`, whic
 | `assets.file` | `GET /assets/{asset}` | → the stored bytes with their media type: `application/vnd.touchdeck.tdi1`, `image/gif` or `image/png` |
 | `assets.create` | `POST /assets` | `{source: {kind: "app", path} \| {kind: "upload", upload} \| {kind: "catalog", catalog, id}, fit}` → 202 Job `assets.render`. For `app`, the Companion reads only the icon resource of that program |
 | `assets.upload` | `POST /uploads` | raw `image/*`, at most 16 MiB → `{id, media_type, bytes}`, kept for 1 hour |
-| `assets.catalog_search` | `GET /assets/catalog/search?q=&catalog=` | → `CatalogHit[]`. The Companion fetches and caches catalogs |
+| `assets.catalog_search` | `GET /assets/catalog/search?q=&catalog=` | → `CatalogHit[]`. Searches the bundled catalogs offline; images are fetched on pick |
 | `assets.on_device` | `GET /devices/{device}/assets` | → `{ids: AssetId[], storage_free}` |
 | `assets.prune` | `POST /devices/{device}/assets/prune` | `{also_keep: AssetId[]}` → 202 Job `assets.prune`. Removes Assets no stored Layout uses |
 
 As built in #75:
 
-- `assets.create` takes the `app` source only; #93 adds `upload` and `catalog`. `fit` is `"contain"` (the default: the whole image inside the Tile) or `"cover"` (cropped to a centered square first). The result's `kind` is `tdi1`, 64 by 64. A third render while two run gets 429 `limits.exceeded`.
+- `assets.create` takes the `app` and `catalog` sources; #93 adds `upload`. Catalog picks accept `variant` (`base`, `light`, `dark`), pixel `padding`, RGBA `background` and RGB `tint`. `fit` is `"contain"` (the default: the whole image inside the Tile) or `"cover"` (cropped to a centered square first). The result's `kind` is `tdi1`, 64 by 64. A third render while two run gets 429 `limits.exceeded`.
 - `assets.prune` keeps the Assets that `also_keep` names, that the Companion's stored Layouts for the Device use, and that the Device's own stored Layouts use, as today's `remove_unused_icons` does.
 - `assets.file` reads built-in icons and the Companion's Asset files, kept as `assets/<id>.bin` under its data folder. The generated client returns a `Blob` for it.
 

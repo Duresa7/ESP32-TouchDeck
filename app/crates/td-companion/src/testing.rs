@@ -26,10 +26,20 @@ impl TestCompanion {
     }
     /// Starts with other connection and time limits, so limit tests run in milliseconds.
     pub async fn start_with(limits: crate::Limits) -> Self {
+        Self::start_with_catalog(limits, Box::new(NoCatalogNetwork)).await
+    }
+    pub async fn start_with_catalog(
+        limits: crate::Limits,
+        fetcher: Box<dyn td_host::catalog::Fetcher>,
+    ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let data = tempfile::tempdir().unwrap();
-        let ctx = Ctx::new(port, true, None, limits, data.path());
+        let mut ctx = Ctx::new(port, true, None, limits, data.path());
+        ctx.catalog = std::sync::Arc::new(td_host::catalog::Catalog::new(
+            data.path().join("cache/catalog"),
+            fetcher,
+        ));
         let config = Config::mock(Some(data.path().join("devices.json")));
         let (ports, input) = config.mock.clone().unwrap();
         ctx.devices.start(config);
@@ -283,5 +293,14 @@ impl TestClock {
     /// Moves the Companion's monotonic clock, which session expiry reads.
     pub fn advance(&self, duration: std::time::Duration) {
         self.0.clock.advance(duration);
+    }
+}
+
+struct NoCatalogNetwork;
+impl td_host::catalog::Fetcher for NoCatalogNetwork {
+    fn fetch(&self, _: &str) -> Result<Vec<u8>, td_host::catalog::Error> {
+        Err(td_host::catalog::Error::Fetch(
+            "Network disabled in tests".into(),
+        ))
     }
 }
