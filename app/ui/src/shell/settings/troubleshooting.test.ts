@@ -14,7 +14,7 @@ describe('Troubleshooting', () => {
       ['Product', null],
       ['Protocol', '2'],
       ['Firmware build', 'fake'],
-      ['Firmware version', '1.4.0'],
+      ['Firmware version', '1.5.0'],
       ['Running from', null],
       ['Sends keys through', null],
       ['Safe mode', 'No'],
