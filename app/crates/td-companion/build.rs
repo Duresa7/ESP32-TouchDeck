@@ -1,3 +1,5 @@
+use std::{env, fs, path::Path};
+
 fn git(args: &[&str]) -> Option<String> {
     let output = std::process::Command::new("git").args(args).output().ok()?;
     output
@@ -14,6 +16,7 @@ fn main() {
         println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
         println!("cargo:rerun-if-changed=app.manifest");
     }
+    embed_ui();
     for name in ["HEAD", "index"] {
         if let Some(path) = git(&["rev-parse", "--git-path", name]) {
             println!("cargo:rerun-if-changed={path}");
@@ -21,4 +24,91 @@ fn main() {
     }
     let sha = git(&["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into());
     println!("cargo:rustc-env=TD_BUILD={sha}");
+}
+
+// Vite's default hash is eight URL-safe characters (including '-' and '_').
+fn hashed(path: &str) -> bool {
+    let stem = Path::new(path).file_stem().unwrap().to_string_lossy();
+    let bytes = stem.as_bytes();
+    bytes.len().checked_sub(9).is_some_and(|separator| {
+        bytes[separator] == b'-'
+            && bytes[separator + 1..]
+                .iter()
+                .all(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-')
+    })
+}
+fn media_type(path: &str) -> &'static str {
+    match Path::new(path)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+    {
+        "html" => "text/html; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" | "map" => "application/json",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "ico" => "image/x-icon",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "txt" => "text/plain; charset=utf-8",
+        "wasm" => "application/wasm",
+        _ => "application/octet-stream",
+    }
+}
+fn collect(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+    for entry in fs::read_dir(dir).expect("read UI dist") {
+        let entry = entry.expect("read UI file");
+        let kind = entry.file_type().expect("read UI file type");
+        if kind.is_dir() {
+            collect(&entry.path(), files);
+        } else if kind.is_file() {
+            files.push(entry.path());
+        }
+    }
+}
+fn embed_ui() {
+    let dist = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ui/dist");
+    println!("cargo:rerun-if-changed={}", dist.display());
+    let mut table = String::from("static UI_FILES: &[(&str, &str, bool, &[u8])] = &[\n");
+    if dist.is_dir() {
+        assert!(
+            dist.join("index.html").is_file(),
+            "UI dist must contain index.html"
+        );
+        let mut files = Vec::new();
+        collect(&dist, &mut files);
+        files.sort();
+        for file in files {
+            let key = file
+                .strip_prefix(&dist)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .replace('\\', "/");
+            let source = file.canonicalize().expect("resolve UI file");
+            table.push_str(&format!(
+                "({:?}, {:?}, {}, include_bytes!({:?})),\n",
+                format!("/{key}"),
+                media_type(&key),
+                key != "index.html" && hashed(&key),
+                source.to_str().unwrap()
+            ));
+        }
+    } else {
+        table.push_str("(\"/index.html\", \"text/html; charset=utf-8\", false, b\"<!doctype html><title>Open TouchDeck</title><p>UI not built. Run pnpm build:ui.</p>\"),\n");
+    }
+    table.push_str("];\n");
+    fs::write(
+        Path::new(&env::var_os("OUT_DIR").unwrap()).join("embedded_ui.rs"),
+        table,
+    )
+    .expect("write embedded UI table");
 }

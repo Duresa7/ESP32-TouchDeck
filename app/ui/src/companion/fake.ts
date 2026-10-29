@@ -1,17 +1,21 @@
-import type { DeviceSummary, Job, Layout, SystemInfo } from './api.ts';
+import type { DeviceSummary, Layout, SystemInfo } from './api.ts';
 import { CLOSE_SESSION, type EventSocket } from './events.ts';
+import { createFakeLayouts } from './fake-layouts.ts';
 import type { OpenTouchDeckBridge } from './session.ts';
 
 // An in-memory Companion for tests and the demo mode of `pnpm dev:ui`. It answers
 // `system.ping`, `system.get`, `devices.list`, `devices.get` and `layouts.get` the way
 // docs/companion-api.md says, checks session tokens, and runs the event stream:
-// `hello`, `sync`, then `device.added`, `device.updated`, `device.removed` and `job.updated`.
+// `hello`, `sync`, then `device.added`, `device.updated`, `device.removed` and `job.updated`. fake-layouts.ts
+// answers the Layouts, Jobs and Assets prune routes and sends `job.updated`.
 
 export interface FakeCompanionOptions {
   devices?: DeviceSummary[];
-  /** The Layout each Device stores, by Device id. */
+  /** The Layout each Device stores at the start, by Device id. */
   layouts?: Record<string, Layout>;
   system?: Partial<SystemInfo>;
+  /** How long a fake Job runs. */
+  jobMs?: number;
 }
 
 type Frame = Record<string, unknown> & { type: string };
@@ -53,20 +57,13 @@ const failure = (status: number, code: string, message: string, details: unknown
 
 export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   const devices = new Map((options.devices ?? []).map((d) => [d.id, structuredClone(d)]));
-  const layouts = new Map<string, { layout: Layout; revision: string }>();
   const system: SystemInfo = { version: '0.2.0', build: 'fake', api: 'v1', mock: true, data_dir_override: false, ...options.system };
   const sessions = new Set<string>();
   const revoked = new Set<string>();
   const sockets = new Set<FakeSocket>();
   let minted = 0;
   let requests = 0;
-  let pushes = 0;
-
-  function store(id: string, layout: Layout) {
-    pushes += 1;
-    layouts.set(`${id}/${layout.orientation}`, { layout: structuredClone(layout), revision: pushes.toString(16).padStart(8, '0') });
-  }
-  for (const [id, layout] of Object.entries(options.layouts ?? {})) store(id, layout);
+  const layouts = createFakeLayouts({ devices, publish, seed: options.layouts, delayMs: options.jobMs });
 
   function mint() {
     minted += 1;
@@ -96,6 +93,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     const get = request.method === 'GET';
 
     if (path === '/system/ping') return get ? json(200, { api: ['v1'] }) : failure(405, 'route.method_not_allowed', 'Use GET.');
+    if (path.startsWith('/test/')) return layouts.test(request, path);
 
     const auth = request.headers.get('Authorization') ?? '';
     const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
@@ -106,15 +104,6 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
         : failure(401, 'auth.invalid', 'The session token is unknown.');
     }
 
-    const layout = /^\/devices\/([^/]+)\/layouts\/(landscape|portrait)$/.exec(path);
-    if (layout && get) {
-      const found = devices.get(decodeURIComponent(layout[1]));
-      if (!found) return failure(404, 'device.not_found', 'No Device with that id.');
-      if (found.link.state !== 'connected') return failure(409, 'device.not_connected', "The Device isn't connected.", { link: found.link });
-      const stored = layouts.get(`${found.id}/${layout[2]}`);
-      return stored ? json(200, stored) : failure(404, 'layout.not_found', 'The Device stores no Layout for this orientation.');
-    }
-
     const device = /^\/devices\/([^/]+)$/.exec(path);
     if (path === '/system' || path === '/devices' || device) {
       if (!get) return failure(405, 'route.method_not_allowed', 'Use GET.');
@@ -123,7 +112,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
       const found = devices.get(decodeURIComponent(device![1]));
       return found ? json(200, found) : failure(404, 'device.not_found', 'No Device with that id.');
     }
-    return failure(404, 'route.not_found', 'No route with that path.');
+    return (await layouts.handle(request, path)) ?? failure(404, 'route.not_found', 'No route with that path.');
   }
 
   function openSocket(url: string, protocols: string[]): EventSocket {
@@ -136,7 +125,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     }
     sockets.add(socket);
     socket.send({ type: 'hello', api: 'v1', build: system.build, session: { id: 'fake-session', kind: 'window' } });
-    socket.send({ type: 'sync', data: { devices: [...devices.values()] } });
+    socket.send({ type: 'sync', data: { devices: [...devices.values()], jobs: layouts.jobs() } });
     return socket;
   }
 
@@ -144,6 +133,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     fetch,
     openSocket,
     bridge,
+    layouts,
     /** Sessions minted so far through the bridge. */
     get minted() {
       return minted;
@@ -171,12 +161,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     },
     /** A `layouts.push` Job puts `layout` on a Device and succeeds: `job.updated`. */
     setLayout(id: string, layout: Layout) {
-      store(id, layout);
-      const job: Job = {
-        id: `job_fake${String(pushes).padStart(12, '0')}`, kind: 'layouts.push', scope: { kind: 'device', id }, state: 'succeeded',
-        progress: null, result: null, error: null, cancellable: false, created_ms: 0, finished_ms: 0, rev: 1,
-      };
-      publish({ type: 'job.updated', data: job });
+      layouts.pushed(id, layout);
     },
     /** A Device is forgotten: `device.removed`. */
     remove(id: string) {

@@ -2,6 +2,7 @@ import { createContext, useContext } from 'react';
 import { createClient, type Companion } from './client.ts';
 import { devicesStore, type DevicesStore } from './devices.ts';
 import { openEvents, openWebSocket, type Events, type OpenSocket } from './events.ts';
+import { jobsStore, type JobsStore } from './jobs.ts';
 import { pickSession, type Session } from './session.ts';
 
 /** Where the UI finds its Companion: the page's own origin, unless the demo fakes one. */
@@ -27,10 +28,15 @@ export interface Connection {
 }
 
 /** Starts the client and the event stream that feeds the Devices store. */
-export function connect(env: Environment, store: DevicesStore = devicesStore, onNewBuild = () => window.location.reload()): Connection {
+export function connect(
+  env: Environment,
+  store: DevicesStore = devicesStore,
+  onNewBuild = () => window.location.reload(),
+  jobs: JobsStore = jobsStore,
+): Connection {
   return {
     companion: createClient(env.base, env.session),
-    events: openEvents({ url: eventsUrl(env.base), session: env.session, store, open: env.open, onNewBuild }),
+    events: openEvents({ url: eventsUrl(env.base), session: env.session, store, jobs, open: env.open, onNewBuild }),
   };
 }
 
