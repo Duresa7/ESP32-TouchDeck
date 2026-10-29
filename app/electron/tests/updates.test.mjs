@@ -2,10 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, symlink, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Updater, feedSettings, builtInKey, INSTALLER_ARGS } from '../dist/updates/index.js';
+import { Updater, feedSettings, INSTALLER_ARGS } from '../dist/updates/index.js';
 import { compareVersions, verifyInstaller } from '../dist/updates/signature.js';
 
 function signer() {
@@ -37,7 +37,7 @@ async function fixture(t) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   state.manifest = { version: '1.0.0', platforms: { 'windows-x86_64': { url: `${origin}/setup.exe`, signature: signing.sign(data) } } };
-  const options = { publicKey: signing.key, current: '0.2.0', dataDir: dir,
+  const options = { publicKey: signing.key, current: '0.2.0', runtimeDir: dir,
     ...feedSettings(false, { TOUCHDECK_UPDATE_TEST_FEED: `${origin}/latest.json` }),
     system: () => async (method, path) => {
       state.calls.push([method, path]);
@@ -63,7 +63,7 @@ test('strict semver precedence including prereleases and build metadata', () => 
 test('disabled source build and packaged build ignores test feed', async t => {
   const f = await fixture(t);
   assert.deepEqual(await new Updater({ ...f.options, publicKey: '' }).check(), { state: 'disabled' });
-  assert.equal(await builtInKey(f.dir), '');
+
   assert.equal(feedSettings(true, { TOUCHDECK_UPDATE_TEST_FEED: 'http://127.0.0.1:1' }).allowLoopback, false);
   assert.throws(() => feedSettings(false, { TOUCHDECK_UPDATE_TEST_FEED: 'http://example.invalid' }));
 });
@@ -104,6 +104,7 @@ test('rejects insecure redirect and serializes downloads', async t => {
   const f = await fixture(t);
   f.state.manifest.platforms['windows-x86_64'].url = f.options.feed.replace('latest.json', 'redirect');
   await f.updater.check(); assert.deepEqual(await f.updater.download(() => {}), { state: 'failed', reason: 'download' });
+  assert.deepEqual(await readdir(f.dir), []);
   f.state.manifest.platforms['windows-x86_64'].url = f.options.feed.replace('latest.json', 'setup.exe');
   await f.updater.check(); const first = f.updater.download(() => {});
   assert.deepEqual(await f.updater.download(() => {}), { state: 'failed', reason: 'download' });
@@ -120,6 +121,7 @@ test('lock renewal failure releases owned lock without shutdown or launch', asyn
   const f = await fixture(t); await f.updater.check(); await f.updater.download(() => {}); f.state.failRenew = true;
   assert.deepEqual(await f.updater.install(), { state: 'failed', reason: 'installer' });
   assert.deepEqual(f.state.calls.map(c => c[0]), ['POST', 'PUT', 'DELETE']); assert.equal(f.state.launches.length, 0);
+  assert.deepEqual(await readdir(f.dir), []);
 });
 
 test('successful handoff locks, renews, shuts down, launches verified bytes and quits without resolving', async t => {
@@ -136,6 +138,7 @@ test('file changed after ready is refused and deleted before lock', async t => {
   const path = join(f.dir, (await readdir(f.dir))[0], 'setup.exe'); await writeFile(path, 'tampered');
   assert.deepEqual(await f.updater.install(), { state: 'failed', reason: 'installer' });
   assert.equal(f.state.calls.length, 0); await assert.rejects(readFile(path));
+  assert.deepEqual(await readdir(f.dir), []);
 });
 
 test('real v0.1.0 installer verifies; one byte flipped is refused', { skip: !process.env.TOUCHDECK_REAL_UPDATE_ASSETS }, async t => {
@@ -157,7 +160,8 @@ test('feed stays equal to the Tauri endpoint and seam types stay equal', async (
   assert.equal(UPDATE_FEED, tauri.plugins.updater.endpoints[0]);
   const types = await readFile(new URL('../src/updates/types.ts', import.meta.url), 'utf8');
   const ui = await readFile(new URL('../../ui/src/companion/session.ts', import.meta.url), 'utf8');
-  assert.ok(ui.startsWith(types));
+  const declarations = text => text.replace(/\/\/[^\n]*/g, '').replace(/\s+/g, ' ').trim();
+  assert.ok(declarations(ui).includes(declarations(types)));
 });
 
 test('oversized manifest fails and HTTP failures resolve', async t => {
@@ -175,6 +179,7 @@ test('installer spawn failure returns failure and attempts owned unlock', async 
   assert.deepEqual(await updater.install(), { state: 'failed', reason: 'installer' });
   assert.deepEqual(f.state.calls.at(-1), ['DELETE', '/system/lock/test-lock']);
   assert.equal(f.state.quits, 0);
+  assert.deepEqual(await readdir(f.dir), []);
 });
 
 test('signed fake installer executable receives passive restart flags', async t => {
@@ -204,7 +209,9 @@ test('missing Companion resolves and permits another attempt', async t => {
   } });
   await updater.check(); await updater.download(() => {});
   assert.deepEqual(await updater.install(), { state: 'failed', reason: 'installer' });
+  assert.deepEqual(await readdir(f.dir), []);
   available = true; f.state.busy = true;
+  await updater.download(() => {});
   assert.deepEqual(await updater.install(), { state: 'failed', reason: 'busy', device: 'Studio' });
 });
 
@@ -213,4 +220,137 @@ test('signed version binds build metadata as well as precedence', async t => {
   f.state.manifest.version = '1.0.0+other';
   await f.updater.check();
   assert.deepEqual(await f.updater.download(() => {}), { state: 'failed', reason: 'signature' });
+  assert.deepEqual(await readdir(f.dir), []);
+});
+
+for (const step of ['lock', 'renew', 'shutdown']) {
+  for (const mutation of ['rewrite', 'replace']) test(`refuses ${mutation} during ${step} and deletes staging`, async t => {
+    const f = await fixture(t);
+    const original = f.options.system;
+    f.options.system = () => async (method, path) => {
+      if ((step === 'lock' && path === '/system/lock') || (step === 'renew' && method === 'PUT') ||
+          (step === 'shutdown' && path === '/system/shutdown')) {
+        const installer = join(f.dir, (await readdir(f.dir))[0], 'setup.exe');
+        if (mutation === 'replace') await rm(installer);
+        await writeFile(installer, 'untrusted bytes');
+      }
+      return original()(method, path);
+    };
+    await f.updater.check(); await f.updater.download(() => {});
+    assert.deepEqual(await f.updater.install(), { state: 'failed', reason: 'installer' });
+    assert.deepEqual(await readdir(f.dir), []);
+    assert.equal(f.state.launches.length, 0);
+    assert.equal(f.state.quits, 0);
+    assert.deepEqual(await f.updater.install(), { state: 'failed', reason: 'installer' });
+  });
+}
+
+for (const failure of ['lock', 'shutdown', 'oversized']) test(`cleans staging on ${failure} install failure`, async t => {
+  const f = await fixture(t);
+  const original = f.options.system;
+  f.options.system = () => async (method, path) => path === `/system/${failure}`
+    ? { status: 503, body: null } : original()(method, path);
+  await f.updater.check(); await f.updater.download(() => {});
+  if (failure === 'oversized') await truncate(join(f.dir, (await readdir(f.dir))[0], 'setup.exe'), 256 * 1024 * 1024 + 1);
+  assert.deepEqual(await f.updater.install(), { state: 'failed', reason: 'installer' });
+  assert.deepEqual(await readdir(f.dir), []);
+  assert.equal(f.state.launches.length, 0);
+});
+
+test('busy retains the ready installer for a successful retry', async t => {
+  const f = await fixture(t); await f.updater.check(); await f.updater.download(() => {});
+  const folders = await readdir(f.dir); f.state.busy = true;
+  assert.equal((await f.updater.install()).reason, 'busy');
+  assert.deepEqual(await readdir(f.dir), folders);
+  assert.deepEqual(await readFile(join(f.dir, folders[0], 'setup.exe')), f.state.data);
+  f.state.busy = false; void f.updater.install();
+  for (let n = 0; n < 100 && !f.state.quits; n++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(f.state.quits, 1);
+});
+
+test('replacement download removes the previous staging folder', async t => {
+  const f = await fixture(t); await f.updater.check(); await f.updater.download(() => {});
+  const first = (await readdir(f.dir))[0];
+  assert.deepEqual(await f.updater.download(() => {}), { state: 'ready' });
+  const next = await readdir(f.dir); assert.equal(next.length, 1); assert.notEqual(next[0], first);
+});
+
+test('startup removes stale update folders and preserves other runtime files', async t => {
+  const f = await fixture(t); await f.updater.check(); await f.updater.download(() => {});
+  await writeFile(join(f.dir, 'companion.json'), '{}');
+  const updater = new Updater(f.options);
+  await updater.check(); await updater.download(() => {});
+  assert.equal((await readdir(f.dir)).filter(name => name.startsWith('update-')).length, 1);
+  assert.equal(await readFile(join(f.dir, 'companion.json'), 'utf8'), '{}');
+});
+
+test('reparse-point staging is refused before launch and its link is deleted', async t => {
+  const f = await fixture(t); await f.updater.check(); await f.updater.download(() => {});
+  const folder = join(f.dir, (await readdir(f.dir))[0]);
+  const target = await mkdtemp(join(tmpdir(), 'touchdeck-link-target-'));
+  t.after(() => rm(target, { recursive: true, force: true }));
+  await rm(folder, { recursive: true });
+  await writeFile(join(target, 'setup.exe'), f.state.data);
+  try { await symlink(target, folder, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (error) { if (['EPERM', 'EACCES', 'ENOTSUP'].includes(error.code)) return t.skip(`OS cannot create directory link: ${error.code}`); throw error; }
+  assert.deepEqual(await f.updater.install(), { state: 'failed', reason: 'installer' });
+  assert.deepEqual(await readdir(f.dir), []);
+  await assert.rejects(readFile(join(folder, 'setup.exe')));
+  assert.equal(f.state.launches.length, 0);
+  assert.deepEqual(await readFile(join(target, 'setup.exe')), f.state.data);
+});
+
+test('source build ignores stray runtime key files', async t => {
+  const { UPDATER_PUBLIC_KEY } = await import('../dist/updates/key.gen.js');
+  const f = await fixture(t);
+  const loose = new URL('../dist/updater-key.json', import.meta.url);
+  await writeFile(loose, JSON.stringify({ publicKey: f.signing.key }));
+  t.after(() => rm(loose, { force: true }));
+  assert.equal(UPDATER_PUBLIC_KEY, '');
+  assert.deepEqual(await new Updater({ ...f.options, publicKey: UPDATER_PUBLIC_KEY }).check(), { state: 'disabled' });
+});
+
+test('failed download after release disappears removes the ready installer', async t => {
+  const f = await fixture(t); await f.updater.check(); await f.updater.download(() => {});
+  f.state.manifest.version = '0.2.0'; await f.updater.check();
+  assert.deepEqual(await f.updater.download(() => {}), { state: 'failed', reason: 'download' });
+  assert.deepEqual(await readdir(f.dir), []);
+  assert.deepEqual(await f.updater.install(), { state: 'failed', reason: 'installer' });
+});
+
+test('staging changed to a junction during shutdown is refused at launch', async t => {
+  const f = await fixture(t);
+  const target = await mkdtemp(join(tmpdir(), 'touchdeck-link-target-'));
+  t.after(() => rm(target, { recursive: true, force: true }));
+  const probe = join(f.dir, 'probe');
+  try { await symlink(target, probe, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (error) { if (['EPERM', 'EACCES', 'ENOTSUP'].includes(error.code)) return t.skip(`OS cannot create directory link: ${error.code}`); throw error; }
+  await rm(probe);
+  const original = f.options.system;
+  f.options.system = () => async (method, path) => {
+    if (path === '/system/shutdown') {
+      const folder = join(f.dir, (await readdir(f.dir))[0]);
+      await rm(folder, { recursive: true });
+      await writeFile(join(target, 'setup.exe'), f.state.data);
+      await symlink(target, folder, process.platform === 'win32' ? 'junction' : 'dir');
+    }
+    return original()(method, path);
+  };
+  await f.updater.check(); await f.updater.download(() => {});
+  assert.deepEqual(await f.updater.install(), { state: 'failed', reason: 'installer' });
+  assert.deepEqual(await readdir(f.dir), []);
+  assert.equal(f.state.launches.length, 0);
+});
+
+test('runtime junction is refused before writing any installer', async t => {
+  const f = await fixture(t);
+  const link = join(f.dir, 'runtime');
+  const target = await mkdtemp(join(tmpdir(), 'touchdeck-runtime-target-'));
+  t.after(() => rm(target, { recursive: true, force: true }));
+  try { await symlink(target, link, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (error) { if (['EPERM', 'EACCES', 'ENOTSUP'].includes(error.code)) return t.skip(`OS cannot create directory link: ${error.code}`); throw error; }
+  const updater = new Updater({ ...f.options, runtimeDir: link });
+  await updater.check();
+  assert.deepEqual(await updater.download(() => {}), { state: 'failed', reason: 'download' });
+  assert.deepEqual(await readdir(target), []);
 });

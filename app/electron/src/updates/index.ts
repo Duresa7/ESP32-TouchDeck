@@ -1,5 +1,5 @@
-import { mkdir, mkdtemp, open, readFile, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { lstat, mkdtemp, open, readdir, rm, stat } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { compareVersions, verifyInstaller } from './signature';
 import type { UpdateCheck, UpdateDownload, UpdateInstall, UpdateProgress } from './types';
 
@@ -10,7 +10,7 @@ class InvalidDownload extends Error {}
 class SignatureFailure extends Error {}
 export type SystemCall = (method: string, path: string) => Promise<{ status: number; body: unknown }>;
 type Options = {
-  publicKey: string; current: string; dataDir: string; feed?: string; allowLoopback?: boolean;
+  publicKey: string; current: string; runtimeDir: string; feed?: string; allowLoopback?: boolean;
   system: () => SystemCall; launch: (path: string, args: string[]) => Promise<void>; quit: () => void;
 };
 type Release = { version: string; url: string; signature: string; size?: number };
@@ -31,19 +31,40 @@ function field(value: unknown, name: string): unknown {
   return typeof value === 'object' && value !== null ? Reflect.get(value, name) : undefined;
 }
 
-export async function builtInKey(dist: string): Promise<string> {
-  try {
-    const value: unknown = JSON.parse(await readFile(join(dist, 'updater-key.json'), 'utf8'));
-    const key = field(value, 'publicKey');
-    return typeof key === 'string' ? key : '';
-  } catch { return ''; }
-}
-
 export class Updater {
   private release?: Release;
   private ready?: { path: string; release: Release };
   private active = false;
-  constructor(private readonly options: Options) {}
+  private staging?: string;
+  private readonly started: Promise<void>;
+  constructor(private readonly options: Options) {
+    this.started = this.removeLeftovers();
+    void this.started.catch(() => {});
+  }
+
+  private async validateFolders(staging?: string) {
+    for (const path of [this.options.runtimeDir, ...(staging ? [staging] : [])]) {
+      const entry = await lstat(path);
+      if (entry.isSymbolicLink() || !entry.isDirectory()) throw new Error('Unsafe staging folder');
+    }
+  }
+
+  private async removeLeftovers() {
+    await this.validateFolders();
+    for (const entry of await readdir(this.options.runtimeDir, { withFileTypes: true })) {
+      if (entry.name.startsWith('update-') && (entry.isDirectory() || entry.isSymbolicLink())) {
+        await rm(join(this.options.runtimeDir, entry.name), { recursive: true, force: true });
+      }
+    }
+  }
+
+  private async cleanup() {
+    this.ready = undefined;
+    if (this.staging) {
+      await rm(this.staging, { recursive: true, force: true });
+      this.staging = undefined;
+    }
+  }
 
   private validateUrl(value: string): URL {
     const url = new URL(value);
@@ -113,22 +134,24 @@ export class Updater {
   }
 
   async download(progress: (p: UpdateProgress) => void): Promise<UpdateDownload> {
-    if (this.active || !this.release || !this.options.publicKey) return { state: 'failed', reason: 'download' };
+    if (this.active) return { state: 'failed', reason: 'download' };
     this.active = true;
-    let dir: string | undefined;
     let reading = false;
     try {
-      if (this.ready) { await rm(this.ready.path, { force: true }); this.ready = undefined; }
+      await this.started;
+      await this.cleanup();
       const release = this.release;
-      await mkdir(this.options.dataDir, { recursive: true });
-      dir = await mkdtemp(join(this.options.dataDir, 'update-'));
-      const path = join(dir, 'setup.exe');
+      if (!release || !this.options.publicKey) throw new InvalidDownload();
+      await this.validateFolders();
+      this.staging = await mkdtemp(join(this.options.runtimeDir, 'update-'));
+      const path = join(this.staging, 'setup.exe');
       const response = await this.response(release.url, AbortSignal.timeout(5 * 60 * 1000));
       const length = response.headers.get('content-length');
       const total = length === null ? null : Number(length);
       if (total !== null && (!Number.isSafeInteger(total) || total <= 0 || total > MAX_DOWNLOAD)) {
         await response.body?.cancel(); throw new InvalidDownload();
       }
+      await this.validateFolders(this.staging);
       const file = await open(path, 'wx', 0o600);
       const reader = response.body.getReader();
       let downloaded = 0;
@@ -148,7 +171,7 @@ export class Updater {
       this.ready = { path, release };
       return { state: 'ready' };
     } catch (error) {
-      if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
+      await this.cleanup().catch(() => {});
       if (error instanceof SignatureFailure || (reading && !(error instanceof InvalidDownload))) return { state: 'failed', reason: 'signature' };
       return error instanceof TypeError || (error instanceof Error && error.name === 'TimeoutError')
         ? { state: 'offline' } : { state: 'failed', reason: 'download' };
@@ -163,6 +186,7 @@ export class Updater {
     try {
       system = this.options.system();
       const ready = this.ready;
+      await this.validateFolders(dirname(ready.path));
       if ((await stat(ready.path)).size > MAX_DOWNLOAD) throw new Error('Oversized installer');
       await this.verify(ready.path, ready.release);
       const acquired = await system('POST', '/system/lock');
@@ -178,13 +202,14 @@ export class Updater {
       if (renewed.status < 200 || renewed.status >= 300) throw new Error('Lock lost');
       const stopped = await system('POST', '/system/shutdown');
       if (stopped.status < 200 || stopped.status >= 300) throw new Error('Shutdown failed');
+      await this.validateFolders(dirname(ready.path));
+      if ((await stat(ready.path)).size > MAX_DOWNLOAD) throw new Error('Oversized installer');
+      await this.verify(ready.path, ready.release);
       await this.options.launch(ready.path, [...INSTALLER_ARGS]);
       this.options.quit();
       return await new Promise<never>(() => {});
-    } catch (error) {
-      if (error instanceof SignatureFailure && this.ready) {
-        await rm(this.ready.path, { force: true }).catch(() => {}); this.ready = undefined;
-      }
+    } catch {
+      await this.cleanup().catch(() => {});
       return { state: 'failed', reason: 'installer' };
     } finally {
       if (lock && system) await system('DELETE', `/system/lock/${encodeURIComponent(lock)}`).catch(() => {});

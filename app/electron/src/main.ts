@@ -3,7 +3,9 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { connect, devUiOrigin, restartMessage, revoke, runtimePath, type WindowSession } from './companion';
 
-import { Updater, builtInKey, feedSettings } from './updates';
+import { Updater, feedSettings } from './updates';
+import { UPDATER_PUBLIC_KEY } from './updates/key.gen';
+import { trustedSender } from './trusted-sender';
 
 app.setName('Open TouchDeck');
 if (process.platform === 'win32') app.setAppUserModelId('io.github.duresa7.touchdeck');
@@ -34,8 +36,7 @@ function startCompanion() {
 
 function trusted(event: Electron.IpcMainInvokeEvent): boolean {
   const frame = event.senderFrame;
-  return !!window && !!current && !closing && event.sender === window.webContents &&
-    frame === window.webContents.mainFrame && frame.origin === current.origin;
+  return trustedSender({ sender: event.sender, frame, origin: frame?.origin, window, closing, expectedOrigin: current?.origin });
 }
 
 function sameOrigin(url: string): boolean {
@@ -91,7 +92,7 @@ for (const action of ['check', 'download', 'install'] as const) {
 async function openWindow() {
   current = await connect(runtimePath(), startCompanion);
   updater = new Updater({
-    publicKey: await builtInKey(__dirname), current: app.getVersion(), dataDir: app.getPath('userData'),
+    publicKey: UPDATER_PUBLIC_KEY, current: app.getVersion(), runtimeDir: dirname(runtimePath()),
     ...feedSettings(app.isPackaged),
     system: () => {
       const session = current;
