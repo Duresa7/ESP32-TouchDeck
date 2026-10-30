@@ -38,20 +38,29 @@ export function waitForJob<K extends keyof JobMap>(
   store: JobsStore,
   companion: Pick<Companion, 'jobs'>,
   job: Job,
-  pollMs = 2000,
+  { pollMs = 2000, signal }: { pollMs?: number; signal?: AbortSignal } = {},
 ): Promise<JobMap[K]['result']> {
   return new Promise((resolve, reject) => {
     let done = false;
-    const settle = (latest: Job) => {
-      if (done || !finished(latest)) return;
+    const end = () => {
       done = true;
       unsubscribe();
       clearInterval(timer);
+      signal?.removeEventListener('abort', abort);
+    };
+    const settle = (latest: Job) => {
+      if (done || !finished(latest)) return;
+      end();
       try {
         resolve(outcome<K>(latest));
       } catch (error) {
         reject(error);
       }
+    };
+    const abort = () => {
+      if (done) return;
+      end();
+      reject(signal?.reason);
     };
     const unsubscribe = store.subscribe((state) => {
       const latest = state.jobs[job.id];
@@ -66,7 +75,9 @@ export function waitForJob<K extends keyof JobMap>(
         () => {},
       );
     }, pollMs);
+    signal?.addEventListener('abort', abort);
     store.getState().upsert(job);
     settle(store.getState().jobs[job.id] ?? job);
+    if (signal?.aborted) abort();
   });
 }

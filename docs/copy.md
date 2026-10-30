@@ -312,6 +312,39 @@ Opens from the Device's name.
 | Forget confirm body | It needs a new code to use Open TouchDeck again. |
 | Forget confirm buttons | Forget, Cancel |
 
+### Icon picker
+
+Opens from the Icon field in the Tile inspector.
+
+| Element | String |
+| --- | --- |
+| Icon field button | Change |
+| Icon field, a Tile without an icon | No icon |
+| Icon field, an Asset no recent pick names | Custom icon |
+| Picker title, for screen readers | Choose icon |
+| Search placeholder | Search icons, like Spotify or mail |
+| Search label | Search icons |
+| Hint, before any search or recent pick | Search Simple Icons and selfh.st logos, or pick a built-in icon. |
+| Section titles | Recent, Logos, Built-in |
+| First built-in cell | No icon |
+| Logo cell tooltip | {name} · {source} |
+| Searching | Searching… |
+| No results | No icons match “{query}”. Try a shorter word. |
+| Companion unreachable | Can't reach the Companion. Check that Open TouchDeck is running in the tray, then retry. |
+| Search or built-ins failed | Icons didn't load. Restart Open TouchDeck, then retry. |
+| Getting a logo | Getting {name}… |
+| Logo failed | Couldn't get {name}. Check the internet connection, then retry. |
+| Upload button | Upload image |
+| Uploading | Uploading “{file}”… |
+| Upload failed | Couldn't upload “{file}”. Choose a PNG or JPEG image up to 16 MB. |
+| App icon button, launch actions only | Use app icon |
+| Getting the app icon | Getting icon… |
+| App icon failed | Couldn't get that app's icon. Check the app's path, or choose an icon. |
+| Recent app icon name | {program file name}, or App icon |
+| Too many icons rendering at once | Other icons are still being prepared. Wait a moment, then retry. |
+| Failure buttons | Retry, Details |
+| Credits | Icons: Simple Icons (CC0) · selfh.st/icons (CC BY 4.0, modified) · Logos belong to their owners |
+
 ## Tooltip names for the bottom-left icons
 
 | Icon | Tooltip |

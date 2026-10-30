@@ -158,14 +158,14 @@ pub fn generate() -> String {
     out.push_str(
         r#"
 export function createCompanion(base: string, token: () => string) {
-  async function call<T>(name: keyof typeof endpoints, path: Record<string, string>, query: unknown, body: unknown, bearer?: string, headers?: Record<string, string>): Promise<T> {
+  async function call<T>(name: keyof typeof endpoints, path: Record<string, string>, query: unknown, body: unknown, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal): Promise<T> {
     const endpoint = endpoints[name];
     let route: string = endpoint.path;
     for (const [key, value] of Object.entries(path)) route = route.replace(`{${key}}`, encodeURIComponent(value));
     const url = new URL(`/api/v1${route}`, base);
-    if (query) for (const [key, value] of Object.entries(query)) url.searchParams.set(key, String(value));
+    if (query) for (const [key, value] of Object.entries(query)) if (value != null) url.searchParams.set(key, String(value));
     const auth = bearer ?? (endpoint.access === 'session' ? token() : undefined);
-    const response = await fetch(url, { method: endpoint.method, headers: { ...headers, ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...(body == null ? {} : { 'Content-Type': body instanceof Blob ? body.type : 'application/json' }) }, ...(body == null ? {} : { body: body instanceof Blob ? body : JSON.stringify(body) }) });
+    const response = await fetch(url, { method: endpoint.method, headers: { ...headers, ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...(body == null ? {} : { 'Content-Type': body instanceof Blob ? body.type : 'application/json' }) }, ...(body == null ? {} : { body: body instanceof Blob ? body : JSON.stringify(body) }), signal });
     if (!response.ok) throw (await response.json()).error;
     if (response.status === 204) return undefined as T;
     // Asset files come back as raw bytes with their media type.
@@ -196,7 +196,7 @@ export function createCompanion(base: string, token: () => string) {
                 }
             };
             out.push_str(&format!(
-                "      {action}: ({}, {}, {}, bearer?: string, headers?: Record<string, string>) => call<{}>('{}', path, query, body, bearer, headers),\n",
+                "      {action}: ({}, {}, {}, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<{}>('{}', path, query, body, bearer, headers, signal),\n",
                 param("path", &e.path_type, "Record<string, never> = {}"),
                 param("query", &e.query_type, "null = null"),
                 param("body", &e.body_type, "null = null"),

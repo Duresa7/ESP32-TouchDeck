@@ -4,6 +4,8 @@ import type { Session } from './session.ts';
 
 export type Companion = ReturnType<typeof createCompanion>;
 
+export const isAbort = (error: unknown): error is DOMException => error instanceof DOMException && error.name === 'AbortError';
+
 export async function request<T>(session: Session, send: () => Promise<T>): Promise<T> {
   let token: string | null;
   try {
@@ -14,6 +16,7 @@ export async function request<T>(session: Session, send: () => Promise<T>): Prom
   try {
     return await send();
   } catch (first) {
+    if (isAbort(first)) throw first;
     const error = toApiError(first);
     if (!isSessionError(error)) throw error;
     const fresh = await session.renew(token);

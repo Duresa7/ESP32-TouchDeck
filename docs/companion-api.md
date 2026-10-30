@@ -16,6 +16,7 @@ Related decisions: [ADR 0001](adr/0001-rust-companion-behind-electron.md) (Rust 
 - Every error has one shape: `{"error": {"code", "message", "details"}}`.
 - No session can approve a command. Approvals happen in a native dialog on the PC.
 - Routes are declared once with a typed `Endpoint` trait. ts-rs generates the TypeScript client, and a test fails when the committed file is stale.
+- Each generated wrapper takes an optional `AbortSignal` after its headers, so a client can drop a request it no longer needs. Query parameters set to `null` or `undefined` are left out of the URL.
 - `/api/v1` changes only by addition.
 
 ## Transport

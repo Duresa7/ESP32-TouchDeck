@@ -278,14 +278,14 @@ export type EventMap = {
 };
 
 export function createCompanion(base: string, token: () => string) {
-  async function call<T>(name: keyof typeof endpoints, path: Record<string, string>, query: unknown, body: unknown, bearer?: string, headers?: Record<string, string>): Promise<T> {
+  async function call<T>(name: keyof typeof endpoints, path: Record<string, string>, query: unknown, body: unknown, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal): Promise<T> {
     const endpoint = endpoints[name];
     let route: string = endpoint.path;
     for (const [key, value] of Object.entries(path)) route = route.replace(`{${key}}`, encodeURIComponent(value));
     const url = new URL(`/api/v1${route}`, base);
-    if (query) for (const [key, value] of Object.entries(query)) url.searchParams.set(key, String(value));
+    if (query) for (const [key, value] of Object.entries(query)) if (value != null) url.searchParams.set(key, String(value));
     const auth = bearer ?? (endpoint.access === 'session' ? token() : undefined);
-    const response = await fetch(url, { method: endpoint.method, headers: { ...headers, ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...(body == null ? {} : { 'Content-Type': body instanceof Blob ? body.type : 'application/json' }) }, ...(body == null ? {} : { body: body instanceof Blob ? body : JSON.stringify(body) }) });
+    const response = await fetch(url, { method: endpoint.method, headers: { ...headers, ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...(body == null ? {} : { 'Content-Type': body instanceof Blob ? body.type : 'application/json' }) }, ...(body == null ? {} : { body: body instanceof Blob ? body : JSON.stringify(body) }), signal });
     if (!response.ok) throw (await response.json()).error;
     if (response.status === 204) return undefined as T;
     // Asset files come back as raw bytes with their media type.
@@ -302,97 +302,97 @@ export function createCompanion(base: string, token: () => string) {
   }
   return {
     actions: {
-      allowed: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<AllowedAction>>('actions.allowed', path, query, body, bearer, headers),
-      allowed_remove: (path: { hash: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('actions.allowed_remove', path, query, body, bearer, headers),
-      log: (path: Record<string, never> = {}, query: { device: DeviceId | null, }, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<ActionLog>>('actions.log', path, query, body, bearer, headers),
+      allowed: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Array<AllowedAction>>('actions.allowed', path, query, body, bearer, headers, signal),
+      allowed_remove: (path: { hash: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('actions.allowed_remove', path, query, body, bearer, headers, signal),
+      log: (path: Record<string, never> = {}, query: { device: DeviceId | null, }, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Array<ActionLog>>('actions.log', path, query, body, bearer, headers, signal),
     },
     approvals: {
-      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<ApprovalRequest>>('approvals.list', path, query, body, bearer, headers),
-      show: (path: { id: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('approvals.show', path, query, body, bearer, headers),
+      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Array<ApprovalRequest>>('approvals.list', path, query, body, bearer, headers, signal),
+      show: (path: { id: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('approvals.show', path, query, body, bearer, headers, signal),
     },
     assets: {
-      builtin: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<Builtin>>('assets.builtin', path, query, body, bearer, headers),
-      catalog_search: (path: Record<string, never> = {}, query: { q: string, catalog: string | null, }, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<CatalogHit>>('assets.catalog_search', path, query, body, bearer, headers),
-      create: (path: Record<string, never> = {}, query: null = null, body: { source: AssetSource, fit?: Fit, }, bearer?: string, headers?: Record<string, string>) => call<Job>('assets.create', path, query, body, bearer, headers),
-      file: (path: { asset: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<AssetBytes>('assets.file', path, query, body, bearer, headers),
-      on_device: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<DeviceAssets>('assets.on_device', path, query, body, bearer, headers),
+      builtin: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Array<Builtin>>('assets.builtin', path, query, body, bearer, headers, signal),
+      catalog_search: (path: Record<string, never> = {}, query: { q: string, catalog: string | null, }, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Array<CatalogHit>>('assets.catalog_search', path, query, body, bearer, headers, signal),
+      create: (path: Record<string, never> = {}, query: null = null, body: { source: AssetSource, fit?: Fit, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('assets.create', path, query, body, bearer, headers, signal),
+      file: (path: { asset: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<AssetBytes>('assets.file', path, query, body, bearer, headers, signal),
+      on_device: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<DeviceAssets>('assets.on_device', path, query, body, bearer, headers, signal),
       prune: (path: { device: DeviceId, }, query: null = null, body: { 
 /**
  * Assets to keep besides the ones the Device's stored Layouts use, such as those of a
  * Layout being edited.
  */
-also_keep: Array<string>, }, bearer?: string, headers?: Record<string, string>) => call<Job>('assets.prune', path, query, body, bearer, headers),
-      suggest: (path: Record<string, never> = {}, query: null = null, body: { action: TileAction, }, bearer?: string, headers?: Record<string, string>) => call<Builtin | null>('assets.suggest', path, query, body, bearer, headers),
-      upload: (path: Record<string, never> = {}, query: null = null, body: Blob, bearer?: string, headers?: Record<string, string>) => call<Uploaded>('assets.upload', path, query, body, bearer, headers),
+also_keep: Array<string>, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('assets.prune', path, query, body, bearer, headers, signal),
+      suggest: (path: Record<string, never> = {}, query: null = null, body: { action: TileAction, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Builtin | null>('assets.suggest', path, query, body, bearer, headers, signal),
+      upload: (path: Record<string, never> = {}, query: null = null, body: Blob, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Uploaded>('assets.upload', path, query, body, bearer, headers, signal),
     },
     auth: {
-      pair: (path: Record<string, never> = {}, query: null = null, body: { code: string, label: string | null, }, bearer?: string, headers?: Record<string, string>) => call<SessionCreated>('auth.pair', path, query, body, bearer, headers),
-      pair_code: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<PairExpires>('auth.pair_code', path, query, body, bearer, headers),
-      proof: (path: Record<string, never> = {}, query: null = null, body: { nonce: string, }, bearer?: string, headers?: Record<string, string>) => call<Proof>('auth.proof', path, query, body, bearer, headers),
-      reset: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('auth.reset', path, query, body, bearer, headers),
-      session_create: (path: Record<string, never> = {}, query: null = null, body: { kind: SessionKind, label: string | null, }, bearer?: string, headers?: Record<string, string>) => call<SessionCreated>('auth.session_create', path, query, body, bearer, headers),
-      session_delete: (path: { id: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('auth.session_delete', path, query, body, bearer, headers),
-      sessions: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<SessionInfo>>('auth.sessions', path, query, body, bearer, headers),
-      sessions_delete: (path: Record<string, never> = {}, query: { kind: BrowserKind, }, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('auth.sessions_delete', path, query, body, bearer, headers),
+      pair: (path: Record<string, never> = {}, query: null = null, body: { code: string, label: string | null, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<SessionCreated>('auth.pair', path, query, body, bearer, headers, signal),
+      pair_code: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<PairExpires>('auth.pair_code', path, query, body, bearer, headers, signal),
+      proof: (path: Record<string, never> = {}, query: null = null, body: { nonce: string, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Proof>('auth.proof', path, query, body, bearer, headers, signal),
+      reset: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('auth.reset', path, query, body, bearer, headers, signal),
+      session_create: (path: Record<string, never> = {}, query: null = null, body: { kind: SessionKind, label: string | null, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<SessionCreated>('auth.session_create', path, query, body, bearer, headers, signal),
+      session_delete: (path: { id: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('auth.session_delete', path, query, body, bearer, headers, signal),
+      sessions: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Array<SessionInfo>>('auth.sessions', path, query, body, bearer, headers, signal),
+      sessions_delete: (path: Record<string, never> = {}, query: { kind: BrowserKind, }, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('auth.sessions_delete', path, query, body, bearer, headers, signal),
     },
     console: {
-      send: (path: { device: DeviceId, }, query: null = null, body: { line: string, }, bearer?: string, headers?: Record<string, string>) => call<null>('console.send', path, query, body, bearer, headers),
+      send: (path: { device: DeviceId, }, query: null = null, body: { line: string, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('console.send', path, query, body, bearer, headers, signal),
     },
     devices: {
-      connect: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<DeviceSummary>('devices.connect', path, query, body, bearer, headers),
-      disconnect: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<DeviceSummary>('devices.disconnect', path, query, body, bearer, headers),
-      forget: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('devices.forget', path, query, body, bearer, headers),
-      get: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<DeviceSummary>('devices.get', path, query, body, bearer, headers),
-      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<DeviceSummary>>('devices.list', path, query, body, bearer, headers),
-      restart: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('devices.restart', path, query, body, bearer, headers),
-      settings_get: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<DeviceSettings>('devices.settings_get', path, query, body, bearer, headers),
+      connect: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<DeviceSummary>('devices.connect', path, query, body, bearer, headers, signal),
+      disconnect: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<DeviceSummary>('devices.disconnect', path, query, body, bearer, headers, signal),
+      forget: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('devices.forget', path, query, body, bearer, headers, signal),
+      get: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<DeviceSummary>('devices.get', path, query, body, bearer, headers, signal),
+      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Array<DeviceSummary>>('devices.list', path, query, body, bearer, headers, signal),
+      restart: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('devices.restart', path, query, body, bearer, headers, signal),
+      settings_get: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<DeviceSettings>('devices.settings_get', path, query, body, bearer, headers, signal),
       settings_patch: (path: { device: DeviceId, }, query: null = null, body: { idle_timeout_s: number | null, orientation: string | null, name: string | null, 
 /**
  * A percentage, 0 to 100.
  */
-brightness: number | null, }, bearer?: string, headers?: Record<string, string>) => call<SettingsPatched>('devices.settings_patch', path, query, body, bearer, headers),
+brightness: number | null, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<SettingsPatched>('devices.settings_patch', path, query, body, bearer, headers, signal),
     },
     firmware: {
-      bundled: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<FirmwareBuild>('firmware.bundled', path, query, body, bearer, headers),
-      install: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, }, bearer?: string, headers?: Record<string, string>) => call<Job>('firmware.install', path, query, body, bearer, headers),
-      pick: (path: Record<string, never> = {}, query: null = null, body: { device: DeviceId, }, bearer?: string, headers?: Record<string, string>) => call<PickResult>('firmware.pick', path, query, body, bearer, headers),
-      repair: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, }, bearer?: string, headers?: Record<string, string>) => call<Job>('firmware.repair', path, query, body, bearer, headers),
-      update: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, }, bearer?: string, headers?: Record<string, string>) => call<Job>('firmware.update', path, query, body, bearer, headers),
+      bundled: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<FirmwareBuild>('firmware.bundled', path, query, body, bearer, headers, signal),
+      install: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('firmware.install', path, query, body, bearer, headers, signal),
+      pick: (path: Record<string, never> = {}, query: null = null, body: { device: DeviceId, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<PickResult>('firmware.pick', path, query, body, bearer, headers, signal),
+      repair: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('firmware.repair', path, query, body, bearer, headers, signal),
+      update: (path: { device: DeviceId, }, query: null = null, body: { bundle: string, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('firmware.update', path, query, body, bearer, headers, signal),
     },
     integrations: {
-      config_put: (path: { integration: string, }, query: null = null, body: number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null, bearer?: string, headers?: Record<string, string>) => call<IntegrationView>('integrations.config_put', path, query, body, bearer, headers),
-      get: (path: { integration: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<IntegrationView>('integrations.get', path, query, body, bearer, headers),
-      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<IntegrationSummary>>('integrations.list', path, query, body, bearer, headers),
-      refresh: (path: { integration: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('integrations.refresh', path, query, body, bearer, headers),
-      secret_delete: (path: { integration: string, field: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('integrations.secret_delete', path, query, body, bearer, headers),
-      secret_put: (path: { integration: string, field: string, }, query: null = null, body: { value: string, }, bearer?: string, headers?: Record<string, string>) => call<SecretHint>('integrations.secret_put', path, query, body, bearer, headers),
+      config_put: (path: { integration: string, }, query: null = null, body: number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<IntegrationView>('integrations.config_put', path, query, body, bearer, headers, signal),
+      get: (path: { integration: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<IntegrationView>('integrations.get', path, query, body, bearer, headers, signal),
+      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Array<IntegrationSummary>>('integrations.list', path, query, body, bearer, headers, signal),
+      refresh: (path: { integration: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('integrations.refresh', path, query, body, bearer, headers, signal),
+      secret_delete: (path: { integration: string, field: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('integrations.secret_delete', path, query, body, bearer, headers, signal),
+      secret_put: (path: { integration: string, field: string, }, query: null = null, body: { value: string, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<SecretHint>('integrations.secret_put', path, query, body, bearer, headers, signal),
     },
     jobs: {
-      cancel: (path: { job: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Job>('jobs.cancel', path, query, body, bearer, headers),
-      get: (path: { job: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Job>('jobs.get', path, query, body, bearer, headers),
-      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<Job>>('jobs.list', path, query, body, bearer, headers),
+      cancel: (path: { job: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('jobs.cancel', path, query, body, bearer, headers, signal),
+      get: (path: { job: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('jobs.get', path, query, body, bearer, headers, signal),
+      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Array<Job>>('jobs.list', path, query, body, bearer, headers, signal),
       wait,
     },
     layouts: {
-      get: (path: { device: string, orientation: Orientation, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<LayoutRead>('layouts.get', path, query, body, bearer, headers),
-      push: (path: { device: string, orientation: Orientation, }, query: null = null, body: Layout, bearer?: string, headers?: Record<string, string>) => call<Job>('layouts.push', path, query, body, bearer, headers),
+      get: (path: { device: string, orientation: Orientation, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<LayoutRead>('layouts.get', path, query, body, bearer, headers, signal),
+      push: (path: { device: string, orientation: Orientation, }, query: null = null, body: Layout, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('layouts.push', path, query, body, bearer, headers, signal),
     },
     new_boards: {
-      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<NewBoard>>('new_boards.list', path, query, body, bearer, headers),
+      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Array<NewBoard>>('new_boards.list', path, query, body, bearer, headers, signal),
     },
     ports: {
-      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<PortProbe>>('ports.list', path, query, body, bearer, headers),
-      rescan: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('ports.rescan', path, query, body, bearer, headers),
+      list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Array<PortProbe>>('ports.list', path, query, body, bearer, headers, signal),
+      rescan: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('ports.rescan', path, query, body, bearer, headers, signal),
     },
     system: {
-      get: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<SystemInfo>('system.get', path, query, body, bearer, headers),
-      lock: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<InstallLock>('system.lock', path, query, body, bearer, headers),
-      lock_renew: (path: { lock: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('system.lock_renew', path, query, body, bearer, headers),
-      ping: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Versions>('system.ping', path, query, body, bearer, headers),
-      shutdown: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('system.shutdown', path, query, body, bearer, headers),
-      startup_get: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<StartupSetting>('system.startup_get', path, query, body, bearer, headers),
-      startup_put: (path: Record<string, never> = {}, query: null = null, body: { at_sign_in: boolean, }, bearer?: string, headers?: Record<string, string>) => call<StartupSetting>('system.startup_put', path, query, body, bearer, headers),
-      unlock: (path: { lock: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('system.unlock', path, query, body, bearer, headers),
+      get: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<SystemInfo>('system.get', path, query, body, bearer, headers, signal),
+      lock: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<InstallLock>('system.lock', path, query, body, bearer, headers, signal),
+      lock_renew: (path: { lock: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('system.lock_renew', path, query, body, bearer, headers, signal),
+      ping: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Versions>('system.ping', path, query, body, bearer, headers, signal),
+      shutdown: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('system.shutdown', path, query, body, bearer, headers, signal),
+      startup_get: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<StartupSetting>('system.startup_get', path, query, body, bearer, headers, signal),
+      startup_put: (path: Record<string, never> = {}, query: null = null, body: { at_sign_in: boolean, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<StartupSetting>('system.startup_put', path, query, body, bearer, headers, signal),
+      unlock: (path: { lock: string, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<null>('system.unlock', path, query, body, bearer, headers, signal),
     },
   };
 }
