@@ -1,0 +1,197 @@
+import { createFakeIntegrations } from '../../companion/fake-integrations.ts';
+import type { IntegrationView } from '../../companion/api.ts';
+import { describe, expect, it } from 'vitest';
+import type { ConfigField, DataStream, IntegrationSummary } from '../../companion/api.ts';
+import {
+  ago,
+  badgeOf,
+  formOf,
+  offersPresets,
+  parseAction,
+  parseUsage,
+  presetLabel,
+  presetLook,
+  resetLine,
+  serialize,
+  statusOf,
+  transportOf,
+  transportWarning,
+  usageLine,
+  validate,
+  valuesOf,
+} from './model.ts';
+
+const SCHEMA: ConfigField[] = [
+  { name: 'enabled', kind: 'boolean', secret: false },
+  { name: 'url', kind: 'string', secret: false },
+  { name: 'interval_s', kind: 'integer', secret: false },
+  { name: 'management_key', kind: 'string', secret: true },
+];
+
+const summary = (state: string, enabled = true, message: string | null = null): Pick<IntegrationSummary, 'enabled' | 'status'> => ({ enabled, status: { state, message, delivery: [] } });
+
+describe('the form a schema builds', () => {
+  it('gives each field its control kind and the copy guide label, and keeps secret fields apart', () => {
+    const { fields, secrets } = formOf('cliproxyapi', SCHEMA);
+    expect(fields.map((f) => [f.name, f.kind, f.label])).toEqual([
+      ['enabled', 'boolean', 'Turn on CLIProxyAPI'],
+      ['url', 'string', 'Hub address'],
+      ['interval_s', 'integer', 'Check every'],
+    ]);
+    expect(fields[1].placeholder).toBe('https://hub.example.com');
+    expect(fields[2].unit).toBe('s');
+    expect(secrets.map((f) => [f.name, f.label])).toEqual([['management_key', 'Management key']]);
+  });
+
+  it('names the fields of an Integration the copy guide lacks from the schema, and reads an unknown kind as text', () => {
+    const { fields, secrets } = formOf('proxmox', [
+      { name: 'node_name', kind: 'string', secret: false },
+      { name: 'poll_every', kind: 'duration', secret: false },
+      { name: 'api_token', kind: 'string', secret: true },
+    ]);
+    expect(fields.map((f) => [f.label, f.kind])).toEqual([
+      ['Node name', 'string'],
+      ['Poll every', 'string'],
+    ]);
+    expect(secrets[0].label).toBe('Api token');
+  });
+
+  it('starts from the config the Companion holds', () => {
+    const { fields } = formOf('cliproxyapi', SCHEMA);
+    expect(valuesOf(fields, { enabled: true, url: 'https://hub.example.com', interval_s: 300 })).toEqual({ enabled: true, url: 'https://hub.example.com', interval_s: '300' });
+    expect(valuesOf(fields, null)).toEqual({ enabled: false, url: '', interval_s: '' });
+  });
+
+  it.each([
+    ['300', undefined],
+    [' 60 ', undefined],
+    ['', 'Enter a whole number.'],
+    ['1.5', 'Enter a whole number.'],
+    ['-5', 'Enter a whole number.'],
+    ['ten', 'Enter a whole number.'],
+  ])('checks an integer field holding %j', (interval, message) => {
+    const { fields } = formOf('cliproxyapi', SCHEMA);
+    expect(validate(fields, { enabled: true, url: '', interval_s: interval }).interval_s).toBe(message);
+  });
+
+  it('sends only the schema settings, typed, and never a secret field even when one is in the values', () => {
+    const { fields } = formOf('cliproxyapi', SCHEMA);
+    const config = serialize(fields, { enabled: true, url: 'https://hub.example.com', interval_s: '120', management_key: 'sk-never-sent' });
+    expect(config).toEqual({ enabled: true, url: 'https://hub.example.com', interval_s: 120 });
+    expect(JSON.stringify(config)).not.toContain('sk-never-sent');
+  });
+});
+
+describe('how a key travels to an address', () => {
+  it.each([
+    ['https://hub.example.com', 'secure'],
+    ['http://127.0.0.1:8317', 'local'],
+    ['http://localhost:8317', 'local'],
+    ['http://[::1]:8317', 'local'],
+    ['http://192.168.1.20:8317', 'unencrypted'],
+    ['http://10.0.0.5', 'unencrypted'],
+    ['http://172.20.1.1', 'unencrypted'],
+    ['http://[fd00::1]', 'unencrypted'],
+    ['http://172.40.1.1', 'refused'],
+    ['http://hub.example.com', 'refused'],
+    ['ftp://hub.example.com', 'invalid'],
+    ['not an address', 'invalid'],
+  ])('%s is %s', (address, transport) => {
+    expect(transportOf(address)).toBe(transport);
+  });
+
+  it('warns only when the key would go unencrypted or not at all', () => {
+    expect(transportWarning('https://hub.example.com')).toBeNull();
+    expect(transportWarning('http://127.0.0.1:8317')).toBeNull();
+    expect(transportWarning('http://192.168.1.20')).toBe("This address isn't on this PC and uses http://, so the key is sent unencrypted. Use https://.");
+    expect(transportWarning('http://hub.example.com')).toBe("This address uses http:// and isn't on your network, so the key isn't sent. Use https://.");
+  });
+});
+
+describe('status', () => {
+  it.each([
+    ['not_configured', true, 'Not set up', false, true],
+    ['not_configured', false, 'Not set up', false, true],
+    ['ok', false, 'Off', false, false],
+    ['ok', true, 'Connected', true, false],
+    ['error', true, "Can't connect", false, false],
+    ['warming', true, 'Checkingâ€¦', false, false],
+  ] as const)('%s while %s reads %s', (state, enabled, words, live, needsSetup) => {
+    expect(statusOf(summary(state, enabled))).toMatchObject({ words, live, needsSetup });
+  });
+
+  it('keeps the raw reason for Details', () => {
+    expect(statusOf(summary('error', true, 'connection refused')).detail).toBe('connection refused');
+  });
+
+  it('offers Preset tiles only from an Integration that is set up and on', () => {
+    const presets = [{ id: 'plan', name: 'plan', action: { type: 'widget', source: 'cliproxyapi', field: 'plan', account: '' } }];
+    const base = { id: 'x', name: 'X', icon: '', config_schema: [], streams: [], actions: [], presets };
+    expect(offersPresets({ ...base, ...summary('ok') })).toBe(true);
+    expect(offersPresets({ ...base, ...summary('error') })).toBe(true);
+    expect(offersPresets({ ...base, ...summary('ok', false) })).toBe(false);
+    expect(offersPresets({ ...base, ...summary('not_configured') })).toBe(false);
+    expect(offersPresets({ ...base, ...summary('ok'), presets: [] })).toBe(false);
+  });
+});
+
+describe('usage', () => {
+  const NOW = Date.UTC(2026, 9, 29, 12);
+  const account = { key: 'codex:alice@example.com', provider: 'codex', status: 'active', plan: 'pro', success: 1, failed: 2, recent_10m: 3, five_hour: { pct: 42, reset_in: '2h' }, seven_day: null, usage_error: null };
+
+  it('reads the accounts a view carries and drops malformed ones', async () => {
+    const fake = createFakeIntegrations({ configured: true, publish: () => {} });
+    const response = await fake.handle(new Request('http://localhost/integrations/cliproxyapi'), '/integrations/cliproxyapi');
+    if (!response) throw new Error('Missing view');
+    const view: IntegrationView = await response.json();
+    expect(parseUsage(view)?.accounts[0]).toMatchObject({ key: 'codex:Work', five_hour: { pct: 42, reset_in: '2h 10m' } });
+  });
+
+  it('describes the last checks', () => {
+    const usage = { polled_ms: NOW - 12_000, fails: 0, stale: false, accounts: [account] };
+    expect(usageLine(usage, NOW)).toBe('Connected. 1 account, checked 12 s ago.');
+    expect(usageLine({ ...usage, fails: 2 }, NOW)).toBe('The hub missed the last 2 checks. Retrying.');
+    expect(usageLine({ ...usage, fails: 3, stale: true }, NOW)).toBe("Can't connect. The hub missed 3 checks, so its Tiles are greyed out.");
+    expect(usageLine({ ...usage, polled_ms: null }, NOW)).toBe('Checkingâ€¦');
+  });
+
+  it('words times, resets and badges as the copy guide does', () => {
+    expect(ago(null, NOW)).toBe('Never');
+    expect(ago(NOW - 5_000, NOW)).toBe('5 s ago');
+    expect(ago(NOW - 10 * 60_000, NOW)).toBe('10 min ago');
+    expect(ago(NOW - 3 * 3_600_000, NOW)).toBe('3 hr ago');
+    expect(resetLine({ pct: 1, reset_in: 'now' })).toBe('Resets now');
+    expect(resetLine({ pct: 1, reset_in: '2h 10m' })).toBe('Resets in 2h 10m');
+    expect(resetLine({ pct: 1, reset_in: null })).toBe('Reset time unknown');
+    expect(['active', 'disabled', 'unavailable', 'error', 'paused'].map(badgeOf)).toEqual(['Active', 'Disabled', 'Unavailable', 'Error', 'Paused']);
+  });
+});
+
+describe('Preset tiles', () => {
+  const streams: DataStream[] = [
+    { id: 'five_hour_pct', kind: 'numeric', unit: '%' },
+    { id: 'success', kind: 'numeric', unit: 'requests' },
+    { id: 'plan', kind: 'text', unit: null },
+  ];
+  const preset = (field: string) => ({ id: field, name: field.replaceAll('_', ' '), action: { type: 'widget', source: 'cliproxyapi', field, account: '' } });
+
+  it('draws a share as a bar, a count as a graph and anything else as text', () => {
+    expect(presetLook(preset('five_hour_pct'), streams)).toBe('bar');
+    expect(presetLook(preset('success'), streams)).toBe('graph');
+    expect(presetLook(preset('plan'), streams)).toBe('text');
+    expect(presetLook(preset('unknown'), streams)).toBe('text');
+  });
+
+  it('labels a Tile in sentence case within 16 characters', () => {
+    expect(presetLabel('five hour pct')).toBe('Five hour pct');
+    expect(presetLabel('a very long preset tile name')).toBe('A very long pres');
+    expect(presetLabel('   ')).toBe('Tile');
+  });
+
+  it('takes an action the Layout rules accept and refuses one they do not', () => {
+    expect(parseAction({ type: 'widget', source: 'cliproxyapi', field: 'plan', account: '' })).toEqual({ type: 'widget', source: 'cliproxyapi', field: 'plan', account: '' });
+    expect(parseAction({ type: 'widget', source: '', field: 'plan', account: '' })).toBeNull();
+    expect(parseAction({ type: 'teleport' })).toBeNull();
+    expect(parseAction('widget')).toBeNull();
+  });
+});

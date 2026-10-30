@@ -1,10 +1,10 @@
 #include "ui_geometry.h"
 
-/* docs/design.md draws the screen for a short side of 600 px, and the dashboard columns for a 968 px grid. */
+/* The design draws the screen for a short side of 600 px, and the dashboard columns for a 968 px grid. */
 #define DESIGN_SHORT 600
 #define DESIGN_DASH_W 968
 
-/* The Geometry table of docs/design.md. The band reaches BAND_MARGIN past the grid above and below. */
+/* The design's landscape geometry. The band reaches BAND_MARGIN past the grid above and below. */
 #define PAD_X 28
 #define PAD_TOP 76
 #define PAD_BOTTOM 56
