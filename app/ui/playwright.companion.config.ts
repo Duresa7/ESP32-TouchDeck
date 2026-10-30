@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from '@playwright/test';
 import demo from './playwright.config.ts';
 
-// `pnpm e2e:companion` runs companion.spec.ts against the real Companion with three mock
+// `pnpm e2e:companion` runs every *companion.spec.ts against the real Companion with three mock
 // Devices, through `pnpm dev` and its /api proxy. The Companion gets its own data folder
 // and a fixed port, so it runs beside the one installed on this PC.
 const COMPANION_PORT = 50734;
@@ -19,7 +19,7 @@ const env = { TOUCHDECK_APP_DATA_DIR: DATA_DIR };
 export default defineConfig({
   ...demo,
   testIgnore: [],
-  testMatch: ['companion.spec.ts', 'pairing.companion.spec.ts'],
+  testMatch: '**/*companion.spec.ts',
   use: { ...demo.use, baseURL: `http://127.0.0.1:${UI_PORT}/` },
   // In order: Vite reads the Companion's port and token once it's up.
   webServer: [

@@ -304,9 +304,9 @@ lists them. Until the display has started, `screenshot` and `perf` answer
 The deck draws its text in six Archivo fonts, generated as LVGL C files into
 `firmware/components/ui/fonts/`, with the font's
 [SIL Open Font License](../firmware/components/ui/fonts/OFL.txt) next to them.
-[docs/design.md](design.md#fonts-on-the-device) says which instance, size and
-glyph set each one has. The `lv:` icons are LVGL symbols, which only LVGL's own
-Montserrat 48 carries, so they still draw in it.
+The commands below give each one's instance, size and glyph set. The `lv:`
+icons are LVGL symbols, which only LVGL's own Montserrat 48 carries, so they
+still draw in it.
 
 The source is `Archivo[wdth,wght].ttf`, version 2.001, from the upstream
 repository at commit `b5d63988ce19d044d3e10362de730af00526b672`:
