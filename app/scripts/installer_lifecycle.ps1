@@ -208,7 +208,8 @@ try {
     Wait-Started 'Opening the app'
     Assert-That ((Get-RunValue) -ceq "`"$companionExe`" --packaged") 'The Companion registers the per-user Run entry for the installed Companion.'
     $companion = @(Get-Running $companionExe)[0].Id
-    $null = $window.CloseMainWindow()
+    Assert-That (Wait-Until { $window.Refresh(); $window.MainWindowHandle -ne [IntPtr]::Zero } 60) 'The Open TouchDeck window appears.'
+    Assert-That ($window.CloseMainWindow()) 'The window accepts a close request.'
     Assert-That (Wait-Until { -not @(Get-Running $appExe).Count } 30) 'Closing the window ends Electron.'
     Assert-That (@(Get-Running $companionExe).Id -contains $companion) 'The Companion keeps running after the window closes.'
 
