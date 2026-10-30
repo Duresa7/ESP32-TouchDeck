@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { SEARCH_DELAY_MS } from '../src/lib/icons/catalog.ts';
 import { created, openCopyTile, openPicker, option, picker, searches, storedTile } from './icon-picker-helpers.ts';
 
 type Idle = { reset(): void; read(): { timeouts: number; frames: number; intervals: number; live: number }; live(): string[] };
@@ -13,9 +14,15 @@ declare global {
 const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex');
 
 test('typing fast sends one search, and a picked logo becomes the Tile’s Asset', async ({ page }) => {
+  await page.clock.install();
   await openCopyTile(page);
   await openPicker(page);
-  await page.getByTestId('icon-search').pressSequentially('spotify', { delay: 20 });
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1_000));
+  await page.getByTestId('icon-search').pressSequentially('spotify');
+  await page.clock.runFor(SEARCH_DELAY_MS - 1);
+  expect(await searches(page)).toEqual([]);
+  await page.clock.runFor(1);
+  await page.clock.resume();
   await expect(option(page, 'hit:simple-icons:spotify')).toBeVisible();
   expect((await searches(page)).map((s) => s.q)).toEqual(['spotify']);
 
@@ -199,8 +206,7 @@ test('closing aborts the search in flight, and a closed picker runs no timers', 
   expect(await inFlight()).toBe(1);
   await page.keyboard.press('Escape');
   await expect(picker(page)).toHaveCount(0);
-  await page.waitForTimeout(400);
-  expect(await inFlight()).toBe(0);
+  await expect.poll(inFlight).toBe(0);
   const asked = await searches(page);
   expect(asked.map((s) => s.q)).toEqual(['youtube']);
   expect(asked[0].aborted).toBe(true);
