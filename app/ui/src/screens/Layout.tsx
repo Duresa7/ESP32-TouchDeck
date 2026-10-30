@@ -6,7 +6,9 @@ import type { DeviceSummary } from '../companion/api.ts';
 import { useCompanion } from '../companion/connection.ts';
 import { useDevices } from '../companion/devices.ts';
 import type { EditorStore } from '../lib/editor/store.ts';
+import { needsFirmware, tileKind } from '../lib/device/needs-firmware.ts';
 import { statusOf } from './home-model.ts';
+import { useOfferedFirmware } from './layout/device.ts';
 import { DeviceCanvas, deviceAspect } from './layout/DeviceCanvas.tsx';
 import { editorFor, useEditorState } from './layout/editor.ts';
 import { EditorHeader } from './layout/EditorHeader.tsx';
@@ -90,6 +92,7 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
   const foot = useRef<HTMLDivElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const long = useDeviceLong(canvas, foot, layout?.orientation === 'portrait', layout !== null);
+  const offered = useOfferedFirmware(device);
   useEditorKeys(store);
 
   const current = layout?.pages.find((p) => p.id === page) ?? layout?.pages[0];
@@ -117,6 +120,7 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
               adding={adding}
               long={long}
               actualSize={preview && actualSize}
+              firmwareBadge={(tile) => needsFirmware(device, tileKind(tile), offered)}
             />
             <div ref={foot} className="canvas-foot">
               <PageTabs store={store} layout={layout} page={current.id} />

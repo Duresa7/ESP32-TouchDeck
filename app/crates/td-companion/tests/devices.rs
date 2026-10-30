@@ -328,6 +328,8 @@ async fn settings_and_restart_reach_the_device() {
         (json!({"orientation": "sideways"}), "request.invalid"),
         (json!({"idle_timeout_s": 0}), "request.invalid"),
         (json!({"brightness": 50}), "device.needs_firmware"),
+        (json!({"brightness": 100}), "device.needs_firmware"),
+        (json!({"brightness": 101}), "request.invalid"),
     ] {
         let response = td
             .raw()

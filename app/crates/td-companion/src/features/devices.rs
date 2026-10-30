@@ -16,6 +16,7 @@ use ts_rs::TS;
 
 /// How long a settings or name request may take on the link.
 const SETTINGS_TIMEOUT: Duration = Duration::from_secs(2);
+const BRIGHTNESS_MAX: u8 = 100;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DeviceError {
@@ -212,6 +213,7 @@ pub struct DeviceSettings {
     /// `landscape` or `portrait`.
     pub orientation: String,
     pub name: Option<String>,
+    /// A percentage, 0 to 100.
     pub brightness: Option<u8>,
 }
 #[derive(Debug, Default, Serialize, Deserialize, TS)]
@@ -222,6 +224,7 @@ pub struct DeviceSettingsPatch {
     pub orientation: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
+    /// A percentage, 0 to 100.
     #[serde(default)]
     pub brightness: Option<u8>,
 }
@@ -303,6 +306,9 @@ impl Endpoint for SettingsPatch {
             .is_some_and(|n| !td_link::identity::valid_name(n))
         {
             return Err(invalid("name is empty, too long or has control characters"));
+        }
+        if patch.brightness.is_some_and(|b| b > BRIGHTNESS_MAX) {
+            return Err(invalid("brightness is a percentage from 0 to 100"));
         }
         // No Firmware reports brightness yet.
         if patch.brightness.is_some() {
