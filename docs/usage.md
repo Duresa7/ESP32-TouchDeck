@@ -21,13 +21,13 @@ This section is for people who run the app. If you build it from source, use
 [Build from source (developers)](#build-from-source-developers) instead.
 
 **Windows installer.** Download
-[TouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe)
+[OpenTouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe)
 from [the latest GitHub release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest)
-and run it. It installs for your user, by default under
-`%LOCALAPPDATA%/TouchDeck`, with `touchdeck.exe` and a `firmware/` folder with the matching `.tdfw` bundle. You need no Node, pnpm, Rust,
-Python, or ESP-IDF. If Windows lacks the WebView2 runtime, the installer downloads
-it, so that step needs network access. The [packaging guide](packaging.md) lists
-the installer's contents. The installer needs no admin rights.
+and run it. It installs Open TouchDeck for your user under
+`%LOCALAPPDATA%\Programs\Open TouchDeck`, with the matching Firmware bundle in
+`resources\firmware\touchdeck.tdfw`. You need no Node, pnpm, Rust, Python, or
+ESP-IDF, and no admin rights. The [packaging guide](packaging.md) lists the
+installer's contents.
 Windows SmartScreen may warn the first time, because the installer has no Authenticode signature; choose **More info**, then **Run anyway**.
 
 To build the app yourself, follow [Build from source (developers)](#build-from-source-developers).

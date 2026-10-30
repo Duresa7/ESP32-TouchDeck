@@ -16,14 +16,11 @@ Built with Electron, React, and a Rust Companion, the app discovers USB decks an
 ## Install a published build
 
 The Windows installer is available as
-[TouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe)
+[OpenTouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe)
 on [the latest GitHub release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest).
-The installer installs per user and needs no Node, pnpm, Rust, or ESP-IDF. It
-downloads the WebView2 runtime if Windows lacks it. Linux has no installer.
-
-A portable archive must be fully extracted before you start the app. Per-user settings,
-approvals, Sources state, and icon caches live outside the executable directory.
-Copying that directory alone does not migrate your setup.
+It installs Open TouchDeck (the Electron window, the Companion and the matching
+Firmware bundle) per user under `%LOCALAPPDATA%\Programs\Open TouchDeck` and needs
+no admin rights, Node, pnpm, Rust, or ESP-IDF. Linux has no installer.
 
 The [desktop setup guide](../docs/setup.md) covers prerequisites and Linux serial,
 `/dev/uinput`, and credential-store access. The
@@ -31,10 +28,11 @@ The [desktop setup guide](../docs/setup.md) covers prerequisites and Linux seria
 candidate artifacts, and release production. A successful source build or
 candidate package is not a published release.
 
-Update the installed app from **Settings > App updates**. That is separate from
-updating deck firmware in the **Update** tab. App updates use releases signed
-with the project's updater key. Source builds carry no updater key, so
-their **Check for updates** reports that release signing is not configured.
+The installed app updates itself from GitHub releases signed with the
+project's updater key; the installer is not Authenticode-signed. Builds without
+`TOUCHDECK_UPDATER_PUBKEY` carry no updater key and report updates as disabled.
+To build the installer, run `python scripts/package_windows.py build` as the
+packaging guide describes.
 
 The Companion embeds `ui/dist` at compile time: run `pnpm build:ui` before building Rust. Without that directory it serves a small "UI not built" page.
 

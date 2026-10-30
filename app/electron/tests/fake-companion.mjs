@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-export async function fakeCompanion({ wrongProof = false, api = ['v1'], updateBusy = false } = {}) {
+export async function fakeCompanion({ wrongProof = false, api = ['v1'], updateBusy = false, lockResponse } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'touchdeck-shell-'));
   const pairing = 'tdp_' + randomBytes(32).toString('base64url');
   const sessions = new Set();
@@ -33,6 +33,11 @@ export async function fakeCompanion({ wrongProof = false, api = ['v1'], updateBu
         sessions.delete(req.headers.authorization?.slice(7))) {
       res.statusCode = 204; return res.end();
     }
+    if (lockResponse && req.url === '/api/v1/system/lock') {
+      if (lockResponse.disconnect) { req.socket.destroy(); return; }
+      res.statusCode = lockResponse.status; return res.end(lockResponse.body);
+    }
+    if (req.url === '/api/v1/system/shutdown') { res.statusCode = 204; return res.end(); }
     if (updateBusy && req.url === '/api/v1/system/lock' && sessions.has(req.headers.authorization?.slice(7))) {
       res.statusCode = 409; return res.end(JSON.stringify({ error: { code: 'system.busy', details: { device: 'Studio' } } }));
     }
