@@ -541,9 +541,41 @@ The `td-link` CLI provides `discover-identities`, `identity`, `name`, and
 `set-name "Studio"`. Names default to `Open TouchDeck`, contain 1–48 UTF-8
 bytes, and persist in NVS separately from Layouts. See the
 [protocol contract](../schema/protocol/link-v2.md) for validation rules.
-It advertises the `static`, `photo-frame`, and `clock` Tile kinds, the tdi1
-format, and `photo_bytes` 131072. Live requests remain unsupported. The photo
-frame, idle, and clock requests are below.
+It advertises the `static`, `graph`, `photo-frame`, and `clock` Tile kinds, the
+tdi1 format, and `photo_bytes` 131072. The live values, photo frame, idle, and
+clock requests are below.
+
+### Live tiles
+
+A schema 2 Tile with `render: "graph"` declares `streams: {"value": "number"}`
+or `{"value": "series"}` and draws the values `v2.live.set` sends for it. The
+Firmware advertises these caps:
+
+| Cap | Value | Why |
+|---|---|---|
+| `tile_kinds` | adds `graph` | The only Live tile drawn so far |
+| `series` | 32 | Samples a graph keeps. 32 doubles is 256 bytes a stream |
+| `live_hz` | 2 | Twice the Companion's 1 Hz pace, so jitter isn't refused |
+| `live_total_hz` | 16 | 16 requests of 304 wire bytes is about 4.9 KB/s, under the 6,560 bytes/s the link budget gives live values |
+| `streams` | 1 | A graph Tile has one stream |
+| `text_bytes` | 0 | No Tile draws text values yet |
+
+Activating a Layout allocates one slot and one set of graph objects for each
+declared stream, at most 64, in PSRAM: about 570 bytes a stream, so 36 KB at
+most. Activation clears every value and `n`. The `layout` a request names is
+the SHA-256 of the stored file's bytes, or `builtin` for the built-in Layout.
+A new protocol selection clears every value too, and restarts the per-stream
+and per-Device one-second rate windows.
+
+A number appends one sample to the graph's ring and drops the oldest past 32. A
+series replaces the ring. The redraw timer runs every 100 ms and redraws only
+the graph Tiles whose values changed. A value past its `ttl_ms`, or every value
+while the link is offline, is drawn at 60 percent opacity with the `--`
+unavailable marker, and the graph stops advancing until a fresh value arrives.
+A Tile with no value yet shows the marker and no line. Stale values are kept,
+never set to zero. The line's geometry is in `ui_graph.c`. The UI preview uses
+the same arithmetic, checked against `schema/live/graph-vectors.json` by both
+test suites.
 
 ### Assets
 

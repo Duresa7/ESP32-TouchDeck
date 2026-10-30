@@ -13,6 +13,7 @@ import {
   counts,
   freeCell,
   freshId,
+  graphTile,
   moveTile,
   newGridPage,
   newLayout,
@@ -24,6 +25,7 @@ import {
   setAction,
   setAsset,
   setFullScreen,
+  setGraph,
   setGridSize,
   setIcon,
   setLabel,
@@ -32,6 +34,7 @@ import {
   starterLayout,
   type Action,
   type Edit,
+  type GraphBinding,
   type GridPage,
   type Layout,
   type Orientation,
@@ -322,7 +325,7 @@ export function createEditorStore(deps: EditorDeps) {
     return editField(tile, (l, page) => setAction(l, page, tile, action), (reason) => ({ action: { value: action, reason } }), 'action');
   }
 
-  function placeAtTarget(action: Action, label: string): { id: string; page: string; pages: string[] } | null {
+  function placeAtTarget(action: Action, label: string, graph: GraphBinding | null = null): { id: string; page: string; pages: string[] } | null {
     const draft = current();
     const where = state().adding;
     if (!draft || !where) return null;
@@ -343,8 +346,9 @@ export function createEditorStore(deps: EditorDeps) {
     const target = page;
     if (!target) return null;
     const id = freshId(layout, 'tile');
-    const tile: Tile = { id, label, row: cell.row, col: cell.col, rowSpan: 1, colSpan: 1, icon: null, action };
-    const base = layout;
+    const plain: Tile = { id, label, row: cell.row, col: cell.col, rowSpan: 1, colSpan: 1, icon: null, action };
+    const tile = graph ? graphTile(plain, graph) : plain;
+    const base: Layout = graph ? { ...layout, schema: 2 } : layout;
     if (apply(() => addTile(base, target, tile), { page: target, selected: id, adding: null }) !== null) return null;
     return { id, page: target, pages: base.pages.map((p) => p.id) };
   }
@@ -429,13 +433,14 @@ export function createEditorStore(deps: EditorDeps) {
       if (placed && action === null) editAction(placed.id, freshAction(kind, placed.pages, placed.page));
     },
 
-    placePreset(preset: PresetTile) {
+    /** Places a Preset tile where Add Tile points, as a graph of `graph` when given. */
+    placePreset(preset: PresetTile, graph: GraphBinding | null = null) {
       const action = parseAction(preset.action);
-      if (action) placeAtTarget(action, presetLabel(preset.name));
+      if (action) placeAtTarget(action, presetLabel(preset.name), graph);
       else say('error', friendlyRefusal('action.type'), { detail: JSON.stringify(preset.action), event: 'refused' });
     },
 
-    async addPreset(preset: PresetTile): Promise<Status | null> {
+    async addPreset(preset: PresetTile, graph: GraphBinding | null = null): Promise<Status | null> {
       if (!state().device) return null;
       if (state().busy) {
         say('error', `${name()} is busy. Wait a moment, then retry.`, { event: 'refused' });
@@ -457,8 +462,9 @@ export function createEditorStore(deps: EditorDeps) {
         return state().status;
       }
       const id = freshId(draft.layout, 'tile');
-      const tile: Tile = { id, label: presetLabel(preset.name), row: cell[0], col: cell[1], rowSpan: 1, colSpan: 1, icon: null, action };
-      if (apply((l) => addTile(l, grid.id, tile), { page: grid.id, selected: id, adding: null }) === null) {
+      const plain: Tile = { id, label: presetLabel(preset.name), row: cell[0], col: cell[1], rowSpan: 1, colSpan: 1, icon: null, action };
+      const tile = graph ? graphTile(plain, graph) : plain;
+      if (apply((l) => addTile(graph ? { ...l, schema: 2 } : l, grid.id, tile), { page: grid.id, selected: id, adding: null }) === null) {
         say('ok', `Added to ${name()}'s Layout`, { event: 'preset-added' });
       }
       return state().status;
@@ -466,6 +472,15 @@ export function createEditorStore(deps: EditorDeps) {
 
     editLabel,
     editAction,
+
+    /** Draws the Tile as a graph of the bound stream, or with null as its label again. */
+    setGraph(tile: string, binding: GraphBinding | null) {
+      const page = state().page;
+      if (!page) return 'no page';
+      const reason = apply((l) => setGraph(l, page, tile, binding));
+      if (reason === null) mark(tile, { action: undefined });
+      return reason;
+    },
 
     moveTile(tile: string, row: number, col: number) {
       const page = state().page;

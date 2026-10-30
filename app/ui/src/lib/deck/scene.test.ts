@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { test } from 'vitest';
 import { parseLayout, type GridPage, type Page } from '../editor/validate.ts';
 import { geometry, screenSize, tileRect } from './geometry.ts';
-import { buildDots, buildPage, buildTitle, fitLabel, FONTS, missingGlyphs, sampleRows, sampleWidget } from './scene.ts';
+import { graphPoints } from './graph.ts';
+import { buildDots, buildPage, buildTitle, fitLabel, FONTS, missingGlyphs, sampleRows, sampleSeries, sampleWidget, type GraphSample } from './scene.ts';
 import { layoutLabel } from './text.ts';
 import { panelColor, THEME } from './theme.ts';
 
@@ -70,6 +71,36 @@ test('a widget tile shows its value, its caption below, and a bar as wide as the
   const bare = buildPage(load('dev.json').pages[2], landscape).tiles[0];
   assert.deepEqual(shown(bare.texts[0]), ['--']);
   assert.equal(bare.bar, null);
+});
+
+test('a graph tile plots its samples under its label, in the area the Firmware leaves for it', () => {
+  const samples = sampleSeries(20);
+  const fresh: GraphSample = { samples, cap: 32, stale: false };
+  const page = buildPage(load('graph.json').pages[0], landscape, { graph: () => fresh });
+  const cpu = page.tiles.find((tile) => tile.id === 'cpu')!;
+  const { pad, top, radius } = THEME.graph;
+  const w = cpu.rect.w - 2 * pad;
+  const h = cpu.rect.h - top - pad;
+  assert.deepEqual(cpu.graph, { x: pad, y: top, w, h, radius, points: graphPoints(samples, 32, w, h), stale: false });
+  assert.equal(cpu.graph.points.at(-1)?.x, w - 1);
+  assert.deepEqual(cpu.texts.map(shown), [['CPU']]);
+  assert.deepEqual([cpu.texts[0].x, cpu.texts[0].opacity, cpu.image, cpu.bar], [pad, 255, null, null]);
+});
+
+test('a stale graph keeps its line at 60% with the unavailable marker, and one with no values shows only the marker', () => {
+  const stale: GraphSample = { samples: [3, 9, 4], cap: 32, stale: true };
+  const page = buildPage(load('graph.json').pages[0], landscape, { graph: (tile) => (tile.id === 'cpu' ? stale : null) });
+  const [cpu, net] = page.tiles;
+  assert.equal(cpu.graph?.stale, true);
+  assert.equal(cpu.graph?.points.length, 3);
+  assert.deepEqual(cpu.texts.map(shown), [['CPU'], ['--']]);
+  assert.equal(cpu.texts[0].opacity, THEME.staleOpa);
+  const marker = cpu.texts[1];
+  assert.equal(marker.x + marker.label.width, cpu.rect.w - THEME.graph.pad);
+  assert.deepEqual([net.graph?.points, net.graph?.stale], [[], false]);
+  assert.deepEqual(net.texts.map(shown), [['Network'], ['--']]);
+  const one = buildPage(load('graph.json').pages[0], landscape, { graph: () => ({ samples: [5], cap: 32, stale: false }) });
+  assert.deepEqual(one.tiles[0].graph?.points, []);
 });
 
 test('a widget tile keeps its caption and value on one line, cut with dots to the tile', () => {

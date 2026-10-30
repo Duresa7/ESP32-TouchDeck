@@ -70,6 +70,13 @@ const ui_theme_t ui_theme = {
         .pad = 20,
         .bar_h = 8,
     },
+    .graph = {
+        .pad = 20,
+        .top = 56,
+        .radius = 10,
+        .line_w = 4,
+        .area_mix = 36,
+    },
     .anim_settle_ms = 260,
     .anim_bounce_out_ms = 110,
     .anim_bounce_back_ms = 150,
@@ -222,6 +229,19 @@ static void init_widget_styles(ui_styles_t *st)
     lv_style_set_bg_color(&st->dash_row, ui_color(t->color.tile));
     lv_style_set_border_width(&st->dash_row, 0);
     lv_style_set_pad_all(&st->dash_row, 0);
+
+    lv_style_init(&st->graph_area);
+    lv_style_set_radius(&st->graph_area, t->graph.radius);
+    lv_style_set_bg_opa(&st->graph_area, LV_OPA_COVER);
+    lv_style_set_bg_color(&st->graph_area,
+                          lv_color_mix(ui_color(t->color.accent), ui_color(t->color.tile), t->graph.area_mix));
+    lv_style_set_border_width(&st->graph_area, 0);
+    lv_style_set_pad_all(&st->graph_area, 0);
+
+    lv_style_init(&st->graph_line);
+    lv_style_set_line_width(&st->graph_line, t->graph.line_w);
+    lv_style_set_line_color(&st->graph_line, ui_color(t->color.accent));
+    lv_style_set_line_rounded(&st->graph_line, true);
 }
 
 const ui_styles_t *ui_styles(void)

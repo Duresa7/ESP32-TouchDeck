@@ -741,6 +741,23 @@
   background: var(--screen-accent);
 }
 
+.scene-graph {
+  position: absolute;
+  overflow: hidden;
+}
+
+.scene-graph svg {
+  display: block;
+  overflow: hidden;
+}
+
+.scene-graph polyline {
+  fill: none;
+  stroke: var(--screen-accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .scene-row {
   position: absolute;
   border-radius: 10px;

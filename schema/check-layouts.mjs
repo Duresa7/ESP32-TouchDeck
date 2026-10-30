@@ -23,7 +23,10 @@ const codeRules = [
   'action.page-missing',
   'tile.bounds',
   'tile.overlap',
+  'tile.streams',
 ];
+
+const renderStreams = { graph: { value: ['number', 'series'] } };
 
 export function* schemaNodes(node, property) {
   if (node === null || typeof node !== 'object') return;
@@ -123,6 +126,14 @@ function semanticErrors(layout) {
       addId(tile.id, `${pageLocation} tile ${tileIndex} "${tile.id}"`);
       if (tile.action.type === 'page' && !pageIds.has(tile.action.page)) {
         errors.push(fail('action.page-missing', `page "${page.id}" tile "${tile.id}" references missing page "${tile.action.page}"`));
+      }
+      const bindings = renderStreams[tile.render] ?? {};
+      const streams = tile.streams ?? {};
+      for (const [id, type] of Object.entries(streams)) {
+        if (!Object.hasOwn(bindings, id) || !bindings[id].includes(type)) errors.push(fail('tile.streams', `page "${page.id}" tile "${tile.id}" cannot bind stream "${id}" as ${JSON.stringify(type)}`));
+      }
+      for (const id of Object.keys(bindings)) {
+        if (!Object.hasOwn(streams, id)) errors.push(fail('tile.streams', `page "${page.id}" tile "${tile.id}" needs stream "${id}"`));
       }
       if (tile.row + tile.rowSpan > page.rows || tile.col + tile.colSpan > page.cols) {
         errors.push(fail('tile.bounds', `page "${page.id}" tile "${tile.id}" exceeds grid bounds ${page.rows}x${page.cols}`));

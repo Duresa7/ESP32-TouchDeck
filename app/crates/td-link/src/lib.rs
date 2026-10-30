@@ -1,6 +1,7 @@
 pub mod asset;
 pub mod bundle;
 pub mod discover;
+pub mod live;
 pub mod mock;
 pub mod photo;
 pub mod recover;
@@ -13,6 +14,7 @@ use std::time::Duration;
 
 pub use asset::{AssetError, AssetFormat, AssetReason};
 pub use discover::{Candidate, Probe, discover, probe_transport};
+pub use live::{LiveError, LiveReason, LiveSet, LiveValue};
 pub use mock::MockDeck;
 pub use session::{Incoming, LinkError, Session, SessionConfig, Transfer, XferFrame};
 

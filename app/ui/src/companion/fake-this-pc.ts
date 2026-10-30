@@ -22,7 +22,7 @@ export function fakeThisPc(enabled = true): IntegrationView {
       config_schema: [{ name: 'enabled', kind: 'boolean', secret: false }],
       streams: streams.map(({ id, unit }) => ({ id, kind: 'numeric', unit })),
       actions: ['refresh'],
-      presets: streams.map(({ id, name }) => ({ id, name, action: { type: 'widget', source: 'this_pc', account: '', field: id } })),
+      presets: streams.map(({ id, name }) => ({ id, name, action: { type: 'widget', source: 'this_pc', account: '', field: id }, render: 'graph' })),
     },
   };
 }

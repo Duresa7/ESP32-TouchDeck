@@ -370,7 +370,9 @@ fn push(
             assets,
             revision: revision(xfer::crc32(&layout.to_canonical_json())),
         })
-    })??;
+    });
+    ctx.live.layout_changed(device);
+    let report = report??;
     let _ = ctx.layouts.put(device, layout);
     Ok(report)
 }

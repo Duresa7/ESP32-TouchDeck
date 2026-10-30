@@ -11,6 +11,7 @@ import { ActionLogPanel } from './ActionLog.tsx';
 import { AllowedActions, ApprovalNote } from './Approvals.tsx';
 import { useEditorState } from './editor.ts';
 import { described, Field, FieldError, useFieldIds } from './fields.tsx';
+import { GraphField } from './GraphField.tsx';
 import { IconField } from './IconField.tsx';
 import { KeyTest } from './KeyTest.tsx';
 
@@ -156,12 +157,14 @@ export function TileFields({ store, page, tile }: TileFieldsProps) {
   if (!layout || !device) return null;
   const action = refused?.value ?? tile.action;
   const name = device.name;
+  const graph = tile.render === 'graph';
   return (
     <div className="tile-fields" data-testid="tile-fields" data-id={tile.id}>
       <LabelField key={`label-${tile.id}`} store={store} tile={tile} device={name} layout={layout} />
-      <IconField store={store} tile={tile} kind={action.type} />
+      <GraphField store={store} tile={tile} device={name} />
+      {!graph && <IconField store={store} tile={tile} kind={action.type} />}
       <SizeField store={store} tile={tile} layout={layout} device={name} />
-      <ActionForm key={`action-${tile.id}`} store={store} page={page} tile={tile} layout={layout} device={name} />
+      {!graph && <ActionForm key={`action-${tile.id}`} store={store} page={page} tile={tile} layout={layout} device={name} />}
       {needsApproval(action) && <ApprovalNote action={action} />}
       {processOf(action) && <AllowedActions action={action} />}
       <More key={`position-${tile.id}`} title="Position and size" testId="tile-position">

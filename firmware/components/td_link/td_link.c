@@ -140,7 +140,7 @@ static void handle_message(const td_frame_t *frame)
     const char *message = cJSON_GetStringValue(recovered);
     bool strict = message && (!strncmp(message, "v2.", 3) || !strcmp(message, "hello"));
     cJSON *reply;
-    if (strict && !td_v2_json_valid(payload, frame->len)) {
+    if (strict && !td_v2_json_valid_live(payload, frame->len, !strcmp(message, "v2.live.set"))) {
         reply = cJSON_CreateObject();
         char echo[65];
         snprintf(echo, sizeof echo, "%.64s", message);

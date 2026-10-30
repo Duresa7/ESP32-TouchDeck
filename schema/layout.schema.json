@@ -272,11 +272,15 @@
         },
         "render": {
           "enum": [
-            "gif"
+            "gif",
+            "graph"
           ],
           "x-rules": {
             "enum": "icon.format"
           }
+        },
+        "streams": {
+          "type": "object"
         }
       },
       "allOf": [
@@ -521,7 +525,8 @@
                   "items": {
                     "properties": {
                       "asset": false,
-                      "render": false
+                      "render": false,
+                      "streams": false
                     },
                     "type": "object"
                   },
@@ -559,7 +564,9 @@
                         "render"
                       ],
                       "properties": {
-                        "render": {}
+                        "render": {
+                          "const": "gif"
+                        }
                       }
                     },
                     "then": {

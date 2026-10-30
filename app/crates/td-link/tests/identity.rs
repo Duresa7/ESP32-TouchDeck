@@ -33,7 +33,7 @@ fn negotiated_name_round_trips_and_survives_reconnect() {
         assert!(identity.matches_usb_serial(device.usb_serial()));
         assert!(!identity.matches_usb_serial("02:00:00:00:00:02"));
         let caps = identity.capabilities.unwrap();
-        assert_eq!(caps.tile_kinds, ["static", "photo-frame", "clock"]);
+        assert_eq!(caps.tile_kinds, ["static", "graph", "photo-frame", "clock"]);
         assert_eq!(caps.photo_bytes, 131_072);
         assert_eq!(
             session.set_name("  Studio \u{1f39b}  ", TIMEOUT).unwrap(),

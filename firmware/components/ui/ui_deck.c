@@ -472,6 +472,10 @@ static void build_tile(lv_obj_t *parent, const ui_page_t *page, const ui_tile_t 
     lv_obj_set_event_bubble(obj, true);
     lv_obj_set_user_data(obj, (void *)tile);
     ui_widget_track(obj, tile);
+    if (tile->render == UI_RENDER_GRAPH) {
+        ui_live_build(obj, tile, r);
+        return;
+    }
     if (tile->action.type == TD_ACTION_WIDGET) {
         ui_widget_build(obj, tile, r);
         return;
@@ -652,6 +656,7 @@ static void load_locked(const td_layout_t *layout, const ui_layout_info_t *info,
     const uint8_t count = count_valid_pages(layout->pages, layout->page_count);
     layout_lock();
     td_layout_t *old = td_layout_replace(&s.layout, layout);
+    ui_live_begin(layout);
     s.pages = layout->pages;
     s.page_count = count;
     s.info = *info;

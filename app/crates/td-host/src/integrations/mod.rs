@@ -24,6 +24,9 @@ pub struct PresetTile {
     pub id: String,
     pub name: String,
     pub action: Value,
+    /// How the Tile draws its stream, when not as a value with its label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render: Option<td_core::layout::TileRender>,
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct Delivery {
@@ -79,8 +82,23 @@ pub trait Integration: Send {
     fn tick(&mut self);
     /// Latest Live tile values, consumed by the Device scheduler, not the HTTP API.
     fn readings(&self) -> Vec<crate::sources::Reading>;
+    /// The newest typed value of each stream, which the Companion sends to Devices whose Layouts bind it.
+    fn live(&self) -> Vec<LiveSample> {
+        Vec::new()
+    }
     /// The Device service reports delivery independently of upstream polling.
     fn delivered(&mut self, delivery: Delivery);
+}
+/// The newest value of one Integration stream, for Live tiles.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LiveSample {
+    pub account: String,
+    pub stream: String,
+    /// Rises with every new sample, also one equal to the last, because a graph advances on each.
+    pub sample: u64,
+    /// How long a Device draws the value before it shows it stale, 1000 to 60000.
+    pub ttl_ms: u32,
+    pub value: td_core::live::LiveValue,
 }
 pub struct Environment {
     pub secrets: Arc<dyn secrets::SecretStore>,
@@ -122,6 +140,10 @@ impl Registry {
         for i in self.0.values_mut() {
             i.tick();
         }
+    }
+    /// Each Integration's newest live samples, by Integration id.
+    pub fn live(&self) -> impl Iterator<Item = (&str, Vec<LiveSample>)> {
+        self.0.iter().map(|(id, i)| (id.as_str(), i.live()))
     }
 }
 

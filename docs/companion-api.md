@@ -329,7 +329,7 @@ pub struct DeviceSummary {
     pub link: LinkState,
     pub firmware: Option<FirmwareInfo>,        // {version, protocol, build, recovery, update_available: Option<String>}
     pub diagnostics: Option<DeviceDiagnostics>,
-    pub capabilities: Option<Capabilities>,    // v2 hello: screen, storage_free, tile_kinds. None on v1
+    pub capabilities: Option<Capabilities>,    // v2 hello: screen, storage_free, tile_kinds, live_hz, live_total_hz, series, text_bytes. None on v1
     pub orientation: Option<Orientation>,
     pub layout: Option<LayoutSummary>,         // what the Device shows
     pub key_mirror: KeyMirrorState,            // {enabled, reason}
@@ -604,7 +604,22 @@ CLIProxyAPI Preset tiles have this fixed order and copy names:
 
 With `test-hooks`, mock Integrations use real HTTP only for explicitly configured `http://127.0.0.1:PORT` stub URLs. Other mock URLs retain the empty fixture transport. This permits local stub tests with mock Devices and memory-only credentials.
 
-Each Integration's Preset tiles are in `presets`. Live tiles get their values through the Device link, never through this API ([ADR 0004](adr/0004-firmware-draws-live-tiles.md)).
+Each Integration's Preset tiles are in `presets`, each `{id, name, action, render?}`. `render`, when present, is how the Tile draws its stream, such as `graph`. The app then adds the Preset as a schema 2 Tile with that `render` and `streams: {value: "number"}` if the Device lists it in `tile_kinds`, and as a plain Live tile otherwise. Live tiles get their values through the Device link, never through this API ([ADR 0004](adr/0004-firmware-draws-live-tiles.md)).
+
+#### Live tile bindings
+
+A schema 2 Tile with `streams` binds them through its `widget` action. `source` names the Integration and `account` the account, empty for an Integration with one. The Tile's `value` stream reads the Integration stream named by `field`. Any other Tile stream reads the Integration stream with the same id. A graph Tile takes a `numeric` Integration stream as `number`. A Tile with another action, or one that names an unknown Integration or stream, gets no values and shows its unavailable marker.
+
+The Companion's live router (`td_companion::live`) reads each connected v2 Device's active Layout over the link: `layout state`, then the stored bytes, whose SHA-256 is the `layout` of every `v2.live.set`. It reads only the Integration streams that some Device's Layout binds. Integrations report typed samples through `Integration::live`. Each sample carries a counter that rises with every new sample, even one equal to the last, because a graph advances on each, and a `ttl_ms`.
+
+- **Changes only.** The router sends a Tile stream when its Integration has a newer sample than the Device holds. It keeps only the newest sample per stream, so samples that arrive between rounds coalesce and nothing queues.
+- **Pace.** Each stream waits at least 900 ms between values, or `1000 / live_hz` ms when that is longer. The Device's requests in any one second stay within `live_total_hz`, counting each request as one more for every 256 bytes past the first 256.
+- **`rate`.** The router waits `retry_ms` before it sends the Device anything else, and doubles the wait for each further `rate` in a row, up to 8 seconds.
+- **Sequence.** `n` rises for every new value sent to a Device. A send whose reply never came goes again with the same `n` and value, so a value the Device already took isn't added twice.
+- **Resend.** A new link session, a Layout push or an orientation change sends every bound value again. A `layout`, `page`, `tile`, `stream` or `type` refusal makes the router read the Device's Layout again.
+- **Values a Tile can't take.** A series is cut to its newest `series` numbers and text to `text_bytes`. A value of the wrong type, or a number outside ±1e9, is never sent.
+
+Each Integration's `status.delivery` counts the values each Device accepted and carries the last refusal.
 
 #### This PC
 
@@ -625,9 +640,9 @@ All streams have kind `numeric`. Streams and Preset tiles use this fixed order; 
 | `network_receive_bytes_s` | Network receive | `bytes/s` |
 | `network_send_bytes_s` | Network send | `bytes/s` |
 
-Every Preset uses `{type: "widget", source: "this_pc", account: "", field: <stream id>}`. Windows opens one PDH query and adds counters once. Collection runs at most once per second, including manual refresh. CPU uses Processor Information total Processor Utility; disk activity is 100 minus PhysicalDisk total idle time. GPU usage sums instances by engine type and takes the busiest type, capped at 100%. RAM comes from GlobalMemoryStatusEx. Disk and network rates use cumulative-byte deltas divided by elapsed monotonic time; the first sample and counter resets emit no rate. Network sums physical adapters present when the Integration starts; restart the Companion after adding an adapter.
+Every Preset uses `{type: "widget", source: "this_pc", account: "", field: <stream id>}` and `render: "graph"`. Windows opens one PDH query and adds counters once. Collection runs at most once per second, including manual refresh. CPU uses Processor Information total Processor Utility; disk activity is 100 minus PhysicalDisk total idle time. GPU usage sums instances by engine type and takes the busiest type, capped at 100%. RAM comes from GlobalMemoryStatusEx. Disk and network rates use cumulative-byte deltas divided by elapsed monotonic time; the first sample and counter resets emit no rate. Network sums physical adapters present when the Integration starts; restart the Companion after adding an adapter.
 
-A missing counter omits only its readings; descriptors and Presets stay discoverable. Status is `error` with `Unavailable: {names}.` using the Preset names in order. Healthy streams continue. Non-Windows builds emit no readings and report `This PC needs Windows.`. Values stay inside the Companion for Device delivery, never in HTTP responses. Live tile drawing and binding are tracked in #96.
+A missing counter omits only its readings; descriptors and Presets stay discoverable. Status is `error` with `Unavailable: {names}.` using the Preset names in order. Healthy streams continue. Non-Windows builds emit no readings and report `This PC needs Windows.`. Values stay inside the Companion for Device delivery, never in HTTP responses. Each collection is one live sample per stream with `ttl_ms` 5000, so a Device shows This PC values stale five seconds after collection stops.
 
 ### System
 

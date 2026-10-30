@@ -453,6 +453,9 @@ impl Endpoint for SettingsPatch {
                 Ok((settings, restart, idle))
             })
             .await??;
+        if orientation.is_some() {
+            ctx.live.layout_changed(id.as_str());
+        }
         if let Some(folder) = frame.and_then(|f| f.folder) {
             let photos = ctx.photos.clone();
             let device = id.clone();

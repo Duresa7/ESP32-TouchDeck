@@ -53,7 +53,8 @@ typedef struct {
     bool has_soft;
     const uint8_t *message;
     size_t message_len;
-
+    bool live;
+    bool in_value;
 } scan_t;
 
 static void soft(scan_t *s, const char *key, const char *message)
@@ -187,6 +188,9 @@ static bool scan_number(scan_t *s)
             return false;
         }
     }
+    if (s->in_value) {
+        return true;
+    }
     if (!integer || (s->p - start == 2 && start[0] == '-' && start[1] == '0')) {
         const uint8_t *after = s->p;
         s->p = start;
@@ -223,6 +227,7 @@ static bool scan_container(scan_t *s, uint8_t close)
     }
     for (;;) {
         bool message_key = false;
+        bool value_key = false;
         if (close == '}') {
             skip_ws(s);
             const uint8_t *key = s->p;
@@ -231,6 +236,7 @@ static bool scan_container(scan_t *s, uint8_t close)
             }
             message_key = s->depth == 1 && ((s->p - key == 3 && memcmp(key, "\"m\"", 3) == 0) ||
                 (s->p - key == 8 && memcmp(key, "\"\\u006d\"", 8) == 0));
+            value_key = s->live && s->depth == 1 && s->p - key == 7 && memcmp(key, "\"value\"", 7) == 0;
             skip_ws(s);
             if (s->p >= s->end || *s->p != ':') {
                 return false;
@@ -239,7 +245,10 @@ static bool scan_container(scan_t *s, uint8_t close)
         }
         skip_ws(s);
         const uint8_t *value = s->p;
-        if (!scan_value(s)) {
+        s->in_value = s->in_value || value_key;
+        const bool scanned = scan_value(s);
+        s->in_value = s->in_value && !value_key;
+        if (!scanned) {
             return false;
         }
         if (message_key && value < s->end && *value == '"' && !s->message) {
@@ -292,8 +301,14 @@ static bool scan_value(scan_t *s)
 
 bool td_v2_json_valid(const char *json, size_t len)
 {
+    return td_v2_json_valid_live(json, len, false);
+}
+
+bool td_v2_json_valid_live(const char *json, size_t len, bool live)
+{
     if (!utf8_valid((const uint8_t *)json, len)) return false;
-    scan_t s = { .p = (const uint8_t *)json, .start = (const uint8_t *)json, .end = (const uint8_t *)json + len };
+    scan_t s = { .p = (const uint8_t *)json, .start = (const uint8_t *)json, .end = (const uint8_t *)json + len,
+                 .live = live };
     if (!scan_value(&s)) return false;
     skip_ws(&s);
     return s.p == s.end && !s.has_soft;

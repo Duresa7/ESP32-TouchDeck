@@ -121,6 +121,7 @@ fn presets_follow_copy_order_and_layout_action_contract() {
         ]
     );
     for preset in summary.presets {
+        assert_eq!(preset.render, Some(td_core::layout::TileRender::Graph));
         let action: td_core::layout::Action = serde_json::from_value(preset.action).unwrap();
         assert!(
             matches!(action, td_core::layout::Action::Widget { source, field, account } if source == "this_pc" && field == preset.id && account.is_empty())
@@ -184,4 +185,22 @@ fn counter_reset_omits_rate_then_uses_the_new_baseline() {
     assert!(pc.readings().is_empty());
     pc.sample_at(now + Duration::from_secs(3));
     assert_eq!(pc.readings()[0].value, "200.0 bytes/s");
+}
+#[test]
+fn live_samples_are_numbers_that_count_up_and_stop_when_disabled() {
+    let (mut pc, _) = pc(true);
+    let now = Instant::now();
+    pc.sample_at(now);
+    let first = pc.live();
+    let cpu = first.iter().find(|s| s.stream == "cpu_pct").unwrap();
+    assert_eq!(cpu.value, td_core::live::LiveValue::Number(25.0));
+    assert_eq!((cpu.account.as_str(), cpu.ttl_ms), ("", 5_000));
+    assert_eq!(first.len(), pc.readings().len());
+    pc.sample_at(now + Duration::from_secs(1));
+    let second = pc.live();
+    let again = second.iter().find(|s| s.stream == "cpu_pct").unwrap();
+    assert_eq!(again.value, cpu.value);
+    assert!(again.sample > cpu.sample);
+    pc.configure(json!({"enabled": false})).unwrap();
+    assert!(pc.live().is_empty());
 }

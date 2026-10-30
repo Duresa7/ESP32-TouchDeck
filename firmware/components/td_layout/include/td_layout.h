@@ -49,6 +49,7 @@ typedef struct td_layout {
     uint16_t icons_wanted;
     size_t arena_bytes;
     bool builtin;
+    char sha256[65];
 } td_layout_t;
 
 /*
@@ -70,7 +71,8 @@ const char *td_layout_builtin_json(size_t *len);
 const td_layout_t *td_layout_builtin(void);
 
 /* Reads and parses a stored layout. A file over TD_LAYOUT_MAX_BYTES is refused as `layout.too-large` before it is
- * parsed. *file_bytes is the file's size, or 0 when it could not be read. */
+ * parsed. *file_bytes is the file's size, or 0 when it could not be read. The layout's `sha256` is the SHA-256 of the
+ * file's bytes in lowercase hex, which `v2.live.set` names it by. */
 bool td_layout_load_file(const char *path, td_layout_t **out, size_t *file_bytes, td_layout_error_t *err);
 
 /* "/storage/layouts/<orientation>.json". */

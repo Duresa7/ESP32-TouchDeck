@@ -184,3 +184,14 @@ TEST_CASE("raw DEL is identifiable JSON but forbidden v2 text", "[td_frame]")
     TEST_ASSERT_TRUE(td_v2_json_message(json, strlen(json), &message, &len));
     TEST_ASSERT_FALSE(td_v2_json_valid(json, strlen(json)));
 }
+
+TEST_CASE("v2 JSON allows fractions only inside a live value", "[td_v2_json]")
+{
+    const char *live = "{\"m\":\"v2.live.set\",\"n\":2,\"value\":[1.5,-2e3,0.25]}";
+    TEST_ASSERT_TRUE(td_v2_json_valid_live(live, strlen(live), true));
+    TEST_ASSERT_FALSE(td_v2_json_valid_live(live, strlen(live), false));
+    const char *ttl = "{\"m\":\"v2.live.set\",\"ttl_ms\":1.5,\"value\":1}";
+    TEST_ASSERT_FALSE(td_v2_json_valid_live(ttl, strlen(ttl), true));
+    const char *nested = "{\"m\":\"v2.live.set\",\"x\":{\"value\":1.5}}";
+    TEST_ASSERT_FALSE(td_v2_json_valid_live(nested, strlen(nested), true));
+}

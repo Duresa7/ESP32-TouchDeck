@@ -1,0 +1,35 @@
+expected: tile.streams
+{
+  "schema": 2,
+  "name": "Graph",
+  "orientation": "landscape",
+  "pages": [
+    {
+      "id": "page",
+      "title": "Page",
+      "kind": "grid",
+      "rows": 1,
+      "cols": 2,
+      "tiles": [
+        {
+          "id": "cpu",
+          "label": "CPU",
+          "row": 0,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "streams": {
+            "value": "number"
+          },
+          "action": {
+            "type": "widget",
+            "source": "this_pc",
+            "field": "cpu_pct",
+            "account": ""
+          }
+        }
+      ]
+    }
+  ]
+}

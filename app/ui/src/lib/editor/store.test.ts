@@ -251,6 +251,66 @@ describe('Preset tiles', () => {
     expect(tile(store, state(store).selected!)).toMatchObject({ row: 2, col: 1, label: 'Five hour pct', action: preset.action });
     expect(state(store).adding).toBeNull();
   });
+
+  const cpu = { id: 'cpu_pct', name: 'CPU usage', action: { type: 'widget', source: 'this_pc', field: 'cpu_pct', account: '' }, render: 'graph' as const };
+  const graph = { integration: 'this_pc', stream: 'cpu_pct' };
+
+  test('a Preset placed as a graph is a schema 2 graph Tile bound to its stream', () => {
+    const store = editor();
+    store.open(DESK);
+    store.startStarter();
+    store.setGrid(3, 3);
+    store.openAdd({ row: 2, col: 0 });
+    store.placePreset(cpu, graph);
+    expect(draft(store).schema).toBe(2);
+    expect(tile(store, state(store).selected!)).toMatchObject({ label: 'CPU usage', icon: null, render: 'graph', streams: { value: 'number' }, action: cpu.action });
+  });
+
+  test('Add to Layout adds a graph Tile when given the stream it draws', async () => {
+    const store = editor();
+    store.open(DESK);
+    store.startStarter();
+    store.setGrid(3, 3);
+    expect(await store.addPreset(cpu, graph)).toMatchObject({ kind: 'ok', text: "Added to Desk's Layout" });
+    expect(draft(store).schema).toBe(2);
+    expect(tile(store, state(store).selected!)).toMatchObject({ render: 'graph', streams: { value: 'number' }, action: cpu.action });
+  });
+});
+
+describe('graph Tiles', () => {
+  test('any Tile can draw a graph of a stream, change stream, and go back to its label', () => {
+    const store = editor();
+    store.open(DESK);
+    store.startStarter();
+    const first = page(store).tiles[0];
+    expect(store.setGraph(first.id, { integration: 'this_pc', stream: 'ram_pct' })).toBeNull();
+    expect(draft(store).schema).toBe(2);
+    expect(tile(store, first.id)).toMatchObject({
+      label: first.label,
+      icon: null,
+      render: 'graph',
+      streams: { value: 'number' },
+      action: { type: 'widget', source: 'this_pc', field: 'ram_pct', account: '' },
+    });
+    store.setGraph(first.id, { integration: 'this_pc', stream: 'cpu_pct' });
+    expect(tile(store, first.id).action).toEqual({ type: 'widget', source: 'this_pc', field: 'cpu_pct', account: '' });
+    store.setGraph(first.id, null);
+    const back = tile(store, first.id);
+    expect(back.render).toBeUndefined();
+    expect(back.streams).toBeUndefined();
+    expect(back.action).toEqual({ type: 'widget', source: 'this_pc', field: 'cpu_pct', account: '' });
+  });
+
+  test('a graph Tile survives export and import', () => {
+    const store = editor();
+    store.open(DESK);
+    store.startStarter();
+    const first = page(store).tiles[0];
+    store.setGraph(first.id, { integration: 'this_pc', stream: 'cpu_pct' });
+    const text = store.exportText()!;
+    expect(store.importText(text, 'graph.json')).toBe(true);
+    expect(tile(store, first.id)).toMatchObject({ render: 'graph', streams: { value: 'number' } });
+  });
 });
 
 describe('the invalid-Tile rule', () => {

@@ -93,6 +93,12 @@ pub struct Capabilities {
     pub formats: Vec<String>,
     pub image: [u32; 2],
     pub photo_bytes: u32,
+    /// Live values: updates a stream and the whole Device take each second, samples a graph keeps, and bytes a
+    /// text value holds. All zero when the Firmware has no Live tiles.
+    pub live_hz: u32,
+    pub live_total_hz: u32,
+    pub series: u32,
+    pub text_bytes: u32,
 }
 impl From<&td_link::Capabilities> for Capabilities {
     fn from(c: &td_link::Capabilities) -> Self {
@@ -109,6 +115,10 @@ impl From<&td_link::Capabilities> for Capabilities {
             formats: c.formats.clone(),
             image: c.image,
             photo_bytes: c.photo_bytes,
+            live_hz: c.live_hz,
+            live_total_hz: c.live_total_hz,
+            series: c.series,
+            text_bytes: c.text_bytes,
         }
     }
 }

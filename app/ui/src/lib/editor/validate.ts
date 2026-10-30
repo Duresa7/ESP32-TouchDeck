@@ -23,9 +23,18 @@ export type Tile = {
   colSpan: number;
   action: Action;
 } & (
-  | { render?: undefined; icon: string | null; asset?: string | null }
-  | { render: 'gif'; icon: null; asset: string }
+  | { render?: undefined; icon: string | null; asset?: string | null; streams?: undefined }
+  | { render: 'gif'; icon: null; asset: string; streams?: undefined }
+  | { render: 'graph'; icon: string | null; asset?: string | null; streams: GraphStreams }
 );
+
+export type StreamType = 'number' | 'series' | 'text' | 'image';
+
+/** A graph Tile's one stream: a number appends a sample, a series replaces the history. */
+export type GraphStreams = { value: 'number' | 'series' };
+
+const STREAM_TYPES: readonly StreamType[] = ['number', 'series', 'text', 'image'];
+const RENDER_STREAMS: Record<string, Record<string, readonly StreamType[]>> = { graph: { value: ['number', 'series'] } };
 
 export interface GridPage {
   id: string;
@@ -216,9 +225,16 @@ function structuralErrors(root: unknown): LayoutError[] {
   };
 
   const tile = (value: unknown, pointer: string) => {
-    const tile = object(value, pointer, ['id', 'label', 'row', 'col', 'rowSpan', 'colSpan', 'icon', 'action'], isObject(root) && root.schema === 2 ? ['asset', 'render'] : []);
+    const tile = object(value, pointer, ['id', 'label', 'row', 'col', 'rowSpan', 'colSpan', 'icon', 'action'], isObject(root) && root.schema === 2 ? ['asset', 'render', 'streams'] : []);
     if (!tile) return;
-    if (isObject(root) && root.schema === 2 && Object.hasOwn(tile, 'render') && (tile.render !== 'gif' || typeof tile.asset !== 'string')) at('icon.format', `${pointer}/render`, 'render must be gif with an Asset reference');
+    if (isObject(root) && root.schema === 2 && Object.hasOwn(tile, 'render') && tile.render !== 'graph' && (tile.render !== 'gif' || typeof tile.asset !== 'string')) {
+      at('icon.format', `${pointer}/render`, 'render must be graph, or gif with an Asset reference');
+    }
+    if (Object.hasOwn(tile, 'streams')) {
+      const streams = tile.streams;
+      if (!isObject(streams)) wrongType(`${pointer}/streams`, 'object');
+      else if (!Object.values(streams).every((type) => STREAM_TYPES.some((known) => known === type))) at('tile.streams', `${pointer}/streams`, 'stream types must be number, series, text or image');
+    }
     if (Object.hasOwn(tile, 'id')) id(tile.id, `${pointer}/id`);
     if (Object.hasOwn(tile, 'label')) bounded(tile.label, `${pointer}/label`, LABEL);
     for (const [name, min, max, key] of [
@@ -303,6 +319,14 @@ function semanticErrors(layout: Layout): LayoutError[] {
       addId(tile.id, `${pageLocation} tile ${tileIndex} "${tile.id}"`);
       if (tile.action.type === 'page' && !pageIds.has(tile.action.page)) {
         errors.push(fail('action.page-missing', `page "${page.id}" tile "${tile.id}" references missing page "${tile.action.page}"`));
+      }
+      const bindings = (tile.render && RENDER_STREAMS[tile.render]) || {};
+      const streams: Record<string, string> = tile.streams ?? {};
+      for (const [id, type] of Object.entries(streams)) {
+        if (!bindings[id]?.some((allowed) => allowed === type)) errors.push(fail('tile.streams', `page "${page.id}" tile "${tile.id}" cannot bind stream "${id}" as ${JSON.stringify(type)}`));
+      }
+      for (const id of Object.keys(bindings)) {
+        if (!Object.hasOwn(streams, id)) errors.push(fail('tile.streams', `page "${page.id}" tile "${tile.id}" needs stream "${id}"`));
       }
       if (tile.row + tile.rowSpan > page.rows || tile.col + tile.colSpan > page.cols) {
         errors.push(fail('tile.bounds', `page "${page.id}" tile "${tile.id}" exceeds grid bounds ${page.rows}x${page.cols}`));
@@ -498,6 +522,32 @@ export function setAction(layout: Layout, page: string, id: string, action: Acti
   });
 }
 
+/** Where a graph Tile reads its values: an Integration and one of its streams. */
+export interface GraphBinding {
+  integration: string;
+  stream: string;
+}
+
+/** The Tile drawn as a graph of the bound stream. A graph Tile's action is its binding, and it shows no icon. */
+export function graphTile(tile: Tile, binding: GraphBinding): Tile {
+  const { render: _render, streams: _streams, asset: _asset, ...rest } = tile;
+  return {
+    ...rest,
+    icon: null,
+    render: 'graph',
+    streams: { value: 'number' },
+    action: { type: 'widget', source: binding.integration, field: binding.stream, account: '' },
+  };
+}
+
+/** Draws the Tile as a graph of the bound stream, or, with null, as its label again. */
+export function setGraph(layout: Layout, page: string, id: string, binding: GraphBinding | null): Edit {
+  return redrawTile(layout, page, id, (tile) => {
+    const { render: _render, streams: _streams, asset: _asset, ...rest } = tile;
+    return binding ? graphTile(rest, binding) : { ...rest, icon: null };
+  });
+}
+
 export function setLabel(layout: Layout, page: string, id: string, label: string): Edit {
   return editTile(layout, page, id, (grid, index) => {
     grid.tiles[index].label = label;
@@ -505,18 +555,26 @@ export function setLabel(layout: Layout, page: string, id: string, label: string
   });
 }
 
-const usesAssets = (layout: Layout) => layout.pages.some((page) => page.kind === 'grid' && page.tiles.some((tile) => tile.asset != null));
+const needsSchema2 = (layout: Layout) =>
+  layout.pages.some((page) => page.kind === 'grid' && page.tiles.some((tile) => tile.asset != null || tile.render !== undefined));
 
-function iconEdit(layout: Layout, page: string, id: string, icon: string | null, asset: string | null): Edit {
+/** Changes how a Tile draws, then sets the Layout schema 2 while any Tile has an Asset or a render, and 1 otherwise. */
+function redrawTile(layout: Layout, page: string, id: string, change: (tile: Tile) => Tile): Edit {
   const next = copy(layout);
   const grid = gridOf(next, page);
   if (typeof grid === 'string') return refuse(grid);
   const index = grid.tiles.findIndex((candidate) => candidate.id === id);
   if (index < 0) return refuse(`no tile ${id}`);
-  const { render: _render, icon: _icon, asset: _asset, ...rest } = grid.tiles[index];
-  grid.tiles[index] = asset === null ? { ...rest, icon } : { ...rest, icon: null, asset };
-  next.schema = usesAssets(next) ? 2 : 1;
+  grid.tiles[index] = change(grid.tiles[index]);
+  next.schema = needsSchema2(next) ? 2 : 1;
   return checked(next);
+}
+
+function iconEdit(layout: Layout, page: string, id: string, icon: string | null, asset: string | null): Edit {
+  return redrawTile(layout, page, id, (tile) => {
+    const { render: _render, streams: _streams, icon: _icon, asset: _asset, ...rest } = tile;
+    return asset === null ? { ...rest, icon } : { ...rest, icon: null, asset };
+  });
 }
 
 export function setIcon(layout: Layout, page: string, id: string, icon: string | null): Edit {
