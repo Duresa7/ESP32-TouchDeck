@@ -1194,6 +1194,7 @@ async fn scripted_consent_answers_new_board_installs_over_http() {
         orientation: None,
         name: Some("Workbench".into()),
         brightness: None,
+        photo_frame: None,
     };
     td.call::<SettingsPatch>(
         DevicePath {

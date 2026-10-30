@@ -32,10 +32,9 @@ fn negotiated_name_round_trips_and_survives_reconnect() {
         let identity = session.identity(TIMEOUT).unwrap();
         assert!(identity.matches_usb_serial(device.usb_serial()));
         assert!(!identity.matches_usb_serial("02:00:00:00:00:02"));
-        assert_eq!(
-            identity.capabilities.unwrap().tile_kinds,
-            ["static", "graph"]
-        );
+        let caps = identity.capabilities.unwrap();
+        assert_eq!(caps.tile_kinds, ["static", "graph", "photo-frame", "clock"]);
+        assert_eq!(caps.photo_bytes, 131_072);
         assert_eq!(
             session.set_name("  Studio \u{1f39b}  ", TIMEOUT).unwrap(),
             "  Studio \u{1f39b}  "
@@ -74,7 +73,7 @@ fn invalid_names_preserve_the_committed_name() {
 fn selection_and_unsupported_requests_have_stable_errors() {
     let device = MockDeck::v2();
     let session = open(&device);
-    let request = json!({"m":"v2.idle.get"});
+    let request = json!({"m":"v2.unknown.get"});
     assert_eq!(
         session.call(&request, TIMEOUT).unwrap().fields["reason"],
         "not-negotiated"

@@ -24,10 +24,6 @@ PATTERNS = {
 }
 
 
-def parsed_version(text):
-    return json.loads(text).get("version")
-
-
 def read_versions(root):
     versions = {}
     for relative, pattern in PATTERNS.items():
@@ -35,7 +31,7 @@ def read_versions(root):
         matches = list(pattern.finditer(text))
         if len(matches) != 1:
             raise ValueError(f"{relative}: could not find exactly one version field")
-        if matches[0].group(2) != parsed_version(text):
+        if matches[0].group(2) != json.loads(text).get("version"):
             raise ValueError(f"{relative}: version field is not where the file format puts it")
         versions[relative] = matches[0].group(2)
     return versions

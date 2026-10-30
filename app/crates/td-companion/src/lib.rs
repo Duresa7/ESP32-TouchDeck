@@ -8,6 +8,7 @@ pub mod features;
 pub mod jobs;
 pub mod link;
 pub mod live;
+pub mod photos;
 mod process;
 mod runtime;
 mod serve;

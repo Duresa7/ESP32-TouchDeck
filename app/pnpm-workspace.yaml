@@ -6,6 +6,7 @@ allowBuilds:
   edgedriver: false
   esbuild: true
   electron: true
+  electron-winstaller: false
   geckodriver: false
 
 minimumReleaseAgeExclude:

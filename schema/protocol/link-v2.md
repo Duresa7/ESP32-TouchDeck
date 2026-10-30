@@ -267,8 +267,8 @@ A picture is one logical message, `v2.photo.put`, followed by its chunks and
 base64 inside JSON. Put requires `bytes` and `sha256`; success returns `xfer`.
 End requires `xfer`; success returns `shown:true`. Transfer rules are those for
 Assets, but storage is bounded RAM and nothing is written to LittleFS. Size is
-1 to `caps.photo_bytes`, at most 128 KiB. JPEG format and dimensions follow the
-Asset rules. The Device keeps at most the current picture and one incoming
+1 to `caps.photo_bytes`, at most 128 KiB. JPEG format follows the Asset rules;
+dimensions are at most `caps.screen`, not `caps.image`. The Device keeps at most the current picture and one incoming
 picture. Decode failure keeps the old picture or clock. Success replaces the
 picture atomically only if the Device is still idle. Touch cancels a pending
 photo and its end returns `idle` until the next bulk open.

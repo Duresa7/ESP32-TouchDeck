@@ -541,8 +541,9 @@ The `td-link` CLI provides `discover-identities`, `identity`, `name`, and
 `set-name "Studio"`. Names default to `Open TouchDeck`, contain 1–48 UTF-8
 bytes, and persist in NVS separately from Layouts. See the
 [protocol contract](../schema/protocol/link-v2.md) for validation rules.
-Static Tiles, graph Tiles, and the existing tdi1 format are advertised. Photo,
-idle, and clock requests remain unsupported.
+It advertises the `static`, `graph`, `photo-frame`, and `clock` Tile kinds, the
+tdi1 format, and `photo_bytes` 131072. The live values, photo frame, idle, and
+clock requests are below.
 
 ### Live tiles
 
@@ -626,3 +627,37 @@ The console's `store` usage remains the actual LittleFS measurement.
 Static schema 2 Tiles can reference `asset: "sha256:<id>"` with `icon: null`.
 Firmware requires v2 negotiation and a validated tdi1 Asset before committing
 the Layout. The renderer reads Assets from the internal sixteen-shard store.
+
+### Photo frame and idle clock
+
+`v2.idle.set` stores the photo frame's idle settings in NVS namespace
+`td_device`, key `idle`: a 10-byte blob of version 1, `enabled`, then
+`timeout_s` and `interval_s` as little-endian 32-bit integers. A missing or
+unreadable blob reads as off, 60 s, and 15 s. The boot applies it after the
+power gate starts, and a set applies at once.
+
+With the photo frame on, the power gate never turns the screen off. After
+`timeout_s` without a touch on a lit screen it clears every held key and raises
+the idle face, which covers the Page. The face shows the latest picture while
+the app is connected and a picture came within two intervals, and the clock
+otherwise. The first touch takes the face down. The gate eats that contact
+whole, so it clicks nothing, and the Page underneath is the one that was showing.
+Turning the photo frame off takes the face down and the screen-off timeout
+applies again.
+
+A picture arrives as `v2.photo.put`, chunks, and `v2.photo.end`, in one PSRAM
+buffer of at most 131072 bytes; nothing is written to the store. The end checks
+the SHA-256, then decodes the JPEG on the link task with the ROM TJpgDec into a
+PSRAM RGB565 buffer no larger than the screen, about 1.2 MB, and swaps it in
+under the LVGL lock. The old picture is freed after the swap, so the peak is two
+decoded pictures and one JPEG. The face frees its picture when it goes down.
+The log line `idle: picture WxH from N bytes, decoded in T ms` gives the decode
+time. TJpgDec takes baseline three-component JPEGs, so a grayscale or
+progressive JPEG is refused with `format`.
+
+`v2.clock.set` sets a volatile clock that counts on from the set by the
+monotonic time. Until the first set after boot the clock reads `--:--`, dimmed.
+
+`power state` adds `photo_idle` (the photo frame is on), `idle_face` (the face
+is up), `photo_timeout_s`, `face_count` (times the face came up since boot), and
+`face_wakes` (contacts eaten to take it down).

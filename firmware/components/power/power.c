@@ -23,6 +23,7 @@ typedef enum {
     ACT_NONE,
     ACT_DARK,
     ACT_LIGHT,
+    ACT_FACE,
 } action_t;
 
 static const char *TAG = "power";
@@ -44,6 +45,11 @@ static struct {
     int64_t retry_light_us;
     int64_t timeout_us;
     int64_t timeout_set_us;
+    bool photo_on;
+    bool idle_face;
+    int64_t photo_timeout_us;
+    uint32_t face_count;
+    uint32_t face_wakes;
     uint32_t swallowed;
     uint32_t off_count;
     uint32_t wake_count;
@@ -101,7 +107,11 @@ static action_t step(bool lit, bool touching, bool finger_down, int64_t now_us, 
     const bool dark = !lit || s.chip_in_doubt;
     if (touching && s.contact == CONTACT_NONE) {
         const bool wake_resumed = finger_down && now_us < s.guard_until_us;
-        s.contact = dark || wake_resumed ? CONTACT_EATEN : CONTACT_PASSED;
+        s.contact = dark || s.idle_face || wake_resumed ? CONTACT_EATEN : CONTACT_PASSED;
+        if (s.idle_face) {
+            s.idle_face = false;
+            s.face_wakes++;
+        }
     }
     *swallow = s.contact == CONTACT_EATEN;
     if (*swallow) {
@@ -112,8 +122,14 @@ static action_t step(bool lit, bool touching, bool finger_down, int64_t now_us, 
     }
 
     if (!touching) {
-        if (s.contact == CONTACT_NONE && lit && now_us >= s.retry_dark_us && now_us - idle_since() >= s.timeout_us) {
+        const bool resting = s.contact == CONTACT_NONE && lit;
+        if (resting && !s.photo_on && now_us >= s.retry_dark_us && now_us - idle_since() >= s.timeout_us) {
             act = ACT_DARK;
+        }
+        if (resting && s.photo_on && !s.idle_face && !s.chip_in_doubt && now_us - idle_since() >= s.photo_timeout_us) {
+            s.idle_face = true;
+            s.face_count++;
+            act = ACT_FACE;
         }
         if (s.contact == CONTACT_EATEN) {
             s.guard_until_us = now_us + WAKE_GUARD_US;
@@ -129,6 +145,11 @@ static action_t step(bool lit, bool touching, bool finger_down, int64_t now_us, 
 static void run(action_t act, int64_t entered_us, int64_t now_us)
 {
     if (act == ACT_NONE) {
+        return;
+    }
+    if (act == ACT_FACE) {
+        keys_clear_all();
+        ESP_LOGI(TAG, "idle face on");
         return;
     }
     const bool light = act == ACT_LIGHT;
@@ -213,6 +234,11 @@ esp_err_t power_get_info(power_info_t *out, int64_t now_us)
         .wake_us = s.wake_us,
         .errors = s.errors,
         .output = output,
+        .photo_idle = s.photo_on,
+        .idle_face = s.idle_face,
+        .photo_timeout_s = (uint32_t)(s.photo_timeout_us / US_PER_S),
+        .face_count = s.face_count,
+        .face_wakes = s.face_wakes,
     };
     portEXIT_CRITICAL(&s_lock);
     return ESP_OK;
@@ -231,4 +257,42 @@ esp_err_t power_set_idle_timeout_s(uint32_t seconds, int64_t now_us)
     s.timeout_set_us = now_us;
     portEXIT_CRITICAL(&s_lock);
     return ESP_OK;
+}
+
+esp_err_t power_set_photo_idle(bool on, uint32_t timeout_s, int64_t now_us)
+{
+    if (on && (timeout_s < POWER_PHOTO_TIMEOUT_MIN_S || timeout_s > POWER_PHOTO_TIMEOUT_MAX_S)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!atomic_load(&s_started)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    portENTER_CRITICAL(&s_lock);
+    const bool was_face = s.idle_face;
+    s.photo_on = on;
+    if (on) {
+        s.photo_timeout_us = (int64_t)timeout_s * US_PER_S;
+    }
+    s.idle_face = s.idle_face && on;
+    s.timeout_set_us = now_us;
+    portEXIT_CRITICAL(&s_lock);
+    if (was_face && !on) {
+        ESP_LOGI(TAG, "idle face off: photo idle mode turned off");
+    }
+    return ESP_OK;
+}
+
+bool power_idle_face(uint32_t *entry)
+{
+    if (!atomic_load(&s_started)) {
+        return false;
+    }
+    portENTER_CRITICAL(&s_lock);
+    const bool face = s.idle_face;
+    const uint32_t count = s.face_count;
+    portEXIT_CRITICAL(&s_lock);
+    if (entry != NULL) {
+        *entry = count;
+    }
+    return face;
 }

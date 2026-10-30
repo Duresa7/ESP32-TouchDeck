@@ -94,7 +94,7 @@ export interface SetupDeps {
   firmware: { offered: string | null };
 }
 
-const NO_CHANGE: DeviceSettingsPatch = { idle_timeout_s: null, orientation: null, name: null, brightness: null };
+const NO_CHANGE: DeviceSettingsPatch = { idle_timeout_s: null, orientation: null, name: null, brightness: null, photo_frame: null };
 const PLUG_IN = "Check that it's plugged in, then retry.";
 
 const orientationOf = (device: DeviceSummary): Orientation => (device.orientation === 'portrait' ? 'portrait' : 'landscape');

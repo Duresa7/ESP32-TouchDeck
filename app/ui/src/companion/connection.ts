@@ -13,10 +13,12 @@ export interface Environment {
   session: Session;
   open: OpenSocket;
   updates?: UpdatesBridge;
+  pickFolder?: PickFolder;
 }
 
 export function pageEnvironment(target: Window): Environment {
-  return { base: target.location.origin, session: pickSession(target), open: openWebSocket, updates: target.openTouchDeck?.updates };
+  const bridge = target.openTouchDeck;
+  return { base: target.location.origin, session: pickSession(target), open: openWebSocket, updates: bridge?.updates, pickFolder: bridge?.pickFolder };
 }
 
 export function eventsUrl(base: string): string {
@@ -53,6 +55,13 @@ export function useCompanion(): Companion {
 }
 
 export const EventsContext = createContext<Events | null>(null);
+
+export type PickFolder = () => Promise<string | null>;
+export const FolderPickerContext = createContext<PickFolder | null>(null);
+
+export function useFolderPicker(): PickFolder | null {
+  return useContext(FolderPickerContext);
+}
 
 export function useEvents(): Events {
   const events = useContext(EventsContext);

@@ -47,7 +47,7 @@ function stored(store: DeviceSettingsStore): DeviceSettings {
 }
 
 beforeEach(() => {
-  fake = createFakeCompanion({ devices: [desk, old], brightness: { mock0001: 80 } });
+  fake = createFakeCompanion({ devices: [desk, old], brightness: { mock0001: 80 }, photoFrame: ['mock0001'] });
   vi.stubGlobal('fetch', fake.fetch);
   companion = createClient(BASE, windowSession(fake.bridge));
 });
@@ -80,13 +80,19 @@ describe('loading', () => {
   test('reads the settings and notes what the Firmware lacks', async () => {
     const store = await loaded(desk);
     expect(store.getState().load).toBe('ready');
-    expect(store.getState().shown).toEqual({ idle_timeout_s: 600, orientation: 'landscape', name: 'Desk', brightness: 80 });
+    expect(store.getState().shown).toEqual({
+      idle_timeout_s: 600,
+      orientation: 'landscape',
+      name: 'Desk',
+      brightness: 80,
+      photo_frame: { enabled: false, timeout_s: 60, interval_s: 15, folder: null },
+    });
     expect(store.getState().needs).toEqual({});
   });
 
-  test('v1 Firmware can change neither the name nor the brightness', async () => {
+  test('v1 Firmware can change neither the name, the brightness nor the photo frame', async () => {
     const store = await loaded(old);
-    expect(store.getState().needs).toEqual({ name: { since: null }, brightness: { since: null } });
+    expect(store.getState().needs).toEqual({ name: { since: null }, brightness: { since: null }, photo_frame: { since: null } });
   });
 
   test('a failed read says so', async () => {
@@ -287,7 +293,7 @@ describe('brightness', () => {
     await vi.waitFor(() => expect(store.getState().saved?.brightness).toBe(100));
     expect(patch.mock.calls[0][2].brightness).toBe(100);
     for (const device of [desk.id, old.id]) {
-      const over = companion.devices.settings_patch({ device }, null, { idle_timeout_s: null, orientation: null, name: null, brightness: 101 });
+      const over = companion.devices.settings_patch({ device }, null, { idle_timeout_s: null, orientation: null, name: null, brightness: 101, photo_frame: null });
       await expect(over).rejects.toMatchObject({ code: 'request.invalid' });
     }
   });
@@ -306,5 +312,55 @@ describe('brightness', () => {
     await vi.waitFor(() => expect(store.getState().shown?.brightness).toBeNull());
     expect(store.getState().needs.brightness).toEqual({ since: null });
     expect(store.getState().notice).toBeNull();
+  });
+});
+
+describe('the photo frame', () => {
+  const folder = 'D:\\Pictures\\Frame';
+
+  test('starts off, and Firmware without it needs newer Firmware', async () => {
+    expect((await loaded(desk)).getState().shown?.photo_frame).toEqual({ enabled: false, timeout_s: 60, interval_s: 15, folder: null });
+    const store = await loaded(old);
+    expect(store.getState().needs.photo_frame).toEqual({ since: null });
+    const patch = vi.spyOn(companion.devices, 'settings_patch');
+    expect(await store.setPhotoFrame({ enabled: true })).toBe(false);
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  test('sends only what changed and shows it at once', async () => {
+    const store = await loaded(desk);
+    const patch = vi.spyOn(companion.devices, 'settings_patch');
+    const turning = store.setPhotoFrame({ enabled: true });
+    expect(store.getState().shown?.photo_frame?.enabled).toBe(true);
+    expect(await turning).toBe(true);
+    expect(patch.mock.calls[0][2].photo_frame).toEqual({ enabled: true, timeout_s: null, interval_s: null, folder: null });
+    await store.setPhotoFrame({ timeout_s: 300 });
+    await store.setPhotoFrame({ folder });
+    expect(patch.mock.calls[2][2].photo_frame).toEqual({ enabled: null, timeout_s: null, interval_s: null, folder });
+    expect(stored(store).photo_frame).toEqual({ enabled: true, timeout_s: 300, interval_s: 15, folder });
+    expect(store.getState().notice?.event).toBe('saved');
+  });
+
+  test('a folder the Companion refuses goes back and asks for another, with no error notice', async () => {
+    const store = await loaded(desk);
+    await store.setPhotoFrame({ enabled: true, folder });
+    vi.spyOn(companion.devices, 'settings_patch').mockRejectedValue(
+      new ApiError('request.invalid', 'The request body is invalid.', { part: 'body', reason: 'photo_frame.folder is not the full path of a folder on this computer' }),
+    );
+    expect(await store.setPhotoFrame({ folder: 'E:\\Gone' })).toBe(false);
+    expect(store.getState().shown?.photo_frame?.folder).toBe(folder);
+    expect(store.getState().problem.folder).toBe("That folder isn't on this PC anymore. Choose another.");
+    expect(store.getState().notice).toBeNull();
+    vi.restoreAllMocks();
+    await store.setPhotoFrame({ folder: 'E:\\Frame' });
+    expect(store.getState().problem.folder).toBeUndefined();
+  });
+
+  test('a failed save goes back and says so', async () => {
+    const store = await loaded(desk);
+    vi.spyOn(companion.devices, 'settings_patch').mockRejectedValue(new ApiError('device.not_connected', 'The Device is not connected.'));
+    await store.setPhotoFrame({ enabled: true });
+    expect(store.getState().shown?.photo_frame?.enabled).toBe(false);
+    expect(store.getState().notice?.event).toBe('save-failed');
   });
 });

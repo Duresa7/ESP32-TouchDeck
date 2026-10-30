@@ -16,7 +16,25 @@ test('isolated shell, exact preload, navigation, renewal, single instance and cl
     await page.waitForURL(fake.origin + '/');
     expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getTitle())).toBe('Open TouchDeck');
     expect(await page.evaluate(() => ['require', 'process', 'Buffer', 'global'].map(k => typeof (window as any)[k]))).toEqual(['undefined', 'undefined', 'undefined', 'undefined']);
-    expect(await page.evaluate(() => Object.keys((window as any).openTouchDeck).sort())).toEqual(['onSessionChanged', 'session', 'updates', 'version']);
+    expect(await page.evaluate(() => Object.keys((window as any).openTouchDeck).sort())).toEqual(['onSessionChanged', 'pickFolder', 'session', 'updates', 'version']);
+    await app.evaluate(({ dialog }) => {
+      (globalThis as any).asked = 0;
+      dialog.showOpenDialog = (async () => {
+        (globalThis as any).asked += 1;
+        return { canceled: (globalThis as any).asked > 1, filePaths: ['/pictures/frame'] };
+      }) as typeof dialog.showOpenDialog;
+    });
+    expect(await page.evaluate(() => window.openTouchDeck?.pickFolder?.())).toBe('/pictures/frame');
+    expect(await page.evaluate(() => window.openTouchDeck?.pickFolder?.())).toBe(null);
+    expect(await app.evaluate(async ({ ipcMain, BrowserWindow }) => {
+      const contents = BrowserWindow.getAllWindows()[0].webContents;
+      const handler = (ipcMain as any)._invokeHandlers.get('dialog:pick-folder');
+      return [
+        await handler({ sender: contents, senderFrame: { origin: 'https://example.invalid' } }),
+        await handler({ sender: {}, senderFrame: contents.mainFrame }),
+        (globalThis as any).asked,
+      ];
+    })).toEqual([null, null, 2]);
     expect(await page.evaluate(() => Object.keys((window as any).openTouchDeck.updates).sort())).toEqual(['check', 'download', 'install']);
     expect(await page.evaluate(() => window.openTouchDeck?.updates?.check())).toEqual({ state: 'disabled' });
     expect(await app.evaluate(async ({ ipcMain, BrowserWindow }) => {

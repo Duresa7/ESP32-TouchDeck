@@ -92,6 +92,7 @@ pub struct Capabilities {
     pub asset_bytes: u32,
     pub formats: Vec<String>,
     pub image: [u32; 2],
+    pub photo_bytes: u32,
     /// Live values: updates a stream and the whole Device take each second, samples a graph keeps, and bytes a
     /// text value holds. All zero when the Firmware has no Live tiles.
     pub live_hz: u32,
@@ -113,6 +114,7 @@ impl From<&td_link::Capabilities> for Capabilities {
             asset_bytes: c.asset_bytes,
             formats: c.formats.clone(),
             image: c.image,
+            photo_bytes: c.photo_bytes,
             live_hz: c.live_hz,
             live_total_hz: c.live_total_hz,
             series: c.series,

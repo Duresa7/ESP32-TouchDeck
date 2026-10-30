@@ -17,6 +17,7 @@ use td_core::{
 
 use crate::asset::{ASSET_PAGE, AssetFormat, asset_id, refusal, valid_asset_id};
 use crate::live::{TTL_MAX_MS, TTL_MIN_MS, VALUE_MAX, layout_ref};
+use crate::photo::{IDLE_INTERVAL_S, IDLE_TIMEOUT_S, IdleSettings, PHOTO_BYTES_MAX};
 use crate::xfer::{ICON_BYTES, LayoutState, RETRY_AFTER, TRANSMISSIONS, WINDOW, crc32};
 use crate::{READ_TICK, Transport};
 
@@ -41,6 +42,7 @@ enum Target {
     Layout(Orientation),
     Icon(String),
     Asset(String),
+    Photo(String),
     Update,
 }
 
@@ -168,6 +170,14 @@ struct State {
     asset_end: Option<(u8, Map<String, Value>)>,
     live: Live,
     live_sets: Vec<Value>,
+    idle_settings: IdleSettings,
+    idle: bool,
+    photo_interval: Option<Duration>,
+    last_photo: Option<Instant>,
+    photos: Vec<Vec<u8>>,
+    photo_refusals: Vec<(String, Option<u64>)>,
+    photo_end: Option<(u8, Map<String, Value>)>,
+    clock: Option<(u64, i32)>,
 }
 
 fn arrived(request: &Map<String, Value>) -> Value {
@@ -260,6 +270,14 @@ impl MockDeck {
                 asset_end: None,
                 live: Live::new(),
                 live_sets: Vec::new(),
+                idle_settings: IdleSettings::default(),
+                idle: false,
+                photo_interval: None,
+                last_photo: None,
+                photos: Vec::new(),
+                photo_refusals: Vec::new(),
+                photo_end: None,
+                clock: None,
             })),
         }
     }
@@ -533,6 +551,56 @@ impl MockDeck {
     /// Sets the bytes the Device has for Assets, so a test can fill it.
     pub fn set_asset_capacity(&self, bytes: u64) {
         self.state().asset_capacity = bytes;
+    }
+
+    /// Puts the Device on its idle screen, as `timeout_s` without a touch does, or wakes it, as a
+    /// touch does. A wake cancels the picture on its way, and its end then answers `idle`.
+    pub fn set_idle(&self, idle: bool) {
+        let mut state = self.state();
+        if state.idle
+            && !idle
+            && let Some(Inbound {
+                target: Target::Photo(_),
+                xfer,
+                ..
+            }) = state.inbound
+        {
+            state.inbound = None;
+            state.photo_end = Some((xfer, refusal("idle", "The Device woke")));
+        }
+        if idle && !state.idle {
+            state.last_photo = None;
+        }
+        state.idle = idle;
+    }
+
+    /// Paces pictures at `every` instead of the stored `interval_s`, so a test need not wait 5 s.
+    pub fn set_photo_interval(&self, every: Duration) {
+        self.state().photo_interval = Some(every);
+    }
+
+    /// Refuses the next puts with these reasons, in order, before any other check. `retry_ms`
+    /// goes with `rate`.
+    pub fn refuse_photos(&self, refusals: impl IntoIterator<Item = (&'static str, Option<u64>)>) {
+        self.state().photo_refusals.extend(
+            refusals
+                .into_iter()
+                .map(|(reason, ms)| (reason.to_owned(), ms)),
+        );
+    }
+
+    /// Every picture the Device showed, in order.
+    pub fn photos(&self) -> Vec<Vec<u8>> {
+        self.state().photos.clone()
+    }
+
+    pub fn idle_settings(&self) -> IdleSettings {
+        self.state().idle_settings
+    }
+
+    /// The last `v2.clock.set`, as `(unix_s, offset_min)`.
+    pub fn clock(&self) -> Option<(u64, i32)> {
+        self.state().clock
     }
 
     /// The data bytes of every chunk frame the Device has received.
@@ -811,13 +879,13 @@ impl MockDeck {
             return Ok(Map::new());
         }
         if let Some(Inbound {
-            target: Target::Asset(_),
+            target: Target::Asset(_) | Target::Photo(_),
             xfer: open,
             ..
         }) = &state.inbound
         {
             return Err(if u64::from(*open) == xfer {
-                "end an Asset with v2.asset.end".into()
+                "end an Asset or a picture with its v2 end".into()
             } else {
                 "no transfer with that xfer".into()
             });
@@ -846,7 +914,7 @@ impl MockDeck {
         let orientation = match inbound.target {
             Target::Layout(orientation) => orientation,
             Target::Update => return Err("firmware uses update.end".into()),
-            Target::Asset(_) => unreachable!("an Asset put returned above"),
+            Target::Asset(_) | Target::Photo(_) => unreachable!("a v2 put returned above"),
             Target::Icon(id) => {
                 if !data.starts_with(b"TDI1") {
                     return Err("not a TDI1 icon".into());
@@ -1075,7 +1143,7 @@ impl MockDeck {
                     if matches!(
                         &state.inbound,
                         Some(Inbound {
-                            target: Target::Asset(_),
+                            target: Target::Asset(_) | Target::Photo(_),
                             ..
                         })
                     ) {
@@ -1087,14 +1155,15 @@ impl MockDeck {
                         reply.insert("id".into(), json!("020000000001"));
                         reply.insert("name".into(), json!(state.device_name));
                         reply.insert("caps".into(), json!({"screen":[1024,600],"grid":[8,8],"pages":8,"tiles":64,
-                            "layout_bytes":32768,"layout_schemas":[1,2],"free_bytes":asset_space(&state).3,"tile_kinds":["static","graph"],
+                            "layout_bytes":32768,"layout_schemas":[1,2],"free_bytes":asset_space(&state).3,"tile_kinds":["static","graph","photo-frame","clock"],
                             "asset_bytes":12300,"formats":["tdi1"],"image":[64,64],"gif_frames":0,"gif_pixels":0,
-                            "photo_bytes":0,"live_hz":MOCK_LIVE_HZ,"live_total_hz":MOCK_LIVE_TOTAL_HZ,"series":MOCK_SERIES,"text_bytes":0,"streams":1}));
+                            "photo_bytes":PHOTO_BYTES_MAX,"live_hz":MOCK_LIVE_HZ,"live_total_hz":MOCK_LIVE_TOTAL_HZ,"series":MOCK_SERIES,"text_bytes":0,"streams":1}));
                         if state.gif_capabilities {
                             let caps = reply.get_mut("caps").unwrap();
                             caps["anim"] = json!({"image":[128,128],"min_delay_ms":100,"page_tiles":4,"page_pixels":65536});
                             caps["formats"] = json!(["tdi1", "gif"]);
-                            caps["tile_kinds"] = json!(["static", "graph", "gif"]);
+                            caps["tile_kinds"] =
+                                json!(["static", "graph", "gif", "photo-frame", "clock"]);
                             caps["asset_bytes"] = json!(262144);
                             caps["gif_frames"] = json!(60);
                             caps["gif_pixels"] = json!(983040);
@@ -1105,6 +1174,11 @@ impl MockDeck {
             }
             m if m.starts_with("v2.asset.") && self.v2_selected() => Ok(self.asset(m, request)),
             "v2.live.set" if self.v2_selected() => Ok(self.live_set(request)),
+            "v2.photo.put" | "v2.photo.end" | "v2.idle.get" | "v2.idle.set" | "v2.clock.set"
+                if self.v2_selected() =>
+            {
+                Ok(self.photo(m, request))
+            }
             m if m.starts_with("v2.") && self.state().v2 => {
                 let mut state = self.state();
                 let reason = if !state.selected_v2 || !state.online_since_hello {
@@ -1577,6 +1651,187 @@ impl MockDeck {
         state.live.in_window = all + 1;
         state.record_live(request);
         Map::from_iter([("n".to_owned(), json!(n))])
+    }
+
+    fn photo(&self, m: &str, request: &Map<String, Value>) -> Map<String, Value> {
+        let refused = |reason: &str| refusal(reason, "Request refused");
+        let only = |keys: &[&str]| {
+            request.len() == keys.len() + 1
+                && request
+                    .keys()
+                    .all(|key| key == "m" || keys.contains(&key.as_str()))
+        };
+        let idle_fields = |settings: IdleSettings| {
+            Map::from_iter([
+                ("enabled".to_owned(), json!(settings.enabled)),
+                ("timeout_s".to_owned(), json!(settings.timeout_s)),
+                ("interval_s".to_owned(), json!(settings.interval_s)),
+                ("fallback".to_owned(), json!("clock")),
+            ])
+        };
+        let mut guard = self.state();
+        let state = &mut *guard;
+        match m {
+            "v2.idle.get" => {
+                if !only(&[]) {
+                    return refused("args");
+                }
+                idle_fields(state.idle_settings)
+            }
+            "v2.idle.set" => {
+                let number = |key: &str| {
+                    request
+                        .get(key)
+                        .and_then(Value::as_u64)
+                        .and_then(|n| u32::try_from(n).ok())
+                };
+                let (Some(enabled), Some(timeout_s), Some(interval_s), Some("clock")) = (
+                    request.get("enabled").and_then(Value::as_bool),
+                    number("timeout_s").filter(|n| IDLE_TIMEOUT_S.contains(n)),
+                    number("interval_s").filter(|n| IDLE_INTERVAL_S.contains(n)),
+                    request.get("fallback").and_then(Value::as_str),
+                ) else {
+                    return refused("args");
+                };
+                if !only(&["enabled", "timeout_s", "interval_s", "fallback"]) {
+                    return refused("args");
+                }
+                state.idle_settings = IdleSettings {
+                    enabled,
+                    timeout_s,
+                    interval_s,
+                };
+                if !enabled {
+                    state.idle = false;
+                }
+                idle_fields(state.idle_settings)
+            }
+            "v2.clock.set" => {
+                let (Some(unix_s), Some(offset_min)) = (
+                    request
+                        .get("unix_s")
+                        .and_then(Value::as_u64)
+                        .filter(|n| *n <= crate::photo::CLOCK_UNIX_S_MAX),
+                    request
+                        .get("offset_min")
+                        .and_then(Value::as_i64)
+                        .and_then(|n| i32::try_from(n).ok())
+                        .filter(|n| crate::photo::CLOCK_OFFSET_MIN.contains(n)),
+                ) else {
+                    return refused("args");
+                };
+                if !only(&["unix_s", "offset_min"]) {
+                    return refused("args");
+                }
+                state.clock = Some((unix_s, offset_min));
+                Map::from_iter([
+                    ("unix_s".to_owned(), json!(unix_s)),
+                    ("offset_min".to_owned(), json!(offset_min)),
+                ])
+            }
+            "v2.photo.put" => {
+                let (Some(bytes), Some(sha256)) = (
+                    request
+                        .get("bytes")
+                        .and_then(Value::as_u64)
+                        .filter(|bytes| *bytes > 0),
+                    request
+                        .get("sha256")
+                        .and_then(Value::as_str)
+                        .filter(|id| valid_asset_id(id)),
+                ) else {
+                    return refused("args");
+                };
+                if !only(&["bytes", "sha256"]) {
+                    return refused("args");
+                }
+                if !state.photo_refusals.is_empty() {
+                    let (reason, retry_ms) = state.photo_refusals.remove(0);
+                    let mut reply = refused(&reason);
+                    if let Some(ms) = retry_ms {
+                        reply.insert("retry_ms".into(), json!(ms));
+                    }
+                    return reply;
+                }
+                if bytes > PHOTO_BYTES_MAX as u64 {
+                    return refused("size");
+                }
+                if !state.idle_settings.enabled || !state.idle {
+                    return refusal("idle", "The Device is awake");
+                }
+                let every = state
+                    .photo_interval
+                    .unwrap_or(Duration::from_secs(u64::from(
+                        state.idle_settings.interval_s,
+                    )));
+                if let Some(wait) = state
+                    .last_photo
+                    .map(|at| (at + every).saturating_duration_since(Instant::now()))
+                    .filter(|wait| !wait.is_zero())
+                {
+                    let mut reply = refusal("rate", "Too soon for the next picture");
+                    reply.insert(
+                        "retry_ms".into(),
+                        json!(wait.as_micros().div_ceil(1000) as u64),
+                    );
+                    return reply;
+                }
+                if state.inbound.is_some() {
+                    return refused("busy");
+                }
+                let xfer = MockDeck::next_xfer(state);
+                state.photo_end = None;
+                state.inbound = Some(Inbound {
+                    xfer,
+                    target: Target::Photo(sha256.to_owned()),
+                    bytes: bytes as usize,
+                    crc32: 0,
+                    data: Vec::with_capacity(bytes as usize),
+                    next: 0,
+                });
+                Map::from_iter([("xfer".to_owned(), json!(xfer))])
+            }
+            "v2.photo.end" => {
+                let Some(xfer) = request
+                    .get("xfer")
+                    .and_then(Value::as_u64)
+                    .filter(|xfer| (1..=255).contains(xfer))
+                    .filter(|_| only(&["xfer"]))
+                else {
+                    return refused("args");
+                };
+                let open = matches!(&state.inbound,
+                    Some(Inbound { target: Target::Photo(_), xfer: open, .. }) if u64::from(*open) == xfer);
+                if !open {
+                    return match &state.photo_end {
+                        Some((done, reply)) if u64::from(*done) == xfer => reply.clone(),
+                        _ => refused("state"),
+                    };
+                }
+                let inbound = state.inbound.take().expect("the photo put is open");
+                if inbound.data.len() < inbound.bytes {
+                    state.inbound = Some(inbound);
+                    return refused("incomplete");
+                }
+                let Target::Photo(sha256) = &inbound.target else {
+                    unreachable!("matched a photo put")
+                };
+                let reply = if asset_id(&inbound.data) != *sha256 {
+                    refused("hash")
+                } else if AssetFormat::sniff(&inbound.data) != Some(AssetFormat::Jpeg) {
+                    refused("format")
+                } else if !state.idle {
+                    refusal("idle", "The Device woke")
+                } else {
+                    state.photos.push(inbound.data);
+                    state.last_photo = Some(Instant::now());
+                    Map::from_iter([("shown".to_owned(), json!(true))])
+                };
+                state.photo_end = Some((inbound.xfer, reply.clone()));
+                reply
+            }
+            _ => refused("unsupported"),
+        }
     }
 }
 

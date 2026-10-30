@@ -1316,3 +1316,106 @@ TEST_CASE("a random touch stream never shows LVGL a press the gate should have e
     TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, stats.latched_dark, "no dark write failed and still reached the chip");
     TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, stats.healed, "no rewrite resolved a doubt over a dark chip");
 }
+
+TEST_CASE("photo idle mode raises the idle face at its timeout instead of darkening the screen", "[power]")
+{
+    fresh();
+    TEST_ASSERT_EQUAL(ESP_OK, power_set_idle_timeout_s(5, T0));
+    TEST_ASSERT_EQUAL(ESP_OK, power_set_photo_idle(true, 10, T0));
+    lock_ctrl();
+    uint32_t entry = 99;
+    idle_passes(T0 + 10 * MS, T0 + 10 * SEC);
+    TEST_ASSERT_FALSE(power_idle_face(&entry));
+    TEST_ASSERT_EQUAL_UINT32(0, entry);
+
+    expect_passes(sample(false), T0 + 10 * SEC);
+    TEST_ASSERT_TRUE(power_idle_face(&entry));
+    TEST_ASSERT_EQUAL_UINT32(1, entry);
+    expect_write_count(0);
+    TEST_ASSERT_EQUAL_HEX8(LIT, ch422g_output());
+    expect_mods_off();
+    const power_info_t info = info_at(T0 + 10 * SEC);
+    TEST_ASSERT_EQUAL(POWER_ACTIVE, info.state);
+    TEST_ASSERT_TRUE(info.photo_idle);
+    TEST_ASSERT_TRUE(info.idle_face);
+    TEST_ASSERT_EQUAL_UINT32(10, info.photo_timeout_s);
+    TEST_ASSERT_EQUAL_UINT32(1, info.face_count);
+    expect_counters(&info, 0, 0, 0, 0);
+
+    idle_passes(T0 + 10 * SEC + 10 * MS, T0 + 20 * SEC);
+    TEST_ASSERT_TRUE(power_idle_face(&entry));
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, entry, "the face comes up once per idle period");
+}
+
+TEST_CASE("the touch that takes the idle face down is eaten whole, and the idle clock starts over", "[power]")
+{
+    fresh();
+    TEST_ASSERT_EQUAL(ESP_OK, power_set_photo_idle(true, 10, T0));
+    expect_passes(sample(false), T0 + 10 * SEC);
+    TEST_ASSERT_TRUE(power_idle_face(NULL));
+
+    expect_eaten(sample(true), T0 + 11 * SEC);
+    TEST_ASSERT_FALSE(power_idle_face(NULL));
+    expect_eaten(sample(true), T0 + 11 * SEC + 10 * MS);
+    expect_eaten(sample(false), T0 + 11 * SEC + 20 * MS);
+    expect_write_count(0);
+    power_info_t info = info_at(T0 + 11 * SEC + 20 * MS);
+    TEST_ASSERT_EQUAL_UINT32(1, info.face_wakes);
+    expect_counters(&info, 3, 0, 0, 0);
+
+    expect_passes(sample(true), T0 + 12 * SEC);
+    expect_passes(sample(false), T0 + 12 * SEC + 10 * MS);
+    expect_passes(sample(false), T0 + 22 * SEC - 1);
+    TEST_ASSERT_FALSE(power_idle_face(NULL));
+    uint32_t entry = 0;
+    expect_passes(sample(false), T0 + 22 * SEC);
+    TEST_ASSERT_TRUE(power_idle_face(&entry));
+    TEST_ASSERT_EQUAL_UINT32(2, entry);
+    expect_write_count(0);
+}
+
+TEST_CASE("turning photo idle mode off takes the idle face down and the v1 timeout darkens the screen again", "[power]")
+{
+    fresh();
+    TEST_ASSERT_EQUAL(ESP_OK, power_set_idle_timeout_s(5, T0));
+    TEST_ASSERT_EQUAL(ESP_OK, power_set_photo_idle(true, 10, T0));
+    expect_passes(sample(false), T0 + 10 * SEC);
+    TEST_ASSERT_TRUE(power_idle_face(NULL));
+
+    TEST_ASSERT_EQUAL(ESP_OK, power_set_photo_idle(false, 0, T0 + 11 * SEC));
+    TEST_ASSERT_FALSE(power_idle_face(NULL));
+    TEST_ASSERT_FALSE(info_at(T0 + 11 * SEC).photo_idle);
+    expect_goes_dark_at(T0 + 11 * SEC + 10 * MS, T0 + 16 * SEC);
+}
+
+TEST_CASE("photo idle mode takes 10 to 86400 s and leaves the gate alone when it refuses", "[power]")
+{
+    fresh();
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, power_set_photo_idle(true, 9, T0));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, power_set_photo_idle(true, 86401, T0));
+    TEST_ASSERT_FALSE(info_at(T0).photo_idle);
+    TEST_ASSERT_EQUAL(ESP_OK, power_set_photo_idle(true, 10, T0));
+    TEST_ASSERT_EQUAL(ESP_OK, power_set_photo_idle(true, 86400, T0));
+    TEST_ASSERT_EQUAL_UINT32(86400, info_at(T0).photo_timeout_s);
+    TEST_ASSERT_EQUAL(ESP_OK, power_set_photo_idle(false, 0, T0));
+    TEST_ASSERT_FALSE(info_at(T0).photo_idle);
+}
+
+TEST_CASE("a dark screen in photo idle mode shows no face, and a touch lights it and starts the idle clock", "[power]")
+{
+    fresh();
+    const int64_t t = go_dark(T0, 5);
+    TEST_ASSERT_EQUAL(ESP_OK, power_set_photo_idle(true, 10, t));
+    expect_passes(sample(false), t + 20 * SEC);
+    TEST_ASSERT_FALSE(power_idle_face(NULL));
+    expect_write_count(0);
+
+    eaten_real_tap(t + 21 * SEC);
+    TEST_ASSERT_TRUE(physical_lit());
+    writes_clear();
+    expect_passes(sample(false), t + 31 * SEC - 1);
+    TEST_ASSERT_FALSE(power_idle_face(NULL));
+    expect_passes(sample(false), t + 31 * SEC);
+    TEST_ASSERT_TRUE(power_idle_face(NULL));
+    expect_write_count(0);
+}

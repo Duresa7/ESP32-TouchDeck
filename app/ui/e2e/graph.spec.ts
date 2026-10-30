@@ -17,6 +17,7 @@ const GRAPH_CAPS: Capabilities = {
   asset_bytes: 12300,
   formats: ['tdi1'],
   image: [64, 64],
+  photo_bytes: 0,
   live_hz: 2,
   live_total_hz: 16,
   series: 32,

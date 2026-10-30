@@ -27,6 +27,10 @@ cJSON *td_link_capabilities(void);
 
 esp_err_t td_link_start(void);
 
+/* Applies the photo frame's stored idle settings to the power gate and the idle face. Call it once after power_start;
+ * v2.idle.set applies later changes. */
+void td_link_idle_boot(void);
+
 /* Queues a `press` event for a tap on an app or widget tile, from any task and without blocking. It is dropped when
  * the queue is full or the app is not connected. */
 void td_link_press(const char *page, const char *tile, const char *kind);
