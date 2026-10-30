@@ -1,4 +1,5 @@
 // Generated from td-companion. Do not edit.
+export type AccountUsage = { provider: string, account: string, status: string, success: number, failed: number, recent_10m: number, plan: string | null, five_hour: UsageWindow | null, seven_day: UsageWindow | null, error: string | null, };
 export type ActionLog = { id: string, device: DeviceId, at_ms: number, page: string, tile: string, kind: string, status: string, detail: string, pid: number | null, exit_code: number | null, };
 export type ActionQuery = { device: DeviceId | null, };
 export type AllowedAction = { hash: string, granted_ms: number, kind: string, program: string, args: Array<string>, cwd: string, shell: boolean, };
@@ -32,6 +33,7 @@ export type Capabilities = { screen: [number, number], grid: [number, number], p
 export type CatalogHit = { source: string, name: string, id: string, aliases: Array<string>, hex: string | null, tags: Array<string>, category: string | null, svg: boolean, light: boolean, dark: boolean, license: string, license_url: string | null, guidelines: string | null, attribution_url: string, attribution: string, };
 export type CatalogQuery = { q: string, catalog: string | null, };
 export type CatalogVariant = "base" | "light" | "dark";
+export type CliProxyDetail = { accounts: Array<AccountUsage>, polled_ms: number, };
 export type ClientInfo = { id: string, kind: SessionKind, };
 export type CompanionStopping = { reason: string, };
 export type ConfigField = { name: string, kind: string, secret: boolean, };
@@ -86,8 +88,8 @@ export type InstallLock = { lock: string, };
 export type IntegrationPath = { integration: string, };
 export type IntegrationStatus = { state: string, message: string | null, delivery: Array<Delivery>, };
 export type IntegrationStatusEvent = IntegrationSummary;
-export type IntegrationSummary = { id: string, name: string, icon: string, enabled: boolean, status: IntegrationStatus, config_schema: Array<ConfigField>, streams: Array<DataStream>, actions: Array<string>, presets: Array<PresetTile>, };
-export type IntegrationView = { summary: IntegrationSummary, config: JsonValue, secrets: { [key in string]?: SecretState }, };
+export type IntegrationSummary = { revision: number, id: string, name: string, icon: string, enabled: boolean, status: IntegrationStatus, config_schema: Array<ConfigField>, streams: Array<DataStream>, actions: Array<string>, presets: Array<PresetTile>, };
+export type IntegrationView = { detail: CliProxyDetail | null, summary: IntegrationSummary, config: JsonValue, secrets: { [key in string]?: SecretState }, };
 export type Job = { id: string, kind: string, scope: JobScope, state: JobState, 
 /**
  * Typed per kind in `JobMap`.
@@ -171,11 +173,13 @@ export type SetupState = "needs-setup" | "ready";
 export type StartupSetting = { at_sign_in: boolean, };
 export type SuggestRequest = { action: TileAction, };
 export type SystemInfo = { version: string, build: string, api: string, mock: boolean, data_dir_override: boolean, };
-export type Tile = { id: string, label: string, row: number, col: number, rowSpan: number, colSpan: number, icon: string | null, asset?: string | null, action: TileAction, };
+export type Tile = { id: string, label: string, row: number, col: number, rowSpan: number, colSpan: number, icon: string | null, asset?: string | null, render?: TileRender | null, action: TileAction, };
 export type TileAction = { "type": "key", usage: number, mods: Array<Modifier>, } | { "type": "mod", mod: Modifier, } | { "type": "consumer", usage: number, } | { "type": "page", page: string, } | { "type": "none" } | { "type": "launch", path: string, args: Array<string>, cwd: string, } | { "type": "open", target: string, } | { "type": "command", program: string, args: Array<string>, cwd: string, shell: boolean, } | { "type": "widget", source: string, field: string, account: string, };
+export type TileRender = "gif";
 export type Topic = "state" | "console" | "key-mirror" | "device-events";
 export type UploadBody = Blob;
 export type Uploaded = { id: string, media_type: string, bytes: number, };
+export type UsageWindow = { pct: number, resets_at_ms: number | null, };
 export type Versions = { api: Array<string>, };
 export const endpoints = {
   'actions.allowed': { method: 'GET', path: '/actions/allowed', access: 'session' },

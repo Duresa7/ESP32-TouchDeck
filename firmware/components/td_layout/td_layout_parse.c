@@ -647,14 +647,14 @@ static bool check_action(const cJSON *a, const char *tile_where, td_layout_error
 
 static bool check_tile(const cJSON *t, int page, int index, bool v2, td_layout_error_t *err)
 {
-    static const char *const members[] = { "id", "label", "row", "col", "rowSpan", "colSpan", "icon", "action", "asset" };
+    static const char *const members[] = { "id", "label", "row", "col", "rowSpan", "colSpan", "icon", "action", "asset", "render" };
     char where[48];
     char field[64];
     snprintf(where, sizeof where, "/pages/%d/tiles/%d", page, index);
     if (!cJSON_IsObject(t)) {
         return fail(err, "shape.type", "%s must be object", where);
     }
-    if (!check_some_members(t, where, members, v2 ? 9 : 8, 8, err)) {
+    if (!check_some_members(t, where, members, v2 ? 10 : 8, 8, err)) {
         return false;
     }
 #define FIELD(name) (snprintf(field, sizeof field, "%s/%s", where, name), field)
@@ -687,6 +687,10 @@ static bool check_tile(const cJSON *t, int page, int index, bool v2, td_layout_e
                 return fail(err, "icon.format", "%s/asset must use lowercase hex", where);
             }
         }
+    }
+    const cJSON *render = member(t, "render");
+    if (render && (!cJSON_IsString(render) || strcmp(render->valuestring, "gif") || !cJSON_IsString(asset))) {
+        return fail(err, "icon.format", "%s/render must be gif with an Asset reference", where);
     }
     return check_action(member(t, "action"), where, err);
 }

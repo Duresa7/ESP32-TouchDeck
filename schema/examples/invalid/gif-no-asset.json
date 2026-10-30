@@ -1,0 +1,30 @@
+expected: icon.format
+{
+  "schema": 2,
+  "name": "Animation",
+  "orientation": "landscape",
+  "pages": [
+    {
+      "id": "page",
+      "title": "Page",
+      "kind": "grid",
+      "rows": 1,
+      "cols": 1,
+      "tiles": [
+        {
+          "id": "gif",
+          "label": "GIF",
+          "row": 0,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 1,
+          "icon": null,
+          "render": "gif",
+          "action": {
+            "type": "none"
+          }
+        }
+      ]
+    }
+  ]
+}

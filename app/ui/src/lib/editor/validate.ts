@@ -14,17 +14,18 @@ export type Action =
 
 export type ActionType = Action['type'];
 
-export interface Tile {
+export type Tile = {
   id: string;
   label: string;
   row: number;
   col: number;
   rowSpan: number;
   colSpan: number;
-  icon: string | null;
-  asset?: string | null;
   action: Action;
-}
+} & (
+  | { render?: undefined; icon: string | null; asset?: string | null }
+  | { render: 'gif'; icon: null; asset: string }
+);
 
 export interface GridPage {
   id: string;
@@ -215,8 +216,9 @@ function structuralErrors(root: unknown): LayoutError[] {
   };
 
   const tile = (value: unknown, pointer: string) => {
-    const tile = object(value, pointer, ['id', 'label', 'row', 'col', 'rowSpan', 'colSpan', 'icon', 'action'], isObject(root) && root.schema === 2 ? ['asset'] : []);
+    const tile = object(value, pointer, ['id', 'label', 'row', 'col', 'rowSpan', 'colSpan', 'icon', 'action'], isObject(root) && root.schema === 2 ? ['asset', 'render'] : []);
     if (!tile) return;
+    if (isObject(root) && root.schema === 2 && Object.hasOwn(tile, 'render') && (tile.render !== 'gif' || typeof tile.asset !== 'string')) at('icon.format', `${pointer}/render`, 'render must be gif with an Asset reference');
     if (Object.hasOwn(tile, 'id')) id(tile.id, `${pointer}/id`);
     if (Object.hasOwn(tile, 'label')) bounded(tile.label, `${pointer}/label`, LABEL);
     for (const [name, min, max, key] of [
@@ -509,11 +511,10 @@ function iconEdit(layout: Layout, page: string, id: string, icon: string | null,
   const next = copy(layout);
   const grid = gridOf(next, page);
   if (typeof grid === 'string') return refuse(grid);
-  const tile = grid.tiles.find((candidate) => candidate.id === id);
-  if (!tile) return refuse(`no tile ${id}`);
-  tile.icon = icon;
-  if (asset === null) delete tile.asset;
-  else tile.asset = asset;
+  const index = grid.tiles.findIndex((candidate) => candidate.id === id);
+  if (index < 0) return refuse(`no tile ${id}`);
+  const { render: _render, icon: _icon, asset: _asset, ...rest } = grid.tiles[index];
+  grid.tiles[index] = asset === null ? { ...rest, icon } : { ...rest, icon: null, asset };
   next.schema = usesAssets(next) ? 2 : 1;
   return checked(next);
 }
