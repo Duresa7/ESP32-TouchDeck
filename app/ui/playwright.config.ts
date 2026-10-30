@@ -6,6 +6,7 @@ export default defineConfig({
   testDir: './e2e',
   testIgnore: '**/*companion.spec.ts',
   fullyParallel: true,
+  workers: process.env.CI ? 1 : undefined,
   forbidOnly: !!process.env.CI,
   reporter: [['list']],
   use: {

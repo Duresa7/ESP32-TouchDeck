@@ -31,7 +31,7 @@ declare global {
       push(id: string, order: string[]): void;
       offline(id: string): void;
       device(id: string, change: Partial<Omit<DeviceSummary, 'id' | 'rev'>>): void;
-      firmware: { hold(id: string): void; release(id: string): void; cancel(id: string): void; picks(...answers: FakePick[]): void };
+      firmware: { hold(id: string, at?: number | 'rebooting'): void; release(id: string): void; cancel(id: string): void; picks(...answers: FakePick[]): void };
       fresh(id: string, firmware?: { version: string; protocol: number }): void;
       newBoards: {
         plug(board: { id: string; port: string; kind?: BoardKind }): void;
