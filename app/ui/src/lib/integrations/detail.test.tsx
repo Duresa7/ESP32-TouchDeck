@@ -58,7 +58,7 @@ afterEach(() => {
 describe('the Integration view', () => {
   it('starts from the sync snapshot and follows integration.status', async () => {
     await settle();
-    expect(integrations.getState().integrations.map((i) => [i.id, i.status.state])).toEqual([['cliproxyapi', 'not_configured']]);
+    expect(integrations.getState().integrations.map((i) => [i.id, i.status.state])).toEqual([['cliproxyapi', 'not_configured'], ['this_pc', 'ok']]);
     await setUp(await detail());
     await settle();
     expect(integrations.getState().integrations[0].status.state).toBe('ok');

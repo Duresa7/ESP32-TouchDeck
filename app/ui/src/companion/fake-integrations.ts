@@ -1,3 +1,4 @@
+import { fakeThisPc } from './fake-this-pc.ts';
 import type { AccountUsage, Delivery, IntegrationSummary, IntegrationView } from './api.ts';
 
 type Frame = Record<string, unknown> & { type: string };
@@ -78,6 +79,8 @@ function parseSettings(body: unknown): Settings | null {
 
 export function createFakeIntegrations(options: FakeIntegrationsOptions) {
   const { publish, now = Date.now } = options;
+  let pcEnabled = true;
+  const pcView = () => fakeThisPc(pcEnabled);
   const configured = options.configured ?? false;
   let settings: Settings = configured ? { enabled: true, url: 'https://hub.example.com', interval_s: 300 } : { enabled: false, url: DEFAULT_URL, interval_s: 300 };
   let bound = originOf(settings.url);
@@ -133,14 +136,28 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
   }
 
   return {
-    list: () => [summary()],
+    list: () => [summary(), pcView().summary],
 
     /** Answers a session-checked request, or returns null when it isn't an Integrations route. */
     async handle(request: Request, path: string): Promise<Response | null> {
       const method = request.method;
-      if (path === '/integrations') return method === 'GET' ? json(200, [summary()]) : failure(405, 'route.method_not_allowed', 'Use GET.');
+      if (path === '/integrations') return method === 'GET' ? json(200, [summary(), pcView().summary]) : failure(405, 'route.method_not_allowed', 'Use GET.');
       const match = /^\/integrations\/([^/]+)(?:\/(config|refresh|secrets\/([^/]+)))?$/.exec(path);
       if (!match) return null;
+      if (decodeURIComponent(match[1]) === 'this_pc') {
+        const part = match[2];
+        if (!part) return method === 'GET' ? json(200, pcView()) : failure(405, 'route.method_not_allowed', 'Use GET.');
+        if (part === 'config') {
+          if (method !== 'PUT') return failure(405, 'route.method_not_allowed', 'Use PUT.');
+          const input = await body(request);
+          if (typeof input !== 'object' || input === null || Object.keys(input).length !== 1 || !('enabled' in input) || typeof input.enabled !== 'boolean') return invalid();
+          pcEnabled = input.enabled;
+          publish({ type: 'integration.status', data: pcView().summary });
+          return json(200, pcView());
+        }
+        if (part === 'refresh') return method === 'POST' ? json(204, null) : failure(405, 'route.method_not_allowed', 'Use POST.');
+        return invalid();
+      }
       if (decodeURIComponent(match[1]) !== ID) return failure(404, 'integration.not_found', 'The Integration does not exist.');
       const [, , part, field] = match;
       if (!part) return method === 'GET' ? json(200, view()) : failure(405, 'route.method_not_allowed', 'Use GET.');

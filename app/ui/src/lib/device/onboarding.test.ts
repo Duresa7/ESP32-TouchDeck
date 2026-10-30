@@ -123,7 +123,7 @@ describe('setting up a Device', () => {
 
   function setup(device: DeviceSummary, offered: string | null = null): SetupStore {
     const settings = createDeviceSettings({ companion, device });
-    const store = createSetup({ companion, wait: (job) => waitForJob<'layouts.push'>(jobs, companion, job, 10), settings, drafts, device, firmware: { offered } });
+    const store = createSetup({ companion, wait: (job) => waitForJob<'layouts.push'>(jobs, companion, job, { pollMs: 10 }), settings, drafts, device, firmware: { offered } });
     const stop = devices.subscribe((state) => {
       const latest = state.devices.find((d) => d.id === device.id);
       if (!latest) return;

@@ -159,7 +159,7 @@ export function TileFields({ store, page, tile }: TileFieldsProps) {
   return (
     <div className="tile-fields" data-testid="tile-fields" data-id={tile.id}>
       <LabelField key={`label-${tile.id}`} store={store} tile={tile} device={name} layout={layout} />
-      <IconField tile={tile} kind={action.type} />
+      <IconField store={store} tile={tile} kind={action.type} />
       <SizeField store={store} tile={tile} layout={layout} device={name} />
       <ActionForm key={`action-${tile.id}`} store={store} page={page} tile={tile} layout={layout} device={name} />
       {needsApproval(action) && <ApprovalNote action={action} />}

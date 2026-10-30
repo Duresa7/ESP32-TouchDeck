@@ -505,11 +505,30 @@ export function setLabel(layout: Layout, page: string, id: string, label: string
   });
 }
 
+const usesAssets = (layout: Layout) => layout.pages.some((page) => page.kind === 'grid' && page.tiles.some((tile) => tile.asset != null));
+
+function iconEdit(layout: Layout, page: string, id: string, icon: string | null, asset: string | null): Edit {
+  const next = copy(layout);
+  const grid = gridOf(next, page);
+  if (typeof grid === 'string') return refuse(grid);
+  const index = grid.tiles.findIndex((candidate) => candidate.id === id);
+  if (index < 0) return refuse(`no tile ${id}`);
+  const { render: _render, icon: _icon, asset: _asset, ...rest } = grid.tiles[index];
+  grid.tiles[index] = asset === null ? { ...rest, icon } : { ...rest, icon: null, asset };
+  next.schema = usesAssets(next) ? 2 : 1;
+  return checked(next);
+}
+
 export function setIcon(layout: Layout, page: string, id: string, icon: string | null): Edit {
-  return editTile(layout, page, id, (grid, index) => {
-    grid.tiles[index].icon = icon;
-    return null;
-  });
+  return iconEdit(layout, page, id, icon, null);
+}
+
+export function setAsset(layout: Layout, page: string, id: string, asset: string): Edit {
+  return iconEdit(layout, page, id, null, `sha256:${asset}`);
+}
+
+export function assetOf(tile: Pick<Tile, 'asset'>): string | null {
+  return tile.asset?.startsWith('sha256:') ? tile.asset.slice('sha256:'.length) : null;
 }
 
 export function removeTile(layout: Layout, page: string, id: string): Edit {

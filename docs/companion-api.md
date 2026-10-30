@@ -16,6 +16,7 @@ Related decisions: [ADR 0001](adr/0001-rust-companion-behind-electron.md) (Rust 
 - Every error has one shape: `{"error": {"code", "message", "details"}}`.
 - No session can approve a command. Approvals happen in a native dialog on the PC.
 - Routes are declared once with a typed `Endpoint` trait. ts-rs generates the TypeScript client, and a test fails when the committed file is stale.
+- Each generated wrapper takes an optional `AbortSignal` after its headers, so a client can drop a request it no longer needs. Query parameters set to `null` or `undefined` are left out of the URL.
 - `/api/v1` changes only by addition.
 
 ## Transport
@@ -604,6 +605,29 @@ CLIProxyAPI Preset tiles have this fixed order and copy names:
 With `test-hooks`, mock Integrations use real HTTP only for explicitly configured `http://127.0.0.1:PORT` stub URLs. Other mock URLs retain the empty fixture transport. This permits local stub tests with mock Devices and memory-only credentials.
 
 Each Integration's Preset tiles are in `presets`. Live tiles get their values through the Device link, never through this API ([ADR 0004](adr/0004-firmware-draws-live-tiles.md)).
+
+#### This PC
+
+`this_pc` has config `{enabled: boolean}` (default `true`), no secrets and the `refresh` action. Unknown fields are rejected. Disabling clears readings and stops collection; re-enabling resets the rate baseline. The configuration is saved beside sources.json as this-pc.json.
+
+All streams have kind `numeric`. Streams and Preset tiles use this fixed order; the Preset id matches the stream id:
+
+| Stream id | Preset tile name | Unit |
+|---|---|---|
+| `cpu_pct` | CPU usage | `%` |
+| `ram_pct` | RAM usage | `%` |
+| `ram_used_bytes` | RAM used | `bytes` |
+| `ram_total_bytes` | RAM total | `bytes` |
+| `gpu_pct` | GPU usage | `%` |
+| `disk_active_pct` | Disk activity | `%` |
+| `disk_read_bytes_s` | Disk read | `bytes/s` |
+| `disk_write_bytes_s` | Disk write | `bytes/s` |
+| `network_receive_bytes_s` | Network receive | `bytes/s` |
+| `network_send_bytes_s` | Network send | `bytes/s` |
+
+Every Preset uses `{type: "widget", source: "this_pc", account: "", field: <stream id>}`. Windows opens one PDH query and adds counters once. Collection runs at most once per second, including manual refresh. CPU uses Processor Information total Processor Utility; disk activity is 100 minus PhysicalDisk total idle time. GPU usage sums instances by engine type and takes the busiest type, capped at 100%. RAM comes from GlobalMemoryStatusEx. Disk and network rates use cumulative-byte deltas divided by elapsed monotonic time; the first sample and counter resets emit no rate. Network sums physical adapters present when the Integration starts; restart the Companion after adding an adapter.
+
+A missing counter omits only its readings; descriptors and Presets stay discoverable. Status is `error` with `Unavailable: {names}.` using the Preset names in order. Healthy streams continue. Non-Windows builds emit no readings and report `This PC needs Windows.`. Values stay inside the Companion for Device delivery, never in HTTP responses. Live tile drawing and binding are tracked in #96.
 
 ### System
 

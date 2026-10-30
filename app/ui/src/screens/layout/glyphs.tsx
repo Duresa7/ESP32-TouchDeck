@@ -59,7 +59,16 @@ export function BuiltinIcon({ icon, size }: { icon: string; size: number }) {
   }
 }
 
-const BUILTIN: ReadonlySet<string> = new Set(['lv:prev', 'lv:next', 'lv:play_pause', 'lv:mute', 'lv:volume_mid', 'lv:volume_max']);
+export const SYMBOL_NAMES: Readonly<Record<string, string>> = {
+  'lv:prev': 'Previous',
+  'lv:play_pause': 'Play and pause',
+  'lv:next': 'Next',
+  'lv:mute': 'Speaker off',
+  'lv:volume_mid': 'Volume low',
+  'lv:volume_max': 'Volume high',
+};
+
+const BUILTIN: ReadonlySet<string> = new Set(Object.keys(SYMBOL_NAMES));
 
 export function TileGlyph({ icon, kind, size }: { icon: string | null; kind: ActionType; size: number }) {
   if (icon && BUILTIN.has(icon)) return <BuiltinIcon icon={icon} size={size} />;
