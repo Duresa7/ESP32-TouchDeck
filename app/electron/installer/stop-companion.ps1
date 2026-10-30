@@ -7,8 +7,7 @@ $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::Expect100Continue = $false
 $target = [IO.Path]::GetFullPath((Join-Path $InstallDir 'td-companion.exe'))
 
-function Get-Companions {
-    # Exact path only: another install, a source build or another user's Companion is never touched.
+function Get-InstalledCompanions {
     @(Get-Process -Name 'td-companion' -ErrorAction SilentlyContinue | Where-Object {
         $path = $null
         try { $path = $_.Path } catch { }
@@ -46,6 +45,19 @@ function Invoke-Companion([string]$Origin, [string]$Method, [string]$Path, [stri
     } finally { $response.Dispose() }
 }
 
+function ConvertTo-Base64Url([byte[]]$Bytes) {
+    [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+}
+
+function Confirm-CompanionKnowsToken([string]$Origin, [string]$Token) {
+    $nonce = [byte[]]::new(32)
+    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($nonce)
+    $proof = Invoke-Companion $Origin 'POST' '/auth/proof' (@{ nonce = (ConvertTo-Base64Url $nonce) } | ConvertTo-Json -Compress) $null
+    $hmac = [Security.Cryptography.HMACSHA256]::new([Text.Encoding]::UTF8.GetBytes($Token))
+    $message = [Text.Encoding]::UTF8.GetBytes("touchdeck-companion-proof`0") + $nonce
+    return $proof.Status -eq 200 -and $proof.Body -and $proof.Body.proof -ceq (ConvertTo-Base64Url $hmac.ComputeHash([byte[]]$message))
+}
+
 function Request-Shutdown {
     $runtimeFile = Join-Path $env:LOCALAPPDATA 'io.github.duresa7.touchdeck\runtime\companion.json'
     if (-not (Test-Path -LiteralPath $runtimeFile -PathType Leaf)) { return 0 }
@@ -53,15 +65,7 @@ function Request-Shutdown {
     $port = [int]$runtime.port
     if ($port -lt 1 -or $port -gt 65535 -or $runtime.token -cnotmatch '^tdp_[A-Za-z0-9_-]{43}$') { return 0 }
     $origin = "http://127.0.0.1:$port"
-    # The pairing token goes only to a listener that proves it already knows it, as Electron checks.
-    $nonce = [byte[]]::new(32)
-    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($nonce)
-    $encode = { param([byte[]]$Bytes) [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_') }
-    $proof = Invoke-Companion $origin 'POST' '/auth/proof' (@{ nonce = (& $encode $nonce) } | ConvertTo-Json -Compress) $null
-    $hmac = [Security.Cryptography.HMACSHA256]::new([Text.Encoding]::UTF8.GetBytes($runtime.token))
-    $message = [Text.Encoding]::UTF8.GetBytes("touchdeck-companion-proof`0") + $nonce
-    $expected = & $encode $hmac.ComputeHash([byte[]]$message)
-    if ($proof.Status -ne 200 -or $proof.Body.proof -cne $expected) { Write-Host 'The Companion proof did not match.'; return 0 }
+    if (-not (Confirm-CompanionKnowsToken $origin $runtime.token)) { Write-Host 'The Companion proof did not match.'; return 0 }
     $session = Invoke-Companion $origin 'POST' '/auth/sessions' '{"kind":"window"}' $runtime.token
     if ($session.Status -ne 200 -or $session.Body.token -cnotmatch '^tds_[A-Za-z0-9_-]{43}$') { return 0 }
     $lock = Invoke-Companion $origin 'POST' '/system/lock' '' $session.Body.token
@@ -71,20 +75,20 @@ function Request-Shutdown {
     return 0
 }
 
-if (-not (Get-Companions).Count) { exit 0 }
+if (-not (Get-InstalledCompanions).Count) { exit 0 }
 try {
     if ((Request-Shutdown) -eq 3) { Write-Host 'A Device is busy.'; exit 3 }
 } catch { Write-Host "The Companion did not answer: $($_.Exception.Message)" }
 
 $deadline = [DateTime]::UtcNow.AddSeconds(15)
-while ((Get-Companions).Count -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 200 }
-$left = Get-Companions
+while ((Get-InstalledCompanions).Count -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 200 }
+$left = Get-InstalledCompanions
 if ($left.Count) {
     Write-Host 'The Companion did not stop in 15 seconds; ending it.'
     $left | Stop-Process -Force -ErrorAction SilentlyContinue
     $deadline = [DateTime]::UtcNow.AddSeconds(5)
-    while ((Get-Companions).Count -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 200 }
+    while ((Get-InstalledCompanions).Count -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 200 }
 }
-if ((Get-Companions).Count) { exit 1 }
+if ((Get-InstalledCompanions).Count) { exit 1 }
 Write-Host 'The Companion is stopped.'
 exit 0

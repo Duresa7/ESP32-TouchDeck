@@ -1,4 +1,3 @@
-// Drives the real Electron updater against the installed, running Companion for the installer lifecycle test.
 // Usage: node lifecycle_update.mjs <good|tampered> <current version> <lifecycle dir> <result.json>
 // It serves next.json's installer from a loopback feed. "good" ends after launching the installer;
 // "tampered" changes one byte of the installer and expects a signature failure.
@@ -43,7 +42,6 @@ const finish = async () => {
   await writeFile(resultPath, JSON.stringify(result, null, 2));
 };
 
-// Connects as Electron does: runtime file, HMAC proof, then a window session. It never starts a Companion.
 const staging = join(tmpdir(), 'td-lifecycle-staging');
 await mkdir(staging, { recursive: true });
 const session = await connect(runtimePath(), () => { throw new Error('The installed Companion is not running'); });

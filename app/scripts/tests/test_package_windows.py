@@ -1,4 +1,3 @@
-"""Production packages must refuse a Companion built with test hooks."""
 import importlib.util
 from pathlib import Path
 import unittest

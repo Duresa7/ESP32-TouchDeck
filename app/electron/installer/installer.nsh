@@ -1,4 +1,3 @@
-; Open TouchDeck additions to the electron-builder NSIS template.
 !include LogicLib.nsh
 !include WordFunc.nsh
 ; The template skips these when customCheckAppRunning is defined; the stock check below needs them.
@@ -10,7 +9,6 @@ Var pid
 !define TOUCHDECK_RUN_VALUE "Open TouchDeck"
 
 ; The stock check force-stops every process in $INSTDIR, which would kill the Companion mid-write.
-; Ask the Companion to shut down first, then let the stock check close the window.
 !macro customCheckAppRunning
   InitPluginsDir
   File "/oname=$PLUGINSDIR\stop-companion.ps1" "${BUILD_RESOURCES_DIR}\stop-companion.ps1"
@@ -50,7 +48,6 @@ Var pid
     ${if} $0 == $1
       DeleteRegValue HKCU "${TOUCHDECK_RUN_KEY}" "${TOUCHDECK_RUN_VALUE}"
     ${endif}
-    ; Without the marker, a later install registers startup at sign-in again.
     Delete "$LOCALAPPDATA\${TOUCHDECK_DATA}\startup-initialized"
 
     ClearErrors

@@ -17,7 +17,6 @@ APP = ROOT / "app"
 ELECTRON = APP / "electron"
 TARGET = "x86_64-pc-windows-msvc"
 FEED = "https://github.com/Duresa7/ESP32-TouchDeck/releases/download"
-# Route paths that only builds with the test-hooks feature register.
 TEST_HOOK_MARKERS = (b"/test/pairing-delivery", b"/test/devices/", b"--emit-ts")
 
 
@@ -106,7 +105,6 @@ def firmware(out, revision, lock_path):
 
 
 def prebuilt_firmware(out, revision, source):
-    """A candidate-only shortcut for PCs without ESP-IDF: reuse a checked bundle."""
     folder = out / "payload/firmware"
     folder.mkdir()
     bundle = folder / "touchdeck.tdfw"
@@ -122,7 +120,6 @@ def next_patch(version):
 
 
 def package(out, version, companion, payload, name, env):
-    """Runs electron-builder with a config written outside the checkout; returns the installer path."""
     config = json.loads((ELECTRON / "electron-builder.json").read_text(encoding="utf-8"))
     output = out / "build" / f"installer-{version}"
     config["directories"]["output"] = str(output)
@@ -141,7 +138,6 @@ def package(out, version, companion, payload, name, env):
 
 
 def sign(installer, version, env, key_path=None):
-    """Signs with the updater key in the minisign format the Electron updater checks."""
     args = ["node", APP / "node_modules/@tauri-apps/cli/tauri.js", "signer", "sign", "--app-version", version]
     if key_path:
         args += ["--private-key-path", key_path]
@@ -170,7 +166,6 @@ def build(args):
     out = args.out.resolve()
     if out.is_relative_to(ROOT) or ROOT.is_relative_to(out):
         raise ValueError("Output must be outside and must not contain the checkout")
-    # A new output directory prevents accidental reuse of test builds or old Firmware.
     out.mkdir(parents=True, exist_ok=False)
     payload = out / "payload"
     payload.mkdir()
@@ -218,7 +213,6 @@ def build(args):
         installer = package(out, version, companion, payload, f"OpenTouchDeck-windows-x64{suffix}-setup.exe", env)
         signature = sign(installer, version, env, key_path)
         if args.test_signing:
-            # The lifecycle test updates to this repackaged build: same bits, the next patch version.
             upcoming = next_patch(version)
             next_installer = package(out, upcoming, companion, payload, "OpenTouchDeck-windows-x64-TEST-ONLY-next-setup.exe", env)
             next_signature = sign(next_installer, upcoming, env, key_path)

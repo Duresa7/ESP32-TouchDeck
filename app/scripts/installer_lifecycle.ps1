@@ -42,7 +42,6 @@ $summary = [ordered]@{
 }
 
 function Protect-Log([string]$Text) {
-    # Upload only these sanitized logs, never settings, app logs, runtime files or raw profiles.
     foreach ($name in @('LOCALAPPDATA', 'APPDATA', 'RUNNER_TEMP', 'GITHUB_WORKSPACE', 'USERPROFILE', 'HOME', 'COMPUTERNAME')) {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($value) {
