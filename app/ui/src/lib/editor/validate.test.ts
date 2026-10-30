@@ -18,6 +18,7 @@ import {
   setAction,
   setAsset,
   setFullScreen,
+  setGraph,
   setGridSize,
   setIcon,
   setLayoutName,
@@ -196,13 +197,27 @@ test('an Asset on a Tile makes the Layout schema 2 until no Tile uses one', () =
 test('picking an icon for a GIF Tile makes it a still Tile', () => {
   const gif = ok(setAsset(small(), 'main', 'a', 'cd'.repeat(32)));
   const tiles = grid(gif, 'main').tiles;
-  tiles[0] = { ...tiles[0], render: 'gif', icon: null, asset: `sha256:${'cd'.repeat(32)}` };
+  const { streams: _streams, ...still0 } = tiles[0];
+  tiles[0] = { ...still0, render: 'gif', icon: null, asset: `sha256:${'cd'.repeat(32)}` };
   assert.equal(parseLayout(canonical(gif)).ok, true);
   const still = ok(setAsset(gif, 'main', 'a', 'ef'.repeat(32)));
   assert.equal(Object.hasOwn(grid(still, 'main').tiles[0], 'render'), false);
   assert.equal(grid(still, 'main').tiles[0].asset, `sha256:${'ef'.repeat(32)}`);
   const glyph = ok(setIcon(gif, 'main', 'a', 'lv:mute'));
   assert.deepEqual([grid(glyph, 'main').tiles[0].icon, Object.hasOwn(grid(glyph, 'main').tiles[0], 'render'), glyph.schema], ['lv:mute', false, 1]);
+});
+
+test('a graph Tile keeps the Layout schema 2 while other Tiles change icons, and going back to a label lets it drop', () => {
+  const cpu = { integration: 'this_pc', stream: 'cpu_pct' };
+  const graphed = ok(setGraph(small(), 'main', 'b', cpu));
+  assert.equal(graphed.schema, 2);
+  const iconed = ok(setIcon(graphed, 'main', 'a', 'lv:mute'));
+  assert.equal(iconed.schema, 2);
+  assert.deepEqual(grid(iconed, 'main').tiles[1].streams, { value: 'number' });
+  assert.equal(parseLayout(canonical(iconed)).ok, true);
+  const plain = ok(setGraph(iconed, 'main', 'b', null));
+  assert.deepEqual([plain.schema, Object.hasOwn(grid(plain, 'main').tiles[1], 'streams')], [1, false]);
+  assert.equal(parseLayout(canonical(plain)).ok, true);
 });
 
 function setIconOk(layout: Layout, icon: string): Layout {

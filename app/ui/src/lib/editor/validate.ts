@@ -540,13 +540,11 @@ export function graphTile(tile: Tile, binding: GraphBinding): Tile {
   };
 }
 
-/** Draws the Tile as a graph of the bound stream, or, with null, as its label again. A graph needs Layout schema 2. */
+/** Draws the Tile as a graph of the bound stream, or, with null, as its label again. */
 export function setGraph(layout: Layout, page: string, id: string, binding: GraphBinding | null): Edit {
-  const base: Layout = binding ? { ...layout, schema: 2 } : layout;
-  return editTile(base, page, id, (grid, index) => {
-    const { render: _render, streams: _streams, asset: _asset, ...rest } = grid.tiles[index];
-    grid.tiles[index] = binding ? graphTile(rest, binding) : { ...rest, icon: null };
-    return null;
+  return redrawTile(layout, page, id, (tile) => {
+    const { render: _render, streams: _streams, asset: _asset, ...rest } = tile;
+    return binding ? graphTile(rest, binding) : { ...rest, icon: null };
   });
 }
 
@@ -557,18 +555,26 @@ export function setLabel(layout: Layout, page: string, id: string, label: string
   });
 }
 
-const usesAssets = (layout: Layout) => layout.pages.some((page) => page.kind === 'grid' && page.tiles.some((tile) => tile.asset != null));
+const needsSchema2 = (layout: Layout) =>
+  layout.pages.some((page) => page.kind === 'grid' && page.tiles.some((tile) => tile.asset != null || tile.render !== undefined));
 
-function iconEdit(layout: Layout, page: string, id: string, icon: string | null, asset: string | null): Edit {
+/** Changes how a Tile draws, then sets the Layout schema 2 while any Tile has an Asset or a render, and 1 otherwise. */
+function redrawTile(layout: Layout, page: string, id: string, change: (tile: Tile) => Tile): Edit {
   const next = copy(layout);
   const grid = gridOf(next, page);
   if (typeof grid === 'string') return refuse(grid);
   const index = grid.tiles.findIndex((candidate) => candidate.id === id);
   if (index < 0) return refuse(`no tile ${id}`);
-  const { render: _render, icon: _icon, asset: _asset, ...rest } = grid.tiles[index];
-  grid.tiles[index] = asset === null ? { ...rest, icon } : { ...rest, icon: null, asset };
-  next.schema = usesAssets(next) ? 2 : 1;
+  grid.tiles[index] = change(grid.tiles[index]);
+  next.schema = needsSchema2(next) ? 2 : 1;
   return checked(next);
+}
+
+function iconEdit(layout: Layout, page: string, id: string, icon: string | null, asset: string | null): Edit {
+  return redrawTile(layout, page, id, (tile) => {
+    const { render: _render, streams: _streams, icon: _icon, asset: _asset, ...rest } = tile;
+    return asset === null ? { ...rest, icon } : { ...rest, icon: null, asset };
+  });
 }
 
 export function setIcon(layout: Layout, page: string, id: string, icon: string | null): Edit {
