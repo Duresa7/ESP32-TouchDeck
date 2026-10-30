@@ -4,7 +4,7 @@ import { createFakeIntegrations } from './fake-integrations.ts';
 test('detail is null until a poll and carries typed account usage and named Preset tiles', async () => {
   const frames: unknown[] = [];
   const fake = createFakeIntegrations({ publish: frame => frames.push(frame), now: () => 1800000000000 });
-  const call = async (method: string, path: string, body?: unknown) => {
+  const call = async (method: string, path: string, body?: unknown): Promise<unknown> => {
     const request = new Request(`http://localhost/api/v1${path}`, { method, body: body === undefined ? undefined : JSON.stringify(body) });
     const response = await fake.handle(request, path);
     if (!response) throw new Error('Missing fake route');

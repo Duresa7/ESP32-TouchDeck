@@ -82,7 +82,8 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
   let keyOrigin: string | null = configured ? bound : null;
   let hubUp = true;
   let revision = 0;
-  let polled: number | null = configured ? now() - 12_000 : null;
+  const initialPoll = now() - 12_000;
+  let detail: IntegrationView['detail'] = configured ? { polled_ms: initialPoll, accounts: sampleAccounts(initialPoll) } : null;
   let lastRefresh: number | null = null;
   let refreshes = 0;
   let configPuts = 0;
@@ -113,7 +114,7 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
 
   const view = (): IntegrationView => ({
     summary: summary(), config: { ...settings }, secrets: { [SECRET]: { set: keySet() } },
-    detail: polled === null ? null : { polled_ms: polled, accounts: sampleAccounts(polled) },
+    detail,
   });
 
   const changed = () => {
@@ -147,11 +148,13 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
         const url = next.url.trim().replace(/\/+$/, '');
         const origin = originOf(url);
         if (!origin) return invalid();
+        const interval_s = Math.max(60, next.interval_s);
+        if (next.enabled === settings.enabled && url === settings.url && interval_s === settings.interval_s) return json(200, view());
         if (origin !== bound) keyOrigin = null;
         bound = origin;
-        settings = { enabled: next.enabled, url, interval_s: Math.max(60, next.interval_s) };
+        settings = { enabled: next.enabled, url, interval_s };
         configPuts += 1;
-        polled = null;
+        detail = null;
         changed();
         return json(200, view());
       }
@@ -160,7 +163,8 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
         if (settings.enabled && (lastRefresh === null || now() - lastRefresh >= REFRESH_FLOOR_MS)) {
           lastRefresh = now();
           refreshes += 1;
-          polled = now();
+          const polled_ms = now();
+          detail = { polled_ms, accounts: keySet() && hubUp ? sampleAccounts(polled_ms) : detail?.accounts ?? [] };
           changed();
         }
         return json(204, null);
@@ -168,7 +172,7 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
       if (decodeURIComponent(field) !== SECRET) return invalid();
       if (method === 'DELETE') {
         keyOrigin = null;
-        polled = null;
+        detail = null;
         changed();
         return json(204, null);
       }
@@ -178,7 +182,7 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
       const value = typeof input === 'object' && input !== null && 'value' in input ? input.value : undefined;
       if (keys.length !== 1 || typeof value !== 'string' || !value.trim() || value.length > 4096 || /\p{Cc}/u.test(value)) return invalid();
       keyOrigin = bound;
-      polled = null;
+      detail = null;
       changed();
       return json(200, { hint: 'Set' });
     },
