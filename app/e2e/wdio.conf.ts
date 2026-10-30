@@ -17,8 +17,9 @@ async function serverReady(timeoutMs: number) {
       const status = await fetch(`http://127.0.0.1:${port}/status`);
       if (status.ok && (await status.json()).value?.ready) return;
     } catch {
-      await new Promise((done) => setTimeout(done, 100));
+      // Not listening yet.
     }
+    await new Promise((done) => setTimeout(done, 100));
   }
   throw new Error(`no WebDriver server on port ${port} within ${timeoutMs} ms`);
 }
