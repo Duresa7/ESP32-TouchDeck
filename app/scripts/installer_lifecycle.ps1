@@ -137,6 +137,12 @@ function Get-UninstallEntries {
     }
 }
 
+function Get-InstalledVersion {
+    $entries = @(Get-UninstallEntries)
+    if ($entries.Count -eq 1) { return $entries[0].DisplayVersion }
+    return $null
+}
+
 function Get-RunValue {
     $values = Get-ItemProperty -LiteralPath $runKey -ErrorAction SilentlyContinue
     if ($values -and $values.PSObject.Properties['Open TouchDeck']) { return $values.'Open TouchDeck' }
@@ -158,13 +164,13 @@ function Assert-Installed([string]$Version) {
 }
 
 function Wait-Started([string]$Label) {
-    Assert-That (Wait-Until { (Get-Running $companionExe).Count -eq 1 -and (Test-Path -LiteralPath $runtimeFile) } 60) "$Label starts the installed Companion."
-    Assert-That (Wait-Until { (Get-Running $appExe).Count -gt 0 } 30) "$Label starts the Open TouchDeck window."
+    Assert-That (Wait-Until { @(Get-Running $companionExe).Count -eq 1 -and (Test-Path -LiteralPath $runtimeFile) } 60) "$Label starts the installed Companion."
+    Assert-That (Wait-Until { @(Get-Running $appExe).Count -gt 0 } 30) "$Label starts the Open TouchDeck window."
 }
 
 function Invoke-Driver([string]$Scenario) {
     $result = Join-Path $ArtifactDir "update-$Scenario.json"
-    Finish-Child (Start-Child 'node' @($driver, $Scenario, (Get-UninstallEntries).DisplayVersion, $LifecycleDir, $result)) "Updater driver ($Scenario)"
+    Finish-Child (Start-Child 'node' @($driver, $Scenario, (Get-InstalledVersion), $LifecycleDir, $result)) "Updater driver ($Scenario)"
     $value = Get-Content -LiteralPath $result -Raw | ConvertFrom-Json
     Write-Log "Updater driver ($Scenario): $(ConvertTo-Json $value -Compress -Depth 5)"
     return $value
@@ -201,9 +207,9 @@ try {
     $window = Start-Process -FilePath $appExe -WorkingDirectory $scratch -PassThru
     Wait-Started 'Opening the app'
     Assert-That ((Get-RunValue) -ceq "`"$companionExe`" --packaged") 'The Companion registers the per-user Run entry for the installed Companion.'
-    $companion = (Get-Running $companionExe)[0].Id
+    $companion = @(Get-Running $companionExe)[0].Id
     $null = $window.CloseMainWindow()
-    Assert-That (Wait-Until { -not (Get-Running $appExe).Count } 30) 'Closing the window ends Electron.'
+    Assert-That (Wait-Until { -not @(Get-Running $appExe).Count } 30) 'Closing the window ends Electron.'
     Assert-That (@(Get-Running $companionExe).Id -contains $companion) 'The Companion keeps running after the window closes.'
 
     $summary.scenario = 'tampered-update'
@@ -212,7 +218,7 @@ try {
     Assert-That ($tampered.download.state -eq 'failed' -and (Get-Field $tampered.download 'reason') -eq 'signature') 'The updater refuses an installer whose bytes do not match the signature.'
     Assert-That ($null -eq (Get-Field $tampered 'installer_pid')) 'No installer runs after a bad signature.'
     Assert-That (@(Get-Running $companionExe).Id -contains $companion) 'The Companion keeps running after a refused update.'
-    Assert-That ((Get-UninstallEntries).DisplayVersion -eq $release.version) 'A refused update leaves the installed version.'
+    Assert-That ((Get-InstalledVersion) -eq $release.version) 'A refused update leaves the installed version.'
 
     $summary.scenario = 'update'
     $sentinels = Write-Sentinels
@@ -222,7 +228,7 @@ try {
     Assert-That ((Get-Field $good 'quit') -eq $true -and $installerPid -gt 0) 'The updater launches the installer and quits.'
     Assert-That ((@($good.args) -join ' ') -ceq '/S --updated --force-run') 'The updater passes the installer the silent update flags.'
     Assert-That (Wait-Until { -not (Get-Process -Id $installerPid -ErrorAction SilentlyContinue) } 300) 'The update installer finishes.'
-    Assert-That (Wait-Until { (Get-UninstallEntries).DisplayVersion -eq $next.version } 60) "The update installs $($next.version)."
+    Assert-That (Wait-Until { (Get-InstalledVersion) -eq $next.version } 60) "The update installs $($next.version)."
     Assert-Installed $next.version
     Assert-That (-not (Get-Process -Id $companion -ErrorAction SilentlyContinue)) 'The old Companion stopped for the update.'
     Wait-Started 'The update'
@@ -232,15 +238,15 @@ try {
     }
 
     $summary.scenario = 'downgrade'
-    $companion = (Get-Running $companionExe)[0].Id
+    $companion = @(Get-Running $companionExe)[0].Id
     Finish-Child (Start-Child $installer @('/S')) 'Silent install of the older build' 5
-    Assert-That ((Get-UninstallEntries).DisplayVersion -eq $next.version) 'The older installer leaves the newer version installed.'
+    Assert-That ((Get-InstalledVersion) -eq $next.version) 'The older installer leaves the newer version installed.'
     Assert-That (@(Get-Running $companionExe).Id -contains $companion) 'A refused downgrade leaves the Companion running.'
 
     $summary.scenario = 'uninstall'
     Finish-Child (Start-Child $uninstaller @('/S')) 'Silent uninstall'
     Wait-Uninstalled
-    Assert-That (-not (Get-Running $companionExe).Count -and -not (Get-Running $appExe).Count) 'Uninstall stops the Companion and the window.'
+    Assert-That (-not @(Get-Running $companionExe).Count -and -not @(Get-Running $appExe).Count) 'Uninstall stops the Companion and the window.'
     Assert-That (-not (Test-Path -LiteralPath $runtimeFile)) 'The Companion shut down cleanly: its runtime file is gone.'
     foreach ($relative in @('Open TouchDeck.exe', 'td-companion.exe', 'resources', 'Uninstall Open TouchDeck.exe')) {
         Assert-That (-not (Test-Path -LiteralPath (Join-Path $installDir $relative))) "Uninstall removes $relative."
