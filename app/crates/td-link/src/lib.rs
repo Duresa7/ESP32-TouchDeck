@@ -52,4 +52,4 @@ impl Transport for Serial {
 }
 
 pub mod identity;
-pub use identity::{Capabilities, Identity};
+pub use identity::{AnimationCapabilities, Capabilities, Identity};

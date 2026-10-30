@@ -1057,3 +1057,21 @@ The coverage script below matches any literal that reads like words. These are i
 ## Checking coverage
 
 A script lists the string literals and text nodes in every non-test `.svelte` and `.ts` file under `app/src`, keeps the ones that read as words, and checks that each appears in a row above with its `file:line`. Single lowercase words, such as "seconds" or "never", don't pass its filter, so the rows marked "Added by hand" cover them. When a UI ticket changes a string, it updates the row here.
+
+## Animated GIF Tiles
+
+| State | Copy |
+| --- | --- |
+| Choose | Choose GIF |
+| Replace | Change GIF |
+| Preparing | Preparing GIF… |
+| Fitted | Fitted to {device}: {width} × {height}, {fps} fps. |
+| Too long | This GIF is too long for {device}. Choose a shorter GIF. |
+| Too large | This GIF is too large for {device}. Choose a smaller GIF. |
+| Page budget | This Page has too many animations for {device}. Remove an animated Tile. |
+| Storage full | {device} is out of space. Remove unused Assets, then retry. |
+| Preparation failed | Couldn't prepare this GIF. Choose another GIF. |
+| Unsupported | Needs Firmware {x.y} |
+
+Put decoder and wire reasons under Details. App previews show a paused poster
+when reduced motion is requested.

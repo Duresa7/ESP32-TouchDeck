@@ -20,16 +20,18 @@ export type Action =
 
 export type ActionType = Action['type'];
 
-export interface Tile {
+export type Tile = {
   id: string;
   label: string;
   row: number;
   col: number;
   rowSpan: number;
   colSpan: number;
-  icon: string | null;
   action: Action;
-}
+} & (
+  | { render?: undefined; icon: string | null; asset?: string | null }
+  | { render: 'gif'; icon: null; asset: string }
+);
 
 export interface GridPage {
   id: string;
@@ -50,7 +52,7 @@ interface DashboardPage {
 export type Page = GridPage | DashboardPage;
 
 export interface Layout {
-  schema: 1;
+  schema: 1 | 2;
   name: string;
   orientation: Orientation;
   /** True gives the tiles the whole screen, with no page title and no page dots. A file writes it only when true. */
@@ -219,8 +221,10 @@ function structuralErrors(root: unknown): LayoutError[] {
   };
 
   const tile = (value: unknown, pointer: string) => {
-    const tile = object(value, pointer, ['id', 'label', 'row', 'col', 'rowSpan', 'colSpan', 'icon', 'action']);
+    const tile = object(value, pointer, ['id', 'label', 'row', 'col', 'rowSpan', 'colSpan', 'icon', 'action'], isObject(root) && root.schema === 2 ? ['asset', 'render'] : []);
     if (!tile) return;
+    if (isObject(root) && root.schema === 2 && Object.hasOwn(tile, 'render') && (tile.render !== 'gif' || typeof tile.asset !== 'string')) at('icon.format', `${pointer}/render`, 'render must be gif with an Asset reference');
+    if (tile.asset != null && (typeof tile.asset !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(tile.asset) || tile.icon !== null)) at('icon.format', `${pointer}/asset`, 'Asset requires a SHA-256 reference and icon null');
     if (Object.hasOwn(tile, 'id')) id(tile.id, `${pointer}/id`);
     if (Object.hasOwn(tile, 'label')) bounded(tile.label, `${pointer}/label`, LABEL);
     for (const [name, min, max, key] of [
@@ -267,7 +271,7 @@ function structuralErrors(root: unknown): LayoutError[] {
   const layout = object(root, '', ['schema', 'name', 'orientation', 'pages'], ['fullScreen']);
   if (!layout) return errors;
   if (Object.hasOwn(layout, 'fullScreen') && typeof layout.fullScreen !== 'boolean') wrongType('/fullScreen', 'boolean');
-  if (Object.hasOwn(layout, 'schema') && layout.schema !== 1) at('layout.schema-version', '/schema', 'must be equal to constant (const)');
+  if (Object.hasOwn(layout, 'schema') && layout.schema !== 1 && layout.schema !== 2) at('layout.schema-version', '/schema', 'must be equal to constant (const)');
   if (Object.hasOwn(layout, 'name')) bounded(layout.name, '/name', NAME);
   if (Object.hasOwn(layout, 'orientation') && layout.orientation !== 'landscape' && layout.orientation !== 'portrait') {
     at('layout.orientation', '/orientation', 'must be equal to one of the allowed values (enum)');
