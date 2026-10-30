@@ -1,0 +1,13 @@
+name: main
+
+# The full app matrix, including the Tauri e2e, after each merge. A newer merge cancels an older run.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    uses: ./.github/workflows/app.yml

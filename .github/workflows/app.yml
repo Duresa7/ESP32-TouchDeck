@@ -1,7 +1,7 @@
 name: app
 
-# Pull requests run these checks once; merging to main does not rerun them.
-# The windows release workflow calls this again on the exact commit it releases.
+# Pull requests run Windows only, and the old Tauri app's build and e2e only when its files change.
+# Every push to main and the windows release workflow run the full matrix with the Tauri e2e.
 on:
   workflow_call:
     inputs:
@@ -9,13 +9,21 @@ on:
         description: Commit or tag to check (empty means the triggering ref)
         type: string
         default: ""
+      os:
+        description: JSON list of runners
+        type: string
+        default: '["windows-latest", "ubuntu-24.04"]'
+      tauri:
+        description: Build the Tauri app and run its e2e specs
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: app-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: app-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
 
 jobs:
   app:
@@ -23,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-24.04]
+        os: ${{ fromJSON(inputs.os) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     defaults:
@@ -81,13 +89,17 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --workspace -- -D warnings
       - run: cargo test --workspace
-      - run: pnpm tauri build --features e2e
-
-      - name: Run the e2e specs on the mock deck
+      - name: Run the UI e2e specs on the fake Companion
         if: runner.os == 'Windows'
+        run: pnpm e2e:ui
+
+      - if: inputs.tauri
+        run: pnpm tauri build --features e2e
+      - name: Run the e2e specs on the mock deck
+        if: inputs.tauri && runner.os == 'Windows'
         run: pnpm e2e
       - name: Run the shared e2e specs on the mock deck under xvfb
-        if: runner.os == 'Linux'
+        if: inputs.tauri && runner.os == 'Linux'
         run: xvfb-run -a pnpm e2e
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
