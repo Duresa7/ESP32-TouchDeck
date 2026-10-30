@@ -231,7 +231,7 @@ def build(args):
         "installer": installer.name, "installer_sha256": sha(installer.read_bytes()), "firmware": fw,
         "companion_sha256": sha(companion.read_bytes()),
         "tools": {"rustc": capture(["rustc", "--version"]), "node": capture(["node", "--version"]),
-                  "electron-builder": json.loads((ELECTRON / "node_modules/electron-builder/package.json").read_text())["version"]}})
+                  "electron-builder": json.loads((ELECTRON / "node_modules/electron-builder/package.json").read_text(encoding="utf-8"))["version"]}})
     shutil.copyfile(payload / "firmware" / fw["bundle"], assets / fw["bundle"])
     paths = sorted(path for path in assets.iterdir() if path.is_file())
     (assets / "SHA256SUMS").write_text("".join(f"{sha(path.read_bytes())}  {path.name}\n" for path in paths),
