@@ -1,7 +1,7 @@
 #include "ui_theme.h"
 #include "display.h"
 
-/* docs/design.md gives every screen token's RGB565 value, so a lossy edit to a macro fails the build. */
+/* Every screen token's RGB565 value, pinned so a lossy edit to a macro fails the build. */
 _Static_assert(UI_SCREEN_BG == 0x0883, "--screen-bg");
 _Static_assert(UI_SCREEN_TILE == 0x1906, "--screen-tile");
 _Static_assert(UI_SCREEN_TILE_RAISED == 0x2168, "--screen-tile-raised");

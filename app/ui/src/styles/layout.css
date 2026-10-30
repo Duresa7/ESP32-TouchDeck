@@ -1,4 +1,4 @@
-/* The Layout screen, built from tokens.css. docs/design.md, "Layout editor", explains each part. Never write a raw color here. */
+/* The Layout screen, built from tokens.css. Never write a raw color here. */
 
 .visually-hidden {
   position: absolute;
