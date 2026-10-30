@@ -28,7 +28,7 @@ def run(args, *, cwd=ROOT, env=None, quiet=False):
 
 
 def capture(args, *, cwd=ROOT, env=None):
-    return subprocess.check_output(args, cwd=cwd, env=env, text=True).strip()
+    return subprocess.check_output(args, cwd=cwd, env=env, text=True, encoding="utf-8").strip()
 
 
 def sha(data):
@@ -87,7 +87,7 @@ def firmware(out, revision, lock_path):
     owner = f"packaging {revision} pid={os.getpid()}\n"
     fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
     try:
-        with os.fdopen(fd, "w") as lock:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as lock:
             lock.write(owner)
         build = out / "build/firmware"
         run([sys.executable, idf, "-C", ROOT / "firmware", "-B", build, "build"])
@@ -100,7 +100,7 @@ def firmware(out, revision, lock_path):
         return {"source_revision": revision, "bundle": installed_bundle.name,
                 "sha256": sha(installed_bundle.read_bytes()), "manifest": manifest, "audit": audit}
     finally:
-        if lock_path.read_text() == owner:
+        if lock_path.read_text(encoding="utf-8") == owner:
             lock_path.unlink()
 
 

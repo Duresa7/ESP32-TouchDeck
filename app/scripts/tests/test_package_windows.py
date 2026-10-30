@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import sys
 import unittest
 
 
@@ -23,6 +24,10 @@ class ProductionCompanionTests(unittest.TestCase):
 
     def test_lifecycle_update_is_the_next_patch(self):
         self.assertEqual(package.next_patch("0.2.9"), "0.2.10")
+
+    def test_captured_output_is_utf8_on_any_code_page(self):
+        script = "import sys; sys.stdout.buffer.write('\\u201dOpen TouchDeck\\u201d'.encode('utf-8'))"
+        self.assertEqual(package.capture([sys.executable, "-c", script]), "”Open TouchDeck”")
 
 
 if __name__ == "__main__":
