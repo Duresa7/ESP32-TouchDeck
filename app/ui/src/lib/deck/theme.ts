@@ -42,6 +42,7 @@ export const THEME = {
   staleOpa: LV_OPA_60,
   widget: { valueDy: 16, captionDy: 30, barH: 6, barBottom: 12, barRadius: 3 },
   dash: { rowGap: 8, radius: 10, pad: 20, barH: 12, rowsMax: 8 },
+  graph: { pad: 20, top: 56, radius: 10, lineW: 4, areaMix: 36 },
   anim: { settleMs: 260, bounceOutMs: 110, bounceBackMs: 150, pressMs: 120, dotMs: 160 },
   font: { tile: 48, title: 28, caption: 28, small: 14 },
 } as const;

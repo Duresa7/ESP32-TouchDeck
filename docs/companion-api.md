@@ -599,7 +599,7 @@ CLIProxyAPI Preset tiles have this fixed order and copy names:
 
 With `test-hooks`, mock Integrations use real HTTP only for explicitly configured `http://127.0.0.1:PORT` stub URLs. Other mock URLs retain the empty fixture transport. This permits local stub tests with mock Devices and memory-only credentials.
 
-Each Integration's Preset tiles are in `presets`. Live tiles get their values through the Device link, never through this API ([ADR 0004](adr/0004-firmware-draws-live-tiles.md)).
+Each Integration's Preset tiles are in `presets`, each `{id, name, action, render?}`. `render`, when present, is how the Tile draws its stream, such as `graph`. The app then adds the Preset as a schema 2 Tile with that `render` and `streams: {value: "number"}` if the Device lists it in `tile_kinds`, and as a plain Live tile otherwise. Live tiles get their values through the Device link, never through this API ([ADR 0004](adr/0004-firmware-draws-live-tiles.md)).
 
 #### Live tile bindings
 
@@ -635,7 +635,7 @@ All streams have kind `numeric`. Streams and Preset tiles use this fixed order; 
 | `network_receive_bytes_s` | Network receive | `bytes/s` |
 | `network_send_bytes_s` | Network send | `bytes/s` |
 
-Every Preset uses `{type: "widget", source: "this_pc", account: "", field: <stream id>}`. Windows opens one PDH query and adds counters once. Collection runs at most once per second, including manual refresh. CPU uses Processor Information total Processor Utility; disk activity is 100 minus PhysicalDisk total idle time. GPU usage sums instances by engine type and takes the busiest type, capped at 100%. RAM comes from GlobalMemoryStatusEx. Disk and network rates use cumulative-byte deltas divided by elapsed monotonic time; the first sample and counter resets emit no rate. Network sums physical adapters present when the Integration starts; restart the Companion after adding an adapter.
+Every Preset uses `{type: "widget", source: "this_pc", account: "", field: <stream id>}` and `render: "graph"`. Windows opens one PDH query and adds counters once. Collection runs at most once per second, including manual refresh. CPU uses Processor Information total Processor Utility; disk activity is 100 minus PhysicalDisk total idle time. GPU usage sums instances by engine type and takes the busiest type, capped at 100%. RAM comes from GlobalMemoryStatusEx. Disk and network rates use cumulative-byte deltas divided by elapsed monotonic time; the first sample and counter resets emit no rate. Network sums physical adapters present when the Integration starts; restart the Companion after adding an adapter.
 
 A missing counter omits only its readings; descriptors and Presets stay discoverable. Status is `error` with `Unavailable: {names}.` using the Preset names in order. Healthy streams continue. Non-Windows builds emit no readings and report `This PC needs Windows.`. Values stay inside the Companion for Device delivery, never in HTTP responses. Each collection is one live sample per stream with `ttl_ms` 5000, so a Device shows This PC values stale five seconds after collection stops.
 

@@ -24,6 +24,9 @@ pub struct PresetTile {
     pub id: String,
     pub name: String,
     pub action: Value,
+    /// How the Tile draws its stream, when not as a value with its label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render: Option<td_core::layout::TileRender>,
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct Delivery {

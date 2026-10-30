@@ -1,6 +1,7 @@
 use super::*;
 use crate::sources::Reading;
 use serde_json::json;
+use td_core::layout::TileRender;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(windows)]
@@ -173,6 +174,7 @@ impl Integration for ThisPc {
                     id: (*id).into(),
                     name: (*name).into(),
                     action: json!({"type":"widget","source":"this_pc","field":id,"account":""}),
+                    render: Some(TileRender::Graph),
                 })
                 .collect(),
         }

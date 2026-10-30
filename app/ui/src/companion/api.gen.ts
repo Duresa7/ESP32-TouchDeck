@@ -141,7 +141,11 @@ export type PairExpires = { expires_ms: number, };
 export type PairRequest = { code: string, label: string | null, };
 export type PickResult = { bundle: BundleInfo | null, };
 export type PortProbe = { port: string, usb_serial: string | null, id: DeviceId, probed_ms: number | null, } & ({ "status": "pending" } | { "status": "device", protocol: number, version: string, } | { "status": "silent" } | { "status": "busy", detail: string, } | { "status": "other-firmware", product: string, detail: string, });
-export type PresetTile = { id: string, name: string, action: JsonValue, };
+export type PresetTile = { id: string, name: string, action: JsonValue, 
+/**
+ * How the Tile draws its stream, when not as a value with its label.
+ */
+render?: TileRender | null, };
 export type Proof = { proof: string, };
 export type ProofRequest = { nonce: string, };
 export type PruneProgress = { removed: number, total: number, };

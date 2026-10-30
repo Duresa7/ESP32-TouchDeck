@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import { Lock, Plus } from 'lucide-react';
 import { cellAt, geometry, PANEL_H, PANEL_W, screenSize, tileFits, tileRect, type Geometry, type Rect, type Span } from '../../lib/deck/geometry.ts';
 import { easeOut, goTo, move, nearestPage, pager, press, release, restX, type Bounce } from '../../lib/deck/pager.ts';
-import { buildDots, buildPage, buildTitle, FONTS, sampleRows, sampleWidget, type FontSize, type PageView, type TextView } from '../../lib/deck/scene.ts';
+import { buildDots, buildPage, buildTitle, FONTS, sampleRows, sampleSeries, sampleWidget, type FontSize, type GraphView, type PageView, type SceneOptions, type TextView } from '../../lib/deck/scene.ts';
 import type { Line } from '../../lib/deck/text.ts';
 import { THEME } from '../../lib/deck/theme.ts';
 import type { EditorStore, Target } from '../../lib/editor/store.ts';
@@ -61,6 +61,25 @@ function SceneText({ view, title }: { view: TextView; title?: boolean }) {
 
 const SAMPLES = { widget: sampleWidget, rows: sampleRows, hasImage: () => true };
 
+function SceneGraph({ view }: { view: GraphView }) {
+  return (
+    <span
+      className={clsx('scene-graph', view.stale && 'is-stale')}
+      style={{ left: view.x, top: view.y, width: view.w, height: view.h, borderRadius: view.radius }}
+      data-testid="tile-graph"
+      data-points={view.points.length}
+      data-stale={view.stale}
+      aria-hidden
+    >
+      {view.points.length > 0 && (
+        <svg width={view.w} height={view.h} viewBox={`0 0 ${view.w} ${view.h}`}>
+          <polyline points={view.points.map((p) => `${p.x},${p.y}`).join(' ')} strokeWidth={THEME.graph.lineW} />
+        </svg>
+      )}
+    </span>
+  );
+}
+
 type ModLook = 'one-shot' | 'locked';
 
 const ARROW_STEPS = new Map<string, readonly [number, number]>([
@@ -102,6 +121,8 @@ export interface DeviceCanvasProps {
   long: number;
   actualSize: boolean;
   firmwareBadge?: (tile: Tile) => string | null;
+  /** How graph Tiles look: the samples the Device keeps, and whether its values are stale because it is offline. */
+  live?: { series: number; stale: boolean };
 }
 
 function readRatio(name: string, fallback: number) {
@@ -115,14 +136,22 @@ export function deviceAspect(): number {
   return (1 - 2 * pad) * (PANEL_H / PANEL_W) + 2 * pad;
 }
 
-export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, long, actualSize, firmwareBadge }: DeviceCanvasProps) {
+const SERIES = 32;
+
+export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, long, actualSize, firmwareBadge, live }: DeviceCanvasProps) {
   const editing = mode === 'edit';
   const g: Geometry = useMemo(() => geometry(screenSize(layout.orientation), layout.fullScreen === true), [layout.orientation, layout.fullScreen]);
   const index = Math.max(0, layout.pages.findIndex((p) => p.id === pageId));
   const current = layout.pages[index];
+  const series = live?.series || SERIES;
+  const stale = live?.stale ?? false;
+  const options: SceneOptions = useMemo(() => {
+    const samples = sampleSeries(series);
+    return { ...SAMPLES, graph: () => ({ samples, cap: series, stale }) };
+  }, [series, stale]);
   const views: PageView[] = useMemo(
-    () => (editing ? [buildPage(current, g, SAMPLES)] : layout.pages.map((p) => buildPage(p, g, SAMPLES))),
-    [editing, current, layout.pages, g],
+    () => (editing ? [buildPage(current, g, options)] : layout.pages.map((p) => buildPage(p, g, options))),
+    [editing, current, layout.pages, g, options],
   );
   const built = useRef(0);
   built.current = performance.now();
@@ -530,6 +559,7 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
                 ))}
                 {tv.image && <span className="scene-image" style={{ left: tv.image.x, top: tv.image.y, width: tv.image.size, height: tv.image.size }} />}
                 {tv.bar && <span className="scene-bar" style={{ left: tv.bar.x, top: tv.bar.y, width: tv.bar.w, height: tv.bar.h, borderRadius: tv.bar.radius }} />}
+                {tv.graph && <SceneGraph view={tv.graph} />}
                 {mod === 'locked' && <Lock className="scene-lock" size={30} strokeWidth={3} aria-hidden />}
                 {badge !== null && (
                   <span className="tile-needs" data-testid="tile-needs">

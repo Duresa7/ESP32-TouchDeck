@@ -16,7 +16,7 @@ resvg = { version = "0.45", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
-td-core.workspace = true
+td-core = { workspace = true, features = ["ts"] }
 time = { version = "0.3", features = ["parsing"] }
 ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier"] }
 url = "2"

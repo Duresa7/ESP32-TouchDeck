@@ -121,6 +121,7 @@ fn presets_follow_copy_order_and_layout_action_contract() {
         ]
     );
     for preset in summary.presets {
+        assert_eq!(preset.render, Some(td_core::layout::TileRender::Graph));
         let action: td_core::layout::Action = serde_json::from_value(preset.action).unwrap();
         assert!(
             matches!(action, td_core::layout::Action::Widget { source, field, account } if source == "this_pc" && field == preset.id && account.is_empty())

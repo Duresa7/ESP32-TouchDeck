@@ -1,6 +1,7 @@
 import type { TileAction as Action, Page, Tile } from '../../companion/api.gen.ts';
 import { MONTSERRAT_14, MONTSERRAT_28, MONTSERRAT_48 } from './fonts.data.ts';
 import { dotX, truncDiv, tileRect, type Geometry, type Rect } from './geometry.ts';
+import { graphPoints, type GraphPoint } from './graph.ts';
 import { font, layoutLabel, textSize, codepoints, type Align, type Font, type Label } from './text.ts';
 import { SYMBOLS, THEME } from './theme.ts';
 
@@ -28,6 +29,16 @@ export interface BarView {
   radius: number;
 }
 
+export interface GraphView {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  radius: number;
+  points: GraphPoint[];
+  stale: boolean;
+}
+
 export interface TileView {
   id: string;
   rect: Rect;
@@ -35,6 +46,7 @@ export interface TileView {
   texts: TextView[];
   image: { id: string; x: number; y: number; size: number } | null;
   bar: BarView | null;
+  graph: GraphView | null;
 }
 
 export interface RowView {
@@ -72,8 +84,16 @@ export interface RowSample {
   bar: number;
 }
 
+/** What a graph Tile shows: its samples, oldest first, how many the Device keeps, and whether they are stale. */
+export interface GraphSample {
+  samples: readonly number[];
+  cap: number;
+  stale: boolean;
+}
+
 export interface SceneOptions {
   widget?: (tile: Tile) => WidgetSample | null;
+  graph?: (tile: Tile) => GraphSample | null;
   rows?: (page: Page) => RowSample[];
   hasImage?: (id: string) => boolean;
 }
@@ -105,6 +125,25 @@ export function fitLabel(value: string, tileW: number, tileH: number): { label: 
 
 const fileId = (icon: string | null) => (icon?.startsWith('file:') ? icon.slice(5) : null);
 
+/** The Firmware's ui_live_build: the label top left, "--" top right while there is no fresh value, and the plot below. */
+function buildGraph(view: TileView, tile: Tile, sample: GraphSample | null) {
+  const { pad, top, radius } = THEME.graph;
+  const { rect } = view;
+  const stale = !sample || sample.stale;
+  const lineH = FONTS[28].lineHeight;
+  const y = truncDiv(top - lineH, 2);
+  const label = layoutLabel(tile.label, FONTS[28], { width: rect.w - 2 * pad, height: lineH, dots: true });
+  view.texts.push(text(label, 28, THEME.color.caption, { x: pad, y }, sample?.stale ? THEME.staleOpa : 255));
+  if (stale) {
+    const marker = layoutLabel('--', FONTS[28]);
+    view.texts.push(text(marker, 28, THEME.color.caption, { x: rect.w - pad - marker.width, y }));
+  }
+  const w = Math.max(rect.w - 2 * pad, 0);
+  const h = Math.max(rect.h - top - pad, 0);
+  const points = sample ? graphPoints(sample.samples, sample.cap, w, h) : [];
+  view.graph = { x: pad, y: top, w, h, radius, points: points.length < 2 ? [] : points, stale: sample?.stale ?? false };
+}
+
 function buildTile(page: Page & { kind: 'grid' }, tile: Tile, g: Geometry, options: SceneOptions): TileView {
   const rect = tileRect(page, tile, g.grid, g.gap);
   const view: TileView = {
@@ -114,8 +153,13 @@ function buildTile(page: Page & { kind: 'grid' }, tile: Tile, g: Geometry, optio
     texts: [],
     image: null,
     bar: null,
+    graph: null,
   };
   const { color, media, widget } = THEME;
+  if (tile.render === 'graph') {
+    buildGraph(view, tile, options.graph?.(tile) ?? null);
+    return view;
+  }
   if (tile.action.type === 'widget') {
     const sample = options.widget?.(tile) ?? null;
     const opacity = sample?.stale ? THEME.staleOpa : 255;
@@ -224,6 +268,11 @@ export function sampleWidget(tile: Tile): WidgetSample | null {
   if (tile.action.type !== 'widget') return null;
   const sample = FIELD_SAMPLES[tile.action.field];
   return sample ? { ...sample, caption: tile.label } : { value: '--', caption: tile.label, bar: -1 };
+}
+
+/** Samples a preview graph draws until the Device shows real ones: a gentle wave between 10 and 90. */
+export function sampleSeries(count: number): number[] {
+  return Array.from({ length: count }, (_, i) => Math.round((50 + 40 * Math.sin(i / 3)) * 10) / 10);
 }
 
 export function sampleRows(): RowSample[] {

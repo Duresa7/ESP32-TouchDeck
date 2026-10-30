@@ -121,6 +121,7 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
               long={long}
               actualSize={preview && actualSize}
               firmwareBadge={(tile) => needsFirmware(device, tileKind(tile), offered)}
+              live={{ series: device.capabilities?.series ?? 0, stale: !connected }}
             />
             <div ref={foot} className="canvas-foot">
               <PageTabs store={store} layout={layout} page={current.id} />

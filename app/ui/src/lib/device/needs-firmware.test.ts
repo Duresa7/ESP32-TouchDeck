@@ -15,6 +15,10 @@ const caps = (tile_kinds: string[]): Capabilities => ({
   asset_bytes: 1_000_000,
   formats: ['png'],
   image: [512, 512],
+  live_hz: 0,
+  live_total_hz: 0,
+  series: 0,
+  text_bytes: 0,
 });
 
 const v1 = sampleDevice('mock0001', 'Desk');

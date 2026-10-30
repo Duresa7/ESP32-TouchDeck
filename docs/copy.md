@@ -1104,3 +1104,19 @@ A script lists the string literals and text nodes in every non-test `.svelte` an
 
 Put decoder and wire reasons under Details. App previews show a paused poster
 when reduced motion is requested.
+
+## Graph Tiles
+
+| State | Copy |
+| --- | --- |
+| Field | Shows |
+| Choices | Label (Value on a Live tile), Graph |
+| Stream field | Stream |
+| Stream hint | Updates about once a second. |
+| Stream gone | {stream} (unknown) |
+| No numeric streams | Set up an Integration to draw a graph. |
+| Unsupported | Needs Firmware {x.y}. |
+| No fresh value (on the Device and in the preview) | -- |
+
+The stream picker groups streams by Integration and names each by its Preset
+tile. A stale graph keeps its last line at 60% opacity, as on the Device.

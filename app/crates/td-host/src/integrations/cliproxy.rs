@@ -148,6 +148,7 @@ impl Integration for CliProxyIntegration {
             id: id.into(),
             name: name.into(),
             action: json!({"type":"widget","source":"cliproxyapi","field":id,"account":""}),
+            render: None,
         })
         .collect();
         IntegrationSummary {
