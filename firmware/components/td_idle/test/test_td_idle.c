@@ -7,6 +7,7 @@
 #define MS INT64_C(1000)
 #define SEC INT64_C(1000000)
 #define LIMIT TD_PHOTO_BYTES_MAX
+#define UNIX_2023_11_14_22_13_20 1700000000ull
 
 TEST_CASE("idle settings default to off, 60 s and 15 s and keep to the protocol's ranges", "[idle]")
 {
@@ -100,8 +101,7 @@ TEST_CASE("the clock reads --:-- until it is set, then the local time counting o
     TEST_ASSERT_FALSE(td_clock_text(&clock, T0, text));
     TEST_ASSERT_EQUAL_STRING("--:--", text);
 
-    /* 2023-11-14 22:13:20 UTC */
-    td_clock_set(&clock, 1700000000, 0, T0);
+    td_clock_set(&clock, UNIX_2023_11_14_22_13_20, 0, T0);
     TEST_ASSERT_TRUE(td_clock_text(&clock, T0, text));
     TEST_ASSERT_EQUAL_STRING("22:13", text);
     TEST_ASSERT_TRUE(td_clock_text(&clock, T0 + 39 * SEC, text));
@@ -111,10 +111,10 @@ TEST_CASE("the clock reads --:-- until it is set, then the local time counting o
     TEST_ASSERT_TRUE(td_clock_text(&clock, T0 - SEC, text));
     TEST_ASSERT_EQUAL_STRING_MESSAGE("22:13", text, "a time before the set reads as the set");
 
-    td_clock_set(&clock, 1700000000, 120, T0);
+    td_clock_set(&clock, UNIX_2023_11_14_22_13_20, 120, T0);
     TEST_ASSERT_TRUE(td_clock_text(&clock, T0, text));
     TEST_ASSERT_EQUAL_STRING_MESSAGE("00:13", text, "the offset crosses midnight");
-    td_clock_set(&clock, 1700000000, -840, T0);
+    td_clock_set(&clock, UNIX_2023_11_14_22_13_20, -840, T0);
     TEST_ASSERT_TRUE(td_clock_text(&clock, T0, text));
     TEST_ASSERT_EQUAL_STRING("08:13", text);
     td_clock_set(&clock, 0, -60, T0);

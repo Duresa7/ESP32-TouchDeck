@@ -10,7 +10,6 @@
 
 static const char *TAG = "td_link";
 
-/* The idle settings in force. The boot and v2.idle.set write them, and the link task reads them for every picture. */
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static td_idle_settings_t s_idle = {
     .enabled = false, .timeout_s = TD_IDLE_TIMEOUT_DEFAULT_S, .interval_s = TD_IDLE_INTERVAL_DEFAULT_S,
@@ -46,8 +45,7 @@ uint32_t td_link_idle_interval_s(void)
     return interval_s;
 }
 
-/* A whole JSON number from min to max. */
-static bool whole(const cJSON *request, const char *key, double min, double max, double *out)
+static bool whole_in_range(const cJSON *request, const char *key, double min, double max, double *out)
 {
     const cJSON *item = cJSON_GetObjectItemCaseSensitive(request, key);
     if (!cJSON_IsNumber(item) || item->valuedouble < min || item->valuedouble > max
@@ -87,8 +85,8 @@ void td_link_idle_set(const cJSON *request, cJSON *reply)
     double interval_s;
     if (!td_link_v2_fields(request, keys, 4) || !cJSON_IsBool(enabled) || fallback == NULL
         || strcmp(fallback, "clock") != 0
-        || !whole(request, "timeout_s", TD_IDLE_TIMEOUT_MIN_S, TD_IDLE_TIMEOUT_MAX_S, &timeout_s)
-        || !whole(request, "interval_s", TD_IDLE_INTERVAL_MIN_S, TD_IDLE_INTERVAL_MAX_S, &interval_s)) {
+        || !whole_in_range(request, "timeout_s", TD_IDLE_TIMEOUT_MIN_S, TD_IDLE_TIMEOUT_MAX_S, &timeout_s)
+        || !whole_in_range(request, "interval_s", TD_IDLE_INTERVAL_MIN_S, TD_IDLE_INTERVAL_MAX_S, &interval_s)) {
         td_link_v2_fail(reply, "args", "Invalid request fields");
         return;
     }
@@ -108,8 +106,9 @@ void td_link_clock_set(const cJSON *request, cJSON *reply)
     static const char *const keys[] = { "unix_s", "offset_min" };
     double unix_s;
     double offset_min;
-    if (!td_link_v2_fields(request, keys, 2) || !whole(request, "unix_s", 0, (double)TD_CLOCK_UNIX_MAX_S, &unix_s)
-        || !whole(request, "offset_min", -TD_CLOCK_OFFSET_MAX_MIN, TD_CLOCK_OFFSET_MAX_MIN, &offset_min)) {
+    if (!td_link_v2_fields(request, keys, 2)
+        || !whole_in_range(request, "unix_s", 0, (double)TD_CLOCK_UNIX_MAX_S, &unix_s)
+        || !whole_in_range(request, "offset_min", -TD_CLOCK_OFFSET_MAX_MIN, TD_CLOCK_OFFSET_MAX_MIN, &offset_min)) {
         td_link_v2_fail(reply, "args", "Invalid request fields");
         return;
     }

@@ -68,11 +68,12 @@ typedef struct {
  * A failed wake write still eats its contact. It is retried on a later sample of that contact after 250 ms, and on the
  * first sample of the next contact.
  *
- * Photo idle mode (link-v2.md "Photo frame, idle, and clock") replaces going dark. While it is on the gate never darkens
- * the screen: once the idle clock has run for the photo timeout on a lit screen with no contact open, it clears every
- * key modifier and raises the idle face, which the UI draws over the Page. The face counts as dark for the next contact,
- * which is eaten whole and takes the face down, so the touch that wakes the Device to its last Page clicks nothing. The
- * backlight is not written for it. Turning the mode off takes the face down and the v1 timeout applies again.
+ * Photo idle mode (link-v2.md "Photo frame, idle, and clock") replaces going dark. While it is on the gate never
+ * darkens the screen: once the idle clock has run for the photo timeout on a lit screen with no contact open, it clears
+ * every key modifier and raises the idle face, which the UI draws over the Page. The face counts as dark for the next
+ * contact, which is eaten whole and takes the face down, so the touch that wakes the Device to its last Page clicks
+ * nothing. The backlight is not written for it. Turning the mode off takes the face down and the v1 timeout applies
+ * again.
  */
 
 /* Starts the gate with the idle clock at now_us and the default timeout. ESP_ERR_INVALID_STATE when the CH422G has not
@@ -96,8 +97,8 @@ esp_err_t power_get_info(power_info_t *out, int64_t now_us);
  * ESP_ERR_INVALID_ARG out of range, ESP_ERR_INVALID_STATE before a successful power_start. Any task may call it. */
 esp_err_t power_set_idle_timeout_s(uint32_t seconds, int64_t now_us);
 
-/* Turns photo idle mode on, with the idle face after timeout_s without a touch, or off. Either way the idle clock restarts
- * at now_us. Not stored here. ESP_ERR_INVALID_ARG for a timeout outside 10 to 86400 when turning it on,
+/* Turns photo idle mode on, with the idle face after timeout_s without a touch, or off. Either way the idle clock
+ * restarts at now_us. Not stored here. ESP_ERR_INVALID_ARG for a timeout outside 10 to 86400 when turning it on,
  * ESP_ERR_INVALID_STATE before a successful power_start. Any task may call it. */
 esp_err_t power_set_photo_idle(bool on, uint32_t timeout_s, int64_t now_us);
 

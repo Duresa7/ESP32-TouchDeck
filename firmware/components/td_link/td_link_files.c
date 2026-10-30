@@ -35,8 +35,7 @@ typedef enum {
 /* One transfer at a time. A put holds the whole file in PSRAM and writes it with td_store_write_atomic at xfer.end,
  * so a cut transfer leaves nothing on the volume. A get reads the file once and sends it from memory. A firmware
  * update holds no buffer: td_update writes each chunk into the other OTA slot as it arrives. A v2 Asset put holds no
- * buffer either: td_asset streams each chunk into a temporary file and hashes it, and v2.asset.end commits it. A
- * picture for the photo frame is held in PSRAM like a put, and v2.photo.end decodes and shows it without writing it. */
+ * buffer either: td_asset streams each chunk into a temporary file and hashes it, and v2.asset.end commits it. */
 static struct {
     kind_t kind;
     td_xfer_t x;
@@ -71,13 +70,11 @@ static void asset_end_record(uint8_t xfer, const char *reason, const char *id, u
     snprintf(s_asset_end.id, sizeof s_asset_end.id, "%s", id ? id : "");
 }
 
-/* The same for the last picture transfer that closed: shown when reason is NULL. */
 static struct {
     uint8_t xfer;
-    const char *reason;
+    const char *failure;
 } s_photo_end;
 
-/* When the next picture may come. */
 static td_photo_pace_t s_pace;
 
 /* Any bulk open, v1 or v2, ends the replay of the last Asset or picture end. */
@@ -363,7 +360,8 @@ void td_link_xfer_end(const cJSON *request, cJSON *reply)
         td_link_fail(reply, "xfer.end needs xfer");
     } else if (s.kind == KIND_ASSET_PUT || s.kind == KIND_PHOTO_PUT) {
         /* A v1 end never finishes or cuts a v2 Asset or picture put. */
-        const char *v2_end = s.kind == KIND_ASSET_PUT ? "end an Asset with v2.asset.end" : "end a picture with v2.photo.end";
+        const char *v2_end =
+            s.kind == KIND_ASSET_PUT ? "end an Asset with v2.asset.end" : "end a picture with v2.photo.end";
         td_link_fail(reply, id == s.x.id ? v2_end : "no transfer with that xfer");
         return;
     } else if (s.kind == KIND_NONE || id != s.x.id) {
@@ -448,7 +446,6 @@ static void send_chunk(uint16_t idx)
     td_link_send(TD_FRAME_CHUNK, s.tx_seq, 0, payload, TD_FRAME_CHUNK_HEADER + len);
 }
 
-/* A touch that wakes the Device cancels the picture coming in, which stops its acks, and its end answers idle. */
 static bool photo_cancelled(void)
 {
     uint32_t entry = 0;
@@ -456,7 +453,7 @@ static bool photo_cancelled(void)
         return false;
     }
     s_photo_end.xfer = s.x.id;
-    s_photo_end.reason = "idle";
+    s_photo_end.failure = "idle";
     drop_xfer();
     return true;
 }
@@ -931,8 +928,7 @@ void td_link_photo_put(const cJSON *request, cJSON *reply)
     cJSON_AddNumberToObject(reply, "xfer", s.x.id);
 }
 
-/* Checks and shows the complete picture. NULL when it shows, or the reason it does not. */
-static const char *photo_show(void)
+static const char *photo_show_failure(void)
 {
     uint32_t entry = 0;
     if (!power_idle_face(&entry) || entry != s.photo_entry) {
@@ -974,17 +970,17 @@ static void photo_end_reply(cJSON *reply)
         { "memory", "No memory for the picture" },
         { "format", "Not a baseline JPEG" },
     };
-    if (s_photo_end.reason == NULL) {
+    if (s_photo_end.failure == NULL) {
         cJSON_AddBoolToObject(reply, "shown", true);
         return;
     }
     const char *error = "Picture not shown";
     for (size_t i = 0; i < sizeof errors / sizeof errors[0]; i++) {
-        if (strcmp(errors[i].reason, s_photo_end.reason) == 0) {
+        if (strcmp(errors[i].reason, s_photo_end.failure) == 0) {
             error = errors[i].error;
         }
     }
-    td_link_v2_fail(reply, s_photo_end.reason, error);
+    td_link_v2_fail(reply, s_photo_end.failure, error);
 }
 
 void td_link_photo_end(const cJSON *request, cJSON *reply)
@@ -1001,7 +997,7 @@ void td_link_photo_end(const cJSON *request, cJSON *reply)
             return;
         }
         s_photo_end.xfer = s.x.id;
-        s_photo_end.reason = photo_show();
+        s_photo_end.failure = photo_show_failure();
         drop_xfer();
         photo_end_reply(reply);
     } else if (s_photo_end.xfer != 0 && s_photo_end.xfer == id) {

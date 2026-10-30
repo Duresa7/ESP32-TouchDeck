@@ -89,7 +89,9 @@ esp_err_t td_device_idle_get(td_idle_settings_t *out)
     size_t size = sizeof blob;
     err = nvs_get_blob(handle, "idle", blob, &size);
     nvs_close(handle);
-    if (err == ESP_ERR_NVS_NOT_FOUND || err == ESP_ERR_NVS_INVALID_LENGTH || err == ESP_ERR_NVS_TYPE_MISMATCH) return ESP_OK;
+    if (err == ESP_ERR_NVS_NOT_FOUND || err == ESP_ERR_NVS_INVALID_LENGTH || err == ESP_ERR_NVS_TYPE_MISMATCH) {
+        return ESP_OK;
+    }
     if (err != ESP_OK) return err;
     const td_idle_settings_t stored = {
         .enabled = blob[1] != 0, .timeout_s = get_u32(blob + 2), .interval_s = get_u32(blob + 6),

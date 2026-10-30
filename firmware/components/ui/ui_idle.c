@@ -19,12 +19,6 @@
 
 static const char *TAG = "idle";
 
-/*
- * The idle face covers the Page while power_idle_face() says so: the photo frame's picture, or the clock. Its objects
- * live on the deck's screen, so screenshots show it, and a layout reload, which cleans that screen, deletes them; the
- * next tick builds them again. The objects, the picture and its pixels belong to the LVGL task, and ui_idle_picture
- * swaps a picture in under the adapter lock. The clock and the interval come from the link task under s_lock.
- */
 static struct {
     lv_obj_t *face;
     lv_obj_t *picture;
@@ -92,8 +86,7 @@ static void build_face(void)
     ESP_LOGI(TAG, "face up");
 }
 
-/* Picks the picture or the clock and updates the time. The caller holds the adapter lock with the face built. */
-static void refresh(int64_t now_us)
+static void refresh_locked(int64_t now_us)
 {
     portENTER_CRITICAL(&s_lock);
     const td_clock_t clock = s_clock;
@@ -130,7 +123,7 @@ static void tick(lv_timer_t *timer)
     } else if (lv_obj_get_index(s.face) != (int32_t)lv_obj_get_child_count(lv_screen_active()) - 1) {
         lv_obj_move_to_index(s.face, -1);
     }
-    refresh(esp_timer_get_time());
+    refresh_locked(esp_timer_get_time());
 }
 
 void ui_idle_start(void)
@@ -256,7 +249,7 @@ ui_picture_t ui_idle_picture(const uint8_t *jpeg, size_t len)
     lv_obj_center(s.picture);
     s.pixels = d.pixels;
     s.picture_us = esp_timer_get_time();
-    refresh(s.picture_us);
+    refresh_locked(s.picture_us);
     esp_lv_adapter_unlock();
     heap_caps_free(old);
     ESP_LOGI(TAG, "picture %ux%u from %u bytes, decoded in %u ms", (unsigned)jd.width, (unsigned)jd.height,
