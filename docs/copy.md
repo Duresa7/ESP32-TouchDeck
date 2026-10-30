@@ -210,6 +210,17 @@ Opens from the Device's name.
 | Brightness label | Brightness |
 | Screen timeout label | Screen off after |
 | Screen timeout hint | {duration} without a touch. Touch to wake. |
+| Photo frame label | Photo frame |
+| Photo frame hint | Pictures from this PC when {device} sits idle, or a clock when Open TouchDeck isn't running. |
+| Photo frame idle time label | Start after |
+| Photo frame idle time options | 30 s, 1 min, 2 min, 5 min, 10 min, 15 min, 30 min, 1 hr |
+| Photo frame folder label | Folder |
+| Photo frame folder, none | No folder chosen |
+| Photo frame folder button | Choose folder |
+| Photo frame folder hint | Nothing is stored on {device}. |
+| Photo frame folder hint, in a browser | Choose a folder in the Open TouchDeck app. |
+| Photo frame folder error, folder gone | That folder isn't on this PC anymore. Choose another. |
+| Photo frame folder dialog title | Choose a folder for the photo frame |
 | Firmware label | Firmware |
 | Firmware, current | Firmware {version} · Up to date |
 | Firmware, behind | Firmware {version} · {latest} available |

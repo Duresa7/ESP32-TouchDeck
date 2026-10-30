@@ -39,3 +39,20 @@ TEST_CASE("Device name persists through repeated NVS opens and refused writes", 
     TEST_ASSERT_EQUAL(ESP_OK, read);
     TEST_ASSERT_EQUAL_STRING("Test Device", stored);
 }
+
+TEST_CASE("idle settings persist through NVS and an out-of-range set changes nothing", "[td_link]")
+{
+    td_idle_settings_t old, stored;
+    TEST_ASSERT_EQUAL(ESP_OK, td_device_idle_get(&old));
+    const td_idle_settings_t next = { .enabled = true, .timeout_s = 120, .interval_s = 30 };
+    const td_idle_settings_t outside = { .enabled = true, .timeout_s = 9, .interval_s = 30 };
+    TEST_ASSERT_EQUAL(ESP_OK, td_device_idle_set(&next));
+    esp_err_t rejected = td_device_idle_set(&outside);
+    esp_err_t read = td_device_idle_get(&stored);
+    TEST_ASSERT_EQUAL(ESP_OK, td_device_idle_set(&old));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, rejected);
+    TEST_ASSERT_EQUAL(ESP_OK, read);
+    TEST_ASSERT_TRUE(stored.enabled);
+    TEST_ASSERT_EQUAL_UINT32(120, stored.timeout_s);
+    TEST_ASSERT_EQUAL_UINT32(30, stored.interval_s);
+}

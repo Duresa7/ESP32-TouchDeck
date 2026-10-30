@@ -468,12 +468,16 @@ Feature modules `devices`, `ports` and `console`.
 | `devices.disconnect` | `POST /devices/{device}/disconnect` | → `DeviceSummary` with `link.state: "disconnected"`. Releases the port until replug or Connect |
 | `devices.forget` | `DELETE /devices/{device}` | → `()`. Only for a Device that isn't connected; a connected one gives 409 `device.connected` |
 | `devices.restart` | `POST /devices/{device}/restart` | → `()`, then `device.updated` events |
-| `devices.settings_get` | `GET /devices/{device}/settings` | → `DeviceSettings {idle_timeout_s, orientation, name?, brightness?}`. v2 fields are `null` on v1 Firmware. `brightness` is a percentage from 0 to 100 |
-| `devices.settings_patch` | `PATCH /devices/{device}/settings` | `DeviceSettingsPatch`, every field optional → `{settings, restart_required}`. A v2 field on v1 Firmware gives 409 `device.needs_firmware`. A `brightness` above 100 gives 400 `request.invalid` first |
+| `devices.settings_get` | `GET /devices/{device}/settings` | → `DeviceSettings {idle_timeout_s, orientation, name?, brightness?, photo_frame?}`. v2 fields are `null` on v1 Firmware. `brightness` is a percentage from 0 to 100. `photo_frame` is `PhotoFrameSettings`, below, and `null` on Firmware without the photo frame |
+| `devices.settings_patch` | `PATCH /devices/{device}/settings` | `DeviceSettingsPatch`, every field optional → `{settings, restart_required}`. A v2 field on v1 Firmware gives 409 `device.needs_firmware`. A `brightness` above 100 gives 400 `request.invalid` first. `photo_frame` takes `PhotoFramePatch`, below |
 | `new_boards.list` | `GET /new-boards` | → `NewBoard[]` |
 | `ports.list` | `GET /ports` | → `PortProbe[]`, today's `Candidate` plus `usb_serial`. Never opens a port that a link holds |
 | `ports.rescan` | `POST /ports/rescan` | → `()` |
 | `console.send` | `POST /devices/{device}/console` | `{line}` → `()`. One line, at most 256 printable ASCII bytes, allowlist below |
+
+`PhotoFrameSettings` is `{enabled, timeout_s, interval_s, folder}`. The Device keeps the first three, from [link-v2.md](../schema/protocol/link-v2.md) "Photo frame, idle, and clock": `enabled` turns photo idle mode on, `timeout_s` is the idle time before the photo frame or clock shows, from 10 to 86400, and `interval_s` is the time between pictures, from 5 to 3600. The Companion keeps `folder` per Device in `photo-frame.json` in its data folder: the full path of a folder on this computer, or `null`. `PhotoFramePatch` has the same fields, each optional. A `folder` of `""` clears it. A time out of range, or a folder that is not the full path of an existing folder, gives 400 `request.invalid`. Firmware without `photo-frame` and `clock` in `caps.tile_kinds` and a nonzero `caps.photo_bytes` gives 409 `device.needs_firmware` with `details.field` `photo_frame`.
+
+While a Device is connected with the photo frame on and a folder set, the Companion sends it one picture per interval while it is idle. It reads JPEG and PNG files at the folder's top level only, skips files it cannot read or decode, follows no links, and fits each picture to the screen as a JPEG within `caps.photo_bytes`. It sets the Device's clock on connect, every 10 minutes, and when the time zone changes.
 
 The Companion owns this exact allowlist, derived from registrations and handlers under `firmware/components`. A line must contain 1 to 256 bytes in `0x20..0x7e`; CR, LF, tabs, DEL and all other control or non-ASCII bytes are forbidden. Split on ASCII spaces, require the exact command, subcommand and argument count below, and reject quotes, escapes and command separators. Anything else returns 403 `console.forbidden` before reaching the Device.
 

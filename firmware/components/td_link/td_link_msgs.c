@@ -99,7 +99,7 @@ static void hello(const cJSON *request, cJSON *reply)
         snprintf(id, sizeof id, "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
         cJSON_AddStringToObject(reply, "id", id);
         cJSON_AddStringToObject(reply, "name", name);
-        cJSON *caps = cJSON_Parse("{\"screen\":[1024,600],\"grid\":[8,8],\"pages\":8,\"tiles\":64,\"layout_bytes\":32768,\"layout_schemas\":[1,2],\"tile_kinds\":[\"static\"],\"asset_bytes\":12300,\"formats\":[\"tdi1\"],\"image\":[64,64],\"gif_frames\":0,\"gif_pixels\":0,\"photo_bytes\":0,\"live_hz\":0,\"live_total_hz\":0,\"series\":0,\"text_bytes\":0,\"streams\":0}");
+        cJSON *caps = cJSON_Parse("{\"screen\":[1024,600],\"grid\":[8,8],\"pages\":8,\"tiles\":64,\"layout_bytes\":32768,\"layout_schemas\":[1,2],\"tile_kinds\":[\"static\",\"photo-frame\",\"clock\"],\"asset_bytes\":12300,\"formats\":[\"tdi1\"],\"image\":[64,64],\"gif_frames\":0,\"gif_pixels\":0,\"photo_bytes\":131072,\"live_hz\":0,\"live_total_hz\":0,\"series\":0,\"text_bytes\":0,\"streams\":0}");
         if (strcmp(ui_layout_slot(), "portrait") == 0) {
             const int screen[] = {600, 1024};
             cJSON_ReplaceItemInObjectCaseSensitive(caps, "screen", cJSON_CreateIntArray(screen, 2));
@@ -270,6 +270,11 @@ static const struct {
     { "v2.asset.put", td_link_asset_put },
     { "v2.asset.end", td_link_asset_end },
     { "v2.asset.delete", td_link_asset_delete },
+    { "v2.photo.put", td_link_photo_put },
+    { "v2.photo.end", td_link_photo_end },
+    { "v2.idle.get", td_link_idle_get },
+    { "v2.idle.set", td_link_idle_set },
+    { "v2.clock.set", td_link_clock_set },
 };
 
 #define ECHO_CHARS_MAX 64
