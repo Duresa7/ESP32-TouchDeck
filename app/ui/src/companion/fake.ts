@@ -194,7 +194,6 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     const bearer = protocols.find((p) => p.startsWith('touchdeck.bearer.'));
     const token = bearer?.slice('touchdeck.bearer.'.length) ?? '';
     const socket = new FakeSocket(sockets, token);
-    // The Companion refuses the upgrade with an HTTP error, which a page sees only as close 1006.
     if (!new URL(url).pathname.endsWith('/api/v1/events') || !protocols.includes('touchdeck.v1') || sessions.status(token) !== 'live') {
       socket.close(1006);
       return socket;
