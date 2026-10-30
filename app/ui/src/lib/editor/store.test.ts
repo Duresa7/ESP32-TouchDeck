@@ -31,7 +31,7 @@ let jobs: JobsStore;
 let storage: ReturnType<typeof memoryStorage>;
 
 function editor(overrides: Partial<EditorDeps> = {}): EditorStore {
-  return createEditorStore({ companion, storage, wait: (job) => waitForJob(jobs, companion, job, 10), ...overrides });
+  return createEditorStore({ companion, storage, wait: (job) => waitForJob(jobs, companion, job, { pollMs: 10 }), ...overrides });
 }
 
 const state = (store: EditorStore) => store.getState();
@@ -376,7 +376,7 @@ describe('send and load', () => {
     const devices = createDevicesStore();
     const events: Events = openEvents({ url: 'ws://127.0.0.1:51234/api/v1/events', session: windowSession(fake.bridge), store: devices, jobs, open: fake.openSocket });
     await vi.waitFor(() => expect(devices.getState().status).toBe('live'));
-    const store = editor({ wait: (job) => waitForJob(jobs, companion, job, 60_000) });
+    const store = editor({ wait: (job) => waitForJob(jobs, companion, job, { pollMs: 60_000 }) });
     store.open(DESK);
     store.startStarter();
     await store.push();

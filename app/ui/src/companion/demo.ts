@@ -1,6 +1,8 @@
-import type { Delivery, DeviceSummary } from './api.ts';
+import type { AssetSource, Delivery, DeviceSummary } from './api.ts';
 import type { Environment } from './connection.ts';
 import { createFakeCompanion } from './fake.ts';
+import type { FakeSearch } from './fake-assets.ts';
+import { worstCaseHits } from './fake-catalog-worst.ts';
 import { createFakeUpdates, sampleOffer, type FakeUpdates } from './fake-updates.ts';
 import { demoLayout, demoScenario } from './samples.ts';
 import { windowSession, type UpdateCheck } from './session.ts';
@@ -33,6 +35,13 @@ declare global {
       topics(): string[];
       setHub(up: boolean): void;
       deliver(entry: Delivery): void;
+      assets: {
+        offline(on: boolean): void;
+        holdSearches(on: boolean): void;
+        failRender(id: string): void;
+        searches(): FakeSearch[];
+        created(): AssetSource[];
+      };
     };
   }
 }
@@ -49,6 +58,7 @@ export function demoEnvironment(target: Window): Environment {
     brightness: Object.fromEntries(devices.filter((_, i) => i % 3 !== 2).map((d) => [d.id, 80])),
     browsers: params.get('browsers') === '0' ? [] : browsers,
     integrations: { configured: params.get('integrations') !== 'new', delivery: devices.map((d) => ({ device: d.id, sent: 42, error: null })) },
+    assets: params.get('icons') === 'worst' ? { hits: worstCaseHits() } : {},
   });
   const update = params.get('update');
   const updates = createFakeUpdates({ check: isCheckName(update) ? checks[update] : checks.none });
@@ -61,6 +71,13 @@ export function demoEnvironment(target: Window): Environment {
     topics: () => fake.topics.flat(),
     setHub: (up) => fake.integrations.setHub(up),
     deliver: (entry) => fake.integrations.deliver(entry),
+    assets: {
+      offline: (on) => fake.assets.setOffline(on),
+      holdSearches: (on) => fake.assets.holdSearches(on),
+      failRender: (id) => fake.assets.failRender(id),
+      searches: () => fake.assets.searches.map((s) => ({ ...s })),
+      created: () => structuredClone([...fake.assets.created]),
+    },
   };
   const network = target.fetch.bind(target);
   target.fetch = (input, init) => {

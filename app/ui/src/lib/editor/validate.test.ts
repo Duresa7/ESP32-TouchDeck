@@ -16,6 +16,7 @@ import {
   removeTile,
   resizeTile,
   setAction,
+  setAsset,
   setFullScreen,
   setGridSize,
   setIcon,
@@ -179,6 +180,22 @@ test('labels and icons follow the schema', () => {
   ok(setIcon(layout, 'main', 'a', 'lv:mute'));
   assert.match(refused(setIcon(layout, 'main', 'a', 'lv:nope')), /^icon\.format: /);
 });
+
+test('an Asset on a Tile makes the Layout schema 2 until no Tile uses one', () => {
+  const id = 'ab'.repeat(32);
+  const withAsset = ok(setAsset(setIconOk(small(), 'lv:mute'), 'main', 'a', id));
+  assert.equal(withAsset.schema, 2);
+  assert.deepEqual([grid(withAsset, 'main').tiles[0].icon, grid(withAsset, 'main').tiles[0].asset], [null, `sha256:${id}`]);
+  assert.equal(parseLayout(canonical(withAsset)).ok, true);
+  const back = ok(setIcon(withAsset, 'main', 'a', 'lv:next'));
+  assert.equal(back.schema, 1);
+  assert.equal(Object.hasOwn(grid(back, 'main').tiles[0], 'asset'), false);
+  assert.match(refused(setAsset(small(), 'main', 'a', 'not-a-hash')), /^icon\.format: /);
+});
+
+function setIconOk(layout: Layout, icon: string): Layout {
+  return ok(setIcon(layout, 'main', 'a', icon));
+}
 
 test('removeTile drops only that tile', () => {
   assert.deepEqual(

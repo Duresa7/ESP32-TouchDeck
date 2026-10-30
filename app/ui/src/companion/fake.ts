@@ -1,6 +1,7 @@
 import type { DeviceSummary, FirmwareBuild, Layout, SystemInfo } from './api.ts';
 import { CLOSE_SESSION, type EventSocket } from './events.ts';
 import { createFakeActions } from './fake-actions.ts';
+import { createFakeAssets, type FakeAssetsOptions } from './fake-assets.ts';
 import { createFakeConsole } from './fake-console.ts';
 import { createFakeDeviceSettings } from './fake-device-settings.ts';
 import { createFakeFirmware } from './fake-firmware.ts';
@@ -31,6 +32,7 @@ export interface FakeCompanionOptions {
   startAtSignIn?: boolean;
   /** How CLIProxyAPI starts: not set up unless `configured`. */
   integrations?: Omit<FakeIntegrationsOptions, 'publish'>;
+  assets?: Omit<FakeAssetsOptions, 'publish'>;
 }
 
 type Frame = Record<string, unknown> & { type: string };
@@ -110,6 +112,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   const startup = createFakeStartup(options.startAtSignIn);
   const consoles = createFakeConsole({ devices, publish });
   const integrations = createFakeIntegrations({ publish, ...options.integrations });
+  const assets = createFakeAssets({ publish, ...options.assets });
 
   function mint() {
     minted += 1;
@@ -166,6 +169,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
       return found ? json(200, found) : failure(404, 'device.not_found', 'No Device with that id.');
     }
     return (
+      (await assets.handle(request, path)) ??
       (await settings.handle(request, path)) ??
       (await firmware.handle(request, path)) ??
       (await layouts.handle(request, path)) ??
@@ -185,7 +189,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     }
     sockets.add(socket);
     socket.push({ type: 'hello', api: 'v1', build: system.build, session: { id: 'fake-session', kind: 'window' } });
-    socket.push({ type: 'sync', data: { devices: [...devices.values()], jobs: [...layouts.jobs(), ...firmware.jobs()], approvals: actions.pending(), integrations: integrations.list() } });
+    socket.push({ type: 'sync', data: { devices: [...devices.values()], jobs: [...layouts.jobs(), ...firmware.jobs(), ...assets.jobs()], approvals: actions.pending(), integrations: integrations.list() } });
     return socket;
   }
 
@@ -200,6 +204,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     startup,
     consoles,
     integrations,
+    assets,
     /** Sessions minted so far through the bridge. */
     get minted() {
       return minted;

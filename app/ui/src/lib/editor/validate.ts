@@ -22,6 +22,7 @@ export interface Tile {
   rowSpan: number;
   colSpan: number;
   icon: string | null;
+  asset?: string | null;
   action: Action;
 }
 
@@ -44,7 +45,7 @@ interface DashboardPage {
 export type Page = GridPage | DashboardPage;
 
 export interface Layout {
-  schema: 1;
+  schema: 1 | 2;
   name: string;
   orientation: Orientation;
   fullScreen?: boolean;
@@ -502,11 +503,31 @@ export function setLabel(layout: Layout, page: string, id: string, label: string
   });
 }
 
+const usesAssets = (layout: Layout) => layout.pages.some((page) => page.kind === 'grid' && page.tiles.some((tile) => tile.asset != null));
+
+function iconEdit(layout: Layout, page: string, id: string, icon: string | null, asset: string | null): Edit {
+  const next = copy(layout);
+  const grid = gridOf(next, page);
+  if (typeof grid === 'string') return refuse(grid);
+  const tile = grid.tiles.find((candidate) => candidate.id === id);
+  if (!tile) return refuse(`no tile ${id}`);
+  tile.icon = icon;
+  if (asset === null) delete tile.asset;
+  else tile.asset = asset;
+  next.schema = usesAssets(next) ? 2 : 1;
+  return checked(next);
+}
+
 export function setIcon(layout: Layout, page: string, id: string, icon: string | null): Edit {
-  return editTile(layout, page, id, (grid, index) => {
-    grid.tiles[index].icon = icon;
-    return null;
-  });
+  return iconEdit(layout, page, id, icon, null);
+}
+
+export function setAsset(layout: Layout, page: string, id: string, asset: string): Edit {
+  return iconEdit(layout, page, id, null, `sha256:${asset}`);
+}
+
+export function assetOf(tile: Pick<Tile, 'asset'>): string | null {
+  return tile.asset?.startsWith('sha256:') ? tile.asset.slice('sha256:'.length) : null;
 }
 
 export function removeTile(layout: Layout, page: string, id: string): Edit {
