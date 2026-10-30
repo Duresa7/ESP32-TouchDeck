@@ -4,6 +4,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include "esp_heap_caps.h"
+#include "td_update_state.h"
 
 extern const char k_builtin_start[] asm("_binary_builtin_json_start");
 extern const char k_builtin_end[] asm("_binary_builtin_json_end");
@@ -85,6 +86,16 @@ bool td_layout_load_file(const char *path, td_layout_t **out, size_t *file_bytes
     }
     *file_bytes = n;
     const bool ok = td_layout_parse(buf, n, out, err);
+    if (ok) {
+        td_sha256_t sha;
+        uint8_t digest[TD_SHA256_BYTES];
+        td_sha256_init(&sha);
+        td_sha256_update(&sha, (const uint8_t *)buf, n);
+        td_sha256_final(&sha, digest);
+        for (size_t i = 0; i < TD_SHA256_BYTES; i++) {
+            snprintf((*out)->sha256 + 2 * i, 3, "%02x", digest[i]);
+        }
+    }
     free(buf);
     return ok;
 }

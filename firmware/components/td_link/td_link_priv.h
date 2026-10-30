@@ -46,6 +46,9 @@ void td_link_xfer_end(const cJSON *request, cJSON *reply);
 void td_link_update_begin(const cJSON *request, cJSON *reply);
 void td_link_update_end(const cJSON *request, cJSON *reply);
 void td_link_asset_stat(const cJSON *request, cJSON *reply);
+
+/* v2.live.set: checks the request's fields and hands the value to the Layout on screen. */
+void td_link_live_set(const cJSON *request, cJSON *reply);
 void td_link_asset_list(const cJSON *request, cJSON *reply);
 void td_link_asset_put(const cJSON *request, cJSON *reply);
 void td_link_asset_end(const cJSON *request, cJSON *reply);

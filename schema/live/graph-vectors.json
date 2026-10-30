@@ -1,0 +1,171 @@
+{
+  "about": "Shared graph geometry vectors. firmware/components/td_ui_core/ui_graph.c and app/ui/src/lib/deck/graph.ts must produce these points.",
+  "cases": [
+    {
+      "name": "cpu percent grows in from the right",
+      "cap": 32,
+      "w": 200,
+      "h": 80,
+      "samples": [12.5, 30, 47.25, 8, 99.9],
+      "range": [0, 100],
+      "points": [
+        [173, 69],
+        [179, 55],
+        [186, 42],
+        [192, 73],
+        [199, 0]
+      ]
+    },
+    {
+      "name": "full history fills the width",
+      "cap": 32,
+      "w": 218,
+      "h": 96,
+      "samples": [50, 63.1, 74.7, 83.7, 88.9, 89.8, 86.4, 78.9, 68.3, 55.6, 42.4, 29.9, 19.7, 12.8, 10, 11.6, 17.5, 26.9, 38.8, 52, 65, 76.3, 84.7, 89.3, 89.6, 85.5, 77.5, 66.5, 53.7, 40.4, 28.2, 18.5],
+      "range": [0, 100],
+      "points": [
+        [0, 47],
+        [7, 35],
+        [14, 24],
+        [21, 15],
+        [28, 11],
+        [35, 10],
+        [42, 13],
+        [49, 20],
+        [56, 30],
+        [63, 42],
+        [70, 55],
+        [77, 67],
+        [84, 76],
+        [91, 83],
+        [98, 85],
+        [105, 84],
+        [112, 78],
+        [119, 69],
+        [126, 58],
+        [133, 46],
+        [140, 33],
+        [147, 23],
+        [154, 15],
+        [161, 10],
+        [168, 10],
+        [175, 14],
+        [182, 21],
+        [189, 32],
+        [196, 44],
+        [203, 57],
+        [210, 68],
+        [217, 77]
+      ]
+    },
+    {
+      "name": "negative values get a round floor",
+      "cap": 8,
+      "w": 100,
+      "h": 50,
+      "samples": [-3, 2, -0.5],
+      "range": [-5, 2],
+      "points": [
+        [70, 35],
+        [84, 0],
+        [99, 17]
+      ]
+    },
+    {
+      "name": "all zeros span 0 to 1",
+      "cap": 8,
+      "w": 64,
+      "h": 32,
+      "samples": [0, 0, 0],
+      "range": [0, 1],
+      "points": [
+        [45, 31],
+        [54, 31],
+        [63, 31]
+      ]
+    },
+    {
+      "name": "one sample sits on the right edge",
+      "cap": 32,
+      "w": 200,
+      "h": 80,
+      "samples": [5],
+      "range": [0, 5],
+      "points": [
+        [199, 0]
+      ]
+    },
+    {
+      "name": "small fractions use a fractional ceiling",
+      "cap": 4,
+      "w": 40,
+      "h": 21,
+      "samples": [0.012, 0.37],
+      "range": [0, 0.5],
+      "points": [
+        [26, 20],
+        [39, 5]
+      ]
+    },
+    {
+      "name": "the contract maximum",
+      "cap": 4,
+      "w": 40,
+      "h": 21,
+      "samples": [1000000000, 250000000, -1000000000],
+      "range": [-1000000000, 1000000000],
+      "points": [
+        [13, 0],
+        [26, 7],
+        [39, 20]
+      ]
+    },
+    {
+      "name": "an area under 2 pixels draws nothing",
+      "cap": 4,
+      "w": 1,
+      "h": 40,
+      "samples": [1, 2],
+      "range": [0, 2],
+      "points": []
+    },
+    {
+      "name": "only the newest cap samples show",
+      "cap": 4,
+      "w": 31,
+      "h": 11,
+      "samples": [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
+      "range": [0, 5],
+      "points": [
+        [0, 4],
+        [10, 6],
+        [20, 8],
+        [30, 10]
+      ]
+    },
+    {
+      "name": "exact powers of ten are their own ceiling",
+      "cap": 3,
+      "w": 30,
+      "h": 11,
+      "samples": [10, 20, 50.0001],
+      "range": [0, 100],
+      "points": [
+        [0, 9],
+        [14, 8],
+        [29, 5]
+      ]
+    },
+    {
+      "name": "one-slot graph",
+      "cap": 1,
+      "w": 30,
+      "h": 11,
+      "samples": [3],
+      "range": [0, 5],
+      "points": [
+        [29, 4]
+      ]
+    }
+  ]
+}

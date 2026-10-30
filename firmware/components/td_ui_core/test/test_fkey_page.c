@@ -10,8 +10,8 @@
 #include "td_layout.h"
 
 /* A tile with no icon and no action, as the page geometry tests need. */
-#define TILE(id, label, row, col, row_span, col_span) \
-    { id, label, row, col, row_span, col_span, NULL, { .type = TD_ACTION_NONE } }
+#define TILE(i, l, r, c, rs, cs) \
+    { .id = i, .label = l, .row = r, .col = c, .row_span = rs, .col_span = cs, .action = { .type = TD_ACTION_NONE } }
 
 typedef struct {
     unsigned key_calls;
@@ -210,7 +210,8 @@ TEST_CASE("a press that starts on a tile and turns into a swipe, a drag or a mov
 TEST_CASE("a tile does only what its own action says, whatever its id", "[fkey_page]")
 {
     const ui_tile_t shift_as_key = {
-        "shift", "Shift", 0, 0, 1, 1, NULL, { .type = TD_ACTION_KEY, .key = { .usage = 62, .mods = 1 | 2 } },
+        .id = "shift", .label = "Shift", .row = 0, .col = 0, .row_span = 1, .col_span = 1,
+        .action = { .type = TD_ACTION_KEY, .key = { .usage = 62, .mods = 1 | 2 } },
     };
     recorder_t rec = { 0 };
     TEST_ASSERT_TRUE(ui_tile_click(&shift_as_key, &k_ops, &rec));

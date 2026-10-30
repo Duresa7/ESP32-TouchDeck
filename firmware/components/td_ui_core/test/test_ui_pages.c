@@ -8,8 +8,8 @@
 #include "ui_pages.h"
 
 /* A tile with no icon and no action, as the page geometry tests need. */
-#define TILE(id, label, row, col, row_span, col_span) \
-    { id, label, row, col, row_span, col_span, NULL, { .type = TD_ACTION_NONE } }
+#define TILE(i, l, r, c, rs, cs) \
+    { .id = i, .label = l, .row = r, .col = c, .row_span = rs, .col_span = cs, .action = { .type = TD_ACTION_NONE } }
 
 #define GAP 16
 #define MAX_IDS 64

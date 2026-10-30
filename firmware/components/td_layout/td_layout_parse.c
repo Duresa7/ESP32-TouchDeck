@@ -645,16 +645,28 @@ static bool check_action(const cJSON *a, const char *tile_where, td_layout_error
     return true;
 }
 
+static const char *const k_stream_types[] = { "number", "series", "text", "image" };
+
+static int stream_type(const cJSON *v)
+{
+    for (int i = 0; cJSON_IsString(v) && i < (int)(sizeof k_stream_types / sizeof k_stream_types[0]); i++) {
+        if (strcmp(v->valuestring, k_stream_types[i]) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 static bool check_tile(const cJSON *t, int page, int index, bool v2, td_layout_error_t *err)
 {
-    static const char *const members[] = { "id", "label", "row", "col", "rowSpan", "colSpan", "icon", "action", "asset", "render" };
+    static const char *const members[] = { "id", "label", "row", "col", "rowSpan", "colSpan", "icon", "action", "asset", "render", "streams" };
     char where[48];
     char field[64];
     snprintf(where, sizeof where, "/pages/%d/tiles/%d", page, index);
     if (!cJSON_IsObject(t)) {
         return fail(err, "shape.type", "%s must be object", where);
     }
-    if (!check_some_members(t, where, members, v2 ? 10 : 8, 8, err)) {
+    if (!check_some_members(t, where, members, v2 ? 11 : 8, 8, err)) {
         return false;
     }
 #define FIELD(name) (snprintf(field, sizeof field, "%s/%s", where, name), field)
@@ -689,8 +701,21 @@ static bool check_tile(const cJSON *t, int page, int index, bool v2, td_layout_e
         }
     }
     const cJSON *render = member(t, "render");
-    if (render && (!cJSON_IsString(render) || strcmp(render->valuestring, "gif") || !cJSON_IsString(asset))) {
-        return fail(err, "icon.format", "%s/render must be gif with an Asset reference", where);
+    const bool gif = cJSON_IsString(render) && strcmp(render->valuestring, "gif") == 0;
+    const bool graph = cJSON_IsString(render) && strcmp(render->valuestring, "graph") == 0;
+    if (render && !graph && (!gif || !cJSON_IsString(asset))) {
+        return fail(err, "icon.format", "%s/render must be graph, or gif with an Asset reference", where);
+    }
+    const cJSON *streams = member(t, "streams");
+    if (streams != NULL) {
+        if (!cJSON_IsObject(streams)) {
+            return fail(err, "shape.type", "%s/streams must be object", where);
+        }
+        for (const cJSON *s = streams->child; s != NULL; s = s->next) {
+            if (stream_type(s) < 0) {
+                return fail(err, "tile.streams", "%s/streams types must be number, series, text or image", where);
+            }
+        }
     }
     return check_action(member(t, "action"), where, err);
 }
@@ -918,6 +943,22 @@ static bool check_semantics(const cJSON *root, td_layout_error_t *err)
                     break;
                 }
             }
+            const cJSON *render = member(t, "render");
+            const bool graph = cJSON_IsString(render) && strcmp(render->valuestring, "graph") == 0;
+            const cJSON *streams = member(t, "streams");
+            for (const cJSON *s = streams != NULL ? streams->child : NULL; ok && s != NULL; s = s->next) {
+                const int type = stream_type(s);
+                if (!graph || strcmp(s->string, "value") != 0 || (type != UI_STREAM_NUMBER && type != UI_STREAM_SERIES)) {
+                    ok = fail(err, "tile.streams", "page \"%s\" tile \"%s\" cannot bind stream \"%s\" as \"%s\"", page_id,
+                              id, s->string, s->valuestring);
+                }
+            }
+            if (ok && graph && member(streams, "value") == NULL) {
+                ok = fail(err, "tile.streams", "page \"%s\" tile \"%s\" needs stream \"value\"", page_id, id);
+            }
+            if (!ok) {
+                break;
+            }
             const int row = member(t, "row")->valueint;
             const int col = member(t, "col")->valueint;
             const int row_span = member(t, "rowSpan")->valueint;
@@ -1001,6 +1042,7 @@ static bool build(const cJSON *root, td_layout_t **out, td_layout_error_t *err)
     const cJSON *pages = member(root, "pages");
     size_t page_count = 0;
     size_t tile_count = 0;
+    size_t stream_count = 0;
     size_t strings = text_bytes(member(root, "name"));
     for (const cJSON *p = pages->child; p != NULL; p = p->next, page_count++) {
         strings += text_bytes(member(p, "id")) + text_bytes(member(p, "title")) + text_bytes(member(p, "source"));
@@ -1008,6 +1050,10 @@ static bool build(const cJSON *root, td_layout_t **out, td_layout_error_t *err)
         for (const cJSON *t = tiles != NULL ? tiles->child : NULL; t != NULL; t = t->next, tile_count++) {
             const cJSON *a = member(t, "action");
             strings += text_bytes(member(t, "id")) + text_bytes(member(t, "label")) + text_bytes(member(t, "icon")) + text_bytes(member(t, "asset"));
+            const cJSON *streams = member(t, "streams");
+            for (const cJSON *s = streams != NULL ? streams->child : NULL; s != NULL; s = s->next, stream_count++) {
+                strings += strlen(s->string) + 1;
+            }
             if (strcmp(member(a, "type")->valuestring, "widget") == 0) {
                 strings += text_bytes(member(a, "source")) + text_bytes(member(a, "field")) +
                            text_bytes(member(a, "account"));
@@ -1018,16 +1064,18 @@ static bool build(const cJSON *root, td_layout_t **out, td_layout_error_t *err)
     const size_t head = align8(sizeof(td_layout_t));
     const size_t page_bytes = align8(page_count * sizeof(ui_page_t));
     const size_t tile_bytes = align8(tile_count * sizeof(ui_tile_t));
-    const size_t total = head + page_bytes + tile_bytes + strings;
+    const size_t stream_bytes = align8(stream_count * sizeof(ui_stream_t));
+    const size_t total = head + page_bytes + tile_bytes + stream_bytes + strings;
     uint8_t *arena = arena_alloc(total);
     if (arena == NULL) {
         return fail(err, "internal.no-memory", "no memory for a layout of %u bytes", (unsigned)total);
     }
-    memset(arena, 0, head + page_bytes + tile_bytes);
+    memset(arena, 0, head + page_bytes + tile_bytes + stream_bytes);
     td_layout_t *layout = (td_layout_t *)arena;
     ui_page_t *page_out = (ui_page_t *)(arena + head);
     ui_tile_t *tile_out = (ui_tile_t *)(arena + head + page_bytes);
-    char *next = (char *)(arena + head + page_bytes + tile_bytes);
+    ui_stream_t *stream_out = (ui_stream_t *)(arena + head + page_bytes + tile_bytes);
+    char *next = (char *)(arena + head + page_bytes + tile_bytes + stream_bytes);
 
     layout->schema = (uint8_t)member(root, "schema")->valueint;
     layout->name = put(&next, member(root, "name"));
@@ -1061,6 +1109,20 @@ static bool build(const cJSON *root, td_layout_t **out, td_layout_error_t *err)
             tile_out->col_span = (uint8_t)member(t, "colSpan")->valueint;
             tile_out->icon = put(&next, cJSON_IsString(member(t, "asset")) ? member(t, "asset") : member(t, "icon"));
             tile_out->action = build_action(member(t, "action"), pages, &next);
+            const cJSON *render = member(t, "render");
+            tile_out->render = !cJSON_IsString(render)                   ? UI_RENDER_STATIC
+                               : strcmp(render->valuestring, "gif") == 0 ? UI_RENDER_GIF
+                                                                          : UI_RENDER_GRAPH;
+            const cJSON *streams = member(t, "streams");
+            tile_out->streams = stream_out;
+            for (const cJSON *s = streams != NULL ? streams->child : NULL; s != NULL; s = s->next, stream_out++) {
+                const size_t n = strlen(s->string) + 1;
+                memcpy(next, s->string, n);
+                stream_out->id = next;
+                stream_out->type = (ui_stream_type_t)stream_type(s);
+                next += n;
+                tile_out->stream_count++;
+            }
             if (tile_out->icon != NULL && (strncmp(tile_out->icon, "file:", 5) == 0 || strncmp(tile_out->icon, "sha256:", 7) == 0)) {
                 layout->icons_wanted++;
             }

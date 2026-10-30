@@ -64,6 +64,27 @@ typedef struct {
  * "widget". */
 const char *td_action_name(const td_action_t *action);
 
+/* How a tile draws. A schema 1 tile, and a schema 2 tile without `render`, is static. */
+typedef enum {
+    UI_RENDER_STATIC = 0,
+    UI_RENDER_GIF,
+    UI_RENDER_GRAPH,
+} ui_render_t;
+
+/* The value type of a Live tile's stream, as the layout declares it and `v2.live.set` sends it. */
+typedef enum {
+    UI_STREAM_NUMBER = 0,
+    UI_STREAM_SERIES,
+    UI_STREAM_TEXT,
+    UI_STREAM_IMAGE,
+} ui_stream_type_t;
+
+/* One stream of a Live tile: its id, unique on the tile, and its type. */
+typedef struct {
+    const char *id;
+    ui_stream_type_t type;
+} ui_stream_t;
+
 /*
  * One tile on a page's grid. A tile covers row_span by col_span cells from its top-left cell. `id` is the stable name
  * that the console and the layouts use. It is unique across every page. `label` is what the tile shows. `icon` is
@@ -78,6 +99,9 @@ typedef struct {
     uint8_t col_span;
     const char *icon;
     td_action_t action;
+    ui_render_t render;
+    uint8_t stream_count;
+    const ui_stream_t *streams;
 } ui_tile_t;
 
 typedef enum {

@@ -103,6 +103,16 @@ typedef struct {
         int16_t pad;
         int16_t bar_h;
     } dash;
+    /* A graph Tile: its label in the label font left in a `top` tall row, with the unavailable marker "--" at the
+     * row's right end, and a plot area `pad` in from the sides and the bottom under it. The area is the accent mixed
+     * area_mix of 255 into the Tile color with `radius` corners, and the line is line_w wide in the accent. */
+    struct {
+        int16_t pad;
+        int16_t top;
+        int16_t radius;
+        int16_t line_w;
+        uint8_t area_mix;
+    } graph;
     uint16_t anim_settle_ms;
     uint16_t anim_bounce_out_ms;
     uint16_t anim_bounce_back_ms;
@@ -145,6 +155,8 @@ typedef struct {
     lv_style_t bar_track;
     lv_style_t bar_fill;
     lv_style_t dash_row;
+    lv_style_t graph_area;
+    lv_style_t graph_line;
 } ui_styles_t;
 
 lv_color_t ui_color(uint16_t rgb565);

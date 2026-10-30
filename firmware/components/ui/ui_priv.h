@@ -109,6 +109,13 @@ const char *ui_icon_symbol(const char *icon);
  */
 void ui_widget_begin(void);
 
+/* Allocates and binds the live values of a Layout being activated, which clears every value and counter. Runs where
+ * ui_widget_begin does, before the Layout's objects are built and before the old Layout is freed. */
+void ui_live_begin(const td_layout_t *layout);
+
+/* Draws a graph Tile's label, unavailable marker, plot area and line on `obj`, and ties them to its slot. */
+void ui_live_build(lv_obj_t *obj, const ui_tile_t *tile, ui_rect_t rect);
+
 /* Draws a widget tile's value, caption and bar on its tile object and registers the tile in the table. */
 void ui_widget_build(lv_obj_t *obj, const ui_tile_t *tile, ui_rect_t rect);
 

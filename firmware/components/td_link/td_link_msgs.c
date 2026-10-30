@@ -15,7 +15,11 @@
 
 cJSON *td_link_capabilities(void)
 {
-    cJSON *caps = cJSON_Parse("{\"screen\":[1024,600],\"grid\":[8,8],\"pages\":8,\"tiles\":64,\"layout_bytes\":32768,\"layout_schemas\":[1,2],\"tile_kinds\":[\"static\"],\"asset_bytes\":12300,\"formats\":[\"tdi1\"],\"image\":[64,64],\"gif_frames\":0,\"gif_pixels\":0,\"photo_bytes\":0,\"live_hz\":0,\"live_total_hz\":0,\"series\":0,\"text_bytes\":0,\"streams\":0}");
+    cJSON *caps = cJSON_Parse("{\"screen\":[1024,600],\"grid\":[8,8],\"pages\":8,\"tiles\":64,\"layout_bytes\":32768,\"layout_schemas\":[1,2],\"tile_kinds\":[\"static\",\"graph\"],\"asset_bytes\":12300,\"formats\":[\"tdi1\"],\"image\":[64,64],\"gif_frames\":0,\"gif_pixels\":0,\"photo_bytes\":0,\"live_hz\":0,\"live_total_hz\":0,\"series\":0,\"text_bytes\":0,\"streams\":0}");
+    cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "live_hz"), UI_LIVE_HZ);
+    cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "live_total_hz"), UI_LIVE_TOTAL_HZ);
+    cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "series"), UI_LIVE_SERIES_MAX);
+    cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "streams"), UI_LIVE_TILE_STREAMS);
 #if CONFIG_TD_GIF_CAPS
     const td_link_animation_caps_t anim = { .image = {128, 128}, .min_delay_ms = 100, .page_tiles = 4, .page_pixels = 65536 };
     cJSON *object = cJSON_AddObjectToObject(caps, "anim");
@@ -24,9 +28,9 @@ cJSON *td_link_capabilities(void)
     cJSON_AddNumberToObject(object, "page_tiles", anim.page_tiles);
     cJSON_AddNumberToObject(object, "page_pixels", anim.page_pixels);
     const char *formats[] = {"tdi1", "gif"};
-    const char *kinds[] = {"static", "gif"};
+    const char *kinds[] = {"static", "graph", "gif"};
     cJSON_ReplaceItemInObjectCaseSensitive(caps, "formats", cJSON_CreateStringArray(formats, 2));
-    cJSON_ReplaceItemInObjectCaseSensitive(caps, "tile_kinds", cJSON_CreateStringArray(kinds, 2));
+    cJSON_ReplaceItemInObjectCaseSensitive(caps, "tile_kinds", cJSON_CreateStringArray(kinds, 3));
     cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "asset_bytes"), 262144);
     cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "gif_frames"), 60);
     cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "gif_pixels"), 983040);
@@ -90,6 +94,7 @@ static void hello(const cJSON *request, cJSON *reply)
         return;
     }
     td_link_files_select();
+    ui_live_select();
     s_v2 = v2;
     const esp_app_desc_t *app = esp_app_get_description();
     const esp_partition_t *running = esp_ota_get_running_partition();
@@ -292,6 +297,7 @@ static const struct {
     { "v2.asset.put", td_link_asset_put },
     { "v2.asset.end", td_link_asset_end },
     { "v2.asset.delete", td_link_asset_delete },
+    { "v2.live.set", td_link_live_set },
 };
 
 #define ECHO_CHARS_MAX 64

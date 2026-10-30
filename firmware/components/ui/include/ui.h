@@ -6,6 +6,7 @@
 #include "esp_console.h"
 #include "td_layout.h"
 #include "ui_widget_state.h"
+#include "ui_live.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -66,6 +67,13 @@ void ui_set_press_hook(ui_press_hook_t hook);
  * it is offline, every app and widget tile draws at the theme's dim_opa and a tap on one sends nothing. The deck asks
  * on its widget redraw timer, so a change shows within one redraw. */
 void ui_set_link_online(bool (*online)(void));
+
+/* Applies one `v2.live.set` to the Layout on screen, under the live-value lock, and returns why it was refused or
+ * UI_LIVE_OK. *retry_ms is set for UI_LIVE_RATE. */
+ui_live_result_t ui_live_update(const ui_live_set_t *set, uint32_t *retry_ms);
+
+/* A new protocol 2 selection: clears every live value and counter and restarts the rate windows. */
+void ui_live_select(void);
 
 /* True when the online source says the app is connected. */
 bool ui_link_online(void);
