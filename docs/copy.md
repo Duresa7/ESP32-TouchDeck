@@ -1069,6 +1069,24 @@ The coverage script below matches any literal that reads like words. These are i
 
 A script lists the string literals and text nodes in every non-test `.svelte` and `.ts` file under `app/src`, keeps the ones that read as words, and checks that each appears in a row above with its `file:line`. Single lowercase words, such as "seconds" or "never", don't pass its filter, so the rows marked "Added by hand" cover them. When a UI ticket changes a string, it updates the row here.
 
+### This PC Integration
+
+| Element | String |
+|---|---|
+| Integration name | This PC |
+| Unsupported platform | This PC needs Windows. |
+| Unavailable counters | Unavailable: {names}. |
+| Preset tile, `cpu_pct` | CPU usage |
+| Preset tile, `ram_pct` | RAM usage |
+| Preset tile, `ram_used_bytes` | RAM used |
+| Preset tile, `ram_total_bytes` | RAM total |
+| Preset tile, `gpu_pct` | GPU usage |
+| Preset tile, `disk_active_pct` | Disk activity |
+| Preset tile, `disk_read_bytes_s` | Disk read |
+| Preset tile, `disk_write_bytes_s` | Disk write |
+| Preset tile, `network_receive_bytes_s` | Network receive |
+| Preset tile, `network_send_bytes_s` | Network send |
+
 ## Animated GIF Tiles
 
 | State | Copy |

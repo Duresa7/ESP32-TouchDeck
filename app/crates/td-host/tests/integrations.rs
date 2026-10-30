@@ -34,7 +34,7 @@ fn registry_schema_presets_config_and_summaries_never_contain_secret_values() {
     let file = root.join("sources.json");
     let mut r = registry(Recorder::default(), Some(file.clone()));
     let summaries = r.list();
-    assert_eq!(summaries.len(), 1);
+    assert!(summaries.iter().any(|s| s.id == "this_pc"));
     let s = &summaries[0];
     assert_eq!(s.id, "cliproxyapi");
     assert!(
@@ -43,7 +43,7 @@ fn registry_schema_presets_config_and_summaries_never_contain_secret_values() {
             .any(|f| f.name == "management_key" && f.secret)
     );
     assert!(s.presets.iter().any(|p| p.id == "five_hour_pct"));
-    for summary in summaries {
+    for summary in summaries.into_iter().filter(|s| s.id == "cliproxyapi") {
         let i = r.get(&summary.id).unwrap();
         i.configure(config("https://hub.example")).unwrap();
         i.secret_put("management_key", "fixture-private-value")
