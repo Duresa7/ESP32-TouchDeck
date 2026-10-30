@@ -101,6 +101,7 @@ export interface DeviceCanvasProps {
   adding: Target | null;
   long: number;
   actualSize: boolean;
+  firmwareBadge?: (tile: Tile) => string | null;
 }
 
 function readRatio(name: string, fallback: number) {
@@ -114,7 +115,7 @@ export function deviceAspect(): number {
   return (1 - 2 * pad) * (PANEL_H / PANEL_W) + 2 * pad;
 }
 
-export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, long, actualSize }: DeviceCanvasProps) {
+export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, long, actualSize, firmwareBadge }: DeviceCanvasProps) {
   const editing = mode === 'edit';
   const g: Geometry = useMemo(() => geometry(screenSize(layout.orientation), layout.fullScreen === true), [layout.orientation, layout.fullScreen]);
   const index = Math.max(0, layout.pages.findIndex((p) => p.id === pageId));
@@ -486,6 +487,7 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
           const tile = page.tiles.find((t) => t.id === tv.id)!;
           const mod = tile.action.type === 'mod' ? mods[tile.action.mod] : undefined;
           const isSelected = editing && selected === tile.id;
+          const badge = firmwareBadge?.(tile) ?? null;
           return (
             <div
               key={tile.id}
@@ -500,6 +502,7 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
                 drag?.moved && drag.tile === tile.id && drag.mode === 'move' && 'is-moving',
                 mod === 'one-shot' && 'is-one-shot',
                 mod === 'locked' && 'is-locked',
+                badge !== null && 'needs-firmware',
               )}
               style={{ left: tv.rect.x, top: tv.rect.y, width: tv.rect.w, height: tv.rect.h }}
               role="button"
@@ -513,6 +516,7 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
               data-row-span={tile.rowSpan}
               data-col-span={tile.colSpan}
               data-action={tile.action.type}
+              data-needs={badge ?? undefined}
               onPointerDown={(event) => grab(event, tile, 'move')}
               onPointerMove={follow}
               onPointerUp={drop}
@@ -527,6 +531,11 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
                 {tv.image && <span className="scene-image" style={{ left: tv.image.x, top: tv.image.y, width: tv.image.size, height: tv.image.size }} />}
                 {tv.bar && <span className="scene-bar" style={{ left: tv.bar.x, top: tv.bar.y, width: tv.bar.w, height: tv.bar.h, borderRadius: tv.bar.radius }} />}
                 {mod === 'locked' && <Lock className="scene-lock" size={30} strokeWidth={3} aria-hidden />}
+                {badge !== null && (
+                  <span className="tile-needs" data-testid="tile-needs">
+                    {badge}
+                  </span>
+                )}
               </span>
               {isSelected && (
                 <span

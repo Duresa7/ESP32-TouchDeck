@@ -196,6 +196,12 @@ Opens from the Device's name.
 | --- | --- |
 | Name field label | Name |
 | Name hint | Stored on {device}. |
+| Name error, empty | Give the Device a name. |
+| Name error, too long | That name is too long for the Device. |
+| Name error, control characters | Remove tabs, line breaks and other special characters. |
+| Field on older Firmware | Needs Firmware {x.y}. |
+| Field no released Firmware supports | {device}'s Firmware can't change this yet. |
+| Saved, takes effect after a restart | Saved. Restart {device} to apply it. |
 | Orientation label | Orientation |
 | Orientation options | Landscape, Portrait |
 | Orientation confirm title | Restart {device} to switch to {orientation}? |
@@ -209,11 +215,16 @@ Opens from the Device's name.
 | Firmware, behind | Firmware {version} · {latest} available |
 | Firmware button | Update |
 | Firmware progress | Updating… {pct}% |
+| Firmware, waiting for consent | Confirm on this PC to continue. |
 | Firmware done | Updated to {latest} |
+| Firmware declined, or consent not answered in 5 min | Declined on this PC. {device} still runs {version}. |
+| Firmware update cancelled | Update stopped. {device} still runs {version}. |
+| Firmware file expired | That file expired. Choose it again, then retry. |
 | Restart button | Restart |
 | Restart progress | Restarting… |
 | Restart failed | Couldn't restart {device}. Unplug it and plug it back in. |
 | Tile badge on older Firmware | Needs Firmware {x.y} |
+| Tile badge, no newer Firmware offered | Needs newer Firmware |
 | Tile badge tooltip | Update {device}'s Firmware to show this Tile. |
 | Save failed | Couldn't save to {device}. Check that it's plugged in, then retry. |
 | Not connected | Plug in {device} to change its settings. |
