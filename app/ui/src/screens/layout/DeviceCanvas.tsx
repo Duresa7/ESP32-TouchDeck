@@ -65,8 +65,16 @@ const SAMPLES = { widget: sampleWidget, rows: sampleRows, hasImage: () => true }
 function SceneGraph({ view }: { view: GraphView }) {
   return (
     <span
-      className={clsx('scene-graph', view.stale && 'is-stale')}
-      style={{ left: view.x, top: view.y, width: view.w, height: view.h, borderRadius: view.radius }}
+      className="scene-graph"
+      style={{
+        left: view.x,
+        top: view.y,
+        width: view.w,
+        height: view.h,
+        borderRadius: view.radius,
+        background: `color-mix(in srgb, var(--screen-accent) ${(THEME.graph.areaMix / 255) * 100}%, var(--screen-tile))`,
+        opacity: view.stale ? THEME.staleOpa / 255 : 1,
+      }}
       data-testid="tile-graph"
       data-points={view.points.length}
       data-stale={view.stale}

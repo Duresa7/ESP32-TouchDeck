@@ -730,15 +730,9 @@
   background: var(--screen-accent);
 }
 
-/* The Firmware's graph_area mixes 36/255 of the accent into the Tile color. */
 .scene-graph {
   position: absolute;
   overflow: hidden;
-  background: color-mix(in srgb, var(--screen-accent) 14.1%, var(--screen-tile));
-}
-
-.scene-graph.is-stale {
-  opacity: 0.6;
 }
 
 .scene-graph svg {

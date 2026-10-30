@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Capabilities } from '../src/companion/api.ts';
-import { exportText, openLayout, tile } from './layout-helpers.ts';
+import { exportText, gridPage, layoutOf, openLayout, tile } from './layout-helpers.ts';
 
 const folder = process.env.TD_SHOTS;
 
@@ -56,9 +56,9 @@ test('Graph waits for Firmware that draws graphs, then binds a Tile to any numer
   await expect(graph).toHaveAttribute('data-stale', 'false');
 
   await stream.selectOption({ label: 'GPU usage' });
-  const exported = JSON.parse(await exportText(page));
+  const exported = layoutOf(await exportText(page));
   expect(exported.schema).toBe(2);
-  const next = exported.pages[0].tiles.find((t: { id: string }) => t.id === 'next');
+  const next = gridPage(exported.pages[0]).tiles.find((t) => t.id === 'next');
   expect(next).toMatchObject({ render: 'graph', streams: { value: 'number' }, icon: null, action: { type: 'widget', source: 'this_pc', field: 'gpu_pct', account: '' } });
 
   await page.getByTestId('tile-shows-plain').click();
