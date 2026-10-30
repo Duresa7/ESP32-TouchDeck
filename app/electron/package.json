@@ -6,7 +6,7 @@
   "scripts": {
     "build": "node build-key.mjs && tsc",
     "lint": "node build-key.mjs && tsc --noEmit",
-    "test": "pnpm build && node --test --test-concurrency=1 tests/*.test.mjs",
+    "test": "pnpm build && node --test tests/*.test.mjs",
     "e2e": "node e2e.mjs",
     "dev": "pnpm build && node dev.mjs"
   },

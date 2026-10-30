@@ -35,7 +35,7 @@ async function fixture(t) {
   const server = createServer((req, res) => {
     if (req.url === '/latest.json') { res.writeHead(state.status); res.end(JSON.stringify(state.manifest)); }
     else if (req.url === '/redirect') { res.writeHead(302, { location: 'http://example.invalid/setup.exe' }); res.end(); }
-    else { res.end(state.data); }
+    else { res.writeHead(200, { 'Content-Length': state.data.length }); res.end(state.data); }
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
@@ -125,20 +125,20 @@ test('rejects insecure redirect and serializes downloads', async t => {
 });
 
 test('busy names Device and never releases an unowned lock', async t => {
-  const f = await fixture(t); await f.updater.check(); await f.updater.download(() => {}); f.state.busy = true;
+  const f = await fixture(t); await f.updater.check(); assert.deepEqual(await f.updater.download(() => {}), { state: 'ready' }); f.state.busy = true;
   assert.deepEqual(await f.updater.install(), { state: 'failed', reason: 'busy', device: 'Studio' });
   assert.deepEqual(f.state.calls, [['POST', '/system/lock']]); assert.equal(f.state.launches.length, 0);
 });
 
 test('lock renewal failure releases owned lock without shutdown or launch', async t => {
-  const f = await fixture(t); await f.updater.check(); await f.updater.download(() => {}); f.state.failRenew = true;
+  const f = await fixture(t); await f.updater.check(); assert.deepEqual(await f.updater.download(() => {}), { state: 'ready' }); f.state.failRenew = true;
   assert.deepEqual(await f.updater.install(), { state: 'failed', reason: 'installer' });
   assert.deepEqual(f.state.calls.map(c => c[0]), ['POST', 'PUT', 'DELETE']); assert.equal(f.state.launches.length, 0);
   assert.deepEqual(await readdir(f.dir), []);
 });
 
 test('successful handoff locks, renews, shuts down, launches verified bytes and quits without resolving', async t => {
-  const f = await fixture(t); await f.updater.check(); await f.updater.download(() => {});
+  const f = await fixture(t); await f.updater.check(); assert.deepEqual(await f.updater.download(() => {}), { state: 'ready' });
   let resolved = false; void f.updater.install().then(() => { resolved = true; });
   for (let n = 0; n < 100 && !f.state.quits; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(f.state.quits, 1); assert.equal(resolved, false);
@@ -147,7 +147,7 @@ test('successful handoff locks, renews, shuts down, launches verified bytes and 
 });
 
 test('file changed after ready is refused and deleted before lock', async t => {
-  const f = await fixture(t); await f.updater.check(); await f.updater.download(() => {});
+  const f = await fixture(t); await f.updater.check(); assert.deepEqual(await f.updater.download(() => {}), { state: 'ready' });
   const path = join(f.dir, (await readdir(f.dir))[0], 'setup.exe'); await writeFile(path, 'tampered');
   assert.deepEqual(await f.updater.install(), { state: 'failed', reason: 'installer' });
   assert.equal(f.state.calls.length, 0); await assert.rejects(readFile(path));
@@ -201,7 +201,7 @@ test('oversized manifest fails and HTTP failures resolve', async t => {
 test('installer spawn failure returns failure and attempts owned unlock', async t => {
   const f = await fixture(t);
   const updater = new Updater({ ...f.options, launch: async () => { throw new Error('test launch failed'); } });
-  await updater.check(); await updater.download(() => {});
+  await updater.check(); assert.deepEqual(await updater.download(() => {}), { state: 'ready' });
   assert.deepEqual(await updater.install(), { state: 'failed', reason: 'installer' });
   assert.deepEqual(f.state.calls.at(-1), ['DELETE', '/system/lock/test-lock']);
   assert.equal(f.state.quits, 0);
@@ -233,11 +233,11 @@ test('missing Companion resolves and permits another attempt', async t => {
     if (!available) throw new Error('Companion unavailable');
     return f.options.system();
   } });
-  await updater.check(); await updater.download(() => {});
+  await updater.check(); assert.deepEqual(await updater.download(() => {}), { state: 'ready' });
   assert.deepEqual(await updater.install(), { state: 'failed', reason: 'installer' });
   assert.deepEqual(await readdir(f.dir), []);
   available = true; f.state.busy = true;
-  await updater.download(() => {});
+  assert.deepEqual(await updater.download(() => {}), { state: 'ready' });
   assert.deepEqual(await updater.install(), { state: 'failed', reason: 'busy', device: 'Studio' });
 });
 
@@ -262,7 +262,7 @@ for (const step of ['lock', 'renew', 'shutdown']) {
       }
       return original()(method, path);
     };
-    await f.updater.check(); await f.updater.download(() => {});
+    await f.updater.check(); assert.deepEqual(await f.updater.download(() => {}), { state: 'ready' });
     assert.deepEqual(await f.updater.install(), { state: 'failed', reason: 'installer' });
     assert.deepEqual(await readdir(f.dir), []);
     assert.equal(f.state.launches.length, 0);
@@ -276,7 +276,7 @@ for (const failure of ['lock', 'shutdown', 'oversized']) test(`cleans staging on
   const original = f.options.system;
   f.options.system = () => async (method, path) => path === `/system/${failure}`
     ? { status: 503, body: null } : original()(method, path);
-  await f.updater.check(); await f.updater.download(() => {});
+  await f.updater.check(); assert.deepEqual(await f.updater.download(() => {}), { state: 'ready' });
   if (failure === 'oversized') await truncate(join(f.dir, (await readdir(f.dir))[0], 'setup.exe'), 256 * 1024 * 1024 + 1);
   assert.deepEqual(await f.updater.install(), { state: 'failed', reason: 'installer' });
   assert.deepEqual(await readdir(f.dir), []);
@@ -284,7 +284,7 @@ for (const failure of ['lock', 'shutdown', 'oversized']) test(`cleans staging on
 });
 
 test('busy retains the ready installer for a successful retry', async t => {
-  const f = await fixture(t); await f.updater.check(); await f.updater.download(() => {});
+  const f = await fixture(t); await f.updater.check(); assert.deepEqual(await f.updater.download(() => {}), { state: 'ready' });
   const folders = await readdir(f.dir); f.state.busy = true;
   assert.equal((await f.updater.install()).reason, 'busy');
   assert.deepEqual(await readdir(f.dir), folders);
@@ -295,23 +295,23 @@ test('busy retains the ready installer for a successful retry', async t => {
 });
 
 test('replacement download removes the previous staging folder', async t => {
-  const f = await fixture(t); await f.updater.check(); await f.updater.download(() => {});
+  const f = await fixture(t); await f.updater.check(); assert.deepEqual(await f.updater.download(() => {}), { state: 'ready' });
   const first = (await readdir(f.dir))[0];
   assert.deepEqual(await f.updater.download(() => {}), { state: 'ready' });
   const next = await readdir(f.dir); assert.equal(next.length, 1); assert.notEqual(next[0], first);
 });
 
 test('startup removes stale update folders and preserves other runtime files', async t => {
-  const f = await fixture(t); await f.updater.check(); await f.updater.download(() => {});
+  const f = await fixture(t); await f.updater.check(); assert.deepEqual(await f.updater.download(() => {}), { state: 'ready' });
   await writeFile(join(f.dir, 'companion.json'), '{}');
   const updater = new Updater(f.options);
-  await updater.check(); await updater.download(() => {});
+  await updater.check(); assert.deepEqual(await updater.download(() => {}), { state: 'ready' });
   assert.equal((await readdir(f.dir)).filter(name => name.startsWith('update-')).length, 1);
   assert.equal(await readFile(join(f.dir, 'companion.json'), 'utf8'), '{}');
 });
 
 test('reparse-point staging is refused before launch and its link is deleted', async t => {
-  const f = await fixture(t); await f.updater.check(); await f.updater.download(() => {});
+  const f = await fixture(t); await f.updater.check(); assert.deepEqual(await f.updater.download(() => {}), { state: 'ready' });
   const folder = join(f.dir, (await readdir(f.dir))[0]);
   const target = await mkdtemp(join(tmpdir(), 'touchdeck-link-target-'));
   t.after(() => rm(target, { recursive: true, force: true }));
@@ -337,7 +337,7 @@ test('source build ignores stray runtime key files', async t => {
 });
 
 test('failed download after release disappears removes the ready installer', async t => {
-  const f = await fixture(t); await f.updater.check(); await f.updater.download(() => {});
+  const f = await fixture(t); await f.updater.check(); assert.deepEqual(await f.updater.download(() => {}), { state: 'ready' });
   f.state.manifest.version = '0.2.0'; await f.updater.check();
   assert.deepEqual(await f.updater.download(() => {}), { state: 'failed', reason: 'download' });
   assert.deepEqual(await readdir(f.dir), []);
@@ -362,7 +362,7 @@ test('staging changed to a junction during shutdown is refused at launch', async
     }
     return original()(method, path);
   };
-  await f.updater.check(); await f.updater.download(() => {});
+  await f.updater.check(); assert.deepEqual(await f.updater.download(() => {}), { state: 'ready' });
   assert.deepEqual(await f.updater.install(), { state: 'failed', reason: 'installer' });
   assert.deepEqual(await readdir(f.dir), []);
   assert.equal(f.state.launches.length, 0);
