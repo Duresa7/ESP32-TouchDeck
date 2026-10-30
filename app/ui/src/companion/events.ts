@@ -45,6 +45,11 @@ export interface EventsOptions {
   integrations?: IntegrationsStore;
   open?: OpenSocket;
   onNewBuild?: () => void;
+  /**
+   * A session-checked HTTP call. A refused upgrade reaches the page only as close 1006, so
+   * after a socket closes before its hello this call finds a dead session and renews it.
+   */
+  probe?: () => Promise<unknown>;
   retryMs?: readonly number[];
 }
 
@@ -155,7 +160,7 @@ function parse(data: unknown): Frame | null {
 }
 
 export function openEvents(options: EventsOptions): Events {
-  const { url, session, store, jobs, actions, integrations, open = openWebSocket, onNewBuild, retryMs = RETRY_MS } = options;
+  const { url, session, store, jobs, actions, integrations, open = openWebSocket, onNewBuild, probe, retryMs = RETRY_MS } = options;
   let socket: EventSocket | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
@@ -279,12 +284,16 @@ export function openEvents(options: EventsOptions): Events {
     current.onclose = (event) => {
       if (closed || socket !== current) return;
       socket = null;
-      void reconnect(event.code, token);
+      void reconnect(event.code, token, greeted === current);
     };
   }
 
-  async function reconnect(code: number, token: string) {
+  async function reconnect(code: number, token: string, opened: boolean) {
     const immediate = failures === 0 && (code === CLOSE_SESSION || code === CLOSE_TOO_SLOW);
+    if (code !== CLOSE_SESSION && !opened && probe) {
+      await probe().catch(() => undefined);
+      if (closed) return;
+    }
     if (code === CLOSE_SESSION) {
       let fresh: string | null;
       try {

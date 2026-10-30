@@ -248,6 +248,145 @@ async fn browser(td: &TestCompanion) -> String {
     let session: Value = pair(td, &code).await.json().await.unwrap();
     session["token"].as_str().unwrap().into()
 }
+
+#[tokio::test]
+async fn forgetting_one_browser_preserves_other_clients() {
+    for own in [false, true] {
+        let td = TestCompanion::start().await;
+        let a = browser(&td).await;
+        let b = browser(&td).await;
+        let mut socket_a = events(&td, &a).await;
+        let mut socket_b = events(&td, &b).await;
+        let mut window = td.events().await;
+        let sessions: Value = td
+            .raw()
+            .get("/api/v1/auth/sessions")
+            .bearer_auth(&a)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let id = sessions
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["current"] == true)
+            .unwrap()["id"]
+            .as_str()
+            .unwrap();
+        let path = format!("/api/v1/auth/sessions/{}", if own { "self" } else { id });
+        assert_eq!(
+            td.raw()
+                .request(reqwest::Method::DELETE, &path)
+                .bearer_auth(if own { &a } else { &td.token })
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            204
+        );
+        let (types, code) = until_closed(&mut socket_a).await;
+        assert_eq!(types, ["auth.revoked"]);
+        assert_eq!(code, Some(4401));
+        error(
+            td.raw()
+                .get("/api/v1/system")
+                .bearer_auth(&a)
+                .send()
+                .await
+                .unwrap(),
+            401,
+            "auth.revoked",
+        )
+        .await;
+        for token in [&b, &td.token] {
+            assert_eq!(
+                td.raw()
+                    .get("/api/v1/system")
+                    .bearer_auth(token)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                200
+            );
+        }
+        td.plug_device("mock0001").await;
+        for socket in [&mut socket_b, &mut window] {
+            assert_eq!(frame(socket).await.unwrap()["type"], "device.added");
+        }
+    }
+}
+
+#[tokio::test]
+async fn browser_guards_cover_routes_before_auth() {
+    let td = TestCompanion::start().await;
+    let foreign = format!("evil.example:{}", td.url.rsplit(':').next().unwrap());
+    for path in [
+        "/",
+        "/pair",
+        "/assets/missing.js",
+        "/api/v1/system",
+        "/api/v1/auth/pair",
+        "/api/v1/events",
+        "/api/v1/missing",
+    ] {
+        for (header, value, status) in [
+            ("host", foreign.as_str(), 421),
+            ("origin", "http://evil.example", 403),
+            ("sec-fetch-site", "cross-site", 403),
+        ] {
+            let hits = td.handler_hits();
+            let response = td
+                .raw()
+                .get(path)
+                .header(header, value)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{path} {header}");
+            assert_eq!(td.handler_hits(), hits);
+        }
+        let response = td
+            .raw()
+            .request(reqwest::Method::OPTIONS, path)
+            .header("origin", "http://evil.example")
+            .header("access-control-request-method", "POST")
+            .header(
+                "access-control-request-headers",
+                "authorization,content-type",
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 403);
+        assert!(
+            !response
+                .headers()
+                .keys()
+                .any(|h| h.as_str().starts_with("access-control-"))
+        );
+        for content_type in [
+            "text/plain",
+            "application/x-www-form-urlencoded",
+            "multipart/form-data; boundary=test",
+        ] {
+            let hits = td.handler_hits();
+            let response = td
+                .raw()
+                .post(path)
+                .header("content-type", content_type)
+                .body("code=secret")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 415, "{path} {content_type}");
+            assert_eq!(td.handler_hits(), hits);
+        }
+    }
+}
 async fn events(td: &TestCompanion, token: &str) -> Socket {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     let mut request = format!("{}/api/v1/events", td.url.replace("http:", "ws:"))

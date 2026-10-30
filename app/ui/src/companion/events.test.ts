@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { createActionsStore, type ActionsStore } from './actions.ts';
 import type { ApprovalRequest, Job } from './api.ts';
 import { createDevicesStore, type DevicesStore } from './devices.ts';
-import { CLOSE_TOO_SLOW, openEvents, type Events } from './events.ts';
+import { CLOSE_TOO_SLOW, openEvents, type Events, type EventSocket } from './events.ts';
 import { createFakeCompanion, type FakeCompanion } from './fake.ts';
 import { newBoard } from './fake-new-boards.ts';
 import { demoLayout, sampleDevice } from './samples.ts';
@@ -182,6 +182,33 @@ describe('the event stream', () => {
     await settle();
     expect(store.getState().status).toBe('unpaired');
     expect(fake.openSockets).toBe(0);
+  });
+
+  test('a browser whose upgrade is refused checks its session and says it has to pair', async () => {
+    const stored = new Map([['touchdeck.session', 'tds_stale']]);
+    const session = browserSession({ getItem: (key) => stored.get(key) ?? null, removeItem: (key) => void stored.delete(key) });
+    const refused = (): EventSocket => {
+      const socket: EventSocket = { onmessage: null, onclose: null, send: () => {}, close: () => {} };
+      setTimeout(() => socket.onclose?.({ code: 1006 }), 0);
+      return socket;
+    };
+    const open = vi.fn(refused);
+    const probe = vi.fn(() => session.renew('tds_stale'));
+    events = openEvents({ url: URL, session, store, open, probe, retryMs: [0] });
+    await settle();
+    expect(probe).toHaveBeenCalledOnce();
+    expect(open).toHaveBeenCalledOnce();
+    expect(store.getState().status).toBe('unpaired');
+  });
+
+  test('a socket that drops after its hello reconnects without a session check', async () => {
+    const probe = vi.fn(() => Promise.resolve());
+    follow({ probe, retryMs: [0] });
+    await settle();
+    fake.dropSockets(1006);
+    await settle();
+    expect(probe).not.toHaveBeenCalled();
+    expect(store.getState().status).toBe('live');
   });
 
   test('a different build after a reconnect asks for a reload', async () => {

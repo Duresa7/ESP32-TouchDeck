@@ -169,9 +169,9 @@ The user starts pairing from **Open in browser** in the tray or in the window. T
 
 1. It opens `http://127.0.0.1:PORT/pair#code=XXXX-XXXX-XXXX` in the default browser. The code is in the fragment, which browsers never send to a server or in a `Referer`.
 2. It shows the code for typing by hand only in a native tray notification. The window never displays or copies the code or link. Pairing codes never appear in API responses; `POST /auth/pair-codes` returns only `{expires_ms}` after the Companion opens the default browser itself.
-3. The Companion always opens the fragment form. It can't tell whether a browser dropped the fragment, so it never retries with another link; the code in the tray notification is the fallback. The `/pair` page also accepts `/pair?code=…`. The query form is allowed because the code is single-use, lasts 120 s and never leaves loopback. The page removes the fragment and the query with `history.replaceState(null, '', '/pair')` before it connects or renders anything.
+3. The Companion always opens the fragment form. It can't tell whether a browser dropped the fragment, so it never retries with another link; the code in the tray notification is the fallback. The `/pair` page reads no code from the query string, because the server sees a query and the browser keeps it in history. It removes the fragment and any query with `history.replaceState(null, '', '/pair')` before it connects or renders anything.
 
-The `/pair` page says "Pair this browser again after the Companion restarts." It reads the code from the fragment, the query, or a text field where the user types it. Input ignores case, spaces and dashes, and reads `O` as `0` and `I` or `L` as `1`. The page sends `POST /api/v1/auth/pair` with `{code, label}`, where `label` comes from the user agent (for example "Edge on Windows"), and receives `{id, token}`. It stores the token in `localStorage` as `touchdeck.session`, then goes to `/`.
+The `/pair` page says "Pair this browser again after the Companion restarts." It reads the code from the fragment or a text field where the user types it. Input ignores case, spaces and dashes, and reads `O` as `0` and `I` or `L` as `1`. The page sends `POST /api/v1/auth/pair` with `{code, label}`, where `label` comes from the user agent (for example "Edge on Windows"), and receives `{id, token}`. It stores the token in `localStorage` as `touchdeck.session`, then goes to `/`.
 
 - A used, expired or wrong code returns 401 `auth.code_invalid`. The page says "This pairing code has expired or is wrong. Choose Open in browser from the tray icon again."
 - After the lockout it returns 429 `auth.code_locked`.
@@ -1034,7 +1034,7 @@ Never add a public route, a CORS header, a route that answers approvals, or a ro
 | Upload, decode, socket or approval floods exhaust the Companion | **Reduced.** Aggregate and per-session limits, bounded queues, render concurrency and saturation tests |
 | A session holds the install lock indefinitely | **Reduced.** Window-only owner-bound 10-minute lease, released on session end or expiry |
 | A local process guesses a typed pairing code | **Reduced.** 60-bit codes, 120 s, single use, and a lockout after 5 wrong tries |
-| Browsers may drop the URL fragment when the Companion opens the link | **Resolved.** The query form is allowed, and the user can type the code |
+| Browsers may drop the URL fragment when the Companion opens the link | **Resolved.** The user can type the code from the tray notification |
 | A tray program's dialog may not get the foreground on Windows | **Reduced.** The tray notification and `approvals.show`. The approval waits up to 5 minutes |
 | `assets.create` with `kind: "app"` takes any path, so a session can learn whether a file exists | **Accepted.** The Companion returns only a rendered icon, never file contents |
 | The build-script registry may confuse rust-analyzer | **Resolved.** #71 uses `inventory` (see Feature modules) |
@@ -1063,7 +1063,7 @@ Development and mock starts never enable startup automatically.
 | `system.startup_put` | PUT | `/system/startup` | `{at_sign_in: bool}` | `{at_sign_in: bool}` | Any session |
 
 The Windows shell receives the fragment URL directly. The Companion can't detect a
-dropped fragment, so it never retries with the query form; the code in the tray
+dropped fragment, so it never retries with another link; the code in the tray
 notification is the fallback, as How a browser pairs says. Pairing rejection uses the
 contract's combined wrong-or-expired message because both share `auth.code_invalid`.
 Mock runs capture native delivery in memory. Only test-hook builds register

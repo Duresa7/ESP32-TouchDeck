@@ -7,6 +7,8 @@ import demo from './playwright.config.ts';
 // `pnpm e2e:companion` runs every *companion.spec.ts against the real Companion with three mock
 // Devices, through `pnpm dev` and its /api proxy. The Companion gets its own data folder
 // and a fixed port, so it runs beside the one installed on this PC.
+// The pairing spec pairs a real browser through its own Companion, once in Edge and once in
+// Playwright's Chromium (`pnpm exec playwright install chromium`).
 const COMPANION_PORT = 50734;
 const UI_PORT = 5175;
 const DATA_DIR = fileURLToPath(new URL('../target/ui-e2e-companion', import.meta.url));
@@ -18,6 +20,11 @@ const env = { TOUCHDECK_APP_DATA_DIR: DATA_DIR };
 
 export default defineConfig({
   ...demo,
+  projects: [
+    ...(demo.projects ?? []).map(project => ({ ...project, testIgnore: '**/pairing.companion.spec.ts' })),
+    { name: 'browser-chromium', testMatch: '**/pairing.companion.spec.ts', use: { browserName: 'chromium' } },
+    { name: 'browser-edge', testMatch: '**/pairing.companion.spec.ts', use: { browserName: 'chromium', channel: 'msedge' } },
+  ],
   testIgnore: [],
   testMatch: '**/*companion.spec.ts',
   use: { ...demo.use, baseURL: `http://127.0.0.1:${UI_PORT}/` },
