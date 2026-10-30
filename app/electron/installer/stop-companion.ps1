@@ -1,5 +1,4 @@
-# Stops the Companion installed in -InstallDir before the installer replaces or removes it.
-# Exit codes: 0 stopped or not running, 3 a Device is busy, 1 it could not be stopped.
+# Exit codes: 0 stopped or not running, 3 a Device is busy, 4 safe stop unconfirmed, 1 it could not be stopped.
 # Runs on Windows PowerShell 5.1, which every supported Windows has.
 param([Parameter(Mandatory = $true)][string]$InstallDir)
 
@@ -66,10 +65,13 @@ function Request-Shutdown {
     if ($port -lt 1 -or $port -gt 65535 -or $runtime.token -cnotmatch '^tdp_[A-Za-z0-9_-]{43}$') { return 0 }
     $origin = "http://127.0.0.1:$port"
     if (-not (Confirm-CompanionKnowsToken $origin $runtime.token)) { Write-Host 'The Companion proof did not match.'; return 0 }
-    $session = Invoke-Companion $origin 'POST' '/auth/sessions' '{"kind":"window"}' $runtime.token
-    if ($session.Status -ne 200 -or $session.Body.token -cnotmatch '^tds_[A-Za-z0-9_-]{43}$') { return 0 }
-    $lock = Invoke-Companion $origin 'POST' '/system/lock' '' $session.Body.token
-    if ($lock.Status -eq 409 -and $lock.Body -and $lock.Body.error -and $lock.Body.error.code -ceq 'system.busy') { return 3 }
+    try {
+        $session = Invoke-Companion $origin 'POST' '/auth/sessions' '{"kind":"window"}' $runtime.token
+        if ($session.Status -ne 200 -or $session.Body.token -cnotmatch '^tds_[A-Za-z0-9_-]{43}$') { return 4 }
+        $lock = Invoke-Companion $origin 'POST' '/system/lock' '' $session.Body.token
+        if ($lock.Status -eq 409 -and $lock.Body -and $lock.Body.error -and $lock.Body.error.code -ceq 'system.busy') { return 3 }
+        if ($lock.Status -ne 200 -or $lock.Body.lock -isnot [string] -or -not $lock.Body.lock) { return 4 }
+    } catch { return 4 }
     $stopped = Invoke-Companion $origin 'POST' '/system/shutdown' '' $session.Body.token
     Write-Host "The Companion answered shutdown with status $($stopped.Status)."
     return 0
@@ -77,7 +79,9 @@ function Request-Shutdown {
 
 if (-not (Get-InstalledCompanions).Count) { exit 0 }
 try {
-    if ((Request-Shutdown) -eq 3) { Write-Host 'A Device is busy.'; exit 3 }
+    $result = Request-Shutdown
+    if ($result -eq 3) { Write-Host 'A Device is busy.'; exit 3 }
+    if ($result -eq 4) { Write-Host 'Could not confirm it is safe to stop.'; exit 4 }
 } catch { Write-Host "The Companion did not answer: $($_.Exception.Message)" }
 
 $deadline = [DateTime]::UtcNow.AddSeconds(15)

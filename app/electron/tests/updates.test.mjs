@@ -169,10 +169,9 @@ test('real v0.1.0 installer verifies; one byte flipped is refused', { skip: !pro
   await assert.rejects(verifyInstaller(changed, signature, key));
 });
 
-test('feed stays equal to the Tauri endpoint and seam types stay equal', async () => {
+test('feed stays on the release endpoint and seam types stay equal', async () => {
   const { UPDATE_FEED } = await import('../dist/updates/index.js');
-  const tauri = JSON.parse(await readFile(new URL('../../src-tauri/tauri.conf.json', import.meta.url), 'utf8'));
-  assert.equal(UPDATE_FEED, tauri.plugins.updater.endpoints[0]);
+  assert.equal(UPDATE_FEED, 'https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/latest.json');
   const types = await readFile(new URL('../src/updates/types.ts', import.meta.url), 'utf8');
   const ui = await readFile(new URL('../../ui/src/companion/session.ts', import.meta.url), 'utf8');
   const declarations = text => text.replace(/\/\/[^\n]*/g, '').replace(/\s+/g, ' ').trim();

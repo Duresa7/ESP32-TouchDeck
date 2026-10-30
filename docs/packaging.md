@@ -50,7 +50,7 @@ SHA256SUMS
 
 ## Shipping an update
 
-1. Bump every app version in one command (Python 3.11+), open a pull request with the result and merge it. `check` fails when `app/package.json`, `app/electron/package.json`, `app/src-tauri/tauri.conf.json`, `app/src-tauri/Cargo.toml` and the app entry in `app/Cargo.lock` disagree.
+1. Bump every app version in one command (Python 3.11+), open a pull request with the result and merge it. `check` fails when `app/package.json` and `app/electron/package.json` disagree.
 
    ```sh
    python app/scripts/release_version.py bump X.Y.Z
@@ -113,3 +113,5 @@ The recipe builds the Firmware and audits it radio-free, builds the UI, builds t
 For an unpublished candidate, pass `--test-signing` instead of `--public-key-file`, with no signing environment. It generates a throwaway key, builds the installer named `OpenTouchDeck-windows-x64-TEST-ONLY-setup.exe` and the next-patch installer for the lifecycle check, and deletes the private key. Never publish these assets. On a PC without ESP-IDF, a test-signed candidate can reuse a checked bundle with `--firmware-bundle <file.tdfw>`; releases always build the Firmware.
 
 The recipe holds the shared `.verify/m3-build.lock` while it compiles Firmware and removes only its own lock. Never delete another owner's lock.
+
+The installer enforces current-user mode and `%LOCALAPPDATA%\Programs\Open TouchDeck` after resolving command-line and stored installation settings. `/allusers` and `/D=` cannot change that destination. A busy Device stops the installer with exit code 3. If the Companion passes authentication proof but the helper cannot confirm an install lock, the installer exits 4 and asks you to close Open TouchDeck from the tray before retrying.

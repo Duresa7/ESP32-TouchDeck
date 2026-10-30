@@ -4,8 +4,8 @@
     python app/scripts/release_version.py check [--tag vX.Y.Z]
     python app/scripts/release_version.py bump X.Y.Z
 
-check exits nonzero when app/src-tauri/tauri.conf.json, app/package.json, app/electron/package.json,
-app/src-tauri/Cargo.toml and the touchdeck entry in app/Cargo.lock disagree, or when --tag is not "v" plus that version. bump rewrites only
+check exits nonzero when app/package.json and app/electron/package.json
+disagree, or when --tag is not "v" plus that version. bump rewrites only
 those version strings and leaves every other byte, line endings included, unchanged.
 """
 
@@ -14,35 +14,17 @@ import json
 from pathlib import Path
 import re
 import sys
-import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
-CRATE = "touchdeck"
 # Each pattern captures the text before and after the one version string it owns.
 # A top-level JSON "version" follows only scalar members, so nested objects cannot be mistaken for it.
 JSON_VERSION = re.compile(r'(\A\{\s*(?:"[^"]*"\s*:\s*(?:"[^"]*"|true|false|null|-?[0-9][0-9.eE+-]*)\s*,\s*)*?'
                           r'"version"\s*:\s*")([^"]*)(")')
 PATTERNS = {
-    "app/src-tauri/tauri.conf.json": JSON_VERSION,
     "app/package.json": JSON_VERSION,
     "app/electron/package.json": JSON_VERSION,
-    "app/src-tauri/Cargo.toml": re.compile(r'(^\[package\]\r?\n(?:[^\[\r\n][^\r\n]*\r?\n|\r?\n)*?version\s*=\s*")([^"]*)(")',
-                                           re.MULTILINE),
-    "app/Cargo.lock": re.compile(r'(^\[\[package\]\]\r?\nname = "' + CRATE + r'"\r?\nversion = ")([^"]*)(")', re.MULTILINE),
 }
-
-
-def parsed_version(relative, text):
-    """The version as each file's own format reports it, so a regex slip cannot go unnoticed."""
-    if relative.endswith(".json"):
-        return json.loads(text).get("version")
-    if relative.endswith("Cargo.toml"):
-        return tomllib.loads(text).get("package", {}).get("version")
-    versions = [entry.get("version") for entry in tomllib.loads(text).get("package", []) if entry.get("name") == CRATE]
-    if len(versions) != 1:
-        raise ValueError(f"{relative}: expected one {CRATE} package entry, found {len(versions)}")
-    return versions[0]
 
 
 def read_versions(root):
@@ -52,7 +34,7 @@ def read_versions(root):
         matches = list(pattern.finditer(text))
         if len(matches) != 1:
             raise ValueError(f"{relative}: could not find exactly one version field")
-        if matches[0].group(2) != parsed_version(relative, text):
+        if matches[0].group(2) != json.loads(text).get("version"):
             raise ValueError(f"{relative}: version field is not where the file format puts it")
         versions[relative] = matches[0].group(2)
     return versions

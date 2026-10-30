@@ -10,6 +10,7 @@ Var pid
 
 ; The stock check force-stops every process in $INSTDIR, which would kill the Companion mid-write.
 !macro customCheckAppRunning
+  !insertmacro touchdeckCurrentUser
   ; NSIS is 32-bit; Get-Process.Path cannot inspect the 64-bit Companion from that host.
   ${if} ${RunningX64}
     StrCpy $PowerShellPath "$WINDIR\SysNative\WindowsPowerShell\v1.0\powershell.exe"
@@ -23,7 +24,13 @@ Var pid
     MessageBox MB_OK|MB_ICONEXCLAMATION "Open TouchDeck is updating a Device. Try again when it finishes." /SD IDOK
     SetErrorLevel 3
     Quit
-  ${elseif} $0 != 0
+  ${elseif} $0 == 4
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Open TouchDeck could not confirm it is safe to stop. Close Open TouchDeck from the tray and try again." /SD IDOK
+    SetErrorLevel 4
+    Quit
+  ${elseif} $0 == 1
+  ${orif} $0 == "error"
+  ${orif} $0 == "timeout"
     nsExec::Exec `"$CmdPath" /C taskkill /F /IM td-companion.exe /FI "USERNAME eq %USERNAME%"`
     Pop $0
   ${endif}
@@ -31,7 +38,23 @@ Var pid
   !insertmacro _CHECK_APP_RUNNING
 !macroend
 
+!macro touchdeckCurrentUser
+  SetShellVarContext current
+  StrCpy $installMode "CurrentUser"
+  StrCpy $hasPerMachineInstallation "0"
+  StrCpy $hasPerUserInstallation "1"
+  StrCpy $INSTDIR "$LOCALAPPDATA\Programs\Open TouchDeck"
+!macroend
+
+!macro customInstallMode
+  StrCpy $isForceCurrentInstall "1"
+  !insertmacro touchdeckCurrentUser
+  ; The template checks /allusers first and reapplies /D= after this hook unless we skip the page.
+  Abort
+!macroend
+
 !macro customInit
+  !insertmacro touchdeckCurrentUser
   ReadRegStr $0 SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}" DisplayVersion
   ${if} $0 != ""
     ${VersionCompare} "$0" "${VERSION}" $1
@@ -41,6 +64,10 @@ Var pid
       Quit
     ${endif}
   ${endif}
+!macroend
+
+!macro customUnInit
+  !insertmacro touchdeckCurrentUser
 !macroend
 
 !macro customUnInstall

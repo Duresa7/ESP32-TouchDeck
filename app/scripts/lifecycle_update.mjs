@@ -1,6 +1,4 @@
 // Usage: node lifecycle_update.mjs <good|tampered> <current version> <lifecycle dir> <result.json>
-// It serves next.json's installer from a loopback feed. "good" ends after launching the installer;
-// "tampered" changes one byte of the installer and expects a signature failure.
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
