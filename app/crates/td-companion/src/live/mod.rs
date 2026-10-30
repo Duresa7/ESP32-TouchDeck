@@ -95,9 +95,13 @@ fn round(shared: &Shared, devices: &DeviceManager, links: &Links, integrations: 
     if let Some(read) = integrations.live(&wanted) {
         *shared.samples.lock() = read;
     }
-    let mut samples = shared.samples.lock().clone();
+    let samples = shared.samples.lock().clone();
     #[cfg(any(test, feature = "test-hooks"))]
-    samples.extend(shared.injected.lock().clone());
+    let samples = {
+        let mut samples = samples;
+        samples.extend(shared.injected.lock().clone());
+        samples
+    };
     for (device, session, caps) in connected {
         let delivered = links.within(&device, LINK_WAIT, |link| {
             shared
