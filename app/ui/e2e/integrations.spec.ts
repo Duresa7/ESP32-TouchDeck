@@ -120,7 +120,7 @@ test('checks fields inline and warns before a key travels unencrypted', async ({
 test('the status light follows the hub and the switch', async ({ page }) => {
   await openCliProxy(page);
   const status = page.getByTestId('detail-status');
-  await expect(status).toHaveText(/^Connected\. 3 accounts, checked 1[2-9] s ago\.$/);
+  await expect(status).toHaveText(/^Connected\. 2 accounts, checked 1[2-9] s ago\.$/);
   await expect(status).toHaveAttribute('data-live', 'true');
 
   await page.evaluate(() => window.touchdeckDemo?.setHub(false));
@@ -192,19 +192,19 @@ test('shows every account with its limits, as the AI usage page did', async ({ b
   if (browserName === 'chromium') await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await openCliProxy(page);
   const accounts = page.getByTestId('usage-account');
-  await expect(accounts).toHaveCount(3);
-  const codex = page.locator('[data-testid="usage-account"][data-account="codex:alice@example.com"]');
+  await expect(accounts).toHaveCount(2);
+  const codex = page.locator('[data-testid="usage-account"][data-account="codex:Work"]');
   await expect(codex.getByTestId('usage-plan')).toHaveText('pro');
   await expect(codex.getByTestId('usage-five-hour')).toContainText('42%');
   await expect(codex.getByTestId('usage-five-hour')).toContainText('Resets in 2h 10m');
   await expect(codex.getByTestId('usage-seven-day')).toContainText('10%');
   await expect(codex.getByTestId('usage-status')).toContainText('Active');
   await expect(codex.getByTestId('usage-status')).toContainText('128 OK · 2 failed · 6 in 10 min');
-  await expect(page.locator('[data-testid="usage-account"][data-account="claude:alice@example.com"]').getByTestId('usage-seven-day')).toContainText('61%');
+  await expect(page.locator('[data-testid="usage-account"][data-account="claude:Personal"]').getByTestId('usage-seven-day')).toContainText('—');
 
   await codex.getByTestId('usage-copy').click();
   await expect(codex.getByTestId('usage-copy')).toHaveText('Copied');
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('codex:alice@example.com');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('codex:Work');
 });
 
 test('Add to Layout refuses a full Page, then places a Preset tile in the first free cell', async ({ page }) => {
@@ -219,14 +219,14 @@ test('Add to Layout refuses a full Page, then places a Preset tile in the first 
 
   await page.getByRole('button', { name: 'Integrations', exact: true }).click();
   const preset = page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('preset').first();
-  await expect(preset).toHaveAttribute('aria-label', 'Add Status to Layout');
+  await expect(preset).toHaveAttribute('aria-label', 'Add Account status to Layout');
   await preset.click();
   await expect(page.getByText("Added to Desk's Layout")).toBeVisible();
 
   await page.getByRole('button', { name: 'Layout', exact: true }).click();
   const placed = page.getByTestId('tile');
   await expect(placed).toHaveCount(1);
-  await expect(placed).toHaveAttribute('aria-label', 'Status');
+  await expect(placed).toHaveAttribute('aria-label', 'Account status');
   await expect(placed).toHaveAttribute('data-row', '0');
   await expect(placed).toHaveAttribute('data-col', '0');
   await expect(placed).toHaveAttribute('aria-pressed', 'true');
@@ -246,7 +246,7 @@ test('Add Tile lists Preset tiles by Integration and places one where it points'
   await expect(group.getByTestId('preset')).toHaveCount(9);
   await group.locator('[data-preset="five_hour_pct"]').click();
   const placed = page.locator('[data-testid="tile"][data-row="2"][data-col="2"]');
-  await expect(placed).toHaveAttribute('aria-label', 'Five hour pct');
+  await expect(placed).toHaveAttribute('aria-label', '5-hour limit use');
   await expect(placed).toHaveAttribute('aria-pressed', 'true');
   await expect(section).toHaveCount(0);
 });
@@ -275,7 +275,7 @@ test('focus is visible on the list and on every control of the CLIProxyAPI view'
     expect({ id, ...(await reach(page, id)) }).toEqual({ id, visible: true, ring: true });
   }
   await page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-open').click();
-  await expect(page.getByTestId('usage-account')).toHaveCount(3);
+  await expect(page.getByTestId('usage-account')).toHaveCount(2);
   for (const id of ['detail-back', 'config-switch', 'config-field', 'secret-replace', 'secret-forget', 'refresh', 'preset', 'usage-copy']) {
     expect({ id, ...(await reach(page, id)) }).toEqual({ id, visible: true, ring: true });
   }

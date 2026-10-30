@@ -292,10 +292,12 @@ impl MockDeck {
         self.state.lock().unwrap()
     }
 
-    /// Simulates the ROM flasher writing a validated bundle, preserving Layout storage.
+    /// Simulates the ROM flasher writing a validated bundle, preserving Layout storage. The board
+    /// then runs Firmware that speaks protocol 2.
     pub fn flash_bundle(&self, bundle: &crate::bundle::Bundle) {
         let mut state = self.state();
         state.silent = false;
+        state.v2 = true;
         state.hello.product = "touchdeck".into();
         state.hello.version = bundle.manifest.version.clone();
         state.hello.elf_sha256 = bundle.manifest.elf_sha256.clone();

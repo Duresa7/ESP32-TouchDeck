@@ -1,12 +1,16 @@
+import { useEffect, useMemo } from 'react';
 import clsx from 'clsx';
 import { ArrowUpCircle, Cable } from 'lucide-react';
 import type { DeviceSummary } from '../companion/api.ts';
+import { useCompanion } from '../companion/connection.ts';
 import { useDevices } from '../companion/devices.ts';
 import { button } from '../shell/button.ts';
 import { useUi } from '../state/ui.ts';
 import { DevicePreview } from './DevicePreview.tsx';
 import { useDeviceLayout } from './home-layouts.ts';
 import { deviceWidth, firmwareUpdate, lastSeen, orientationOf, previewOf, statusOf } from './home-model.ts';
+import { boardCards, boardInstallFor, boardsUi, useBoardsUi } from './new-boards.ts';
+import { IgnoredBoards, NewBoardCard } from './NewBoardCard.tsx';
 import './home.css';
 
 function DeviceCard({ device, width }: { device: DeviceSummary; width: number }) {
@@ -41,12 +45,33 @@ function NoDevices() {
   </div>;
 }
 
+function useHandedOff(devices: DeviceSummary[]) {
+  const companion = useCompanion();
+  const started = useBoardsUi((s) => s.started);
+  useEffect(() => {
+    for (const device of devices) {
+      if (!started[device.id]) continue;
+      boardsUi.getState().end(device.id);
+      boardInstallFor(companion, device).dismiss();
+    }
+  }, [companion, devices, started]);
+}
+
 export function Home() {
   const devices = useDevices((s) => s.devices);
+  const newBoards = useDevices((s) => s.newBoards);
   const live = useDevices((s) => s.status === 'live');
-  return <main className={clsx('home', devices.length === 1 && 'home-single')}>
-    {devices.length ? <ul className="device-row" aria-label="Devices">
-      {devices.map((device) => <DeviceCard key={device.id} device={device} width={deviceWidth(devices.length)} />)}
+  const ignored = useBoardsUi((s) => s.ignored);
+  const started = useBoardsUi((s) => s.started);
+  const boards = useMemo(() => boardCards(newBoards, devices, { ignored, started }), [newBoards, devices, ignored, started]);
+  useHandedOff(devices);
+  const count = devices.length + boards.shown.length;
+  const width = deviceWidth(count);
+  return <main className={clsx('home', count === 1 && 'home-single')}>
+    {count ? <ul className="device-row" aria-label="Devices">
+      {devices.map((device) => <DeviceCard key={device.id} device={device} width={width} />)}
+      {boards.shown.map((board) => <NewBoardCard key={board.id} board={board} width={width} />)}
     </ul> : live && <NoDevices />}
+    <IgnoredBoards boards={boards.ignored} />
   </main>;
 }
