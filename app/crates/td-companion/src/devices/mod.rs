@@ -92,6 +92,7 @@ pub struct Capabilities {
     pub asset_bytes: u32,
     pub formats: Vec<String>,
     pub image: [u32; 2],
+    pub photo_bytes: u32,
 }
 impl From<&td_link::Capabilities> for Capabilities {
     fn from(c: &td_link::Capabilities) -> Self {
@@ -107,6 +108,7 @@ impl From<&td_link::Capabilities> for Capabilities {
             asset_bytes: c.asset_bytes,
             formats: c.formats.clone(),
             image: c.image,
+            photo_bytes: c.photo_bytes,
         }
     }
 }

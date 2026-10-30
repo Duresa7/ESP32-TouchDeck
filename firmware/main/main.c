@@ -201,6 +201,7 @@ void app_main(void)
         ESP_LOGE(TAG, "Power failed to start, the screen stays on: %s", esp_err_to_name(power_err));
     } else {
         power_set_idle_timeout_s(settings.idle_timeout_s, esp_timer_get_time());
+        td_link_idle_boot();
     }
     BOOT_MARK("power");
 

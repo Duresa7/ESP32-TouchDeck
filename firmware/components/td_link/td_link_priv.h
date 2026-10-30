@@ -50,6 +50,14 @@ void td_link_asset_list(const cJSON *request, cJSON *reply);
 void td_link_asset_put(const cJSON *request, cJSON *reply);
 void td_link_asset_end(const cJSON *request, cJSON *reply);
 void td_link_asset_delete(const cJSON *request, cJSON *reply);
+void td_link_photo_put(const cJSON *request, cJSON *reply);
+void td_link_photo_end(const cJSON *request, cJSON *reply);
+void td_link_idle_get(const cJSON *request, cJSON *reply);
+void td_link_idle_set(const cJSON *request, cJSON *reply);
+void td_link_clock_set(const cJSON *request, cJSON *reply);
+
+/* The interval between pictures in the idle settings in force. Any task. */
+uint32_t td_link_idle_interval_s(void);
 
 /* The `layout state` fields, from the layout on screen. */
 void td_link_layout_fields(cJSON *reply);

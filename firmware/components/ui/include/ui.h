@@ -70,6 +70,29 @@ void ui_set_link_online(bool (*online)(void));
 /* True when the online source says the app is connected. */
 bool ui_link_online(void);
 
+/* The idle face: the photo frame's picture, or the clock, over the Page while power_idle_face() says so. ui_build
+ * starts the timer that raises it, takes it down and keeps it on top. */
+void ui_idle_start(void);
+
+typedef enum {
+    UI_PICTURE_SHOWN,
+    UI_PICTURE_FORMAT, /* not a baseline colour JPEG */
+    UI_PICTURE_SIZE,   /* larger than the screen */
+    UI_PICTURE_IDLE,   /* the idle face went down, or the display stayed busy */
+    UI_PICTURE_MEMORY,
+} ui_picture_t;
+
+/* Decodes one JPEG on the caller's task and shows it on the idle face in place of the last picture, which is freed. The
+ * face keeps only the picture it shows, and drops it when it goes down. Takes the LVGL lock, so never call it from an
+ * LVGL callback. */
+ui_picture_t ui_idle_picture(const uint8_t *jpeg, size_t len);
+
+/* Sets the clock to unix_s in UTC and offset_min east of it, counting on from now. Any task. */
+void ui_idle_set_clock(uint64_t unix_s, int32_t offset_min);
+
+/* After two intervals without a picture the face shows the clock. Any task. */
+void ui_idle_set_interval(uint32_t interval_s);
+
 /* Writes a widget tile's state and marks it for the next redraw, from any task and without the LVGL lock. Returns
  * NULL and the stored state in *stored (when not NULL), or the refusal: "unknown tile", "display not ready". */
 const char *ui_widget_update(const char *tile, const char *value, const char *caption, float bar, bool stale,

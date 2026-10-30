@@ -3,15 +3,19 @@ import clsx from 'clsx';
 import { useStore } from 'zustand';
 import { Popover } from '@base-ui/react/popover';
 import { Slider } from '@base-ui/react/slider';
+import { Switch } from '@base-ui/react/switch';
 import { Toggle } from '@base-ui/react/toggle';
 import { ToggleGroup } from '@base-ui/react/toggle-group';
 import { ChevronDown } from 'lucide-react';
 import type { DeviceSummary, Orientation } from '../../companion/api.ts';
+import { useFolderPicker } from '../../companion/connection.ts';
 import { inProgress, type FirmwareUpdateStore } from '../../lib/device/firmware.ts';
 import { needsFirmwareField } from '../../lib/device/needs-firmware.ts';
+import { durationLabel, startAfterChoices } from '../../lib/device/photo-frame.ts';
 import type { DeviceSettingsStore } from '../../lib/device/settings.ts';
 import { button } from '../../shell/button.ts';
 import { useDeviceStores, useOfferedFirmware } from './device.ts';
+import { Select } from './fields.tsx';
 
 const ORIENTATIONS: { value: Orientation; label: string }[] = [
   { value: 'landscape', label: 'Landscape' },
@@ -169,6 +173,103 @@ function BrightnessField({ name, settings, editable }: PanelProps) {
   );
 }
 
+function PhotoFrameField({ name, settings, editable }: PanelProps) {
+  const id = useId();
+  const pick = useFolderPicker();
+  const frame = useStore(settings, (s) => s.shown?.photo_frame ?? null);
+  const lacks = useStore(settings, (s) => s.needs.photo_frame);
+  const needs = lacks && needsFirmwareField({ device: name, since: lacks.since });
+  const problem = useStore(settings, (s) => s.problem.folder);
+  const choose = async () => {
+    const folder = pick ? await pick() : null;
+    if (folder) await settings.setPhotoFrame({ folder });
+  };
+  if (needs) {
+    return (
+      <div className="field">
+        <span className="field-label">Photo frame</span>
+        <p className="field-hint is-warning" data-testid="device-panel-photo-frame-hint">
+          {needs}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <>
+      <div className="field">
+        <div className="field-label field-label-row switch-row">
+          <span id={`${id}-title`}>Photo frame</span>
+          <Switch.Root
+            className="switch"
+            checked={frame?.enabled ?? false}
+            disabled={!editable || frame === null}
+            onCheckedChange={(enabled) => void settings.setPhotoFrame({ enabled })}
+            aria-labelledby={`${id}-title`}
+            aria-describedby={`${id}-hint`}
+            data-testid="device-panel-photo-frame"
+          >
+            <Switch.Thumb className="switch-thumb" />
+          </Switch.Root>
+        </div>
+        <p className="field-hint" id={`${id}-hint`} data-testid="device-panel-photo-frame-hint">
+          Pictures from this PC when {name} sits idle, or a clock when Open TouchDeck isn't running.
+        </p>
+      </div>
+      {frame?.enabled && (
+        <>
+          <div className="field">
+            <label className="field-label" htmlFor={`${id}-after`}>
+              Start after
+            </label>
+            <Select
+              id={`${id}-after`}
+              value={frame.timeout_s}
+              disabled={!editable}
+              onChange={(event) => void settings.setPhotoFrame({ timeout_s: Number(event.target.value) })}
+              data-testid="device-panel-photo-frame-after"
+            >
+              {startAfterChoices(frame.timeout_s).map((seconds) => (
+                <option key={seconds} value={seconds}>
+                  {durationLabel(seconds)}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="field">
+            <span className="field-label" id={`${id}-folder`}>
+              Folder
+            </span>
+            <div className="panel-row">
+              <span
+                className={clsx('panel-folder', !frame.folder && 'is-empty')}
+                title={frame.folder ?? undefined}
+                aria-labelledby={`${id}-folder`}
+                data-testid="device-panel-folder"
+              >
+                {frame.folder ?? 'No folder chosen'}
+              </span>
+              {pick && (
+                <button
+                  type="button"
+                  className={button({ size: 'small' })}
+                  aria-disabled={!editable}
+                  onClick={() => editable && void choose()}
+                  data-testid="device-panel-folder-choose"
+                >
+                  Choose folder
+                </button>
+              )}
+            </div>
+            <p className={problem ? 'field-error' : 'field-hint'} role={problem ? 'alert' : undefined} data-testid="device-panel-folder-hint">
+              {problem ?? (pick ? `Nothing is stored on ${name}.` : 'Choose a folder in the Open TouchDeck app.')}
+            </p>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 function FirmwareRow({ device, name, settings, firmware }: PanelProps & { firmware: FirmwareUpdateStore }) {
   const offered = useOfferedFirmware(device);
   const view = useStore(firmware, (s) => s.view);
@@ -283,6 +384,7 @@ function PanelBody({ device }: { device: DeviceSummary }) {
       <NameField {...props} />
       <OrientationField {...props} />
       <BrightnessField {...props} />
+      <PhotoFrameField {...props} />
       <FirmwareRow {...props} firmware={firmware} />
       <Notice settings={settings} />
     </>

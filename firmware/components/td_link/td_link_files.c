@@ -7,9 +7,11 @@
 #include "power.h"
 #include "td_frame.h"
 #include "td_asset.h"
+#include "td_idle.h"
 #include "td_layout.h"
 #include "td_store.h"
 #include "td_update.h"
+#include "td_update_state.h"
 #include "td_xfer.h"
 #include "ui.h"
 
@@ -27,6 +29,7 @@ typedef enum {
     KIND_GET,
     KIND_UPDATE,
     KIND_ASSET_PUT,
+    KIND_PHOTO_PUT,
 } kind_t;
 
 /* One transfer at a time. A put holds the whole file in PSRAM and writes it with td_store_write_atomic at xfer.end,
@@ -46,6 +49,8 @@ static struct {
     uint8_t tx_seq;
     const char *asset_failure;
     char asset_id[TD_ASSET_ID_LEN + 1];
+    uint8_t photo_sha256[TD_SHA256_BYTES];
+    uint32_t photo_entry;
 } s;
 
 /* The outcome of the last v2 Asset transfer that closed, which v2.asset.end repeats for its xfer until the next bulk
@@ -65,10 +70,18 @@ static void asset_end_record(uint8_t xfer, const char *reason, const char *id, u
     snprintf(s_asset_end.id, sizeof s_asset_end.id, "%s", id ? id : "");
 }
 
-/* Any bulk open, v1 or v2, ends the replay of the last Asset end. */
+static struct {
+    uint8_t xfer;
+    const char *failure;
+} s_photo_end;
+
+static td_photo_pace_t s_pace;
+
+/* Any bulk open, v1 or v2, ends the replay of the last Asset or picture end. */
 static void bulk_opened(void)
 {
     s_asset_end.xfer = 0;
+    s_photo_end.xfer = 0;
 }
 
 /* Frees the buffer and forgets the transfer, and leaves a running update alone. */
@@ -345,9 +358,11 @@ void td_link_xfer_end(const cJSON *request, cJSON *reply)
     uint32_t id;
     if (!u32_arg(request, "xfer", &id)) {
         td_link_fail(reply, "xfer.end needs xfer");
-    } else if (s.kind == KIND_ASSET_PUT) {
-        /* A v1 end never finishes or cuts a v2 Asset put. */
-        td_link_fail(reply, id == s.x.id ? "end an Asset with v2.asset.end" : "no transfer with that xfer");
+    } else if (s.kind == KIND_ASSET_PUT || s.kind == KIND_PHOTO_PUT) {
+        /* A v1 end never finishes or cuts a v2 Asset or picture put. */
+        const char *v2_end =
+            s.kind == KIND_ASSET_PUT ? "end an Asset with v2.asset.end" : "end a picture with v2.photo.end";
+        td_link_fail(reply, id == s.x.id ? v2_end : "no transfer with that xfer");
         return;
     } else if (s.kind == KIND_NONE || id != s.x.id) {
         td_link_fail(reply, "no transfer with that xfer");
@@ -431,12 +446,28 @@ static void send_chunk(uint16_t idx)
     td_link_send(TD_FRAME_CHUNK, s.tx_seq, 0, payload, TD_FRAME_CHUNK_HEADER + len);
 }
 
+static bool photo_cancelled(void)
+{
+    uint32_t entry = 0;
+    if (s.kind != KIND_PHOTO_PUT || (power_idle_face(&entry) && entry == s.photo_entry)) {
+        return false;
+    }
+    s_photo_end.xfer = s.x.id;
+    s_photo_end.failure = "idle";
+    drop_xfer();
+    return true;
+}
+
 void td_link_files_chunk(uint8_t seq, const uint8_t *payload, size_t len)
 {
     if (len < TD_FRAME_CHUNK_HEADER
-        || (s.kind != KIND_LAYOUT_PUT && s.kind != KIND_ICON_PUT && s.kind != KIND_UPDATE && s.kind != KIND_ASSET_PUT)
+        || (s.kind != KIND_LAYOUT_PUT && s.kind != KIND_ICON_PUT && s.kind != KIND_UPDATE && s.kind != KIND_ASSET_PUT
+            && s.kind != KIND_PHOTO_PUT)
         || payload[0] != s.x.id) {
         td_link_count_drop();
+        return;
+    }
+    if (photo_cancelled()) {
         return;
     }
     const uint16_t idx = (uint16_t)(payload[1] | (payload[2] << 8));
@@ -465,7 +496,7 @@ void td_link_files_ack(const uint8_t *payload, size_t len)
 
 void td_link_files_service(uint32_t now_ms)
 {
-    if (s.kind == KIND_NONE) {
+    if (s.kind == KIND_NONE || photo_cancelled()) {
         return;
     }
     if (s.kind == KIND_GET) {
@@ -644,7 +675,7 @@ static bool asset_sink(void *ctx, const uint8_t *data, size_t len)
 
 void td_link_files_select(void)
 {
-    if (s.kind == KIND_ASSET_PUT) {
+    if (s.kind == KIND_ASSET_PUT || s.kind == KIND_PHOTO_PUT) {
         drop_xfer();
     }
 }
@@ -852,4 +883,126 @@ void td_link_asset_delete(const cJSON *request, cJSON *reply)
         return;
     }
     cJSON_AddBoolToObject(reply, "deleted", deleted);
+}
+
+void td_link_photo_put(const cJSON *request, cJSON *reply)
+{
+    static const char *const keys[] = { "bytes", "sha256" };
+    const char *sha256 = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(request, "sha256"));
+    uint8_t digest[TD_SHA256_BYTES];
+    uint32_t bytes;
+    if (!td_link_v2_fields(request, keys, 2) || !u32_arg(request, "bytes", &bytes) || sha256 == NULL
+        || !td_sha256_from_hex(sha256, digest)) {
+        td_link_v2_fail(reply, "args", "Invalid request fields");
+        return;
+    }
+    uint32_t entry = 0;
+    const bool idle = power_idle_face(&entry);
+    uint32_t retry_ms = 0;
+    switch (td_photo_admit(&s_pace, bytes, TD_PHOTO_BYTES_MAX, idle, entry, td_link_idle_interval_s(),
+                           esp_timer_get_time(), &retry_ms)) {
+    case TD_PHOTO_SIZE:
+        td_link_v2_fail(reply, "size", "A picture is 1 to 131072 bytes");
+        return;
+    case TD_PHOTO_IDLE:
+        td_link_v2_fail(reply, "idle", "The Device is awake or the photo frame is off");
+        return;
+    case TD_PHOTO_RATE:
+        td_link_v2_fail(reply, "rate", "The next picture is not due yet");
+        cJSON_AddNumberToObject(reply, "retry_ms", retry_ms);
+        return;
+    case TD_PHOTO_OK:
+        break;
+    }
+    if (s.kind != KIND_NONE) {
+        td_link_v2_fail(reply, "busy", "Another transfer is open");
+        return;
+    }
+    if (!open_xfer(KIND_PHOTO_PUT, bytes)) {
+        td_link_v2_fail(reply, "memory", "No memory for the picture");
+        return;
+    }
+    td_xfer_init(&s.x, s.last_id, false, bytes, 0, put_sink, NULL);
+    memcpy(s.photo_sha256, digest, sizeof digest);
+    s.photo_entry = entry;
+    cJSON_AddNumberToObject(reply, "xfer", s.x.id);
+}
+
+static const char *photo_show_failure(void)
+{
+    uint32_t entry = 0;
+    if (!power_idle_face(&entry) || entry != s.photo_entry) {
+        return "idle";
+    }
+    td_sha256_t sha;
+    uint8_t digest[TD_SHA256_BYTES];
+    td_sha256_init(&sha);
+    td_sha256_update(&sha, s.buf, s.fill);
+    td_sha256_final(&sha, digest);
+    if (memcmp(digest, s.photo_sha256, sizeof digest) != 0) {
+        return "hash";
+    }
+    switch (ui_idle_picture(s.buf, s.fill)) {
+    case UI_PICTURE_SHOWN:
+        td_photo_shown(&s_pace, entry, esp_timer_get_time());
+        return NULL;
+    case UI_PICTURE_SIZE:
+        return "size";
+    case UI_PICTURE_IDLE:
+        return "idle";
+    case UI_PICTURE_MEMORY:
+        return "memory";
+    case UI_PICTURE_FORMAT:
+    default:
+        return "format";
+    }
+}
+
+static void photo_end_reply(cJSON *reply)
+{
+    static const struct {
+        const char *reason;
+        const char *error;
+    } errors[] = {
+        { "idle", "The Device woke up" },
+        { "hash", "SHA-256 differs" },
+        { "size", "The picture is larger than the screen" },
+        { "memory", "No memory for the picture" },
+        { "format", "Not a baseline JPEG" },
+    };
+    if (s_photo_end.failure == NULL) {
+        cJSON_AddBoolToObject(reply, "shown", true);
+        return;
+    }
+    const char *error = "Picture not shown";
+    for (size_t i = 0; i < sizeof errors / sizeof errors[0]; i++) {
+        if (strcmp(errors[i].reason, s_photo_end.failure) == 0) {
+            error = errors[i].error;
+        }
+    }
+    td_link_v2_fail(reply, s_photo_end.failure, error);
+}
+
+void td_link_photo_end(const cJSON *request, cJSON *reply)
+{
+    static const char *const keys[] = { "xfer" };
+    uint32_t id;
+    if (!td_link_v2_fields(request, keys, 1) || !u32_arg(request, "xfer", &id) || id == 0 || id > 255) {
+        td_link_v2_fail(reply, "args", "Invalid request fields");
+        return;
+    }
+    if (s.kind == KIND_PHOTO_PUT && s.x.id == id && !photo_cancelled()) {
+        if (s.x.received != s.x.bytes) {
+            td_link_v2_fail(reply, "incomplete", "Bytes are still missing");
+            return;
+        }
+        s_photo_end.xfer = s.x.id;
+        s_photo_end.failure = photo_show_failure();
+        drop_xfer();
+        photo_end_reply(reply);
+    } else if (s_photo_end.xfer != 0 && s_photo_end.xfer == id) {
+        photo_end_reply(reply);
+    } else {
+        td_link_v2_fail(reply, "state", "No picture transfer with that xfer");
+    }
 }

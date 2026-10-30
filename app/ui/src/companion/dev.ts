@@ -18,5 +18,6 @@ export function devEnvironment(target: Window): Environment {
     },
     onSessionChanged: () => {},
   };
-  return { base: target.location.origin, session: windowSession(bridge), open: openWebSocket, updates: target.openTouchDeck?.updates };
+  const shell = target.openTouchDeck;
+  return { base: target.location.origin, session: windowSession(bridge), open: openWebSocket, updates: shell?.updates, pickFolder: shell?.pickFolder };
 }

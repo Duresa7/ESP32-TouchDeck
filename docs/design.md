@@ -215,7 +215,7 @@ Controls in rows: a switch, a segmented control (the theme: System, Light, Dark)
 A popover anchored to the Device's name in the editor header: below it, aligned to its start, 8px away. The name keeps its place, so the panel reads as the name opening up.
 
 - 320 wide, 16px padding, `--radius-group`, `--surface-raised`, a `--line` ring and `--shadow-dialog`. Title 14/620.
-- Fields, top to bottom: Name (input), Orientation (segmented), Brightness (slider, with the value tabular at the label's right), then a row with the Firmware version and its status on the left and Restart on the right.
+- Fields, top to bottom: Name (input), Orientation (segmented), Brightness (slider, with the value tabular at the label's right), Photo frame (a switch; when on, Start after (select) and Folder, the path in one ellipsized line with Choose folder on its right in the desktop app only), then a row with the Firmware version and its status on the left and Restart on the right.
 - The trigger is the nameplate name with a chevron. It shows `--fill-active` while the panel is open, and the chevron turns 180°.
 
 ### Home

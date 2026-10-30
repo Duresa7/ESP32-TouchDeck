@@ -29,7 +29,7 @@ export type AuthRevoked = Record<string, never>;
 export type BrowserKind = "browser";
 export type Builtin = { name: string, label: string, tags: Array<string>, id: string, };
 export type BundleInfo = { id: string, version: string, build: string, bytes: number, };
-export type Capabilities = { screen: [number, number], grid: [number, number], pages: number, tiles: number, layout_bytes: number, layout_schemas: Array<number>, storage_free: number, tile_kinds: Array<string>, asset_bytes: number, formats: Array<string>, image: [number, number], };
+export type Capabilities = { screen: [number, number], grid: [number, number], pages: number, tiles: number, layout_bytes: number, layout_schemas: Array<number>, storage_free: number, tile_kinds: Array<string>, asset_bytes: number, formats: Array<string>, image: [number, number], photo_bytes: number, };
 export type CatalogHit = { source: string, name: string, id: string, aliases: Array<string>, hex: string | null, tags: Array<string>, category: string | null, svg: boolean, light: boolean, dark: boolean, license: string, license_url: string | null, guidelines: string | null, attribution_url: string, attribution: string, };
 export type CatalogQuery = { q: string, catalog: string | null, };
 export type CatalogVariant = "base" | "light" | "dark";
@@ -67,12 +67,16 @@ orientation: string, name: string | null,
 /**
  * A percentage, 0 to 100.
  */
-brightness: number | null, };
+brightness: number | null, 
+/**
+ * `null` when the Firmware has no photo frame.
+ */
+photo_frame: PhotoFrameSettings | null, };
 export type DeviceSettingsPatch = { idle_timeout_s: number | null, orientation: string | null, name: string | null, 
 /**
  * A percentage, 0 to 100.
  */
-brightness: number | null, };
+brightness: number | null, photo_frame: PhotoFramePatch | null, };
 export type DeviceSummary = { id: DeviceId, rev: number, name: string | null, setup: SetupState, link: LinkState, firmware: FirmwareInfo | null, diagnostics: DeviceDiagnostics | null, capabilities: Capabilities | null, orientation: string | null, layout: JsonValue | null, key_mirror: KeyMirrorState, stable_id: boolean, };
 export type DeviceUpdated = DeviceSummary;
 export type ErrorBody = { code: string, message: string, details: JsonValue | null, };
@@ -134,6 +138,24 @@ export type Orientation = "landscape" | "portrait";
 export type Page = { "kind": "grid", id: string, title: string, rows: number, cols: number, tiles: Array<Tile>, } | { "kind": "dashboard", id: string, title: string, source: string, };
 export type PairExpires = { expires_ms: number, };
 export type PairRequest = { code: string, label: string | null, };
+export type PhotoFramePatch = { enabled: boolean | null, timeout_s: number | null, interval_s: number | null, 
+/**
+ * An absolute path to an existing folder; `""` clears it.
+ */
+folder: string | null, };
+export type PhotoFrameSettings = { enabled: boolean, 
+/**
+ * 10 to 86400.
+ */
+timeout_s: number, 
+/**
+ * 5 to 3600.
+ */
+interval_s: number, 
+/**
+ * An absolute path to a folder on this PC, `null` until one is chosen.
+ */
+folder: string | null, };
 export type PickResult = { bundle: BundleInfo | null, };
 export type PortProbe = { port: string, usb_serial: string | null, id: DeviceId, probed_ms: number | null, } & ({ "status": "pending" } | { "status": "device", protocol: number, version: string, } | { "status": "silent" } | { "status": "busy", detail: string, } | { "status": "other-firmware", product: string, detail: string, });
 export type PresetTile = { id: string, name: string, action: JsonValue, };
@@ -350,7 +372,7 @@ also_keep: Array<string>, }, bearer?: string, headers?: Record<string, string>, 
 /**
  * A percentage, 0 to 100.
  */
-brightness: number | null, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<SettingsPatched>('devices.settings_patch', path, query, body, bearer, headers, signal),
+brightness: number | null, photo_frame: PhotoFramePatch | null, }, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<SettingsPatched>('devices.settings_patch', path, query, body, bearer, headers, signal),
     },
     firmware: {
       bundled: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<FirmwareBuild>('firmware.bundled', path, query, body, bearer, headers, signal),

@@ -23,6 +23,8 @@ export interface OpenTouchDeckBridge {
     // On success, install() never resolves: the app quits and the installer runs.
     install(): Promise<UpdateInstall>;
   };
+  // The folder the user picked in the system dialog, or null when they cancelled.
+  pickFolder?(): Promise<string | null>;
 }
 
 declare global {

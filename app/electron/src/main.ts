@@ -75,6 +75,14 @@ ipcMain.handle('session', async event => {
   return trusted(event) ? token : null;
 });
 
+ipcMain.handle('dialog:pick-folder', async event => {
+  if (!trusted(event) || !window) return null;
+  try {
+    const picked = await dialog.showOpenDialog(window, { title: 'Choose a folder for the photo frame', properties: ['openDirectory'] });
+    return trusted(event) && !picked.canceled ? picked.filePaths[0] ?? null : null;
+  } catch { return null; }
+});
+
 let updater: Updater | undefined;
 for (const action of ['check', 'download', 'install'] as const) {
   ipcMain.handle(`updates:${action}`, async event => {

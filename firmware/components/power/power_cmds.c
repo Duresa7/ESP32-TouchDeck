@@ -39,6 +39,11 @@ static void cmd_state(void)
     td_reply_int(&r, "wake_us", info.wake_us);
     td_reply_int(&r, "errors", info.errors);
     td_reply_int(&r, "output", info.output);
+    td_reply_bool(&r, "photo_idle", info.photo_idle);
+    td_reply_bool(&r, "idle_face", info.idle_face);
+    td_reply_int(&r, "photo_timeout_s", info.photo_timeout_s);
+    td_reply_int(&r, "face_count", info.face_count);
+    td_reply_int(&r, "face_wakes", info.face_wakes);
     send(&r);
 }
 

@@ -15,7 +15,7 @@
 
 cJSON *td_link_capabilities(void)
 {
-    cJSON *caps = cJSON_Parse("{\"screen\":[1024,600],\"grid\":[8,8],\"pages\":8,\"tiles\":64,\"layout_bytes\":32768,\"layout_schemas\":[1,2],\"tile_kinds\":[\"static\"],\"asset_bytes\":12300,\"formats\":[\"tdi1\"],\"image\":[64,64],\"gif_frames\":0,\"gif_pixels\":0,\"photo_bytes\":0,\"live_hz\":0,\"live_total_hz\":0,\"series\":0,\"text_bytes\":0,\"streams\":0}");
+    cJSON *caps = cJSON_Parse("{\"screen\":[1024,600],\"grid\":[8,8],\"pages\":8,\"tiles\":64,\"layout_bytes\":32768,\"layout_schemas\":[1,2],\"tile_kinds\":[\"static\",\"photo-frame\",\"clock\"],\"asset_bytes\":12300,\"formats\":[\"tdi1\"],\"image\":[64,64],\"gif_frames\":0,\"gif_pixels\":0,\"photo_bytes\":131072,\"live_hz\":0,\"live_total_hz\":0,\"series\":0,\"text_bytes\":0,\"streams\":0}");
 #if CONFIG_TD_GIF_CAPS
     const td_link_animation_caps_t anim = { .image = {128, 128}, .min_delay_ms = 100, .page_tiles = 4, .page_pixels = 65536 };
     cJSON *object = cJSON_AddObjectToObject(caps, "anim");
@@ -24,9 +24,9 @@ cJSON *td_link_capabilities(void)
     cJSON_AddNumberToObject(object, "page_tiles", anim.page_tiles);
     cJSON_AddNumberToObject(object, "page_pixels", anim.page_pixels);
     const char *formats[] = {"tdi1", "gif"};
-    const char *kinds[] = {"static", "gif"};
+    const char *kinds[] = {"static", "gif", "photo-frame", "clock"};
     cJSON_ReplaceItemInObjectCaseSensitive(caps, "formats", cJSON_CreateStringArray(formats, 2));
-    cJSON_ReplaceItemInObjectCaseSensitive(caps, "tile_kinds", cJSON_CreateStringArray(kinds, 2));
+    cJSON_ReplaceItemInObjectCaseSensitive(caps, "tile_kinds", cJSON_CreateStringArray(kinds, 4));
     cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "asset_bytes"), 262144);
     cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "gif_frames"), 60);
     cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "gif_pixels"), 983040);
@@ -292,6 +292,11 @@ static const struct {
     { "v2.asset.put", td_link_asset_put },
     { "v2.asset.end", td_link_asset_end },
     { "v2.asset.delete", td_link_asset_delete },
+    { "v2.photo.put", td_link_photo_put },
+    { "v2.photo.end", td_link_photo_end },
+    { "v2.idle.get", td_link_idle_get },
+    { "v2.idle.set", td_link_idle_set },
+    { "v2.clock.set", td_link_clock_set },
 };
 
 #define ECHO_CHARS_MAX 64

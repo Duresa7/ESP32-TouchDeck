@@ -18,6 +18,8 @@ const checks = {
   failed: { state: 'failed' },
 } satisfies Record<string, UpdateCheck>;
 
+const DEMO_FOLDER = 'D:\\Pictures\\Desk frame';
+
 const isCheckName = (name: string | null): name is keyof typeof checks => name !== null && Object.hasOwn(checks, name);
 
 const browsers = [
@@ -47,6 +49,8 @@ declare global {
       topics(): string[];
       setHub(up: boolean): void;
       deliver(entry: Delivery): void;
+      /** What the next Choose folder answers: a path, or null for a cancelled dialog. */
+      pickFolder(next: string | null): void;
       assets: {
         offline(on: boolean): void;
         holdSearches(on: boolean): void;
@@ -68,12 +72,16 @@ export function demoEnvironment(target: Window): Environment {
     layouts: Object.fromEntries(devices.map((d) => [d.id, demoLayout()])),
     system: { build: 'demo' },
     brightness: Object.fromEntries(devices.filter((_, i) => i % 3 !== 2).map((d) => [d.id, 80])),
+    photoFrame: devices.filter((_, i) => i % 3 !== 2).map((d) => d.id),
     browsers: params.get('browsers') === '0' ? [] : browsers,
     integrations: { configured: params.get('integrations') !== 'new', delivery: devices.map((d) => ({ device: d.id, sent: 42, error: null })) },
     assets: params.get('icons') === 'worst' ? { hits: worstCaseHits() } : {},
   });
   const update = params.get('update');
   const updates = createFakeUpdates({ check: isCheckName(update) ? checks[update] : checks.none });
+  let picked: string | null = DEMO_FOLDER;
+  const inBrowser = params.get('shell') === 'browser';
+  const pickFolder = inBrowser ? undefined : async () => picked;
   target.touchdeckDemo = {
     push: (id, order) => fake.setLayout(id, demoLayout(order)),
     offline: (id) => fake.update(id, { link: { state: 'lost', reason: 'unplugged', detail: '', at_ms: Date.UTC(2026, 9, 27, 21, 40) } }),
@@ -93,6 +101,9 @@ export function demoEnvironment(target: Window): Environment {
     topics: () => fake.topics.flat(),
     setHub: (up) => fake.integrations.setHub(up),
     deliver: (entry) => fake.integrations.deliver(entry),
+    pickFolder: (next) => {
+      picked = next;
+    },
     assets: {
       offline: (on) => fake.assets.setOffline(on),
       holdSearches: (on) => fake.assets.holdSearches(on),
@@ -106,5 +117,5 @@ export function demoEnvironment(target: Window): Environment {
     const url = new URL(input instanceof Request ? input.url : String(input), target.location.href);
     return url.origin === target.location.origin && url.pathname.startsWith('/api/') ? fake.fetch(input, init) : network(input, init);
   };
-  return { base: target.location.origin, session: windowSession(fake.bridge), open: fake.openSocket, updates: updates.bridge };
+  return { base: target.location.origin, session: windowSession(fake.bridge), open: fake.openSocket, updates: updates.bridge, pickFolder };
 }
