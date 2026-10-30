@@ -2,11 +2,15 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import clsx from 'clsx';
 import { Switch } from '@base-ui/react/switch';
 import { Plus } from 'lucide-react';
+import { useIntegrations } from '../../companion/integrations.ts';
 import { missingGlyphs } from '../../lib/deck/scene.ts';
 import { ADD_KINDS, tileProblems, type EditorStore, type Target } from '../../lib/editor/store.ts';
 import { plural } from '../../lib/editor/messages.ts';
 import type { GridPage, Layout, Page } from '../../lib/editor/validate.ts';
+import { offersPresets } from '../../lib/integrations/model.ts';
 import { button } from '../../shell/button.ts';
+import { useUi } from '../../state/ui.ts';
+import { PresetButton } from '../integrations/PresetPreview.tsx';
 import { PendingApprovals } from './Approvals.tsx';
 import { useEditorState } from './editor.ts';
 import { KINDS, TileGlyph } from './glyphs.tsx';
@@ -220,6 +224,38 @@ function where(target: Target, page: Page) {
   return `Row ${target.row + 1}, column ${target.col + 1} on the ${page.title} Page`;
 }
 
+function PresetTiles({ store }: { store: EditorStore }) {
+  const integrations = useIntegrations((s) => s.integrations);
+  const go = useUi((s) => s.go);
+  const offered = integrations.filter(offersPresets);
+  return (
+    <section className="inspector-section" aria-label="Preset tiles" data-testid="add-presets">
+      <h3 className="add-heading">Preset tiles</h3>
+      {offered.length ? (
+        offered.map((integration) => (
+          <div className="add-presets-group" key={integration.id} data-id={integration.id}>
+            <span className="add-presets-name">{integration.name}</span>
+            <div className="preset-grid">
+              {integration.presets.map((preset) => (
+                <PresetButton key={preset.id} preset={preset} streams={integration.streams} onAdd={(chosen) => store.placePreset(chosen)} />
+              ))}
+            </div>
+          </div>
+        ))
+      ) : (
+        <div className="add-presets-group">
+          <p className="field-hint">Set up an Integration to add its Preset tiles.</p>
+          <div>
+            <button type="button" className={button({ size: 'small' })} onClick={() => go('integrations')} data-testid="add-presets-setup">
+              Integrations
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function AddTile({ store, page, target }: { store: EditorStore; page: Page; target: Target }) {
   const first = useRef<HTMLButtonElement>(null);
   useEffect(() => first.current?.focus({ preventScroll: true }), []);
@@ -255,6 +291,7 @@ function AddTile({ store, page, target }: { store: EditorStore; page: Page; targ
           })}
         </div>
       </section>
+      <PresetTiles store={store} />
       <div className="inspector-foot">
         <button type="button" className={button()} onClick={() => store.closeAdd()} data-testid="add-cancel">
           Cancel

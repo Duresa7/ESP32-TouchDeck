@@ -30,20 +30,41 @@ impl TestCompanion {
     }
     /// Starts with other connection and time limits, so limit tests run in milliseconds.
     pub async fn start_with(limits: crate::Limits) -> Self {
-        Self::start_router(limits, false, None, None).await
+        Self::start_router(limits, false, None, None, Box::new(NoCatalogNetwork)).await
+    }
+    pub async fn start_with_catalog(
+        limits: crate::Limits,
+        fetcher: Box<dyn td_host::catalog::Fetcher>,
+    ) -> Self {
+        Self::start_router(limits, false, None, None, fetcher).await
     }
     pub async fn start_release_router() -> Self {
-        Self::start_router(crate::Limits::default(), true, None, None).await
+        Self::start_router(
+            crate::Limits::default(),
+            true,
+            None,
+            None,
+            Box::new(NoCatalogNetwork),
+        )
+        .await
     }
     /// Starts with grants kept in `grants` instead of a file.
     pub async fn start_with_grants(grants: Arc<dyn GrantStore>) -> Self {
-        Self::start_router(crate::Limits::default(), false, Some(grants), None).await
+        Self::start_router(
+            crate::Limits::default(),
+            false,
+            Some(grants),
+            None,
+            Box::new(NoCatalogNetwork),
+        )
+        .await
     }
     async fn start_router(
         limits: crate::Limits,
         release: bool,
         grants: Option<Arc<dyn GrantStore>>,
         desktop: Option<Arc<crate::tray::Desktop>>,
+        fetcher: Box<dyn td_host::catalog::Fetcher>,
     ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -56,6 +77,10 @@ impl TestCompanion {
         })
         .await
         .unwrap();
+        ctx.catalog = std::sync::Arc::new(td_host::catalog::Catalog::new(
+            data.path().join("cache/catalog"),
+            fetcher,
+        ));
         if let Some(desktop) = desktop {
             ctx.desktop = desktop;
         }
@@ -104,7 +129,14 @@ impl TestCompanion {
     pub async fn restart(&mut self) {
         let desktop = self.ctx.desktop.clone();
         assert!(self.stop(Duration::from_secs(5)).await);
-        *self = Self::start_router(crate::Limits::default(), false, None, Some(desktop)).await;
+        *self = Self::start_router(
+            crate::Limits::default(),
+            false,
+            None,
+            Some(desktop),
+            Box::new(NoCatalogNetwork),
+        )
+        .await;
     }
     pub fn pairing_delivery(&self) -> (Option<String>, Option<String>) {
         let (opener, notifier) = self.ctx.desktop.captures.as_ref().unwrap();
@@ -346,5 +378,14 @@ impl TestClock {
     /// Moves the Companion's monotonic clock, which session expiry reads.
     pub fn advance(&self, duration: std::time::Duration) {
         self.0.clock.advance(duration);
+    }
+}
+
+struct NoCatalogNetwork;
+impl td_host::catalog::Fetcher for NoCatalogNetwork {
+    fn fetch(&self, _: &str) -> Result<Vec<u8>, td_host::catalog::Error> {
+        Err(td_host::catalog::Error::Fetch(
+            "Network disabled in tests".into(),
+        ))
     }
 }

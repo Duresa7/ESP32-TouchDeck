@@ -353,6 +353,12 @@ impl Inner {
             recovery: hello.recovery,
             update_available: None,
         };
+        let diagnostics = super::DeviceDiagnostics {
+            product: hello.product.clone(),
+            running_from: hello.running.clone(),
+            sinks: hello.sinks.clone(),
+            current_layout: hello.layout.clone(),
+        };
         let capabilities = identity.capabilities.as_ref().map(Capabilities::from);
         match reg.devices.get_mut(id) {
             Some(entry) => {
@@ -362,6 +368,7 @@ impl Inner {
                     d.name = identity.name.clone().or(saved_name);
                     d.link = link;
                     d.firmware = Some(firmware);
+                    d.diagnostics = Some(diagnostics);
                     d.capabilities = capabilities;
                     d.key_mirror = key_mirror;
                     d.stable_id = stable;
@@ -382,6 +389,7 @@ impl Inner {
                     },
                     link,
                     firmware: Some(firmware),
+                    diagnostics: Some(diagnostics),
                     capabilities,
                     orientation: None,
                     layout: None,
