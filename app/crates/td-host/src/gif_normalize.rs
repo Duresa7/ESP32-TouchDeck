@@ -262,7 +262,7 @@ fn resample(source: &[Composed], limits: &AnimLimits) -> Result<Vec<(usize, u32)
     let min_cs = limits.min_delay_ms.div_ceil(10);
     let total: u32 = source.iter().map(|f| f.delay_cs).sum();
     if source.len() == 1 {
-        return Ok(vec![(0, total.max(min_cs))]);
+        return within_frame_budget(vec![(0, total.max(min_cs))], limits);
     }
     if total < min_cs {
         return Err(GifError::TooShort {
@@ -294,6 +294,13 @@ fn resample(source: &[Composed], limits: &AnimLimits) -> Result<Vec<(usize, u32)
             timeline.push((index, delay));
         }
     }
+    within_frame_budget(timeline, limits)
+}
+
+fn within_frame_budget(
+    timeline: Vec<(usize, u32)>,
+    limits: &AnimLimits,
+) -> Result<Vec<(usize, u32)>, GifError> {
     if timeline.len() > limits.max_frames {
         return Err(GifError::TooLong {
             max_frames: limits.max_frames,

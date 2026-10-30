@@ -277,6 +277,19 @@ fn refuses_long_loops_instead_of_truncating() {
 }
 
 #[test]
+fn a_still_frame_respects_a_zero_frame_budget() {
+    let mut caps = limits();
+    caps.max_frames = 0;
+    assert_eq!(
+        normalize_gif(&source(4, 4, &[frame(4, 4, 1, 10)]), target(), &caps).unwrap_err(),
+        GifError::TooLong {
+            max_frames: 0,
+            needed: 1
+        }
+    );
+}
+
+#[test]
 fn shrinks_for_byte_and_pixel_budgets_and_reports_the_smallest_attempt() {
     let input = source(128, 128, &[frame(128, 128, 1, 10)]);
     let t = Target {
