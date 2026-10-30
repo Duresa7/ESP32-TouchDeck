@@ -1,5 +1,5 @@
 name: windows release build
-description: Build and verify the TouchDeck Windows installer and matching radio-free firmware.
+description: Build the Open TouchDeck Windows installer with the Companion and matching radio-free Firmware, signed with the updater key.
 
 inputs:
   release-mode:
@@ -13,7 +13,7 @@ inputs:
     description: Git ref being built
     required: true
   updater-public-key:
-    description: Tauri updater public key for durable-key builds
+    description: Updater public key for durable-key builds
     required: false
     default: ""
   signing-key-present:
@@ -21,7 +21,7 @@ inputs:
     required: false
     default: "false"
   signing-private-key:
-    description: Tauri updater private key for durable-key builds
+    description: Updater private key (minisign, made with the Tauri signer) for durable-key builds
     required: false
     default: ""
   signing-private-key-password:
@@ -103,11 +103,11 @@ runs:
             # Subject and body only, so a signed tag's signature block never reaches the notes.
             $notes = ((git for-each-ref $ref --format='%(contents:subject)%0a%0a%(contents:body)') -join "`n").Trim()
           }
-          if (-not $notes) { $notes = "TouchDeck $env:RELEASE_TAG" }
+          if (-not $notes) { $notes = "Open TouchDeck $env:RELEASE_TAG" }
         } elseif ($env:RELEASE_MODE -eq 'dry-run') {
-          $notes = "TouchDeck dry run of $env:BUILD_REF ($(git rev-parse HEAD)). Not for publication."
+          $notes = "Open TouchDeck dry run of $env:BUILD_REF ($(git rev-parse HEAD)). Not for publication."
         } else {
-          $notes = "TouchDeck test-signing candidate $(git rev-parse HEAD). Not for publication."
+          $notes = "Open TouchDeck test-signing candidate $(git rev-parse HEAD). Not for publication."
         }
         [IO.File]::WriteAllText("$env:RUNNER_TEMP/release-notes.md", "$notes`n")
         if ($env:RELEASE_MODE -ne 'test-signing') {
@@ -125,7 +125,7 @@ runs:
         & "$env:RUNNER_TEMP/esp-idf/install.ps1" esp32s3
         if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-    - name: Build test-signed installer and matching radio-free firmware
+    - name: Build test-signed installer and matching radio-free Firmware
       if: inputs.release-mode == 'test-signing'
       shell: pwsh
       run: |
@@ -133,7 +133,7 @@ runs:
         python app/scripts/package_windows.py build --out "$env:RUNNER_TEMP/touchdeck-release" --test-signing --notes-file "$env:RUNNER_TEMP/release-notes.md"
         exit $LASTEXITCODE
 
-    - name: Build durable-key installer and matching radio-free firmware
+    - name: Build durable-key installer and matching radio-free Firmware
       if: inputs.release-mode != 'test-signing'
       shell: pwsh
       env:
@@ -142,12 +142,6 @@ runs:
       run: |
         . "$env:RUNNER_TEMP/esp-idf/export.ps1"
         python app/scripts/package_windows.py build --out "$env:RUNNER_TEMP/touchdeck-release" --public-key-file "$env:RUNNER_TEMP/updater.pub" --notes-file "$env:RUNNER_TEMP/release-notes.md"
-        exit $LASTEXITCODE
-
-    - name: Verify signed installer with local HTTPS fixture without installing
-      shell: pwsh
-      run: |
-        python app/scripts/verify_updater.py --assets "$env:RUNNER_TEMP/touchdeck-release/release-assets" --out "$env:RUNNER_TEMP/updater-fixture" --cargo-target "$env:RUNNER_TEMP/touchdeck-release/build/app" --openssl 'C:/Program Files/Git/usr/bin/openssl.exe'
         exit $LASTEXITCODE
 
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

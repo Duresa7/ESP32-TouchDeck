@@ -4,8 +4,8 @@
     python app/scripts/release_version.py check [--tag vX.Y.Z]
     python app/scripts/release_version.py bump X.Y.Z
 
-check exits nonzero when app/src-tauri/tauri.conf.json, app/package.json, app/src-tauri/Cargo.toml and the
-touchdeck entry in app/Cargo.lock disagree, or when --tag is not "v" plus that version. bump rewrites only
+check exits nonzero when app/src-tauri/tauri.conf.json, app/package.json, app/electron/package.json,
+app/src-tauri/Cargo.toml and the touchdeck entry in app/Cargo.lock disagree, or when --tag is not "v" plus that version. bump rewrites only
 those version strings and leaves every other byte, line endings included, unchanged.
 """
 
@@ -26,6 +26,7 @@ JSON_VERSION = re.compile(r'(\A\{\s*(?:"[^"]*"\s*:\s*(?:"[^"]*"|true|false|null|
 PATTERNS = {
     "app/src-tauri/tauri.conf.json": JSON_VERSION,
     "app/package.json": JSON_VERSION,
+    "app/electron/package.json": JSON_VERSION,
     "app/src-tauri/Cargo.toml": re.compile(r'(^\[package\]\r?\n(?:[^\[\r\n][^\r\n]*\r?\n|\r?\n)*?version\s*=\s*")([^"]*)(")',
                                            re.MULTILINE),
     "app/Cargo.lock": re.compile(r'(^\[\[package\]\]\r?\nname = "' + CRATE + r'"\r?\nversion = ")([^"]*)(")', re.MULTILINE),

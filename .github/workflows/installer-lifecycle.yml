@@ -41,11 +41,12 @@ jobs:
           # Must differ from windows-release-assets, which the release publish job downloads.
           artifact-name: installer-lifecycle-candidate
 
-      - name: Install, passively update, and uninstall
+      - name: Install, update through the Electron updater, refuse bad updates, and uninstall
         shell: pwsh
         run: |
           & app/scripts/installer_lifecycle.ps1 `
-            -InstallerPath "$env:RUNNER_TEMP/touchdeck-release/release-assets/TouchDeck-windows-x64-TEST-ONLY-setup.exe" `
+            -AssetsDir "$env:RUNNER_TEMP/touchdeck-release/release-assets" `
+            -LifecycleDir "$env:RUNNER_TEMP/touchdeck-release/lifecycle" `
             -ArtifactDir "$env:RUNNER_TEMP/installer-lifecycle"
           exit $LASTEXITCODE
 
@@ -57,5 +58,6 @@ jobs:
           path: |
             ${{ runner.temp }}/installer-lifecycle/summary.json
             ${{ runner.temp }}/installer-lifecycle/lifecycle.log
+            ${{ runner.temp }}/installer-lifecycle/update-*.json
           if-no-files-found: warn
           retention-days: 14

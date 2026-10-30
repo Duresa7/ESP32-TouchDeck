@@ -197,7 +197,7 @@ test('installer spawn failure returns failure and attempts owned unlock', async 
   assert.deepEqual(await readdir(f.dir), []);
 });
 
-test('signed fake installer executable receives passive restart flags', async t => {
+test('signed fake installer executable receives silent update and restart flags', async t => {
   const { spawn } = await import('node:child_process');
   const f = await fixture(t);
   const marker = join(f.dir, 'launched.json');
@@ -211,7 +211,7 @@ test('signed fake installer executable receives passive restart flags', async t 
   void updater.install();
   for (let n = 0; n < 200 && !f.state.quits; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(f.state.quits, 1);
-  assert.deepEqual(JSON.parse(await readFile(marker, 'utf8')), ['/P', '/UPDATE', '/R']);
+  assert.deepEqual(JSON.parse(await readFile(marker, 'utf8')), ['/S', '--updated', '--force-run']);
 });
 
 
