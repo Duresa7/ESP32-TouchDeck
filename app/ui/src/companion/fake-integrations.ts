@@ -1,4 +1,4 @@
-import type { Delivery, IntegrationSummary, IntegrationView, JsonValue } from './api.ts';
+import type { AccountUsage, Delivery, IntegrationSummary, IntegrationView } from './api.ts';
 
 type Frame = Record<string, unknown> & { type: string };
 
@@ -35,14 +35,20 @@ const STREAMS: [string, string, string | null][] = [
   ['plan', 'text', null],
 ];
 
-function sampleAccounts() {
-  const window = (pct: number, reset_in: string) => ({ pct, reset_in });
+function sampleAccounts(polled: number): AccountUsage[] {
+  const window = (pct: number, delay: number) => ({ pct, resets_at_ms: polled + delay });
   return [
-    { key: 'codex:alice@example.com', provider: 'codex', status: 'active', plan: 'pro', success: 128, failed: 2, recent_10m: 6, five_hour: window(42, '2h 10m'), seven_day: window(10, '3d 4h'), usage_error: null },
-    { key: 'claude:alice@example.com', provider: 'claude', status: 'active', plan: null, success: 64, failed: 0, recent_10m: 5, five_hour: window(24, '2h 10m'), seven_day: window(61, '3d 4h'), usage_error: null },
-    { key: 'gemini-cli:linus@example.com', provider: 'gemini-cli', status: 'active', plan: null, success: 40, failed: 1, recent_10m: 0, five_hour: null, seven_day: null, usage_error: null },
+    { account: 'Work', provider: 'codex', status: 'active', plan: 'pro', success: 128, failed: 2, recent_10m: 6, five_hour: window(42, 7_800_000), seven_day: window(10, 273_600_000), error: null },
+    { account: 'Personal', provider: 'claude', status: 'active', plan: 'Claude', success: 64, failed: 0, recent_10m: 5, five_hour: null, seven_day: null, error: 'provider refused (HTTP 403)' },
   ];
 }
+
+const PRESETS: [string, string][] = [
+  ['status', 'Account status'], ['success', 'Requests OK'], ['failed', 'Requests failed'],
+  ['recent_10m', 'Requests in 10 min'], ['five_hour_pct', '5-hour limit used'],
+  ['seven_day_pct', '7-day limit used'], ['five_hour_reset', '5-hour reset in'],
+  ['seven_day_reset', '7-day reset in'], ['plan', 'Plan'],
+];
 
 function originOf(address: string): string | null {
   let url: URL;
@@ -77,7 +83,9 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
   let bound = originOf(settings.url);
   let keyOrigin: string | null = configured ? bound : null;
   let hubUp = true;
-  let polled: number | null = configured ? now() - 12_000 : null;
+  let revision = 0;
+  const initialPoll = now() - 12_000;
+  let detail: IntegrationView['detail'] = configured ? { polled_ms: initialPoll, accounts: sampleAccounts(initialPoll) } : null;
   let lastRefresh: number | null = null;
   let refreshes = 0;
   let configPuts = 0;
@@ -89,6 +97,7 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
     const state = !keySet() ? 'not_configured' : hubUp ? 'ok' : 'error';
     return {
       id: ID,
+      revision,
       name: 'CLIProxyAPI',
       icon: 'activity',
       enabled: settings.enabled,
@@ -101,23 +110,19 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
       ],
       streams: STREAMS.map(([id, kind, unit]) => ({ id, kind, unit })),
       actions: ['refresh'],
-      presets: STREAMS.map(([id]) => ({ id, name: id.replaceAll('_', ' '), action: { type: 'widget', source: ID, field: id, account: '' } })),
+      presets: PRESETS.map(([id, name]) => ({ id, name, action: { type: 'widget', source: ID, field: id, account: '' } })),
     };
   }
 
-  function usage(): JsonValue {
-    const working = settings.enabled && keySet();
-    return {
-      polled_ms: working ? polled : null,
-      fails: working && !hubUp ? 3 : 0,
-      stale: working && !hubUp,
-      accounts: working && hubUp && polled !== null ? sampleAccounts() : [],
-    };
-  }
+  const view = (): IntegrationView => ({
+    summary: summary(), config: { ...settings }, secrets: { [SECRET]: { set: keySet() } },
+    detail,
+  });
 
-  const view = (): IntegrationView & { usage: JsonValue } => ({ summary: summary(), config: { ...settings }, secrets: { [SECRET]: { set: keySet() } }, usage: usage() });
-
-  const changed = () => publish({ type: 'integration.status', data: summary() });
+  const changed = () => {
+    revision += 1;
+    publish({ type: 'integration.status', data: summary() });
+  };
 
   async function body(request: Request): Promise<unknown> {
     try {
@@ -146,11 +151,13 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
         const url = next.url.trim().replace(/\/+$/, '');
         const origin = originOf(url);
         if (!origin) return invalid();
+        const interval_s = Math.max(60, next.interval_s);
+        if (next.enabled === settings.enabled && url === settings.url && interval_s === settings.interval_s) return json(200, view());
         if (origin !== bound) keyOrigin = null;
         bound = origin;
-        settings = { enabled: next.enabled, url, interval_s: Math.max(60, next.interval_s) };
+        settings = { enabled: next.enabled, url, interval_s };
         configPuts += 1;
-        if (settings.enabled && keySet()) polled = now();
+        detail = null;
         changed();
         return json(200, view());
       }
@@ -159,7 +166,8 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
         if (settings.enabled && (lastRefresh === null || now() - lastRefresh >= REFRESH_FLOOR_MS)) {
           lastRefresh = now();
           refreshes += 1;
-          polled = now();
+          const polled_ms = now();
+          detail = { polled_ms, accounts: keySet() && hubUp ? sampleAccounts(polled_ms) : detail?.accounts ?? [] };
           changed();
         }
         return json(204, null);
@@ -167,6 +175,7 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
       if (decodeURIComponent(field) !== SECRET) return invalid();
       if (method === 'DELETE') {
         keyOrigin = null;
+        detail = null;
         changed();
         return json(204, null);
       }
@@ -176,24 +185,21 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
       const value = typeof input === 'object' && input !== null && 'value' in input ? input.value : undefined;
       if (keys.length !== 1 || typeof value !== 'string' || !value.trim() || value.length > 4096 || /\p{Cc}/u.test(value)) return invalid();
       keyOrigin = bound;
-      if (settings.enabled) polled = now();
+      detail = null;
       changed();
       return json(200, { hint: 'Set' });
     },
 
-    /** `GET /test/integrations/record`: what the fake was asked to do, for the demo's Playwright specs. */
     test(request: Request, path: string): Response {
       if (path === '/test/integrations/record' && request.method === 'GET') return json(200, { settings, keySet: keySet(), refreshes, configPuts });
       return failure(404, 'route.not_found', 'No test route with that path.');
     },
 
-    /** The hub stops or starts answering. */
     setHub(up: boolean) {
       hubUp = up;
       changed();
     },
 
-    /** The Device scheduler reports a delivery. */
     deliver(entry: Delivery) {
       delivery.set(entry.device, entry);
       changed();

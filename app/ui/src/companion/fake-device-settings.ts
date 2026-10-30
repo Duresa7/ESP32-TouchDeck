@@ -117,7 +117,7 @@ export function createFakeDeviceSettings(options: FakeDeviceSettingsOptions) {
       if (typeof interval === 'number') photo.interval_s = interval;
       if (typeof folder === 'string') photo.folder = folder === '' ? null : folder;
     }
-    if (typeof name === 'string' && name !== device.name) setDevice(device.id, { name });
+    if (typeof name === 'string' && (name !== device.name || device.setup !== 'ready')) setDevice(device.id, { name, setup: 'ready' });
     return json(200, { settings: view(devices.get(device.id) ?? device), restart_required: restart });
   }
 

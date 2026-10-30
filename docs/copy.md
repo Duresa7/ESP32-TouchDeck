@@ -115,6 +115,11 @@ Shown the first time a Device with Open TouchDeck Firmware connects to this PC w
 | All | Title | Set up your Device |
 | All | Step counter | Step {n} of {total} |
 | All | Buttons | Back, Next |
+| All | Close button label | Close |
+| Name, Orientation | Next, while saving | Saving… |
+| Orientation | Next, while {device} restarts | Restarting… |
+| Starting Layout | Next, while reading the Layout on the Device | Loading… |
+| Starting Layout | Next, while sending the Layout | Sending… |
 | Name | Heading | Name this Device |
 | Name | Field label | Name |
 | Name | Placeholder | Desk |
@@ -154,6 +159,8 @@ Shown the first time a Device with Open TouchDeck Firmware connects to this PC w
 | Confirm warning | Installing replaces everything on the board, including any other project on it. This can't be undone. |
 | Confirm buttons | Install Firmware, Cancel |
 | Progress | Installing Firmware… {pct}% |
+| Progress, before a percentage | Installing Firmware… |
+| Declined on this PC | Declined on this PC. Nothing changed on the board. |
 | Progress hint | Keep the board plugged in. This takes about a minute. |
 | Success | Firmware installed |
 | Success body | Next, name your Device. |
@@ -231,6 +238,7 @@ Opens from the Device's name.
 | Firmware declined, or consent not answered in 5 min | Declined on this PC. {device} still runs {version}. |
 | Firmware update cancelled | Update stopped. {device} still runs {version}. |
 | Firmware file expired | That file expired. Choose it again, then retry. |
+| Firmware file, a file dialog is already open | A file dialog is already open on this PC. Close it, then retry. |
 | Restart button | Restart |
 | Restart progress | Restarting… |
 | Restart failed | Couldn't restart {device}. Unplug it and plug it back in. |
@@ -276,6 +284,9 @@ Opens from the Device's name.
 | Paired browsers heading | Paired browsers |
 | Paired browsers, empty | No browsers paired. Choose Open in browser in the tray to pair one. |
 | Troubleshooting entry | Troubleshooting |
+| Troubleshooting, update from a file heading | Update from a file |
+| Troubleshooting, update from a file hint | A .tdfw file from an Open TouchDeck release. |
+| Troubleshooting, update from a file button | Choose file |
 | About entry | About |
 | About, version | Open TouchDeck {version} |
 | About, build | Build {sha} |
@@ -1068,3 +1079,21 @@ The coverage script below matches any literal that reads like words. These are i
 ## Checking coverage
 
 A script lists the string literals and text nodes in every non-test `.svelte` and `.ts` file under `app/src`, keeps the ones that read as words, and checks that each appears in a row above with its `file:line`. Single lowercase words, such as "seconds" or "never", don't pass its filter, so the rows marked "Added by hand" cover them. When a UI ticket changes a string, it updates the row here.
+
+## Animated GIF Tiles
+
+| State | Copy |
+| --- | --- |
+| Choose | Choose GIF |
+| Replace | Change GIF |
+| Preparing | Preparing GIF… |
+| Fitted | Fitted to {device}: {width} × {height}, {fps} fps. |
+| Too long | This GIF is too long for {device}. Choose a shorter GIF. |
+| Too large | This GIF is too large for {device}. Choose a smaller GIF. |
+| Page budget | This Page has too many animations for {device}. Remove an animated Tile. |
+| Storage full | {device} is out of space. Remove unused Assets, then retry. |
+| Preparation failed | Couldn't prepare this GIF. Choose another GIF. |
+| Unsupported | Needs Firmware {x.y} |
+
+Put decoder and wire reasons under Details. App previews show a paused poster
+when reduced motion is requested.

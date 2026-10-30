@@ -573,7 +573,7 @@ Requests carrying a credential never follow a redirect to another origin. They s
 | Name | Method and path | Request → Response |
 |---|---|---|
 | `integrations.list` | `GET /integrations` | → `IntegrationSummary[] {id, name, icon, enabled, status, config_schema, presets}`. `status` reports delivery per Device as `{device, sent, error}` |
-| `integrations.get` | `GET /integrations/{integration}` | → `{summary, config, secrets: {[field]: {set, hint?}}}` |
+| `integrations.get` | `GET /integrations/{integration}` | → `{summary, config, secrets: {[field]: {set}}, detail}` |
 | `integrations.config_put` | `PUT /integrations/{integration}/config` | Config, checked against the Integration's schema → the same view as `integrations.get` |
 | `integrations.secret_put` | `PUT /integrations/{integration}/secrets/{field}` | `{value}` → `{hint}`. Write-only. The value never comes back and is never in `config` |
 | `integrations.secret_delete` | `DELETE /integrations/{integration}/secrets/{field}` | → `()` |
@@ -582,6 +582,26 @@ Requests carrying a credential never follow a redirect to another origin. They s
 CLIProxyAPI config is `{enabled: boolean, url: string, interval_s: integer}`. The URL is trimmed and the interval has a 60-second floor. Unknown fields, including `management_key`, are rejected in config. Its write-only secret field is `management_key`; the secret-write hint is the constant `Set`, including for short keys. Identical config writes preserve the polling deadline. Background polls, manual refreshes, config resets and secret writes share a 15-second minimum spacing between polling attempts.
 
 `IntegrationSummary` also includes `streams: {id, kind, unit}[]` and `actions: string[]`. Its `status` is `{state: "ok" | "error" | "not_configured", message, delivery: {device, sent, error}[]}`. Delivery entries are supplied by the Device scheduler; an Integration without a bound Device has an empty delivery list. Presets contain `{id, name, action}` with the existing Layout action shape. Live tile readings stay inside the Companion.
+
+CLIProxyAPI `detail` is read-only and null until the first poll (and after config or secret resets). Otherwise it is `{accounts, polled_ms}`, with a Unix-millisecond poll timestamp. Each account is `{provider, account, status, success, failed, recent_10m, plan, five_hour, seven_day, error}`. `account` is the display label; `plan` and `error` are nullable strings. Each window is null or `{pct, resets_at_ms}`, with a nullable Unix-millisecond reset timestamp. Failed polls retain the last account data, with the failure in summary status. No credential, token, auth index or secret hint is included.
+
+`IntegrationSummary.revision` increases when detail changes, including resets. The existing `integration.status` event carries this revision so clients can refetch `integrations.get`; sync carries the current summary revision.
+
+CLIProxyAPI Preset tiles have this fixed order and copy names:
+
+| id | name |
+|---|---|
+| `status` | Account status |
+| `success` | Requests OK |
+| `failed` | Requests failed |
+| `recent_10m` | Requests in 10 min |
+| `five_hour_pct` | 5-hour limit used |
+| `seven_day_pct` | 7-day limit used |
+| `five_hour_reset` | 5-hour reset in |
+| `seven_day_reset` | 7-day reset in |
+| `plan` | Plan |
+
+With `test-hooks`, mock Integrations use real HTTP only for explicitly configured `http://127.0.0.1:PORT` stub URLs. Other mock URLs retain the empty fixture transport. This permits local stub tests with mock Devices and memory-only credentials.
 
 Each Integration's Preset tiles are in `presets`. Live tiles get their values through the Device link, never through this API ([ADR 0004](adr/0004-firmware-draws-live-tiles.md)).
 
@@ -645,6 +665,7 @@ Feature module `test_hooks`, compiled only with the `test-hooks` Cargo feature a
 | `test.ports` | `POST /test/ports` | `{plug: {id, kind: "device" \| "device-v1" \| "silent" \| "other-firmware" \| "busy"}}` or `{unplug: id}` → `()` |
 | `test.approvals_script` | `POST /test/approvals/script` | `{answers: ("once" \| "always" \| "deny" \| "fail" \| "never")[]}` → `()`. Sets what the `FakePrompter` answers next. `fail` acts as a dialog that can't be shown |
 | `test.clock` | `POST /test/clock` | `{advance_ms}` → `()`. Moves the Companion's clock for expiry tests |
+| `test.firmware_script` | `POST /test/firmware/script` | `{answers: ("accept" \| "decline")[]}` → `()`. Replaces the native Firmware dialogs with a scripted prompter that gives these consent answers in order and waits once they run out. Its file picker returns the test bundle |
 
 ## Mapping from today's Tauri commands and events
 
@@ -1024,3 +1045,42 @@ contract's combined wrong-or-expired message because both share `auth.code_inval
 Mock runs capture native delivery in memory. Only test-hook builds register
 `test.pairing_delivery`, which requires a window session and consumes the captures;
 its types appear only in `api.test.gen.ts`.
+
+## Animated GIF contract (implementation follows in #94)
+
+An animated Asset has `kind:"gif"`, media type `image/gif` and an id equal to
+SHA-256 of its normalized encoded bytes. GIF uploads and `assets.render` use the
+following fitting contract; the PNG/JPEG and tdi1 implementation above remains
+available. A mock Device can opt into GIF capabilities for integration tests;
+real Firmware and mock Devices default to GIF off. Absence of `caps.anim` means
+off even when `formats` includes `gif`.
+
+Source limits are 16 MiB encoded, 4096 by 4096 pixels, 300 frames and 64 MiB
+cumulative decoded RGBA, counted while streaming. Preparation proceeds in order:
+
+1. Compose source frames, including disposal 2 and 3.
+2. Fit with contain or cover to the actual Tile region, capped at `anim.image`.
+3. Resample time to at least `min_delay_ms` per frame, preserving total duration.
+4. Quantize to one global palette.
+5. Encode normalized GIF as specified in `schema/protocol/link-v2.md`.
+
+If encoded bytes exceed `asset_bytes`, step the canvas down. Enforce
+`gif_pixels` as well. Refuse output exceeding `gif_frames` as too long; never
+truncate silently. Identical input and target produce identical bytes and hash.
+Refit after a resize, orientation change or target Device change.
+
+Before Layout push, check every Page against `anim.page_tiles` and
+`anim.page_pixels` (sum of animated canvas areas, once per Tile even for reused
+Assets). Refuse the push before transferring or replacing the current Layout.
+Firmware independently enforces the same budgets and validates complete Assets.
+
+| Error code | Meaning | `details` |
+| --- | --- | --- |
+| `asset.too_large` | Source or fitted GIF exceeds a bound | `{limit, actual, unit, field}` with numeric limit/actual and field naming the source or capability limit |
+| `asset.unsupported` | GIF unavailable or encoding unsupported | `{limit, actual, field, reason}`; limit/actual identify the required and observed format or capability, reason retains the wire reason when present |
+| `layout.animation_limit` | A Page exceeds animation count or area | `{page, field, limit, actual}`; field is `page_tiles` or `page_pixels` |
+
+These are Job errors for preparation/push failures. Source upload admission
+continues to use the documented HTTP 413 `request.too_large`. Wire `size`,
+`format`, `memory` and `full` remain typed through the API; storage and allocation
+failures must not be reported as generic link text. Raw reasons go under Details.

@@ -2554,6 +2554,13 @@ CONFIG_TD_LAZY_KEY_RECORD=y
 # end of TouchDeck keys
 
 #
+# TouchDeck animation contract
+#
+# default:
+# CONFIG_TD_GIF_CAPS is not set
+# end of TouchDeck animation contract
+
+#
 # TouchDeck UI
 #
 # default:

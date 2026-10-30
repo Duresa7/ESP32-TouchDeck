@@ -1,3 +1,4 @@
+import type { IntegrationView, UsageWindow as ApiUsageWindow } from '../../companion/api.ts';
 import type { ConfigField, DataStream, IntegrationSummary, JsonValue, PresetTile } from '../../companion/api.ts';
 import { plural } from '../editor/messages.ts';
 import { parseLayout, type Action } from '../editor/validate.ts';
@@ -209,46 +210,26 @@ export interface Usage {
   accounts: UsageAccount[];
 }
 
-const str = (value: unknown): string | null => (typeof value === 'string' ? value : null);
-const num = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null);
-
-function parseWindow(value: unknown): UsageWindow | null {
-  if (!isRecord(value)) return null;
-  const pct = num(value.pct);
-  return pct === null ? null : { pct, reset_in: str(value.reset_in) };
-}
-
-function parseAccount(value: unknown): UsageAccount | null {
-  if (!isRecord(value)) return null;
-  const key = str(value.key);
-  const provider = str(value.provider);
-  const status = str(value.status);
-  if (key === null || provider === null || status === null) return null;
-  return {
-    key,
-    provider,
-    status,
-    plan: str(value.plan),
-    success: num(value.success) ?? 0,
-    failed: num(value.failed) ?? 0,
-    recent_10m: num(value.recent_10m) ?? 0,
-    five_hour: parseWindow(value.five_hour),
-    seven_day: parseWindow(value.seven_day),
-    usage_error: str(value.usage_error),
+export function parseUsage(view: IntegrationView): Usage | null {
+  const { detail } = view;
+  if (!detail) return null;
+  const window = (value: ApiUsageWindow | null): UsageWindow | null => {
+    if (!value) return null;
+    const minutes = value.resets_at_ms === null ? null : Math.max(0, Math.ceil((value.resets_at_ms - detail.polled_ms) / 60_000));
+    const reset_in = minutes === null ? null : minutes === 0 ? 'now' : minutes >= 1440 ? `${Math.floor(minutes / 1440)}d ${Math.floor(minutes % 1440 / 60)}h` : minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m`;
+    return { pct: value.pct, reset_in };
   };
-}
-
-/** The accounts and limits an Integration view carries under `usage`, or null when it carries none. */
-export function parseUsage(view: unknown): Usage | null {
-  if (!isRecord(view) || !isRecord(view.usage)) return null;
-  const { usage } = view;
-  const accounts: unknown = usage.accounts;
-  if (!Array.isArray(accounts)) return null;
   return {
-    polled_ms: num(usage.polled_ms),
-    fails: num(usage.fails) ?? 0,
-    stale: usage.stale === true,
-    accounts: accounts.map(parseAccount).filter((a) => a !== null),
+    polled_ms: detail.polled_ms,
+    fails: 0,
+    stale: view.summary.status.state === 'error',
+    accounts: detail.accounts.map(account => ({
+      ...account,
+      key: `${account.provider}:${account.account}`,
+      five_hour: window(account.five_hour),
+      seven_day: window(account.seven_day),
+      usage_error: account.error,
+    })),
   };
 }
 

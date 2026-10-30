@@ -14,6 +14,15 @@ typedef struct {
     int64_t last_rx_ms;
 } td_link_state_t;
 
+typedef struct {
+    int image[2];
+    uint32_t min_delay_ms;
+    uint32_t page_tiles;
+    uint32_t page_pixels;
+} td_link_animation_caps_t;
+
+cJSON *td_link_capabilities(void);
+
 #define TD_LINK_ID_MAX 16
 
 esp_err_t td_link_start(void);

@@ -61,12 +61,28 @@ impl Service {
 }
 struct FakeFetch;
 impl td_host::sources::Fetch for FakeFetch {
-    fn get(&self, _: &str, _: &str) -> Result<String, String> {
+    fn get(&self, url: &str, bearer: &str) -> Result<String, String> {
+        #[cfg(feature = "test-hooks")]
+        if loopback_stub(url) {
+            return td_host::sources::HttpFetch::new().get(url, bearer);
+        }
+        let _ = (url, bearer);
         Ok("[]".into())
     }
-    fn post_json(&self, _: &str, _: &str, _: &Value) -> Result<String, String> {
+    fn post_json(&self, url: &str, bearer: &str, body: &Value) -> Result<String, String> {
+        #[cfg(feature = "test-hooks")]
+        if loopback_stub(url) {
+            return td_host::sources::HttpFetch::new().post_json(url, bearer, body);
+        }
+        let _ = (url, bearer, body);
         Err("No fixture".into())
     }
+}
+#[cfg(feature = "test-hooks")]
+fn loopback_stub(url: &str) -> bool {
+    url.strip_prefix("http://127.0.0.1:")
+        .and_then(|rest| rest.split_once('/'))
+        .is_some_and(|(port, _)| port.parse::<u16>().is_ok_and(|port| port > 0))
 }
 #[derive(Serialize, Deserialize, TS)]
 pub struct IntegrationStatusEvent(pub IntegrationSummary);

@@ -191,10 +191,10 @@ describe('Refresh', () => {
 
   it('reads the accounts again after a check', async () => {
     const store = await detail();
-    expect(store.getState().usage?.accounts).toEqual([]);
+    expect(store.getState().usage).toBeNull();
     await setUp(store);
     await store.refresh();
-    expect(store.getState().usage?.accounts.map((a) => a.key)).toEqual(['codex:alice@example.com', 'claude:alice@example.com', 'gemini-cli:linus@example.com']);
+    expect(store.getState().usage?.accounts.map((a) => a.key)).toEqual(['codex:Work', 'claude:Personal']);
     expect(store.getState().usage?.accounts[0].five_hour).toEqual({ pct: 42, reset_in: '2h 10m' });
   });
 });

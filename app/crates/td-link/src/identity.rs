@@ -6,7 +6,17 @@ use std::time::Duration;
 use td_core::{Hello, ReplyError, Request};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnimationCapabilities {
+    pub image: [u32; 2],
+    pub min_delay_ms: u32,
+    pub page_tiles: u32,
+    pub page_pixels: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capabilities {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anim: Option<AnimationCapabilities>,
     pub screen: [u32; 2],
     pub grid: [u32; 2],
     pub pages: u32,
@@ -28,6 +38,18 @@ pub struct Capabilities {
     pub streams: u32,
 }
 impl Capabilities {
+    pub fn gif_enabled(&self) -> bool {
+        self.anim.as_ref().is_some_and(|a| {
+            a.image.iter().all(|n| *n > 0)
+                && a.min_delay_ms > 0
+                && a.page_tiles > 0
+                && a.page_pixels > 0
+        }) && self.formats.iter().any(|s| s == "gif")
+            && self.tile_kinds.iter().any(|s| s == "gif")
+            && self.gif_frames > 0
+            && self.gif_pixels > 0
+    }
+
     fn valid(&self) -> bool {
         self.screen.iter().all(|n| (1..=4096).contains(n))
             && self.grid.iter().all(|n| (1..=8).contains(n))

@@ -1,5 +1,5 @@
 import type { ActionsStore } from './actions.ts';
-import type { ActionLog, Answer, ApprovalRequest, ApprovalResolved, DeviceConsole, DeviceKeyMirror, DeviceRemoved, DeviceSummary, IntegrationSummary, Job, SyncData, Topic } from './api.ts';
+import type { ActionLog, Answer, ApprovalRequest, ApprovalResolved, DeviceConsole, DeviceKeyMirror, DeviceRemoved, DeviceSummary, IntegrationSummary, Job, NewBoard, NewBoardRemoved, SyncData, Topic } from './api.ts';
 import type { DevicesStore } from './devices.ts';
 import type { IntegrationsStore } from './integrations.ts';
 import type { JobsStore } from './jobs.ts';
@@ -59,6 +59,8 @@ type Frame =
   | { type: 'sync'; data: Partial<SyncData> }
   | { type: 'device.added' | 'device.updated'; data: DeviceSummary }
   | { type: 'device.removed'; data: DeviceRemoved }
+  | { type: 'new-board.added'; data: NewBoard }
+  | { type: 'new-board.removed'; data: NewBoardRemoved }
   | { type: 'job.updated'; data: Job }
   | { type: 'device.console'; data: DeviceConsole }
   | { type: 'integration.status'; data: IntegrationSummary }
@@ -70,6 +72,8 @@ const HANDLED: ReadonlySet<unknown> = new Set<Frame['type']>([
   'device.added',
   'device.updated',
   'device.removed',
+  'new-board.added',
+  'new-board.removed',
   'job.updated',
   'device.console',
   'approval.requested',
@@ -186,7 +190,7 @@ export function openEvents(options: EventsOptions): Events {
         break;
       case 'sync':
         failures = 0;
-        store.getState().sync(frame.data.devices ?? [], frame.data.jobs ?? []);
+        store.getState().sync(frame.data.devices ?? [], frame.data.jobs ?? [], frame.data.new_boards ?? []);
         jobs?.getState().sync(frame.data.jobs ?? []);
         actions?.getState().syncApprovals(syncedApprovals(frame.data.approvals));
         integrations?.getState().sync(frame.data.integrations ?? []);
@@ -197,6 +201,12 @@ export function openEvents(options: EventsOptions): Events {
         break;
       case 'device.removed':
         store.getState().remove(frame.data.id);
+        break;
+      case 'new-board.added':
+        store.getState().boardAdded(frame.data);
+        break;
+      case 'new-board.removed':
+        store.getState().boardRemoved(frame.data.id);
         break;
       case 'job.updated':
         store.getState().job(frame.data);

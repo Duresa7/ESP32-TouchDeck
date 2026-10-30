@@ -1,0 +1,8 @@
+menu "TouchDeck animation contract"
+    config TD_GIF_CAPS
+        bool "Advertise proposed GIF capabilities (contract tests only)"
+        default n
+        help
+            Contract test switch. Production must leave this disabled until
+            GIF validation, playback and the combined board proof are complete.
+endmenu

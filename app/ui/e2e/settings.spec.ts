@@ -196,6 +196,35 @@ test.describe('Troubleshooting', () => {
     await expect(notice).toBeHidden();
     await expect(help(page).getByTestId('console-log').locator('[data-kind="line"]')).toContainText('free_heap');
   });
+
+  test('Update from a file updates a Device from the chosen file, and a file that is not Firmware says so', async ({ page }) => {
+    await start(page);
+    await openTroubleshooting(page);
+    await expect(help(page).getByRole('heading', { name: 'Update from a file' })).toBeVisible();
+    const rows = help(page).getByTestId('firmware-file');
+    await expect(rows).toHaveCount(3);
+    const studio = rows.filter({ hasText: 'Studio' });
+    const status = studio.getByTestId('firmware-file-status');
+    const choose = studio.getByRole('button', { name: 'Choose file' });
+    await expect(status).toHaveText('A .tdfw file from an Open TouchDeck release.');
+
+    await page.evaluate(() => window.touchdeckDemo?.firmware.hold('mock0002'));
+    await choose.click();
+    await expect(status).toHaveText('Updating… 40%');
+    await expect(studio.getByRole('progressbar', { name: 'Updating Studio' })).toHaveAttribute('aria-valuenow', '40');
+    await expect(choose).toHaveAttribute('aria-disabled', 'true');
+    await page.evaluate(() => window.touchdeckDemo?.firmware.release('mock0002'));
+    await expect(studio).toHaveAttribute('data-step', 'done');
+    await expect(status).toHaveText('Updated to 1.5.0');
+    await expect(help(page).getByTestId('device-details').nth(1).locator('[data-fact="version"] dd')).toHaveText('1.5.0');
+
+    await page.evaluate(() => window.touchdeckDemo?.firmware.picks('not-firmware'));
+    await choose.click();
+    await expect(studio).toHaveAttribute('data-step', 'failed');
+    await expect(status).toHaveText("That file isn't a Firmware file for this Device.");
+    await studio.locator('summary', { hasText: 'Details' }).click();
+    await expect(studio.locator('.row-details p')).toHaveText('Failed: The Firmware bundle is invalid or unavailable.');
+  });
 });
 
 test.describe('About', () => {

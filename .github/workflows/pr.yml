@@ -12,6 +12,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       app: ${{ steps.paths.outputs.app }}
+      tauri: ${{ steps.paths.outputs.tauri }}
       firmware: ${{ steps.paths.outputs.firmware }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -28,22 +29,30 @@ jobs:
           set -euo pipefail
           git diff --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/pr-changed-paths"
           app=false
+          tauri=false
           firmware=false
           while IFS= read -r -d '' path; do
             case "$path" in
               app/*|schema/*|.github/workflows/app.yml|.github/workflows/pr.yml) app=true ;;
             esac
             case "$path" in
+              app/src/*|app/src-tauri/*|app/e2e/*|app/index.html|app/vite.config.ts|app/tsconfig.json|app/package.json|app/pnpm-lock.yaml|.github/workflows/app.yml) tauri=true ;;
+            esac
+            case "$path" in
               firmware/*|schema/*|app/scripts/package_windows.py|.github/workflows/firmware.yml|.github/workflows/pr.yml) firmware=true ;;
             esac
           done < "$RUNNER_TEMP/pr-changed-paths"
           echo "app=$app" >> "$GITHUB_OUTPUT"
+          echo "tauri=$tauri" >> "$GITHUB_OUTPUT"
           echo "firmware=$firmware" >> "$GITHUB_OUTPUT"
 
   app:
     needs: changes
     if: needs.changes.outputs.app == 'true'
     uses: ./.github/workflows/app.yml
+    with:
+      os: '["windows-latest"]'
+      tauri: ${{ needs.changes.outputs.tauri == 'true' }}
 
   firmware:
     needs: changes
