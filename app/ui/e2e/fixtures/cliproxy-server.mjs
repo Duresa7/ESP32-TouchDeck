@@ -1,12 +1,3 @@
-// A stand-in for CLIProxyAPI's management API, for the sources specs and CI.
-//
-// Only auth-files and api-call are served. Provider usage is canned; no upstream call
-// is ever made. Headers and JSON bodies are recorded for protocol assertions.
-//
-//   import { start } from './cliproxy-server.mjs';
-//   const server = await start({ key: 'fixture-key' });   // server.url, server.requests
-//
-//   node cliproxy-server.mjs --port 8317 --key fixture-key     run it by hand
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
@@ -17,7 +8,7 @@ export const API_CALL = '/v0/management/api-call';
 export const CODEX_USAGE = 'https://chatgpt.com/backend-api/wham/usage';
 export const CLAUDE_USAGE = 'https://api.anthropic.com/api/oauth/usage';
 export const DEFAULT_KEY = 'fixture-key-0123';
-const DEFAULT_FIXTURE = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', 'crates', 'td-host', 'tests', 'fixtures', 'auth-files-usage.json');
+const DEFAULT_FIXTURE = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', 'crates', 'td-host', 'tests', 'fixtures', 'auth-files-usage.json');
 
 /** Starts the server on `port`, or on a free one when `port` is 0, and resolves once it listens. */
 export async function start({ port = 0, key = DEFAULT_KEY, fixture = DEFAULT_FIXTURE, host = '127.0.0.1' } = {}) {
@@ -30,7 +21,7 @@ export async function start({ port = 0, key = DEFAULT_KEY, fixture = DEFAULT_FIX
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     let json = null;
-    try { json = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* GET has no body. */ }
+    try { json = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {  }
     requests.push({ at: Date.now(), method: request.method, path: request.url, authorized, headers: { ...request.headers }, body: json });
     const send = (status, payload) => {
       response.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) });
