@@ -10,12 +10,13 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 use td_core::frame::CHUNK_DATA_MAX;
-use td_core::layout::{Page, UPLOAD_MAX};
+use td_core::layout::{Page, StreamType, UPLOAD_MAX};
 use td_core::{
     Body, Event, Frame, Hello, ICON_PAGE, Item, Layout, Orientation, Role, Settings, StreamDecoder,
 };
 
 use crate::asset::{ASSET_PAGE, AssetFormat, asset_id, refusal, valid_asset_id};
+use crate::live::{TTL_MAX_MS, TTL_MIN_MS, VALUE_MAX, layout_ref};
 use crate::xfer::{ICON_BYTES, LayoutState, RETRY_AFTER, TRANSMISSIONS, WINDOW, crc32};
 use crate::{READ_TICK, Transport};
 
@@ -29,6 +30,10 @@ const BUILTIN: &[u8] = include_bytes!("../../../../schema/examples/builtin.json"
 /// The space a mock Device has for Assets until a test sets another.
 pub const ASSET_CAPACITY: u64 = 4 * 1024 * 1024;
 const ASSET_BYTES: usize = ICON_BYTES;
+/// The live caps a mock Device advertises, as the Firmware does.
+pub const MOCK_LIVE_HZ: u32 = 2;
+pub const MOCK_LIVE_TOTAL_HZ: u32 = 16;
+pub const MOCK_SERIES: usize = 32;
 
 /// Where a put lands once `xfer.end` accepts it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +74,49 @@ impl Outbound {
         let start = usize::from(idx) * CHUNK_DATA_MAX;
         self.data[start..(start + CHUNK_DATA_MAX).min(self.data.len())].to_vec()
     }
+}
+
+/// One live stream as the Firmware keeps it. `sent` is the ttl, type and value of the accepted `n`, which an
+/// identical retry must repeat.
+#[derive(Debug, Default)]
+struct LiveSlot {
+    n: u32,
+    sent: Value,
+    samples: Vec<f64>,
+    value: Value,
+    expires: Option<Instant>,
+    window: u64,
+    in_window: u32,
+}
+
+/// The live values of the Layout on screen. The rate windows run from the last protocol selection.
+#[derive(Debug)]
+struct Live {
+    session: Instant,
+    slots: HashMap<(String, String, String), LiveSlot>,
+    window: u64,
+    in_window: u32,
+}
+
+impl Live {
+    fn new() -> Live {
+        Live {
+            session: Instant::now(),
+            slots: HashMap::new(),
+            window: 0,
+            in_window: 0,
+        }
+    }
+}
+
+/// What a mock Device shows for one live stream: the accepted `n`, the graph's samples oldest first, the last
+/// value as sent, and whether it is drawn stale.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MockLive {
+    pub n: u32,
+    pub samples: Vec<f64>,
+    pub value: Value,
+    pub stale: bool,
 }
 
 #[derive(Debug)]
@@ -118,16 +166,26 @@ struct State {
     chunk_bytes: usize,
     /// The xfer of the last Asset transfer that closed and what `v2.asset.end` answered for it.
     asset_end: Option<(u8, Map<String, Value>)>,
+    live: Live,
+    live_sets: Vec<Value>,
+}
+
+fn arrived(request: &Map<String, Value>) -> Value {
+    let mut set = request.clone();
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64);
+    set.insert("at_ms".into(), json!(at));
+    Value::Object(set)
 }
 
 impl State {
     fn record_set(&mut self, request: &Map<String, Value>) {
-        let mut set = request.clone();
-        let at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| since.as_millis() as u64);
-        set.insert("at_ms".into(), json!(at));
-        self.sets.push(Value::Object(set));
+        self.sets.push(arrived(request));
+    }
+
+    fn record_live(&mut self, request: &Map<String, Value>) {
+        self.live_sets.push(arrived(request));
     }
 }
 
@@ -200,6 +258,8 @@ impl MockDeck {
                 asset_capacity: ASSET_CAPACITY,
                 chunk_bytes: 0,
                 asset_end: None,
+                live: Live::new(),
+                live_sets: Vec::new(),
             })),
         }
     }
@@ -412,6 +472,46 @@ impl MockDeck {
     /// milliseconds at which the mock received it.
     pub fn sets(&self) -> Vec<Value> {
         self.state().sets.clone()
+    }
+
+    /// Every `v2.live.set` the deck accepted, in order, each with the `at_ms` it arrived.
+    pub fn live_sets(&self) -> Vec<Value> {
+        self.state().live_sets.clone()
+    }
+
+    /// The live stream `(page, tile, stream)` of the Layout on screen, once a value for it was accepted.
+    pub fn live(&self, page: &str, tile: &str, stream: &str) -> Option<MockLive> {
+        let state = self.state();
+        let online =
+            state.online_since_hello && state.last_rx.is_some_and(|at| at.elapsed() < ONLINE_FOR);
+        let key = (page.to_owned(), tile.to_owned(), stream.to_owned());
+        state
+            .live
+            .slots
+            .get(&key)
+            .filter(|slot| slot.n > 0)
+            .map(|slot| MockLive {
+                n: slot.n,
+                samples: slot.samples.clone(),
+                value: slot.value.clone(),
+                stale: !online || slot.expires.is_some_and(|at| at <= Instant::now()),
+            })
+    }
+
+    /// The `layout` a live request must name for the Layout on screen, and that Layout.
+    pub fn live_layout(&self) -> (String, Layout) {
+        let state = self.state();
+        match state
+            .layouts
+            .get(&state.shown)
+            .and_then(|bytes| Layout::parse(bytes).ok().map(|layout| (bytes, layout)))
+        {
+            Some((bytes, layout)) => (layout_ref(bytes), layout),
+            None => (
+                crate::live::BUILTIN.into(),
+                Layout::parse(BUILTIN).expect("builtin.json is valid"),
+            ),
+        }
     }
 
     /// The layout file the deck stores for `orientation`, as it arrived.
@@ -763,6 +863,7 @@ impl MockDeck {
         state.layouts.insert(orientation, data);
         if orientation == state.shown {
             state.hello.layout = "storage".into();
+            state.live.slots.clear();
         }
         drop(state);
         let fields = serde_json::to_value(self.layout_state()).expect("layout state serializes");
@@ -968,6 +1069,7 @@ impl MockDeck {
                         ));
                     }
                     state.selected_v2 = proto == 2;
+                    state.live = Live::new();
                     if matches!(
                         &state.inbound,
                         Some(Inbound {
@@ -983,14 +1085,14 @@ impl MockDeck {
                         reply.insert("id".into(), json!("020000000001"));
                         reply.insert("name".into(), json!(state.device_name));
                         reply.insert("caps".into(), json!({"screen":[1024,600],"grid":[8,8],"pages":8,"tiles":64,
-                            "layout_bytes":32768,"layout_schemas":[1,2],"free_bytes":asset_space(&state).3,"tile_kinds":["static"],
+                            "layout_bytes":32768,"layout_schemas":[1,2],"free_bytes":asset_space(&state).3,"tile_kinds":["static","graph"],
                             "asset_bytes":12300,"formats":["tdi1"],"image":[64,64],"gif_frames":0,"gif_pixels":0,
-                            "photo_bytes":0,"live_hz":0,"live_total_hz":0,"series":0,"text_bytes":0,"streams":0}));
+                            "photo_bytes":0,"live_hz":MOCK_LIVE_HZ,"live_total_hz":MOCK_LIVE_TOTAL_HZ,"series":MOCK_SERIES,"text_bytes":0,"streams":1}));
                         if state.gif_capabilities {
                             let caps = reply.get_mut("caps").unwrap();
                             caps["anim"] = json!({"image":[128,128],"min_delay_ms":100,"page_tiles":4,"page_pixels":65536});
                             caps["formats"] = json!(["tdi1", "gif"]);
-                            caps["tile_kinds"] = json!(["static", "gif"]);
+                            caps["tile_kinds"] = json!(["static", "graph", "gif"]);
                             caps["asset_bytes"] = json!(262144);
                             caps["gif_frames"] = json!(60);
                             caps["gif_pixels"] = json!(983040);
@@ -1000,6 +1102,7 @@ impl MockDeck {
                 Ok(reply)
             }
             m if m.starts_with("v2.asset.") && self.v2_selected() => Ok(self.asset(m, request)),
+            "v2.live.set" if self.v2_selected() => Ok(self.live_set(request)),
             m if m.starts_with("v2.") && self.state().v2 => {
                 let mut state = self.state();
                 let reason = if !state.selected_v2 || !state.online_since_hello {
@@ -1338,6 +1441,138 @@ impl MockDeck {
             }
             _ => refused("unsupported"),
         }
+    }
+}
+
+impl MockDeck {
+    /// Answers `v2.live.set` with the Firmware's checks in the Firmware's order: fields, Layout, Page, Tile,
+    /// stream, type, value, sequence, then rate. A graph stream is the only kind it draws.
+    fn live_set(&self, request: &Map<String, Value>) -> Map<String, Value> {
+        const FIELDS: [&str; 9] = [
+            "m", "layout", "page", "tile", "stream", "n", "ttl_ms", "type", "value",
+        ];
+        let refused = |reason: &str| refusal(reason, "Request refused");
+        let text = |key: &str| request.get(key).and_then(Value::as_str);
+        let whole = |key: &str| {
+            request
+                .get(key)
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+        };
+        let kind = request
+            .get("type")
+            .and_then(|kind| serde_json::from_value::<StreamType>(kind.clone()).ok());
+        let value = request.get("value").cloned().unwrap_or(Value::Null);
+        let numbers: Option<Vec<f64>> = match kind {
+            Some(StreamType::Number) => value.as_f64().map(|v| vec![v]),
+            Some(StreamType::Series) => value
+                .as_array()
+                .and_then(|items| items.iter().map(Value::as_f64).collect()),
+            Some(StreamType::Text) => value.is_string().then(Vec::new),
+            Some(StreamType::Image) => (value.is_null() || value.is_string()).then(Vec::new),
+            None => None,
+        };
+        let (
+            Some(layout),
+            Some(page),
+            Some(tile),
+            Some(stream),
+            Some(n),
+            Some(ttl),
+            Some(kind),
+            Some(numbers),
+        ) = (
+            text("layout"),
+            text("page"),
+            text("tile"),
+            text("stream"),
+            whole("n"),
+            whole("ttl_ms"),
+            kind,
+            numbers,
+        )
+        else {
+            return refusal("args", "Invalid live value");
+        };
+        if request.keys().any(|k| !FIELDS.contains(&k.as_str())) || !request.contains_key("value")
+        {
+            return refusal("args", "Invalid live value");
+        }
+        if n == 0 || !(TTL_MIN_MS..=TTL_MAX_MS).contains(&ttl) {
+            return refused("args");
+        }
+        let (reference, active) = self.live_layout();
+        if layout != reference {
+            return refused("layout");
+        }
+        let Some(found) = active.pages.iter().find(|p| p.id() == page) else {
+            return refused("page");
+        };
+        let Some(found) = (match found {
+            Page::Grid { tiles, .. } => tiles.iter().find(|t| t.id == tile),
+            _ => None,
+        }) else {
+            return refused("tile");
+        };
+        let Some(declared) = found.streams.as_ref().and_then(|s| s.get(stream)) else {
+            return refused("stream");
+        };
+        if *declared != kind || !matches!(kind, StreamType::Number | StreamType::Series) {
+            return refused("type");
+        }
+        if numbers.is_empty() {
+            return refused("args");
+        }
+        if numbers.len() > MOCK_SERIES {
+            return refused("size");
+        }
+        if numbers.iter().any(|v| !v.is_finite() || v.abs() > VALUE_MAX) {
+            return refused("args");
+        }
+        let sent = json!([ttl, kind, value]);
+        let mut state = self.state();
+        let elapsed = state.live.session.elapsed().as_millis() as u64;
+        let window = elapsed / 1000;
+        let all = if state.live.window == window {
+            state.live.in_window
+        } else {
+            0
+        };
+        let key = (page.to_owned(), tile.to_owned(), stream.to_owned());
+        let slot = state.live.slots.entry(key).or_default();
+        if n < slot.n || (n == slot.n && sent != slot.sent) {
+            return refused("sequence");
+        }
+        if n == slot.n {
+            return Map::from_iter([("n".to_owned(), json!(n))]);
+        }
+        let mine = if slot.window == window {
+            slot.in_window
+        } else {
+            0
+        };
+        if mine >= MOCK_LIVE_HZ || all >= MOCK_LIVE_TOTAL_HZ {
+            let mut reply = refused("rate");
+            reply.insert("retry_ms".into(), json!(1000 - elapsed % 1000));
+            return reply;
+        }
+        slot.window = window;
+        slot.in_window = mine + 1;
+        slot.n = n;
+        slot.sent = sent;
+        slot.value = value;
+        slot.expires = Some(Instant::now() + Duration::from_millis(u64::from(ttl)));
+        if kind == StreamType::Series {
+            slot.samples = numbers;
+        } else {
+            slot.samples.extend(numbers);
+            let over = slot.samples.len().saturating_sub(MOCK_SERIES);
+            slot.samples.drain(..over);
+        }
+        state.live.window = window;
+        state.live.in_window = all + 1;
+        state.record_live(request);
+        Map::from_iter([("n".to_owned(), json!(n))])
     }
 }
 

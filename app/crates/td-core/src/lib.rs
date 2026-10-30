@@ -1,6 +1,7 @@
 pub mod app_dirs;
 pub mod frame;
 pub mod layout;
+pub mod live;
 pub mod settings;
 
 use serde::{Deserialize, Serialize};

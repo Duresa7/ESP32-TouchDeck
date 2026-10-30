@@ -37,7 +37,8 @@
       ],
       "free_bytes": 4194304,
       "tile_kinds": [
-        "static"
+        "static",
+        "graph"
       ],
       "asset_bytes": 12300,
       "formats": [
@@ -50,11 +51,11 @@
       "gif_frames": 0,
       "gif_pixels": 0,
       "photo_bytes": 0,
-      "live_hz": 0,
-      "live_total_hz": 0,
-      "series": 0,
+      "live_hz": 2,
+      "live_total_hz": 16,
+      "series": 32,
       "text_bytes": 0,
-      "streams": 0
+      "streams": 1
     }
   },
   {
@@ -96,6 +97,7 @@
       "free_bytes": 4194304,
       "tile_kinds": [
         "static",
+        "graph",
         "gif"
       ],
       "asset_bytes": 262144,
@@ -110,11 +112,11 @@
       "gif_frames": 60,
       "gif_pixels": 983040,
       "photo_bytes": 0,
-      "live_hz": 0,
-      "live_total_hz": 0,
-      "series": 0,
+      "live_hz": 2,
+      "live_total_hz": 16,
+      "series": 32,
       "text_bytes": 0,
-      "streams": 0,
+      "streams": 1,
       "anim": {
         "image": [
           128,
