@@ -126,7 +126,7 @@ describe('status', () => {
 
   it('offers Preset tiles only from an Integration that is set up and on', () => {
     const presets = [{ id: 'plan', name: 'plan', action: { type: 'widget', source: 'cliproxyapi', field: 'plan', account: '' } }];
-    const base = { id: 'x', name: 'X', icon: '', config_schema: [], streams: [], actions: [], presets };
+    const base = { revision: 0, id: 'x', name: 'X', icon: '', config_schema: [], streams: [], actions: [], presets };
     expect(offersPresets({ ...base, ...summary('ok') })).toBe(true);
     expect(offersPresets({ ...base, ...summary('error') })).toBe(true);
     expect(offersPresets({ ...base, ...summary('ok', false) })).toBe(false);

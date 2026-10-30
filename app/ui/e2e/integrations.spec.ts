@@ -219,7 +219,7 @@ test('Add to Layout refuses a full Page, then places a Preset tile in the first 
 
   await page.getByRole('button', { name: 'Integrations', exact: true }).click();
   const preset = page.getByTestId('integration').getByTestId('preset').first();
-  await expect(preset).toHaveAttribute('aria-label', 'Add Status to Layout');
+  await expect(preset).toHaveAttribute('aria-label', 'Add Account status to Layout');
   await preset.click();
   await expect(page.getByText("Added to Desk's Layout")).toBeVisible();
 

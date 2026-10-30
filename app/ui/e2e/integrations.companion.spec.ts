@@ -68,7 +68,7 @@ test('CLIProxyAPI is set up against the local hub, and its key shows only as Set
 
   await page.getByTestId('refresh').click();
   await expect(outcome(page)).toHaveAttribute('data-event', 'refreshed');
-  await expect(page.getByTestId('usage-account')).toHaveCount(3);
+  await expect(page.getByTestId('usage-account')).toHaveCount(4);
   await expect(page.getByTestId('usage-five-hour').first()).toContainText('42%');
 });
 
