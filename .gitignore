@@ -1,11 +1,28 @@
-# Agent instructions
+# Agent instructions and rules
 AGENTS.md
+CLAUDE.md
+CLAUDE.local.md
+GEMINI.md
+.cursorrules
+.windsurfrules
+/.cursor/
+/.github/copilot-instructions.md
+/.github/instructions/
 /docs/agents/
 
-# Local agent skills and installation metadata
+# Local agent skills, settings and installation metadata
 /.agents/
 /.claude/
+/.codex/
+/.gemini/
+/.mcp.json
 /skills-lock.json
+
+# Maintainer docs and research, kept local
+/GLOSSARY.md
+/docs/copy.md
+/docs/design.md
+/docs/research/
 
 # Build output
 .pio/
@@ -19,6 +36,14 @@ dist/
 /app/target/
 node_modules/
 /app/src-tauri/gen/
+
+# Test output and Python caches
+test-results/
+playwright-report/
+blob-report/
+__pycache__/
+*.py[cod]
+.pytest_cache/
 
 # Hardware verification evidence
 /.verify/
@@ -62,5 +87,9 @@ desktop.ini
 .env
 .env.*
 !.env.example
+*.key
+*.pem
+*.p12
+*.pfx
 
 /app/electron/src/updates/key.gen.ts

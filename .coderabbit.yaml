@@ -26,6 +26,33 @@ reviews:
       requirements: >-
         Conventional Commits: `type: description` or `type(scope): description`,
         lowercase and imperative, with no trailing period. Mark breaking changes with `!`.
+    # Warnings until they prove accurate on real PRs; then they move to error.
+    # Companion routes have no check here. td-companion's contract test fails CI when api.gen.ts
+    # is stale or docs/companion-api.md misses an endpoint, event or error code, and the
+    # app/crates path instruction below flags other drift from that doc.
+    custom_checks:
+      - name: "Wire and Layout contracts change on every side"
+        mode: warning
+        instructions: >-
+          The Link protocol is specified in schema/protocol/*.md. The Layout format is specified in
+          schema/layout.schema.json and schema/README.md, and schema/check-layouts.mjs is its
+          reference validator. Both are implemented in Rust (app/crates/td-core, app/crates/td-link),
+          TypeScript (app/ui/src/lib/editor and app/src/lib/editor validators) and C
+          (firmware/components/td_link, firmware/components/td_layout). If this PR changes a message,
+          field, capability, error reason or Layout rule in any of these files, fail unless every
+          other file above that covers the same contract, and the shared fixtures in schema/examples
+          and schema/protocol/*.json, are updated to match, or the PR description explains why one
+          needs no change. Pass if no contract changes.
+      - name: "No private data"
+        mode: warning
+        instructions: >-
+          This repository is public. Fail if added lines in any file, the PR title or the PR
+          description contain: a Windows user-folder path with a real user name (C:\Users\<name>);
+          an email address other than noreply or example.com addresses; a hostname of a real machine;
+          a real IP address (127.0.0.1, localhost and the documentation ranges 192.0.2.0/24,
+          198.51.100.0/24 and 203.0.113.0/24 are fine); or a password, token, API key, signing key or
+          Wi-Fi credential. The maintainer's name is fine. Report each match by file, line and kind
+          (for example "email address" or "API token") only; never include any part of the value.
 
   path_filters:
     - "!app/ui/src/companion/api.gen.ts"
@@ -38,7 +65,6 @@ reviews:
   path_instructions:
     - path: "app/ui/**"
       instructions: >-
-        Check user-facing strings against docs/copy.md and terms against GLOSSARY.md.
         Colors, spacing and overlay layers come from the tokens in tokens.css; flag raw colors.
     - path: "app/crates/**"
       instructions: >-
@@ -57,9 +83,6 @@ knowledge_base:
   code_guidelines:
     enabled: true
     filePatterns:
-      - "GLOSSARY.md"
-      - "docs/copy.md"
-      - "docs/design.md"
       - "docs/adr/*.md"
 
 chat:
