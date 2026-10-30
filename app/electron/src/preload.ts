@@ -26,4 +26,5 @@ contextBridge.exposeInMainWorld('openTouchDeck', {
     },
     install: (): Promise<UpdateInstall> => ipcRenderer.invoke('updates:install').catch(() => ({ state: 'failed', reason: 'installer' })),
   },
+  pickFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:pick-folder').catch(() => null),
 });

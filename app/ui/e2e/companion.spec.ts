@@ -175,6 +175,28 @@ test('the Device panel renames a mock Device, switches its orientation with a re
   expect(restored.status()).toBe(200);
 });
 
+test('the Device panel turns on the photo frame of a mock Device, which stores it', async ({ page, request }) => {
+  const api = await companion(request);
+  const frame = async (): Promise<unknown> => (await (await api('GET', '/devices/mock0002/settings')).json()).photo_frame;
+  expect(await frame()).toEqual({ enabled: false, timeout_s: 60, interval_s: 15, folder: null });
+  await page.goto('/');
+  await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit Mock Device mock0002' }).click();
+  await expect(page.getByTestId('editor')).toHaveAttribute('data-device-id', 'mock0002');
+  await page.getByTestId('device-name').click();
+  const photo = page.getByTestId('device-panel-photo-frame');
+  await expect(photo).toBeEnabled();
+  await photo.click();
+  await expect(page.getByTestId('device-panel-status')).toHaveAttribute('data-event', 'saved');
+  await page.getByTestId('device-panel-photo-frame-after').selectOption({ label: '5 min' });
+  await expect.poll(frame).toEqual({ enabled: true, timeout_s: 300, interval_s: 15, folder: null });
+  await expect(page.getByTestId('device-panel-folder-choose')).toHaveCount(0);
+  await expect(page.getByTestId('device-panel-folder-hint')).toHaveText('Choose a folder in the Open TouchDeck app.');
+
+  const restored = await api('PATCH', '/devices/mock0002/settings', { photo_frame: { enabled: false, timeout_s: 60 } });
+  expect(restored.status()).toBe(200);
+});
+
 const NO_SUCH_PROGRAM = 'touchdeck-e2e-no-such-program';
 const RLO_ARG = 'report‮gpj.exe';
 const RLO_SHOWN = 'report\\u{202E}gpj.exe';

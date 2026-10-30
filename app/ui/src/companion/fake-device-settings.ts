@@ -1,4 +1,4 @@
-import type { DeviceSettings, DeviceSummary, LinkState } from './api.ts';
+import type { DeviceSettings, DeviceSummary, LinkState, PhotoFrameSettings } from './api.ts';
 
 type Frame = Record<string, unknown> & { type: string };
 
@@ -6,6 +6,7 @@ export interface FakeDeviceSettingsOptions {
   devices: Map<string, DeviceSummary>;
   publish(frame: Frame): void;
   brightness?: Record<string, number>;
+  photoFrame?: readonly string[];
   restartMs?: number;
 }
 
@@ -21,7 +22,13 @@ interface Stored {
   idle_timeout_s: number;
   orientation: 'landscape' | 'portrait';
   brightness: number | null;
+  photo_frame: PhotoFrameSettings | null;
 }
+
+const between = (value: unknown, min: number, max: number) => typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max;
+
+// A full path on Windows or elsewhere. The fake can't see the PC's folders, so any full path exists.
+const fullPath = (folder: string) => /^[A-Za-z]:[\\/]/u.test(folder) || folder.startsWith('/') || folder.startsWith('\\\\');
 
 export function createFakeDeviceSettings(options: FakeDeviceSettingsOptions) {
   const { devices, publish, restartMs = 300 } = options;
@@ -31,7 +38,12 @@ export function createFakeDeviceSettings(options: FakeDeviceSettingsOptions) {
   function settingsOf(device: DeviceSummary): Stored {
     let found = stored.get(device.id);
     if (!found) {
-      found = { idle_timeout_s: 600, orientation: device.orientation === 'portrait' ? 'portrait' : 'landscape', brightness: options.brightness?.[device.id] ?? null };
+      found = {
+        idle_timeout_s: 600,
+        orientation: device.orientation === 'portrait' ? 'portrait' : 'landscape',
+        brightness: options.brightness?.[device.id] ?? null,
+        photo_frame: options.photoFrame?.includes(device.id) ? { enabled: false, timeout_s: 60, interval_s: 15, folder: null } : null,
+      };
       stored.set(device.id, found);
     }
     return found;
@@ -41,7 +53,13 @@ export function createFakeDeviceSettings(options: FakeDeviceSettingsOptions) {
 
   const view = (device: DeviceSummary): DeviceSettings => {
     const settings = settingsOf(device);
-    return { idle_timeout_s: settings.idle_timeout_s, orientation: settings.orientation, name: v2(device) ? device.name : null, brightness: settings.brightness };
+    return {
+      idle_timeout_s: settings.idle_timeout_s,
+      orientation: settings.orientation,
+      name: v2(device) ? device.name : null,
+      brightness: settings.brightness,
+      photo_frame: settings.photo_frame && { ...settings.photo_frame },
+    };
   };
 
   function setDevice(id: string, change: Partial<DeviceSummary>) {
@@ -67,17 +85,38 @@ export function createFakeDeviceSettings(options: FakeDeviceSettingsOptions) {
     const idle = field('idle_timeout_s');
     const name = field('name');
     const brightness = field('brightness');
+    const frame = field('photo_frame');
+    const part = (name: string): unknown => (typeof frame === 'object' && frame !== null && name in frame ? Reflect.get(frame, name) : null);
+    const enabled = part('enabled');
+    const timeout = part('timeout_s');
+    const interval = part('interval_s');
+    const folder = part('folder');
     if (orientation !== null && orientation !== 'landscape' && orientation !== 'portrait') return invalid('orientation is landscape or portrait');
     if (idle !== null && (typeof idle !== 'number' || !Number.isInteger(idle) || idle < 1 || idle > 86400)) return invalid('idle_timeout_s is out of range');
     if (name !== null && (typeof name !== 'string' || !validName(name))) return invalid('name is empty, too long or has control characters');
     if (brightness !== null && (typeof brightness !== 'number' || !Number.isInteger(brightness) || brightness < 0 || brightness > 100)) return invalid('brightness is a percentage from 0 to 100');
+    if (frame !== null && typeof frame !== 'object') return invalid('photo_frame is an object');
+    if (enabled !== null && typeof enabled !== 'boolean') return invalid('photo_frame.enabled is true or false');
+    if (timeout !== null && !between(timeout, 10, 86400)) return invalid('photo_frame.timeout_s is 10 to 86400');
+    if (interval !== null && !between(interval, 5, 3600)) return invalid('photo_frame.interval_s is 5 to 3600');
+    if (folder !== null && (typeof folder !== 'string' || (folder !== '' && !fullPath(folder)))) {
+      return invalid('photo_frame.folder is not the full path of a folder on this computer');
+    }
     const settings = settingsOf(device);
+    if (frame !== null && settings.photo_frame === null) return failure(409, 'device.needs_firmware', 'This needs newer Firmware on the Device.', { field: 'photo_frame', version: null });
     if (brightness !== null && settings.brightness === null) return failure(409, 'device.needs_firmware', 'This needs newer Firmware on the Device.', { field: 'brightness', version: null });
     if (name !== null && !v2(device)) return failure(409, 'device.needs_firmware', 'This needs newer Firmware on the Device.', { field: 'name', version: null });
     const restart = orientation !== null && orientation !== settings.orientation;
     if (orientation !== null) settings.orientation = orientation;
     if (typeof idle === 'number') settings.idle_timeout_s = idle;
     if (typeof brightness === 'number') settings.brightness = brightness;
+    if (settings.photo_frame) {
+      const photo = settings.photo_frame;
+      if (typeof enabled === 'boolean') photo.enabled = enabled;
+      if (typeof timeout === 'number') photo.timeout_s = timeout;
+      if (typeof interval === 'number') photo.interval_s = interval;
+      if (typeof folder === 'string') photo.folder = folder === '' ? null : folder;
+    }
     if (typeof name === 'string' && name !== device.name) setDevice(device.id, { name });
     return json(200, { settings: view(devices.get(device.id) ?? device), restart_required: restart });
   }

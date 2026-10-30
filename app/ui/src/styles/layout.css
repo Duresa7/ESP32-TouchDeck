@@ -371,6 +371,17 @@
   margin-top: var(--space-2);
 }
 
+.panel-folder {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-folder.is-empty {
+  color: var(--ink-2);
+}
+
 .panel-firmware {
   display: flex;
   flex-direction: column;

@@ -11,7 +11,10 @@ use axum::http::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use td_core::{Request, Settings};
-use td_link::LinkError;
+use td_link::{
+    LinkError,
+    photo::{self, IdleSettings, PhotoError},
+};
 use ts_rs::TS;
 
 /// How long a settings or name request may take on the link.
@@ -95,6 +98,17 @@ impl From<LinkError> for DeviceError {
     fn from(error: LinkError) -> Self {
         match error {
             LinkError::Timeout(_) => Self::Timeout,
+            error => Self::Link {
+                reason: error.to_string(),
+            },
+        }
+    }
+}
+impl From<PhotoError> for DeviceError {
+    fn from(error: PhotoError) -> Self {
+        match error {
+            PhotoError::Link(error) => error.into(),
+            PhotoError::Invalid(reason) => CommonError::invalid("body", reason).into(),
             error => Self::Link {
                 reason: error.to_string(),
             },
@@ -215,6 +229,32 @@ pub struct DeviceSettings {
     pub name: Option<String>,
     /// A percentage, 0 to 100.
     pub brightness: Option<u8>,
+    /// `null` when the Firmware has no photo frame.
+    pub photo_frame: Option<PhotoFrameSettings>,
+}
+/// What the Device shows after `timeout_s` with no touch: pictures from `folder` on this PC, a
+/// new one every `interval_s`, or its clock when no picture comes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct PhotoFrameSettings {
+    pub enabled: bool,
+    /// 10 to 86400.
+    pub timeout_s: u32,
+    /// 5 to 3600.
+    pub interval_s: u32,
+    /// An absolute path to a folder on this PC, `null` until one is chosen.
+    pub folder: Option<String>,
+}
+#[derive(Debug, Default, Clone, Serialize, Deserialize, TS)]
+pub struct PhotoFramePatch {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub timeout_s: Option<u32>,
+    #[serde(default)]
+    pub interval_s: Option<u32>,
+    /// An absolute path to an existing folder; `""` clears it.
+    #[serde(default)]
+    pub folder: Option<String>,
 }
 #[derive(Debug, Default, Serialize, Deserialize, TS)]
 pub struct DeviceSettingsPatch {
@@ -227,6 +267,8 @@ pub struct DeviceSettingsPatch {
     /// A percentage, 0 to 100.
     #[serde(default)]
     pub brightness: Option<u8>,
+    #[serde(default)]
+    pub photo_frame: Option<PhotoFramePatch>,
 }
 #[derive(Debug, Serialize, Deserialize, TS)]
 pub struct SettingsPatched {
@@ -245,6 +287,26 @@ fn name_if_v2(summary: &DeviceSummary) -> Option<String> {
     let v2 = summary.firmware.as_ref().is_some_and(|f| f.protocol >= 2);
     v2.then(|| summary.name.clone()).flatten()
 }
+fn has_photo_frame(summary: &DeviceSummary) -> bool {
+    crate::photos::supports(summary.capabilities.as_ref()).0
+}
+fn photo_frame(ctx: &Ctx, id: &DeviceId, idle: Option<IdleSettings>) -> Option<PhotoFrameSettings> {
+    let idle = idle?;
+    ctx.photos.idle_changed(id, idle);
+    Some(PhotoFrameSettings {
+        enabled: idle.enabled,
+        timeout_s: idle.timeout_s,
+        interval_s: idle.interval_s,
+        folder: ctx.photos.folder(id),
+    })
+}
+fn idle_patch(current: IdleSettings, patch: &PhotoFramePatch) -> IdleSettings {
+    IdleSettings {
+        enabled: patch.enabled.unwrap_or(current.enabled),
+        timeout_s: patch.timeout_s.unwrap_or(current.timeout_s),
+        interval_s: patch.interval_s.unwrap_or(current.interval_s),
+    }
+}
 pub struct SettingsGet;
 impl Endpoint for SettingsGet {
     const NAME: &'static str = "devices.settings_get";
@@ -257,12 +319,17 @@ impl Endpoint for SettingsGet {
     type Error = DeviceError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
         let id = req.path.device;
-        let settings = ctx
+        let summary = ctx.devices.get(&id).ok_or(DeviceError::NotFound)?;
+        let photos = has_photo_frame(&summary);
+        let (settings, idle) = ctx
             .devices
-            .call(&id, |s| -> Result<Settings, LinkError> {
-                s.request(&Request::SettingsGet, SETTINGS_TIMEOUT)?
+            .call(&id, move |s| -> Result<_, DeviceError> {
+                let settings: Settings = s
+                    .request(&Request::SettingsGet, SETTINGS_TIMEOUT)?
                     .fields()
-                    .map_err(LinkError::Reply)
+                    .map_err(LinkError::Reply)?;
+                let idle = photos.then(|| photo::idle_get(s)).transpose()?;
+                Ok((settings, idle))
             })
             .await??;
         let summary = ctx.devices.get(&id).ok_or(DeviceError::NotFound)?;
@@ -271,6 +338,7 @@ impl Endpoint for SettingsGet {
             orientation: orientation_name(&settings),
             name: name_if_v2(&summary),
             brightness: None,
+            photo_frame: photo_frame(&ctx, &id, idle),
         })
     }
 }
@@ -316,15 +384,46 @@ impl Endpoint for SettingsPatch {
                 field: "brightness",
             });
         }
+        let frame = patch.photo_frame.clone();
+        if let Some(frame) = &frame {
+            if frame
+                .timeout_s
+                .is_some_and(|t| !photo::IDLE_TIMEOUT_S.contains(&t))
+            {
+                return Err(invalid("photo_frame.timeout_s is 10 to 86400"));
+            }
+            if frame
+                .interval_s
+                .is_some_and(|t| !photo::IDLE_INTERVAL_S.contains(&t))
+            {
+                return Err(invalid("photo_frame.interval_s is 5 to 3600"));
+            }
+            if frame
+                .folder
+                .as_deref()
+                .is_some_and(|f| !f.is_empty() && !crate::photos::folder::valid(f))
+            {
+                return Err(invalid(
+                    "photo_frame.folder is not the full path of a folder on this computer",
+                ));
+            }
+        }
         let summary = ctx.devices.get(&id).ok_or(DeviceError::NotFound)?;
         if patch.name.is_some() && summary.firmware.as_ref().is_some_and(|f| f.protocol < 2) {
             return Err(DeviceError::NeedsFirmware { field: "name" });
         }
+        let photos = has_photo_frame(&summary);
+        if frame.is_some() && !photos {
+            return Err(DeviceError::NeedsFirmware {
+                field: "photo_frame",
+            });
+        }
         let devices = ctx.devices.clone();
         let device = id.clone();
-        let (settings, restart_required) = ctx
+        let idle_frame = frame.clone();
+        let (settings, restart_required, idle) = ctx
             .devices
-            .call(&id, move |s| -> Result<(Settings, bool), LinkError> {
+            .call(&id, move |s| -> Result<_, DeviceError> {
                 let mut settings: Settings = s
                     .request(&Request::SettingsGet, SETTINGS_TIMEOUT)?
                     .fields()
@@ -343,9 +442,27 @@ impl Endpoint for SettingsPatch {
                     let name = s.set_name(&name, SETTINGS_TIMEOUT)?;
                     devices.named(&device, name);
                 }
-                Ok((settings, restart))
+                let idle = match (photos, idle_frame) {
+                    (false, _) => None,
+                    (true, None) => Some(photo::idle_get(s)?),
+                    (true, Some(frame)) => {
+                        let idle = idle_patch(photo::idle_get(s)?, &frame);
+                        Some(photo::idle_set(s, idle)?)
+                    }
+                };
+                Ok((settings, restart, idle))
             })
             .await??;
+        if let Some(folder) = frame.and_then(|f| f.folder) {
+            let photos = ctx.photos.clone();
+            let device = id.clone();
+            tokio::task::spawn_blocking(move || {
+                photos.set_folder(&device, (!folder.is_empty()).then_some(folder))
+            })
+            .await
+            .map_err(|_| CommonError::Internal)?
+            .map_err(|_| CommonError::Internal)?;
+        }
         let summary = ctx.devices.get(&id).ok_or(DeviceError::NotFound)?;
         Ok(SettingsPatched {
             settings: DeviceSettings {
@@ -353,6 +470,7 @@ impl Endpoint for SettingsPatch {
                 orientation: orientation_name(&settings),
                 name: name_if_v2(&summary),
                 brightness: None,
+                photo_frame: photo_frame(&ctx, &id, idle),
             },
             restart_required,
         })

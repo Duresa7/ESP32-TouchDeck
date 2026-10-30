@@ -5,7 +5,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Pair, takePairingCode } from './screens/Pair.tsx';
 import { App } from './App.tsx';
-import { CompanionContext, connect, EventsContext, pageEnvironment, type Environment } from './companion/connection.ts';
+import { CompanionContext, connect, EventsContext, FolderPickerContext, pageEnvironment, type Environment } from './companion/connection.ts';
 import { createUpdatesStore, UpdatesContext, watchForUpdates } from './state/updates.ts';
 
 const isPair = window.location.pathname === '/pair';
@@ -30,7 +30,7 @@ createRoot(document.getElementById('root')!).render(
     <CompanionContext value={companion}>
       <EventsContext value={events}>
         <UpdatesContext value={updates}>
-          {isPair ? <Pair initialCode={initialCode} /> : <App />}
+          <FolderPickerContext value={env.pickFolder ?? null}>{isPair ? <Pair initialCode={initialCode} /> : <App />}</FolderPickerContext>
         </UpdatesContext>
       </EventsContext>
     </CompanionContext>

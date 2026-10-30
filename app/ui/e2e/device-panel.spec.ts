@@ -6,8 +6,21 @@ const panel = (page: Page) => page.getByTestId('device-panel');
 const status = (page: Page) => page.getByTestId('device-panel-status');
 
 interface Record {
-  settings: { orientation: string; brightness: number | null };
+  settings: {
+    orientation: string;
+    brightness: number | null;
+    photo_frame: { enabled: boolean; timeout_s: number; interval_s: number; folder: string | null } | null;
+  };
   reboots: number;
+}
+
+const PICKED = 'D:\\Pictures\\Desk frame';
+
+async function photoFrameOn(page: Page) {
+  const photo = page.getByTestId('device-panel-photo-frame');
+  await expect(photo).toBeEnabled();
+  await photo.click();
+  await expect(page.getByTestId('device-panel-photo-frame-after')).toHaveValue('60');
 }
 
 async function record(page: Page, device = 'mock0001'): Promise<Record> {
@@ -188,6 +201,49 @@ test("brightness on Firmware that can't set it explains why", async ({ page }) =
   await expect(page.getByTestId('device-panel-brightness')).toHaveCount(0);
 });
 
+test('turns the photo frame on, sets when it starts and picks its folder', async ({ page }) => {
+  await openPanel(page);
+  const photo = page.getByTestId('device-panel-photo-frame');
+  await expect(page.getByTestId('device-panel-photo-frame-hint')).toHaveText("Pictures from this PC when Desk sits idle, or a clock when Open TouchDeck isn't running.");
+  await expect(photo).toHaveAttribute('aria-checked', 'false');
+  await expect(page.getByTestId('device-panel-photo-frame-after')).toHaveCount(0);
+  await photoFrameOn(page);
+  await expect(status(page)).toHaveAttribute('data-event', 'saved');
+  await expect(photo).toHaveAttribute('aria-checked', 'true');
+  await page.getByTestId('device-panel-photo-frame-after').selectOption({ label: '5 min' });
+  await expect.poll(async () => (await record(page)).settings.photo_frame?.timeout_s).toBe(300);
+
+  await expect(page.getByTestId('device-panel-folder')).toHaveText('No folder chosen');
+  await page.evaluate(() => window.touchdeckDemo?.pickFolder(null));
+  await page.getByTestId('device-panel-folder-choose').click();
+  await expect(page.getByTestId('device-panel-folder')).toHaveText('No folder chosen');
+  await page.evaluate((folder) => window.touchdeckDemo?.pickFolder(folder), PICKED);
+  await page.getByTestId('device-panel-folder-choose').click();
+  await expect(page.getByTestId('device-panel-folder')).toHaveText(PICKED);
+  await expect(page.getByTestId('device-panel-folder-hint')).toHaveText('Nothing is stored on Desk.');
+  expect((await record(page)).settings.photo_frame).toEqual({ enabled: true, timeout_s: 300, interval_s: 15, folder: PICKED });
+
+  await photo.click();
+  await expect(page.getByTestId('device-panel-photo-frame-after')).toHaveCount(0);
+  await expect.poll(async () => (await record(page)).settings.photo_frame?.enabled).toBe(false);
+});
+
+test('in a browser the folder shows as text, and choosing one is left to the app', async ({ page }) => {
+  await openPanel(page, '/?shell=browser');
+  await photoFrameOn(page);
+  await expect(page.getByTestId('device-panel-folder')).toHaveText('No folder chosen');
+  await expect(page.getByTestId('device-panel-folder-choose')).toHaveCount(0);
+  await expect(page.getByTestId('device-panel-folder-hint')).toHaveText('Choose a folder in the Open TouchDeck app.');
+});
+
+test("the photo frame on Firmware without it explains why", async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Edit Stream deck by the window' }).click();
+  await page.getByTestId('device-name').click();
+  await expect(page.getByTestId('device-panel-photo-frame-hint')).toHaveText("Stream deck by the window's Firmware can't change this yet.");
+  await expect(page.getByTestId('device-panel-photo-frame')).toHaveCount(0);
+});
+
 test('Enter opens the panel with focus on the first field, and Escape returns focus to the name', async ({ page }) => {
   await openLayout(page);
   const trigger = page.getByTestId('device-name');
@@ -213,7 +269,7 @@ test('every control in the panel is reachable with Tab and shows the focus ring'
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('device-panel-brightness-value')).toHaveText('80%');
   const reached: string[] = [];
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 5; i++) {
     const focused = await page.evaluate(() => {
       const el = document.activeElement;
       if (!(el instanceof HTMLElement)) return null;
@@ -226,7 +282,7 @@ test('every control in the panel is reachable with Tab and shows the focus ring'
     }
     await page.keyboard.press('Tab');
   }
-  expect(reached).toEqual(['device-panel-name', 'device-panel-landscape', 'device-panel-brightness', 'device-panel-restart']);
+  expect(reached).toEqual(['device-panel-name', 'device-panel-landscape', 'device-panel-brightness', 'device-panel-photo-frame', 'device-panel-restart']);
 });
 
 const folder = process.env.TD_SHOTS;
@@ -257,6 +313,28 @@ for (const theme of ['light', 'dark'] as const) {
       await page.waitForTimeout(300);
       await page.screenshot({ path: join(folder!, `device-panel-updating-${theme}.png`) });
       await page.evaluate(() => window.touchdeckDemo?.firmware.release('mock0002'));
+    });
+
+    test('the photo frame, on with a folder', async ({ page }) => {
+      await openLayout(page);
+      await page.getByTestId('start-starter').click();
+      await page.getByTestId('device-name').click();
+      await photoFrameOn(page);
+      await page.getByTestId('device-panel-folder-choose').click();
+      await expect(page.getByTestId('device-panel-folder')).toHaveText(PICKED);
+      await page.mouse.move(0, 0);
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: join(folder!, `device-panel-photo-frame-${theme}.png`) });
+    });
+
+    test('the photo frame in a browser', async ({ page }) => {
+      await openLayout(page, '/?shell=browser');
+      await page.getByTestId('start-starter').click();
+      await page.getByTestId('device-name').click();
+      await photoFrameOn(page);
+      await page.mouse.move(0, 0);
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: join(folder!, `device-panel-photo-frame-browser-${theme}.png`) });
     });
 
     test('focus on the Device name', async ({ page }) => {

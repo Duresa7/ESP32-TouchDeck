@@ -25,6 +25,8 @@ export interface FakeCompanionOptions {
   /** How long a fake Job runs. */
   jobMs?: number;
   brightness?: Record<string, number>;
+  /** The Devices whose Firmware has the photo frame. */
+  photoFrame?: readonly string[];
   bundled?: FirmwareBuild;
   /** Browsers paired before the start. */
   browsers?: readonly FakeBrowser[];
@@ -103,7 +105,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   let minted = 0;
   let requests = 0;
   const layouts = createFakeLayouts({ devices, publish, seed: options.layouts, delayMs: options.jobMs });
-  const settings = createFakeDeviceSettings({ devices, publish, brightness: options.brightness });
+  const settings = createFakeDeviceSettings({ devices, publish, brightness: options.brightness, photoFrame: options.photoFrame });
   const firmware = createFakeFirmware({ devices, publish, bundled: options.bundled, stepMs: options.jobMs });
   const actions = createFakeActions({ devices, publish, stored: layouts.stored });
   const sessions = createFakeSessions({ browsers: options.browsers, onRevoke: signOut });

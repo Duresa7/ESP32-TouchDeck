@@ -16,7 +16,7 @@ serde_json = { workspace = true, features = ["raw_value"] }
 td-core = { workspace = true, features = ["ts"] }
 td-host.workspace = true
 td-link.workspace = true
-image = { version = "0.25", default-features = false }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 ts-rs = { version = "11", features = ["serde-json-impl"] }
 inventory = "0.3"
 getrandom = "0.3"
@@ -39,7 +39,7 @@ tokio-tungstenite = { version = "0.29", optional = true }
 tempfile = { version = "3", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Devices_DeviceAndDriverInstallation", "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_Memory", "Win32_System_LibraryLoader", "Win32_UI_Controls", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_Registry"] }
+windows-sys = { version = "0.61", features = ["Win32_Devices_DeviceAndDriverInstallation", "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_Time", "Win32_System_Memory", "Win32_System_LibraryLoader", "Win32_UI_Controls", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_Registry"] }
 
 [build-dependencies]
 td-link.workspace = true

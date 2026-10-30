@@ -1,11 +1,12 @@
 import { createStore } from 'zustand/vanilla';
-import type { DeviceSettings, DeviceSettingsPatch, DeviceSummary, Orientation, SettingsPatched } from '../../companion/api.ts';
+import type { DeviceSettings, DeviceSettingsPatch, DeviceSummary, Orientation, PhotoFrameSettings, SettingsPatched } from '../../companion/api.ts';
 import type { Companion } from '../../companion/client.ts';
 import { toApiError, type ApiError } from '../../companion/errors.ts';
 
-export type Field = 'name' | 'orientation' | 'brightness';
+export type Field = 'name' | 'orientation' | 'brightness' | 'photo_frame';
 export type Unsupported = { since: string | null };
-type Values = { name: string; orientation: Orientation; brightness: number };
+type Values = { name: string; orientation: Orientation; brightness: number; photo_frame: PhotoFrameSettings };
+export type PhotoFrameChange = Partial<Pick<PhotoFrameSettings, 'enabled' | 'timeout_s' | 'folder'>>;
 
 export interface Notice {
   kind: 'info' | 'ok' | 'error';
@@ -18,8 +19,8 @@ export interface DeviceSettingsState {
   load: 'idle' | 'loading' | 'ready' | 'failed';
   shown: DeviceSettings | null;
   saved: DeviceSettings | null;
-  needs: Partial<Record<'name' | 'brightness', Unsupported>>;
-  problem: Partial<Record<'name', string>>;
+  needs: Partial<Record<'name' | 'brightness' | 'photo_frame', Unsupported>>;
+  problem: Partial<Record<'name' | 'folder', string>>;
   confirm: Orientation | null;
   restart: 'idle' | 'restarting' | 'failed';
   notice: Notice | null;
@@ -41,7 +42,14 @@ export function nameProblem(name: string): string | null {
   return null;
 }
 
-const NO_CHANGE: DeviceSettingsPatch = { idle_timeout_s: null, orientation: null, name: null, brightness: null };
+const NO_CHANGE: DeviceSettingsPatch = { idle_timeout_s: null, orientation: null, name: null, brightness: null, photo_frame: null };
+const FIELDS = ['name', 'orientation', 'brightness', 'photo_frame'] as const;
+const FOLDER_GONE = "That folder isn't on this PC anymore. Choose another.";
+
+const detailsReason = (error: ApiError): string =>
+  typeof error.details === 'object' && error.details !== null && 'reason' in error.details && typeof error.details.reason === 'string'
+    ? error.details.reason
+    : '';
 
 const detailsVersion = (error: ApiError): string | null =>
   typeof error.details === 'object' && error.details !== null && 'version' in error.details && typeof error.details.version === 'string'
@@ -75,19 +83,21 @@ export function createDeviceSettings(deps: DeviceSettingsDeps) {
     const needs: DeviceSettingsState['needs'] = {};
     if ((device.firmware?.protocol ?? 1) < 2) needs.name = { since: null };
     if (settings.brightness === null) needs.brightness = { since: null };
+    if (settings.photo_frame === null) needs.photo_frame = { since: null };
     return needs;
   }
 
-  async function patch<F extends Field>(field: F, value: Values[F], { quiet = false } = {}): Promise<SettingsPatched | null> {
+  // `body` is what goes to the Companion when it isn't the whole value, as for the photo frame.
+  async function patch<F extends Field>(field: F, value: Values[F], { quiet = false, body = {} }: { quiet?: boolean; body?: Partial<DeviceSettingsPatch> } = {}): Promise<SettingsPatched | null> {
     const mine = ++seq;
     latest[field] = mine;
     set((s) => ({ shown: s.shown && { ...s.shown, [field]: value }, notice: quiet ? s.notice : null }));
     try {
-      const reply = await companion.devices.settings_patch({ device: device.id }, null, { ...NO_CHANGE, [field]: value });
+      const reply = await companion.devices.settings_patch({ device: device.id }, null, { ...NO_CHANGE, [field]: value, ...body });
       settled[field] = Math.max(settled[field] ?? 0, mine);
       set((s) => {
         const shown = { ...reply.settings };
-        for (const key of ['name', 'orientation', 'brightness'] as const) if (pending(key) && s.shown) Object.assign(shown, { [key]: s.shown[key] });
+        for (const key of FIELDS) if (pending(key) && s.shown) Object.assign(shown, { [key]: s.shown[key] });
         return { saved: reply.settings, shown };
       });
       if (reply.restart_required && field !== 'orientation') say({ kind: 'info', text: `Saved. Restart ${name()} to apply it.`, event: 'restart-required' });
@@ -97,8 +107,10 @@ export function createDeviceSettings(deps: DeviceSettingsDeps) {
       const error = toApiError(thrown);
       if (latest[field] === mine) settled[field] = mine;
       set((s) => ({ shown: s.shown && s.saved && latest[field] === mine ? { ...s.shown, [field]: s.saved[field] } : s.shown }));
-      if (error.code === 'device.needs_firmware' && (field === 'name' || field === 'brightness')) {
+      if (error.code === 'device.needs_firmware' && (field === 'name' || field === 'brightness' || field === 'photo_frame')) {
         set((s) => ({ needs: { ...s.needs, [field]: { since: detailsVersion(error) } } }));
+      } else if (field === 'photo_frame' && error.code === 'request.invalid' && detailsReason(error).includes('folder')) {
+        set((s) => ({ problem: { ...s.problem, folder: FOLDER_GONE } }));
       } else {
         say({ kind: 'error', text: `Couldn't save to ${name()}. Check that it's plugged in, then retry.`, event: 'save-failed', detail: error.message });
       }
@@ -185,6 +197,14 @@ export function createDeviceSettings(deps: DeviceSettingsDeps) {
       const reply = await patch('orientation', orientation, { quiet: true });
       if (reply?.restart_required) await api.restart();
       else if (reply) say({ kind: 'ok', text: 'Saved', event: 'saved' });
+    },
+
+    async setPhotoFrame(change: PhotoFrameChange): Promise<boolean> {
+      const current = state().shown?.photo_frame;
+      if (!current || state().needs.photo_frame) return false;
+      set((s) => ({ problem: { ...s.problem, folder: undefined } }));
+      const photo_frame = { enabled: null, timeout_s: null, interval_s: null, folder: null, ...change };
+      return (await patch('photo_frame', { ...current, ...change }, { body: { photo_frame } })) !== null;
     },
 
     slideBrightness(value: number) {

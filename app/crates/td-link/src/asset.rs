@@ -149,6 +149,8 @@ pub enum AssetReason {
     Incomplete,
     Hash,
     InUse,
+    Idle,
+    Rate,
     Other(String),
 }
 
@@ -168,6 +170,8 @@ impl AssetReason {
             "incomplete" => AssetReason::Incomplete,
             "hash" => AssetReason::Hash,
             "in-use" => AssetReason::InUse,
+            "idle" => AssetReason::Idle,
+            "rate" => AssetReason::Rate,
             other => AssetReason::Other(other.to_owned()),
         }
     }
@@ -187,6 +191,8 @@ impl AssetReason {
             AssetReason::Incomplete => "incomplete",
             AssetReason::Hash => "hash",
             AssetReason::InUse => "in-use",
+            AssetReason::Idle => "idle",
+            AssetReason::Rate => "rate",
             AssetReason::Other(other) => other,
         }
     }
