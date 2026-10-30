@@ -66,14 +66,14 @@ function refused(edit: Edit): string {
 }
 
 test('the bundled examples are valid', () => {
-  for (const name of ['builtin.json', 'dev.json', 'gif.json']) {
+  for (const name of ['builtin.json', 'dev.json', 'gif.json', 'graph.json']) {
     assert.deepEqual(validateSource(readFileSync(join(examples, name))), [], name);
   }
 });
 
 test('each of the invalid examples fails with exactly its rule key, as check-layouts.mjs reports', () => {
   const files = readdirSync(invalid).filter((name) => name.endsWith('.json'));
-  assert.equal(files.length, 42);
+  assert.equal(files.length, 46);
   const keys = new Set<string>();
   for (const name of files) {
     const bytes = readFileSync(join(invalid, name));

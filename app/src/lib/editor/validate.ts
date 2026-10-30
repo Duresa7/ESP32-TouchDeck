@@ -29,9 +29,18 @@ export type Tile = {
   colSpan: number;
   action: Action;
 } & (
-  | { render?: undefined; icon: string | null; asset?: string | null }
-  | { render: 'gif'; icon: null; asset: string }
+  | { render?: undefined; icon: string | null; asset?: string | null; streams?: undefined }
+  | { render: 'gif'; icon: null; asset: string; streams?: undefined }
+  | { render: 'graph'; icon: string | null; asset?: string | null; streams: GraphStreams }
 );
+
+export type StreamType = 'number' | 'series' | 'text' | 'image';
+
+/** A graph Tile's one stream: a number appends a sample, a series replaces the history. */
+export type GraphStreams = { value: 'number' | 'series' };
+
+const STREAM_TYPES: readonly StreamType[] = ['number', 'series', 'text', 'image'];
+const RENDER_STREAMS: Record<string, Record<string, readonly StreamType[]>> = { graph: { value: ['number', 'series'] } };
 
 export interface GridPage {
   id: string;
@@ -221,9 +230,16 @@ function structuralErrors(root: unknown): LayoutError[] {
   };
 
   const tile = (value: unknown, pointer: string) => {
-    const tile = object(value, pointer, ['id', 'label', 'row', 'col', 'rowSpan', 'colSpan', 'icon', 'action'], isObject(root) && root.schema === 2 ? ['asset', 'render'] : []);
+    const tile = object(value, pointer, ['id', 'label', 'row', 'col', 'rowSpan', 'colSpan', 'icon', 'action'], isObject(root) && root.schema === 2 ? ['asset', 'render', 'streams'] : []);
     if (!tile) return;
-    if (isObject(root) && root.schema === 2 && Object.hasOwn(tile, 'render') && (tile.render !== 'gif' || typeof tile.asset !== 'string')) at('icon.format', `${pointer}/render`, 'render must be gif with an Asset reference');
+    if (isObject(root) && root.schema === 2 && Object.hasOwn(tile, 'render') && tile.render !== 'graph' && (tile.render !== 'gif' || typeof tile.asset !== 'string')) {
+      at('icon.format', `${pointer}/render`, 'render must be graph, or gif with an Asset reference');
+    }
+    if (Object.hasOwn(tile, 'streams')) {
+      const streams = tile.streams;
+      if (!isObject(streams)) wrongType(`${pointer}/streams`, 'object');
+      else if (!Object.values(streams).every((type) => STREAM_TYPES.some((known) => known === type))) at('tile.streams', `${pointer}/streams`, 'stream types must be number, series, text or image');
+    }
     if (tile.asset != null && (typeof tile.asset !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(tile.asset) || tile.icon !== null)) at('icon.format', `${pointer}/asset`, 'Asset requires a SHA-256 reference and icon null');
     if (Object.hasOwn(tile, 'id')) id(tile.id, `${pointer}/id`);
     if (Object.hasOwn(tile, 'label')) bounded(tile.label, `${pointer}/label`, LABEL);
@@ -308,6 +324,14 @@ function semanticErrors(layout: Layout): LayoutError[] {
       addId(tile.id, `${pageLocation} tile ${tileIndex} "${tile.id}"`);
       if (tile.action.type === 'page' && !pageIds.has(tile.action.page)) {
         errors.push(fail('action.page-missing', `page "${page.id}" tile "${tile.id}" references missing page "${tile.action.page}"`));
+      }
+      const bindings = (tile.render && RENDER_STREAMS[tile.render]) || {};
+      const streams: Record<string, string> = tile.streams ?? {};
+      for (const [id, type] of Object.entries(streams)) {
+        if (!bindings[id]?.some((allowed) => allowed === type)) errors.push(fail('tile.streams', `page "${page.id}" tile "${tile.id}" cannot bind stream "${id}" as ${JSON.stringify(type)}`));
+      }
+      for (const id of Object.keys(bindings)) {
+        if (!Object.hasOwn(streams, id)) errors.push(fail('tile.streams', `page "${page.id}" tile "${tile.id}" needs stream "${id}"`));
       }
       if (tile.row + tile.rowSpan > page.rows || tile.col + tile.colSpan > page.cols) {
         errors.push(fail('tile.bounds', `page "${page.id}" tile "${tile.id}" exceeds grid bounds ${page.rows}x${page.cols}`));
