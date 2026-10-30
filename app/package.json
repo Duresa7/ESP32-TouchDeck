@@ -5,15 +5,11 @@
   "type": "module",
   "packageManager": "pnpm@12.12.1",
   "scripts": {
-    "dev": "vite",
     "gen:api": "cargo run -p td-companion --features test-hooks -- --emit-ts ui/src/companion/api.gen.ts",
-    "build": "vite build",
     "package:windows": "python scripts/package_windows.py build",
     "package:verify": "python scripts/package_windows.py verify",
-    "tauri": "tauri",
-    "lint": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings && pnpm --filter touchdeck-ui typecheck && pnpm --filter @touchdeck/electron lint",
-    "test": "node --test \"src/lib/*.test.ts\" \"src/lib/*/*.test.ts\" \"e2e/*.test.ts\" && pnpm test:ui && pnpm --filter @touchdeck/electron test",
-    "e2e": "wdio run e2e/wdio.conf.ts",
+    "lint": "pnpm --filter touchdeck-ui typecheck && pnpm --filter @touchdeck/electron lint",
+    "test": "pnpm test:ui && pnpm --filter @touchdeck/electron test",
     "dev:ui": "pnpm --filter touchdeck-ui dev",
     "dev:ui:demo": "pnpm --filter touchdeck-ui dev:demo",
     "build:ui": "pnpm --filter touchdeck-ui build",
@@ -21,23 +17,5 @@
     "e2e:ui": "pnpm --filter touchdeck-ui e2e",
     "e2e:ui:companion": "pnpm --filter touchdeck-ui e2e:companion",
     "dev:electron": "pnpm --filter @touchdeck/electron dev"
-  },
-  "dependencies": {
-    "@tauri-apps/api": "~2.11.1"
-  },
-  "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^7.3.1",
-    "@tauri-apps/cli": "^2.12.4",
-    "@types/node": "^26.6.5",
-    "@wdio/cli": "^10.1.0",
-    "@wdio/globals": "^10.1.0",
-    "@wdio/local-runner": "^10.1.0",
-    "@wdio/mocha-framework": "^10.1.0",
-    "@wdio/spec-reporter": "^10.1.0",
-    "svelte": "^5.57.2",
-    "svelte-check": "^4.7.7",
-    "typescript": "^6.0.3",
-    "vite": "^8.3.5",
-    "webdriverio": "^10.1.0"
   }
 }

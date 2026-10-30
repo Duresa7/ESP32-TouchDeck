@@ -1,6 +1,5 @@
 name: main
 
-# The full app matrix, including the Tauri e2e, after each merge. It also saves the Rust cache that pull requests restore.
 on:
   push:
     branches: [main]
