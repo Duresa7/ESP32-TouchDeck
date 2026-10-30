@@ -1,14 +1,10 @@
-//! Turns a picture file into a JPEG the Device can show: turned upright by its EXIF
-//! orientation, fitted inside the screen, and no larger than the Device's `photo_bytes`.
 use image::{
     DynamicImage, ImageDecoder, ImageReader, Limits, codecs::jpeg::JpegEncoder,
     imageops::FilterType, metadata::Orientation,
 };
 use std::io::Cursor;
 
-/// Tried in order until the JPEG fits.
 const QUALITIES: [u8; 5] = [85, 75, 65, 55, 45];
-/// Each shrink takes the picture to three quarters of its size when no quality fits.
 const SHRINKS: u32 = 4;
 const DECODE_BYTES_MAX: u64 = 256 * 1024 * 1024;
 
@@ -52,7 +48,6 @@ pub(crate) mod tests {
     use super::*;
     use image::{ImageFormat, Rgb, RgbImage};
 
-    /// A noisy picture, which compresses badly, as PNG bytes.
     pub(crate) fn noise_png(width: u32, height: u32, seed: u32) -> Vec<u8> {
         let mut state = seed.wrapping_mul(2_654_435_761).max(1);
         let picture = RgbImage::from_fn(width, height, |_, _| {

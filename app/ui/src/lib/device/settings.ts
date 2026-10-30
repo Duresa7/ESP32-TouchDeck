@@ -109,13 +109,12 @@ export function createDeviceSettings(deps: DeviceSettingsDeps) {
     return needs;
   }
 
-  // `body` is what goes to the Companion when it isn't the whole value, as for the photo frame.
-  async function patch<F extends Field>(field: F, value: Values[F], { quiet = false, body = {} }: { quiet?: boolean; body?: Partial<DeviceSettingsPatch> } = {}): Promise<SettingsPatched | null> {
+  async function patch<F extends Field>(field: F, value: Values[F], { quiet = false, sent = {} }: { quiet?: boolean; sent?: Partial<DeviceSettingsPatch> } = {}): Promise<SettingsPatched | null> {
     const mine = ++seq;
     latest[field] = mine;
     set((s) => ({ shown: s.shown && { ...s.shown, [field]: value }, notice: quiet ? s.notice : null }));
     try {
-      const reply = await companion.devices.settings_patch({ device: device.id }, null, { ...NO_CHANGE, [field]: value, ...body });
+      const reply = await companion.devices.settings_patch({ device: device.id }, null, { ...NO_CHANGE, [field]: value, ...sent });
       settled[field] = Math.max(settled[field] ?? 0, mine);
       set((s) => {
         const shown = { ...reply.settings };
@@ -226,7 +225,7 @@ export function createDeviceSettings(deps: DeviceSettingsDeps) {
       if (!current || state().needs.photo_frame) return false;
       set((s) => ({ problem: { ...s.problem, folder: undefined } }));
       const photo_frame = { enabled: null, timeout_s: null, interval_s: null, folder: null, ...change };
-      return (await patch('photo_frame', { ...current, ...change }, { body: { photo_frame } })) !== null;
+      return (await patch('photo_frame', { ...current, ...change }, { sent: { photo_frame } })) !== null;
     },
 
     slideBrightness(value: number) {

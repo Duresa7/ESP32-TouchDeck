@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { durationLabel, START_AFTER, startAfterChoices } from './photo-frame.ts';
+import { durationLabel, START_AFTER_S, startAfterChoices } from './photo-frame.ts';
 
 describe('the idle time', () => {
   test.each([
@@ -16,7 +16,7 @@ describe('the idle time', () => {
   });
 
   test('a preset keeps the list as it is', () => {
-    expect(startAfterChoices(60)).toEqual(START_AFTER);
+    expect(startAfterChoices(60)).toEqual(START_AFTER_S);
   });
 
   test('a time set some other way joins the list in order', () => {

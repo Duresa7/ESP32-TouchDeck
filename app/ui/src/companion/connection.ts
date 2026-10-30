@@ -56,7 +56,6 @@ export function useCompanion(): Companion {
 
 export const EventsContext = createContext<Events | null>(null);
 
-// Only the Electron window can open the system folder dialog. In a browser this is null.
 export type PickFolder = () => Promise<string | null>;
 export const FolderPickerContext = createContext<PickFolder | null>(null);
 

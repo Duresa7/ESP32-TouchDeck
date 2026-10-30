@@ -1,4 +1,3 @@
-//! This PC's time for a Device's clock: seconds since 1970 in UTC and the local offset.
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) fn unix_s() -> u64 {
@@ -7,7 +6,6 @@ pub(crate) fn unix_s() -> u64 {
         .map_or(0, |since| since.as_secs())
 }
 
-/// Minutes east of UTC, daylight saving included, within the protocol's ±840.
 #[cfg(windows)]
 pub(crate) fn offset_min() -> i32 {
     use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};

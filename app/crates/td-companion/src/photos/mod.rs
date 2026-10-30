@@ -1,12 +1,6 @@
 //! The photo frame: each Device's picture folder on this PC, its idle settings and clock, and the
 //! stream that sends it pictures while it is idle, as `schema/protocol/link-v2.md` § "Photo
 //! frame, idle, and clock" defines them.
-//!
-//! A supervisor thread looks at the connected Devices twice a second. It sets the clock of each
-//! one that has a clock when it connects, every 10 minutes and when this PC's offset changes. It
-//! reads the idle settings once per connection, and starts one stream thread for each Device
-//! whose photo frame is on and has a folder. A stream ends when its Device disconnects, the
-//! photo frame is turned off, or the Companion stops.
 mod clock;
 mod encode;
 pub(crate) mod folder;
@@ -33,9 +27,7 @@ use td_link::{
 
 const TICK: Duration = Duration::from_millis(500);
 const CLOCK_EVERY: Duration = Duration::from_secs(600);
-/// How soon a failed clock or idle read is tried again.
 const RETRY_AFTER: Duration = Duration::from_secs(5);
-/// How long a picture waits for a Layout or Asset transfer before it counts as busy.
 const SLOT_WAIT: Duration = Duration::from_millis(250);
 const SLICE: Duration = Duration::from_millis(100);
 
@@ -156,7 +148,6 @@ impl PhotoFrames {
 }
 
 impl Inner {
-    /// What the Device's stream sends next, while it should run.
     fn plan(&self, id: &DeviceId, since_ms: u64, generation: u64) -> Option<(PathBuf, Target)> {
         let state = self.state.lock();
         let conn = state.conns.get(id)?;
@@ -302,7 +293,6 @@ fn work(weak: &Weak<Inner>, id: &DeviceId, since_ms: u64, generation: u64) {
     }
 }
 
-/// One picture, after any Layout or Asset transfer already running on the Device.
 fn send(inner: &Inner, id: &DeviceId, jpeg: &[u8], limit: usize) -> Result<PhotoShown, PhotoError> {
     match inner.links.within(id.as_str(), SLOT_WAIT, |session| {
         photo::put_photo(session, jpeg, limit)

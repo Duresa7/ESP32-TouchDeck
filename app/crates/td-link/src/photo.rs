@@ -26,7 +26,6 @@ pub const IDLE_INTERVAL_S: RangeInclusive<u32> = 5..=3_600;
 pub const CLOCK_UNIX_S_MAX: u64 = 4_102_444_799;
 pub const CLOCK_OFFSET_MIN: RangeInclusive<i32> = -840..=840;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
-/// The Device decodes the whole picture before it answers an end.
 const END_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The Device's idle settings. The fallback is always the clock.

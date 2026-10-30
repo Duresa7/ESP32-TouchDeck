@@ -27,8 +27,7 @@ interface Stored {
 
 const between = (value: unknown, min: number, max: number) => typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max;
 
-// A full path on Windows or elsewhere. The fake can't see the PC's folders, so any full path exists.
-const fullPath = (folder: string) => /^[A-Za-z]:[\\/]/u.test(folder) || folder.startsWith('/') || folder.startsWith('\\\\');
+const looksLikeFullPath = (folder: string) => /^[A-Za-z]:[\\/]/u.test(folder) || folder.startsWith('/') || folder.startsWith('\\\\');
 
 export function createFakeDeviceSettings(options: FakeDeviceSettingsOptions) {
   const { devices, publish, restartMs = 300 } = options;
@@ -99,7 +98,7 @@ export function createFakeDeviceSettings(options: FakeDeviceSettingsOptions) {
     if (enabled !== null && typeof enabled !== 'boolean') return invalid('photo_frame.enabled is true or false');
     if (timeout !== null && !between(timeout, 10, 86400)) return invalid('photo_frame.timeout_s is 10 to 86400');
     if (interval !== null && !between(interval, 5, 3600)) return invalid('photo_frame.interval_s is 5 to 3600');
-    if (folder !== null && (typeof folder !== 'string' || (folder !== '' && !fullPath(folder)))) {
+    if (folder !== null && (typeof folder !== 'string' || (folder !== '' && !looksLikeFullPath(folder)))) {
       return invalid('photo_frame.folder is not the full path of a folder on this computer');
     }
     const settings = settingsOf(device);

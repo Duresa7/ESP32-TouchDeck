@@ -121,9 +121,7 @@ struct State {
     /// The xfer of the last Asset transfer that closed and what `v2.asset.end` answered for it.
     asset_end: Option<(u8, Map<String, Value>)>,
     idle_settings: IdleSettings,
-    /// Whether the Device shows its idle screen, as it does after `timeout_s` without a touch.
     idle: bool,
-    /// The time between pictures the Device enforces. `interval_s` unless a test shortens it.
     photo_interval: Option<Duration>,
     last_photo: Option<Instant>,
     photos: Vec<Vec<u8>>,

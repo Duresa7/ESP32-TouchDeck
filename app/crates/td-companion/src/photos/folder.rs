@@ -1,6 +1,3 @@
-//! The pictures in the folder the user chose. Only regular files directly in that folder are
-//! read. A symbolic link or junction is never a regular file here, so nothing outside the
-//! folder is ever sent.
 use std::{
     fs,
     io::{self, Read},
@@ -8,7 +5,6 @@ use std::{
 };
 
 const EXTENSIONS: [&str; 3] = ["jpg", "jpeg", "png"];
-/// Larger files are skipped before they are read.
 pub(crate) const FILE_BYTES_MAX: u64 = 64 * 1024 * 1024;
 
 fn is_picture(path: &Path) -> bool {
@@ -17,7 +13,6 @@ fn is_picture(path: &Path) -> bool {
         .is_some_and(|e| EXTENSIONS.iter().any(|x| e.eq_ignore_ascii_case(x)))
 }
 
-/// The pictures in `folder`, sorted by path. An unreadable folder has none.
 pub(crate) fn pictures(folder: &Path) -> Vec<PathBuf> {
     let Ok(root) = folder.canonicalize() else {
         return Vec::new();
@@ -35,8 +30,6 @@ pub(crate) fn pictures(folder: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// Reads one picture from `pictures(folder)`, checking again that it is still a regular file
-/// directly inside the folder.
 pub(crate) fn read(folder: &Path, path: &Path) -> io::Result<Vec<u8>> {
     let outside = || io::Error::other("not a picture file in the chosen folder");
     let root = folder.canonicalize()?;
@@ -58,7 +51,6 @@ pub(crate) fn read(folder: &Path, path: &Path) -> io::Result<Vec<u8>> {
     Ok(data)
 }
 
-/// Whether `folder` can be chosen: an absolute path to an existing folder.
 pub(crate) fn valid(folder: &str) -> bool {
     let path = Path::new(folder);
     path.is_absolute() && path.is_dir()

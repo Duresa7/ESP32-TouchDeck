@@ -1,9 +1,3 @@
-//! One Device's picture stream: the next picture from the folder, sent at the Device's pace.
-//!
-//! The Device decides when a picture may come. While it is awake every put answers `idle`, so
-//! the stream stops sending and asks again once a second. Inside the interval a put answers
-//! `rate` with the wait. `busy` means another transfer holds the slot, and the stream backs
-//! off. A picture the Device can't take, or one that can't be read here, is skipped.
 use super::{encode, folder};
 use std::{
     collections::HashSet,
@@ -15,7 +9,6 @@ use td_link::{
     photo::{PhotoError, PhotoShown},
 };
 
-/// The contract's slowest-allowed retry while the Device is awake.
 pub(crate) const IDLE_RETRY: Duration = Duration::from_secs(1);
 const BUSY_FIRST: Duration = Duration::from_millis(500);
 const BUSY_MAX: Duration = Duration::from_secs(8);
@@ -23,12 +16,9 @@ const FAIL_FIRST: Duration = Duration::from_secs(1);
 const FAIL_MAX: Duration = Duration::from_secs(30);
 const RATE_MIN: Duration = Duration::from_millis(100);
 const RATE_MAX: Duration = Duration::from_secs(3600);
-/// How often an empty folder is looked at again.
 pub(crate) const EMPTY_RETRY: Duration = Duration::from_secs(10);
-/// Failed sends of one picture before it is skipped.
-const TRIES: u32 = 3;
+const TRIES_PER_PICTURE: u32 = 3;
 
-/// What the Device takes: its screen, its `photo_bytes` and its `interval_s`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Target {
     pub screen: [u32; 2],
@@ -63,7 +53,6 @@ impl Streamer {
         &self.folder
     }
 
-    /// The next picture, encoded for the target. `None` when the folder has none to show.
     fn next(&mut self, target: &Target) -> Option<&[u8]> {
         if self
             .ready
@@ -108,7 +97,6 @@ impl Streamer {
         self.fail_wait = FAIL_FIRST;
     }
 
-    /// Sends the next picture through `send` and says how long to wait before the next step.
     pub(crate) fn step(
         &mut self,
         target: &Target,
@@ -170,7 +158,7 @@ impl Streamer {
                 self.failures += 1;
                 let wait = self.fail_wait;
                 self.fail_wait = (self.fail_wait * 2).min(FAIL_MAX);
-                if self.failures >= TRIES {
+                if self.failures >= TRIES_PER_PICTURE {
                     self.skip();
                 }
                 wait

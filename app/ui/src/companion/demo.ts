@@ -69,9 +69,9 @@ export function demoEnvironment(target: Window): Environment {
   });
   const update = params.get('update');
   const updates = createFakeUpdates({ check: isCheckName(update) ? checks[update] : checks.none });
-  // `?shell=browser` shows the UI as a browser sees it, with no system folder dialog.
   let picked: string | null = DEMO_FOLDER;
-  const pickFolder = params.get('shell') === 'browser' ? undefined : async () => picked;
+  const inBrowser = params.get('shell') === 'browser';
+  const pickFolder = inBrowser ? undefined : async () => picked;
   target.touchdeckDemo = {
     push: (id, order) => fake.setLayout(id, demoLayout(order)),
     offline: (id) => fake.update(id, { link: { state: 'lost', reason: 'unplugged', detail: '', at_ms: Date.UTC(2026, 9, 27, 21, 40) } }),

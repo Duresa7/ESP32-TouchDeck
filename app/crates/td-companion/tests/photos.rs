@@ -1,5 +1,3 @@
-//! The photo frame through the API: its settings on the Device and on this PC, the Device's
-//! clock, and pictures streamed from the chosen folder while the Device is idle.
 use serde_json::{Value, json};
 use std::{io::Cursor, time::Duration};
 use td_companion::{
@@ -17,8 +15,7 @@ fn path(id: &DeviceId) -> DevicePath {
     DevicePath { device: id.clone() }
 }
 
-/// A generated picture, so no photo of anyone is in the repository.
-fn picture(seed: u8) -> Vec<u8> {
+fn generated_picture(seed: u8) -> Vec<u8> {
     let picture = image::RgbImage::from_fn(96, 64, |x, y| {
         image::Rgb([(x as u8) ^ seed, (y as u8).wrapping_mul(3), seed])
     });
@@ -172,7 +169,7 @@ async fn the_folder_streams_to_the_device_only_while_it_is_idle() {
     assert!(now.abs_diff(unix_s) < 60, "the clock is this PC's time");
 
     let folder = tempfile::tempdir().unwrap();
-    std::fs::write(folder.path().join("a.png"), picture(1)).unwrap();
+    std::fs::write(folder.path().join("a.png"), generated_picture(1)).unwrap();
     std::fs::write(folder.path().join("notes.txt"), b"not a picture").unwrap();
     let turn = |enabled: bool| {
         td.call::<SettingsPatch>(

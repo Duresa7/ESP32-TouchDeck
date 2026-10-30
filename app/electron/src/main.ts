@@ -75,7 +75,6 @@ ipcMain.handle('session', async event => {
   return trusted(event) ? token : null;
 });
 
-// The photo frame's folder. Only the path goes back; the window never reads the folder.
 ipcMain.handle('dialog:pick-folder', async event => {
   if (!trusted(event) || !window) return null;
   try {
