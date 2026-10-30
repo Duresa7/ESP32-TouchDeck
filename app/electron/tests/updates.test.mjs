@@ -5,6 +5,8 @@ import { createServer } from 'node:http';
 import { mkdtemp, readdir, readFile, rm, symlink, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { blake2b } from '@noble/hashes/blake2.js';
 import { Updater, feedSettings, INSTALLER_ARGS } from '../dist/updates/index.js';
 import { compareVersions, verifyInstaller } from '../dist/updates/signature.js';
@@ -85,6 +87,16 @@ for (const legacy of [false, true]) test(`verified download and progress, legacy
   assert.deepEqual(await f.updater.download(p => progress.push(p)), { state: 'ready' });
   assert.equal(progress.at(-1).downloaded, f.state.data.length);
   assert.equal(progress.at(-1).total, f.state.data.length);
+});
+
+test('a download survives garbage collection before its body is read', async t => {
+  setFlagsFromString('--expose-gc');
+  const gc = runInNewContext('gc');
+  const f = await fixture(t); await f.updater.check();
+  let collecting = true;
+  const collector = (async () => { while (collecting) { gc(); await new Promise(resolve => setImmediate(resolve)); } })();
+  try { assert.deepEqual(await f.updater.download(() => {}), { state: 'ready' }); }
+  finally { collecting = false; await collector; }
 });
 
 for (const failure of ['signature', 'wrongId', 'badComment', 'truncated', 'version', 'oversized']) test(`refuses and deletes ${failure}`, async t => {
