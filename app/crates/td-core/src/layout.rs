@@ -1064,16 +1064,15 @@ impl Check {
             }
             Some((_, at)) => self.wrong_type(&at, "string,null"),
         }
-        if let Some((render, at)) = self.field(obj, pointer, "render").filter(|_| self.v2) {
-            if !matches!(render, Json::Str(s) if s.text == "gif")
-                || !matches!(obj.get("asset"), Some(Json::Str(_)))
-            {
-                self.fail(
-                    Rule::IconFormat,
-                    &at,
-                    "render must be gif with an Asset reference",
-                );
-            }
+        if let Some((render, at)) = self.field(obj, pointer, "render").filter(|_| self.v2)
+            && (!matches!(render, Json::Str(s) if s.text == "gif")
+                || !matches!(obj.get("asset"), Some(Json::Str(_))))
+        {
+            self.fail(
+                Rule::IconFormat,
+                &at,
+                "render must be gif with an Asset reference",
+            );
         }
         if let Some((asset, at)) = self.field(obj, pointer, "asset") {
             let valid = matches!(asset, Json::Null)
