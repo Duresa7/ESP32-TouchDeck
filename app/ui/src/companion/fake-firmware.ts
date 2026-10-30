@@ -30,7 +30,7 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
   const jobs = new Map<string, Job>();
   const bundles = new Map<string, BundleInfo & { device: string }>();
   const modes = new Map<string, Mode>();
-  const held = new Map<string, number>();
+  const held = new Map<string, number | 'rebooting'>();
   const waiting = new Map<string, () => void>();
   const ports = new Map<string, string>();
   const picks: FakePick[] = [];
@@ -80,7 +80,7 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
       if (at < steps.length) {
         const progress = steps[at++];
         update(job, { progress, cancellable: progress.phase === 'checking' || progress.phase === 'sending' });
-        if (progress.phase === 'sending' && progress.pct === held.get(device.id)) {
+        if (progress.phase === held.get(device.id) || (progress.phase === 'sending' && progress.pct === held.get(device.id))) {
           waiting.set(device.id, () => setTimeout(tick, stepMs));
           return;
         }
@@ -186,7 +186,7 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
 
     jobs: () => [...jobs.values()],
     picks: (...answers: FakePick[]) => void picks.splice(0, picks.length, ...answers),
-    hold: (device: string, pct = 40) => void held.set(device, pct),
+    hold: (device: string, at: number | 'rebooting' = 40) => void held.set(device, at),
     cancel(device: string) {
       const job = active(device);
       if (job?.cancellable) cancel(job);

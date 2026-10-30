@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { start, type FixtureServer } from '../../e2e/fixtures/cliproxy-server.mjs';
+import { start, type FixtureServer } from './fixtures/cliproxy-server.mjs';
 
 test.describe.configure({ mode: 'serial' });
 
