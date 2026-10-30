@@ -1,4 +1,4 @@
-import type { Action, Page, Tile } from '../editor/validate.ts';
+import type { TileAction as Action, Page, Tile } from '../../companion/api.gen.ts';
 import { MONTSERRAT_14, MONTSERRAT_28, MONTSERRAT_48 } from './fonts.data.ts';
 import { dotX, truncDiv, tileRect, type Geometry, type Rect } from './geometry.ts';
 import { font, layoutLabel, textSize, codepoints, type Align, type Font, type Label } from './text.ts';
