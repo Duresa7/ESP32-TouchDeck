@@ -42,6 +42,7 @@ export function freshDevice({ id, port, firmware }: { id: string; port: string; 
     link: { state: 'connected', port, since_ms: Date.now(), protocol: firmware.protocol },
     firmware: { ...firmware, build: 'fake', recovery: false, update_available: null },
     capabilities: null,
+    diagnostics: null,
     orientation: 'landscape',
     layout: null,
     key_mirror: { enabled: true, reason: null },

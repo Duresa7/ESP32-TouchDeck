@@ -4,14 +4,13 @@ import { Toaster, toast } from 'sonner';
 import { useCompanion } from './companion/connection.ts';
 import { useDevices } from './companion/devices.ts';
 import { Home } from './screens/Home.tsx';
-import { Integrations } from './screens/Integrations.tsx';
 import { SetupHost } from './screens/onboarding/SetupHost.tsx';
 import { NavCluster } from './shell/NavCluster.tsx';
 import { applyTheme } from './state/theme.ts';
 import { useUi } from './state/ui.ts';
 
-// The Layout editor loads the first time its screen opens, so the shell's own bundle stays small.
 const Layout = lazy(() => import('./screens/Layout.tsx').then((screen) => ({ default: screen.Layout })));
+const Integrations = lazy(() => import('./screens/Integrations.tsx').then((screen) => ({ default: screen.Integrations })));
 
 /**
  * The app shell: the current screen, the nav cluster over it and the toast
@@ -38,7 +37,11 @@ export function App() {
           <Layout />
         </Suspense>
       )}
-      {section === 'integrations' && <Integrations />}
+      {section === 'integrations' && (
+        <Suspense fallback={null}>
+          <Integrations />
+        </Suspense>
+      )}
       <NavCluster />
       <SetupHost />
       {window.openTouchDeck && <button className="open-browser" type="button" onClick={() => {

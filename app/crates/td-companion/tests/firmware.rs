@@ -1222,3 +1222,46 @@ async fn an_unknown_consent_answer_is_request_invalid() {
         .unwrap();
     assert_eq!(response.status(), 400);
 }
+
+#[tokio::test]
+async fn diagnostics_follow_the_hello_after_an_update() {
+    use futures_util::StreamExt;
+    let td = TestCompanion::start().await;
+    let id = td.plug_device("mocka").await;
+    let before = td.device(&id).unwrap();
+    assert_eq!(before.diagnostics.as_ref().unwrap().running_from, "ota_0");
+    let mut events = td.events().await;
+    let prompt = Arc::new(Prompt::default());
+    prompt.answer(true);
+    td.firmware_prompter(prompt);
+    let job = td
+        .call::<Update>(FirmwareTarget { device: id.clone() }, NoQuery, request())
+        .await
+        .unwrap();
+    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    let running = |td: &TestCompanion| {
+        td.device(&id)
+            .and_then(|d| d.diagnostics)
+            .map(|d| d.running_from)
+    };
+    td.until(|td| running(td).as_deref() == Some("ota_1")).await;
+    assert!(td.device(&id).unwrap().rev > before.rev);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let message = events.next().await.unwrap().unwrap();
+            let Ok(frame) =
+                serde_json::from_str::<serde_json::Value>(message.to_text().unwrap_or(""))
+            else {
+                continue;
+            };
+            if frame["type"] == "device.updated"
+                && frame["device"] == id.as_str()
+                && frame["data"]["diagnostics"]["running_from"] == "ota_1"
+            {
+                return;
+            }
+        }
+    })
+    .await
+    .expect("device.updated carried the new running_from");
+}

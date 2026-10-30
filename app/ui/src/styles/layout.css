@@ -1,4 +1,4 @@
-/* The Layout screen, built from tokens.css. docs/design.md, "Layout editor", explains each part. Never write a raw color here. */
+/* The Layout screen, built from tokens.css. Never write a raw color here. */
 
 .visually-hidden {
   position: absolute;
@@ -1027,44 +1027,6 @@
   color: var(--ink-2);
 }
 
-.switch-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.switch {
-  flex: none;
-  position: relative;
-  display: inline-flex;
-  width: 36px;
-  height: 22px;
-  padding: 2px;
-  border: 0;
-  border-radius: var(--radius-chip);
-  background: var(--line-control);
-  cursor: pointer;
-  transition: background-color var(--duration-hover) ease;
-}
-
-.switch[data-checked] {
-  background: var(--accent);
-}
-
-.switch-thumb {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--screen-ink);
-  box-shadow: var(--shadow-float);
-  transition: translate var(--duration-press) var(--ease-out);
-}
-
-.switch[data-checked] .switch-thumb {
-  translate: 14px 0;
-}
-
 .switch-label {
   display: inline-flex;
   align-items: center;
@@ -1086,20 +1048,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-}
-
-.field-error {
-  margin: 0;
-  color: var(--danger-ink);
-  font-size: var(--text-12);
-  line-height: var(--leading-12);
-  letter-spacing: var(--track-12);
-  font-weight: var(--weight-medium);
-  text-wrap: pretty;
-}
-
-.input[aria-invalid='true'] {
-  border-color: var(--danger-ink);
 }
 
 .textarea {

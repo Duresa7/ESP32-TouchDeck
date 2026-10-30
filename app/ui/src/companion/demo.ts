@@ -1,4 +1,4 @@
-import type { DeviceSummary } from './api.ts';
+import type { Delivery, DeviceSummary } from './api.ts';
 import type { Environment } from './connection.ts';
 import { createFakeCompanion } from './fake.ts';
 import type { FakePick } from './fake-firmware.ts';
@@ -43,6 +43,8 @@ declare global {
       updates: Pick<FakeUpdates, 'script' | 'finish' | 'calls'>;
       /** The opt-in topics every open event socket subscribed to, as `topic/device`. */
       topics(): string[];
+      setHub(up: boolean): void;
+      deliver(entry: Delivery): void;
     };
   }
 }
@@ -58,6 +60,7 @@ export function demoEnvironment(target: Window): Environment {
     system: { build: 'demo' },
     brightness: Object.fromEntries(devices.filter((_, i) => i % 3 !== 2).map((d) => [d.id, 80])),
     browsers: params.get('browsers') === '0' ? [] : browsers,
+    integrations: { configured: params.get('integrations') !== 'new', delivery: devices.map((d) => ({ device: d.id, sent: 42, error: null })) },
   });
   const update = params.get('update');
   const updates = createFakeUpdates({ check: isCheckName(update) ? checks[update] : checks.none });
@@ -78,6 +81,8 @@ export function demoEnvironment(target: Window): Environment {
     },
     updates: { script: updates.script, finish: updates.finish, calls: updates.calls },
     topics: () => fake.topics.flat(),
+    setHub: (up) => fake.integrations.setHub(up),
+    deliver: (entry) => fake.integrations.deliver(entry),
   };
   const network = target.fetch.bind(target);
   target.fetch = (input, init) => {

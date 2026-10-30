@@ -5201,6 +5201,8 @@ version = "0.1.0"
 dependencies = [
  "freedesktop-icons",
  "image",
+ "inventory",
+ "keyring",
  "libc",
  "open",
  "resvg",
@@ -5209,6 +5211,7 @@ dependencies = [
  "sha2 0.10.9",
  "td-core",
  "time",
+ "ts-rs",
  "ureq",
  "url",
  "windows 0.62.2",

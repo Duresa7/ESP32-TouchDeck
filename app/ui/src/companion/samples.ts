@@ -8,6 +8,7 @@ export function sampleDevice(id: string, name: string | null, link: LinkState = 
     setup: name === null ? 'needs-setup' : 'ready',
     link,
     firmware: { version: '1.5.0', protocol: 2, build: 'fake', recovery: false, update_available: null },
+    diagnostics: { product: 'touchdeck', running_from: 'ota_0', sinks: ['log', 'link'], current_layout: 'builtin' },
     capabilities: null,
     orientation: 'landscape',
     layout: null,

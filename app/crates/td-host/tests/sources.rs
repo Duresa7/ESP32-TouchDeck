@@ -231,7 +231,7 @@ fn auth_file_refreshes_use_bearer_authorization_and_redact_the_key() {
     let td_host::sources::Info::Proxy(info) = proxy.info();
     let shown = serde_json::to_string(&info).unwrap();
     assert!(shown.contains("…1234") && !shown.contains("fixture-key"));
-    assert_eq!(key_hint("ab"), "…ab");
+    assert_eq!(key_hint("ab"), "Set");
 }
 
 #[test]

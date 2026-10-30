@@ -337,3 +337,135 @@ async fn maintenance_closes_an_expired_browser_socket() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn forget_all_revokes_browser_sockets_and_preserves_windows() {
+    let td = TestCompanion::start().await;
+    let second: Value = td
+        .raw()
+        .post("/api/v1/auth/sessions")
+        .bearer_auth(&td.pairing_token)
+        .json(&json!({"kind":"window"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let windows = [&td.token, second["token"].as_str().unwrap()];
+    let mut window_one = events(&td, windows[0]).await;
+    let mut window_two = events(&td, windows[1]).await;
+    let a = browser(&td).await;
+    let b = browser(&td).await;
+    let mut socket_a = events(&td, &a).await;
+    let mut socket_b = events(&td, &b).await;
+    assert_eq!(
+        td.raw()
+            .request(
+                reqwest::Method::DELETE,
+                "/api/v1/auth/sessions?kind=browser"
+            )
+            .bearer_auth(&td.token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        204
+    );
+    for socket in [&mut socket_a, &mut socket_b] {
+        let (types, code) = until_closed(socket).await;
+        assert_eq!(types, ["auth.revoked"]);
+        assert_eq!(code, Some(4401));
+    }
+    for token in windows {
+        assert_eq!(
+            td.raw()
+                .get("/api/v1/system")
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            200
+        );
+    }
+    td.plug_device("mock0001").await;
+    for socket in [&mut window_one, &mut window_two] {
+        assert_eq!(frame(socket).await.unwrap()["type"], "device.added");
+    }
+}
+
+#[tokio::test]
+async fn forget_all_rejects_browser_without_revoking_anything() {
+    let td = TestCompanion::start().await;
+    let a = browser(&td).await;
+    let b = browser(&td).await;
+    error(
+        td.raw()
+            .request(
+                reqwest::Method::DELETE,
+                "/api/v1/auth/sessions?kind=browser",
+            )
+            .bearer_auth(&a)
+            .send()
+            .await
+            .unwrap(),
+        403,
+        "auth.forbidden",
+    )
+    .await;
+    for token in [&td.token, &a, &b] {
+        assert_eq!(
+            td.raw()
+                .get("/api/v1/system")
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            200
+        );
+    }
+}
+
+#[tokio::test]
+async fn forget_all_validates_kind_and_request_security() {
+    let td = TestCompanion::start().await;
+    for query in ["", "?kind=window", "?kind=", "?kind=other"] {
+        error(
+            td.raw()
+                .request(
+                    reqwest::Method::DELETE,
+                    &format!("/api/v1/auth/sessions{query}"),
+                )
+                .bearer_auth(&td.token)
+                .send()
+                .await
+                .unwrap(),
+            400,
+            "request.invalid",
+        )
+        .await;
+    }
+    for (header, value, status, code) in [
+        ("host", "evil.example", 421, "security.host"),
+        ("origin", "http://evil.example", 403, "security.origin"),
+        ("sec-fetch-site", "cross-site", 403, "security.origin"),
+    ] {
+        error(
+            td.raw()
+                .request(
+                    reqwest::Method::DELETE,
+                    "/api/v1/auth/sessions?kind=browser",
+                )
+                .bearer_auth(&td.token)
+                .header(header, value)
+                .send()
+                .await
+                .unwrap(),
+            status,
+            code,
+        )
+        .await;
+    }
+}

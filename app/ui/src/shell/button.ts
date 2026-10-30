@@ -1,6 +1,6 @@
 import { cva } from 'class-variance-authority';
 
-// The button kinds from docs/design.md, "Buttons". Secondary is the default.
+// The button kinds of the design. Secondary is the default.
 export const button = cva('button', {
   variants: {
     kind: {
