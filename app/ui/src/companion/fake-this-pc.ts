@@ -13,11 +13,11 @@ const streams: { id: string; name: string; unit: string }[] = [
   { id: 'network_send_bytes_s', name: 'Network send', unit: 'bytes/s' },
 ];
 
-export function fakeThisPc(): IntegrationView {
+export function fakeThisPc(enabled = true): IntegrationView {
   return {
-    config: { enabled: true }, secrets: {},
+    config: { enabled }, secrets: {},
     summary: {
-      id: 'this_pc', name: 'This PC', icon: 'monitor', enabled: true,
+      id: 'this_pc', name: 'This PC', icon: 'monitor', enabled,
       status: { state: 'ok', message: null, delivery: [] },
       config_schema: [{ name: 'enabled', kind: 'boolean', secret: false }],
       streams: streams.map(({ id, unit }) => ({ id, kind: 'numeric', unit })),

@@ -21,3 +21,18 @@ test('This PC is discoverable with ten ordered Presets through the fake API', as
   ]);
   expect(view.summary.streams).toHaveLength(10);
 });
+
+test('This PC fake validates configuration and preserves its enabled state', async () => {
+  const fake = createFakeCompanion();
+  const token = await fake.bridge.session();
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const configure = (body: unknown) => fake.fetch('http://127.0.0.1/api/v1/integrations/this_pc/config', { method: 'PUT', headers, body: JSON.stringify(body) });
+  for (const body of [{}, { enabled: 'yes' }, { enabled: false, extra: true }]) {
+    expect((await configure(body)).status).toBe(422);
+  }
+  const disabled = await configure({ enabled: false });
+  expect(disabled.status).toBe(200);
+  expect(await disabled.json()).toEqual(fakeThisPc(false));
+  const detail = await fake.fetch('http://127.0.0.1/api/v1/integrations/this_pc', { headers });
+  expect(await detail.json()).toEqual(fakeThisPc(false));
+});

@@ -31,7 +31,7 @@ async function openCliProxy(page: Page) {
   await page.goto('/');
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
   await page.getByRole('button', { name: 'Integrations', exact: true }).click();
-  await page.getByTestId('integration-open').click();
+  await page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-open').click();
   await expect(page.getByTestId('integration-detail')).toHaveAttribute('data-id', 'cliproxyapi');
 }
 
