@@ -15,9 +15,9 @@ const streams: { id: string; name: string; unit: string }[] = [
 
 export function fakeThisPc(enabled = true): IntegrationView {
   return {
-    config: { enabled }, secrets: {},
+    config: { enabled }, secrets: {}, detail: null,
     summary: {
-      id: 'this_pc', name: 'This PC', icon: 'monitor', enabled,
+      revision: 0, id: 'this_pc', name: 'This PC', icon: 'monitor', enabled,
       status: { state: 'ok', message: null, delivery: [] },
       config_schema: [{ name: 'enabled', kind: 'boolean', secret: false }],
       streams: streams.map(({ id, unit }) => ({ id, kind: 'numeric', unit })),

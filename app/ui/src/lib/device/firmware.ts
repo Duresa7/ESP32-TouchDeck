@@ -1,10 +1,11 @@
 import { createStore } from 'zustand/vanilla';
-import type { ErrorBody, FirmwareProgress, FirmwareRequest, FirmwareResult, Job } from '../../companion/api.ts';
+import type { ErrorBody, FirmwareProgress, FirmwareRequest, FirmwareResult, Job, PickResult } from '../../companion/api.ts';
 import type { Companion } from '../../companion/client.ts';
 import { toApiError } from '../../companion/errors.ts';
 import type { JobsStore } from '../../companion/jobs.ts';
 
 export type JobView =
+  | { step: 'waiting'; text: string; raw: string }
   | { step: 'running'; text: string; raw: string; pct: number | null }
   | { step: 'done'; text: string; raw: string; version: string }
   | { step: 'failed'; text: string; raw: string; code: string }
@@ -73,6 +74,8 @@ export function failureText(error: { code: string; details: unknown }, { device,
       return "That file isn't a Firmware file for this Device.";
     case 'firmware.bundle_not_found':
       return 'That file expired. Choose it again, then retry.';
+    case 'system.dialog_open':
+      return 'A file dialog is already open on this PC. Close it, then retry.';
     case 'device.busy':
       return `${device} is updating. Wait for it to finish.`;
     case 'device.not_connected':
@@ -94,27 +97,38 @@ export function doneText(result: FirmwareResult): string {
   return `Done. ${result.message}.`;
 }
 
-export function viewOf(job: Job, context: UpdateContext): JobView {
+export interface FirmwareWords {
+  waiting: string;
+  progress(progress: PhaseProgress | null): string;
+  done(result: FirmwareResult): string;
+  failed(error: { code: string; details: unknown }, context: UpdateContext): string;
+}
+
+export const updateWords: FirmwareWords = { waiting: 'Confirm on this PC to continue.', progress: phaseText, done: doneText, failed: failureText };
+
+export const inProgress = (view: UpdateView) => view.step === 'running' || view.step === 'waiting';
+
+export function viewOf(job: Job, context: UpdateContext, words: FirmwareWords = updateWords): JobView {
   switch (job.state) {
     case 'queued':
-      return { step: 'running', text: 'Updating…', raw: 'Queued', pct: null };
+      return { step: 'running', text: words.progress(null), raw: 'Queued', pct: null };
     case 'waiting_for_confirmation':
-      return { step: 'running', text: 'Confirm on this PC to continue.', raw: 'Waiting for confirmation', pct: null };
+      return { step: 'waiting', text: words.waiting, raw: 'Waiting for confirmation' };
     case 'running': {
       const progress = progressOf(job.progress);
       const pct = progress?.pct ?? null;
-      return { step: 'running', text: phaseText(progress), raw: progress ? `${RAW[progress.phase]}${pct === null ? '' : ` ${pct}%`}` : 'Running', pct };
+      return { step: 'running', text: words.progress(progress), raw: progress ? `${RAW[progress.phase]}${pct === null ? '' : ` ${pct}%`}` : 'Running', pct };
     }
     case 'succeeded': {
       const result = resultOf(job.result) ?? { message: 'Firmware updated', version: context.version };
-      return { step: 'done', text: doneText(result), raw: result.message, version: result.version };
+      return { step: 'done', text: words.done(result), raw: result.message, version: result.version };
     }
     case 'failed': {
       const error: ErrorBody = job.error ?? { code: 'internal', message: 'The Job ended as failed.', details: null };
-      return { step: 'failed', text: failureText(error, context), raw: `Failed: ${error.message}`, code: error.code };
+      return { step: 'failed', text: words.failed(error, context), raw: `Failed: ${error.message}`, code: error.code };
     }
     case 'cancelled':
-      return { step: 'cancelled', text: failureText({ code: 'job.cancelled', details: null }, context), raw: 'Cancelled' };
+      return { step: 'cancelled', text: words.failed({ code: 'job.cancelled', details: null }, context), raw: 'Cancelled' };
     default: {
       const _exhaustive: never = job.state;
       return _exhaustive;
@@ -126,27 +140,34 @@ export interface FirmwareUpdateState {
   view: UpdateView;
   job: string | null;
   log: string[];
+  fileDialogOpen: boolean;
 }
 
-export interface FirmwareUpdateDeps {
-  companion: Pick<Companion, 'firmware' | 'jobs'>;
+export interface FirmwareJobDeps {
+  companion: Pick<Companion, 'jobs'>;
   jobs: JobsStore;
   context(): UpdateContext & { id: string };
+  run(id: string, bundle: BundleRef): Promise<Job>;
+  words?: FirmwareWords;
   pollMs?: number;
+}
+
+export interface FirmwareUpdateDeps extends Omit<FirmwareJobDeps, 'companion' | 'run' | 'words'> {
+  companion: Pick<Companion, 'firmware' | 'jobs'>;
 }
 
 const finished = (job: Job) => job.state === 'succeeded' || job.state === 'failed' || job.state === 'cancelled';
 
-export function createFirmwareUpdate(deps: FirmwareUpdateDeps) {
-  const { companion, jobs, pollMs = 1000 } = deps;
-  const store = createStore<FirmwareUpdateState>()(() => ({ view: { step: 'idle' }, job: null, log: [] }));
+export function createFirmwareJob(deps: FirmwareJobDeps) {
+  const { companion, jobs, words = updateWords, pollMs = 1000 } = deps;
+  const store = createStore<FirmwareUpdateState>()(() => ({ view: { step: 'idle' }, job: null, log: [], fileDialogOpen: false }));
   const { getState: state, setState: set } = store;
   let stop = () => {};
   let started: UpdateContext = { device: 'the Device', version: '' };
 
   function show(job: Job) {
     if (state().job !== job.id) return;
-    const view = viewOf(job, started);
+    const view = viewOf(job, started, words);
     set((s) => ({ view, log: s.log.at(-1) === view.raw ? s.log : [...s.log, view.raw] }));
     if (finished(job)) stop();
   }
@@ -174,12 +195,12 @@ export function createFirmwareUpdate(deps: FirmwareUpdateDeps) {
 
   return Object.assign(store, {
     async start(bundle: BundleRef = 'bundled'): Promise<void> {
-      if (state().view.step === 'running') return;
+      if (inProgress(state().view)) return;
       const { id, ...context } = deps.context();
       started = context;
-      set({ view: { step: 'running', text: 'Updating…', raw: 'Starting', pct: null }, job: null, log: [] });
+      set({ view: { step: 'running', text: words.progress(null), raw: 'Starting', pct: null }, job: null, log: [] });
       try {
-        follow(await companion.firmware.update({ device: id }, null, { bundle }));
+        follow(await deps.run(id, bundle));
       } catch (thrown) {
         const error = toApiError(thrown);
         const busy = error.code === 'device.busy' && typeof error.details === 'object' && error.details !== null && 'job' in error.details ? error.details.job : null;
@@ -187,7 +208,7 @@ export function createFirmwareUpdate(deps: FirmwareUpdateDeps) {
           const known = jobs.getState().jobs[busy.id];
           if (known) return follow(known);
         }
-        set({ view: { step: 'failed', text: failureText(error, context), raw: `Failed: ${error.message}`, code: error.code } });
+        set({ view: { step: 'failed', text: words.failed(error, context), raw: `Failed: ${error.message}`, code: error.code } });
       }
     },
 
@@ -199,11 +220,36 @@ export function createFirmwareUpdate(deps: FirmwareUpdateDeps) {
     },
 
     dismiss() {
-      if (state().view.step !== 'running') set({ view: { step: 'idle' }, job: null, log: [] });
+      if (!inProgress(state().view)) set({ view: { step: 'idle' }, job: null, log: [] });
     },
 
     dispose() {
       stop();
+    },
+  });
+}
+
+export function createFirmwareUpdate(deps: FirmwareUpdateDeps) {
+  const { companion } = deps;
+  const update = createFirmwareJob({ ...deps, run: (id, bundle) => companion.firmware.update({ device: id }, null, { bundle }) });
+  const { getState: state, setState: set } = update;
+  return Object.assign(update, {
+    async startFromFile(): Promise<void> {
+      if (state().fileDialogOpen || inProgress(state().view)) return;
+      const { id, ...context } = deps.context();
+      set({ fileDialogOpen: true });
+      let picked: PickResult;
+      try {
+        picked = await companion.firmware.pick({}, null, { device: id });
+      } catch (thrown) {
+        const error = toApiError(thrown);
+        const raw = `Failed: ${error.message}`;
+        set({ view: { step: 'failed', text: failureText(error, context), raw, code: error.code }, job: null, log: [raw] });
+        return;
+      } finally {
+        set({ fileDialogOpen: false });
+      }
+      if (picked.bundle) await update.start(picked.bundle.id);
     },
   });
 }

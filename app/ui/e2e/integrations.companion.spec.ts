@@ -19,7 +19,9 @@ test.afterAll(async () => {
 async function companion(request: APIRequestContext) {
   const minted = await request.post('/__companion/session', { headers: { 'X-TouchDeck-Dev': '1' } });
   expect(minted.status()).toBe(200);
-  const { token } = (await minted.json()) as { token: string };
+  const session: unknown = await minted.json();
+  if (typeof session !== 'object' || session === null || !('token' in session) || typeof session.token !== 'string') throw new Error('Missing session');
+  const { token } = session;
   return async (path: string) => {
     const response = await request.get(`/api/v1${path}`, { headers: { Authorization: `Bearer ${token}` } });
     expect(response.status()).toBe(200);
@@ -66,6 +68,8 @@ test('CLIProxyAPI is set up against the local hub, and its key shows only as Set
 
   await page.getByTestId('refresh').click();
   await expect(outcome(page)).toHaveAttribute('data-event', 'refreshed');
+  await expect(page.getByTestId('usage-account')).toHaveCount(4);
+  await expect(page.getByTestId('usage-five-hour').first()).toContainText('42%');
 });
 
 test('moving CLIProxyAPI to another origin makes the Companion forget the key, and the view says so', async ({ page, request }) => {

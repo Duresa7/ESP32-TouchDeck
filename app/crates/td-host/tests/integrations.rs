@@ -340,3 +340,23 @@ fn secret_stores_reject_ambiguous_target_components() {
         }
     }
 }
+
+#[test]
+fn detail_starts_empty_and_polling_changes_the_revision() {
+    let mut r = registry(Recorder::default(), None);
+    let i = r.get("cliproxyapi").unwrap();
+    i.configure(config("https://hub.example")).unwrap();
+    i.secret_put("management_key", "fixture-key").unwrap();
+    let before = serde_json::to_value(i.view().unwrap()).unwrap();
+    assert_eq!(before["detail"], Value::Null);
+    i.refresh();
+    let after = serde_json::to_value(i.view().unwrap()).unwrap();
+    assert_eq!(after["detail"]["accounts"], json!([]));
+    assert!(after["detail"]["polled_ms"].as_u64().unwrap() > 0);
+    assert_ne!(before["summary"]["revision"], after["summary"]["revision"]);
+    i.secret_delete("management_key").unwrap();
+    assert_eq!(
+        serde_json::to_value(i.view().unwrap()).unwrap()["detail"],
+        Value::Null
+    );
+}

@@ -120,6 +120,7 @@ impl Integration for ThisPc {
             None
         };
         IntegrationSummary {
+            revision: 0,
             id: "this_pc".into(),
             name: "This PC".into(),
             icon: "monitor".into(),
@@ -155,6 +156,7 @@ impl Integration for ThisPc {
     }
     fn view(&self) -> Result<IntegrationView, Error> {
         Ok(IntegrationView {
+            detail: None,
             summary: self.summary(),
             config: json!({"enabled":self.settings.enabled}),
             secrets: BTreeMap::new(),

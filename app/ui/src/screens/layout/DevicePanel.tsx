@@ -7,13 +7,11 @@ import { Toggle } from '@base-ui/react/toggle';
 import { ToggleGroup } from '@base-ui/react/toggle-group';
 import { ChevronDown } from 'lucide-react';
 import type { DeviceSummary, Orientation } from '../../companion/api.ts';
-import { useCompanion } from '../../companion/connection.ts';
-import { jobsStore } from '../../companion/jobs.ts';
-import type { FirmwareUpdateStore } from '../../lib/device/firmware.ts';
+import { inProgress, type FirmwareUpdateStore } from '../../lib/device/firmware.ts';
 import { needsFirmwareField } from '../../lib/device/needs-firmware.ts';
 import type { DeviceSettingsStore } from '../../lib/device/settings.ts';
 import { button } from '../../shell/button.ts';
-import { deviceStoresFor, useOfferedFirmware } from './device.ts';
+import { useDeviceStores, useOfferedFirmware } from './device.ts';
 
 const ORIENTATIONS: { value: Orientation; label: string }[] = [
   { value: 'landscape', label: 'Landscape' },
@@ -178,10 +176,11 @@ function FirmwareRow({ device, name, settings, firmware }: PanelProps & { firmwa
   const restart = useStore(settings, (s) => s.restart);
   const version = device.firmware?.version ?? null;
   const live = device.link.state === 'connected';
-  const updating = view.step === 'running' || device.link.state === 'updating';
+  const busy = inProgress(view);
+  const updating = busy || device.link.state === 'updating';
   const status =
-    view.step === 'running' ? view.text : view.step === 'done' ? view.text : offered ? `${offered} available` : version ? 'Up to date' : 'Not reported';
-  const offer = offered !== null && view.step !== 'running' && view.step !== 'done';
+    busy || view.step === 'done' ? view.text : offered ? `${offered} available` : version ? 'Up to date' : 'Not reported';
+  const offer = offered !== null && !busy && view.step !== 'done';
   const progress: CSSProperties = { transform: `scaleX(${(view.step === 'running' ? (view.pct ?? 0) : 100) / 100})` };
   return (
     <div className="panel-firmware" data-testid="device-panel-firmware" data-step={view.step}>
@@ -216,8 +215,8 @@ function FirmwareRow({ device, name, settings, firmware }: PanelProps & { firmwa
         </span>
       </div>
       {view.step === 'running' && (
-        <div className="panel-progress" role="progressbar" aria-label={`Updating ${name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={view.pct ?? undefined}>
-          <span className="panel-progress-fill" style={progress} />
+        <div className="firmware-progress" role="progressbar" aria-label={`Updating ${name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={view.pct ?? undefined}>
+          <span className="firmware-progress-fill" style={progress} />
         </div>
       )}
       {view.step === 'running' && <p className="field-hint">Keep {name} plugged in. Takes about a minute. {name} restarts once.</p>}
@@ -263,23 +262,15 @@ function Notice({ settings }: { settings: DeviceSettingsStore }) {
 }
 
 function PanelBody({ device }: { device: DeviceSummary }) {
-  const companion = useCompanion();
-  const stores = deviceStoresFor(companion, device);
-  const { settings, firmware } = stores;
+  const { settings, firmware } = useDeviceStores(device);
   const name = device.name ?? 'Unnamed Device';
   const live = device.link.state === 'connected';
   const loaded = useStore(settings, (s) => s.load === 'ready');
   const restarting = useStore(settings, (s) => s.restart === 'restarting');
-  const job = device.link.state === 'updating' ? device.link.job : null;
 
-  useEffect(() => stores.observe(device), [stores, device]);
   useEffect(() => {
     if (live) void settings.load();
   }, [settings, live]);
-  useEffect(() => {
-    const known = job ? jobsStore.getState().jobs[job] : undefined;
-    if (known) firmware.attach(known);
-  }, [firmware, job]);
 
   const props: PanelProps = { device, name, settings, live, editable: live && loaded && !restarting };
   return (
