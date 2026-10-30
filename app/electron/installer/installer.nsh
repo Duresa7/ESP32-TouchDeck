@@ -10,6 +10,10 @@ Var pid
 
 ; The stock check force-stops every process in $INSTDIR, which would kill the Companion mid-write.
 !macro customCheckAppRunning
+  ; NSIS is 32-bit; Get-Process.Path cannot inspect the 64-bit Companion from that host.
+  ${if} ${RunningX64}
+    StrCpy $PowerShellPath "$WINDIR\SysNative\WindowsPowerShell\v1.0\powershell.exe"
+  ${endif}
   InitPluginsDir
   File "/oname=$PLUGINSDIR\stop-companion.ps1" "${BUILD_RESOURCES_DIR}\stop-companion.ps1"
   DetailPrint "Stopping the Open TouchDeck Companion"
