@@ -120,7 +120,7 @@ test('renders a 64-Tile Page and times five sends', async ({ page }) => {
   await page.evaluate(() => performance.clearMeasures('page-render'));
   await importText(page, JSON.stringify(big), 'sixty-four.json');
   await expect(page.getByTestId('grid').getByTestId('tile')).toHaveCount(64);
-  await page.waitForTimeout(200);
+  await expect.poll(() => page.evaluate(() => performance.getEntriesByName('page-render').length)).toBeGreaterThan(0);
   const render = await page.evaluate(() => performance.getEntriesByName('page-render').map((entry) => Math.round(entry.duration * 10) / 10));
   await importDev(page);
   await page.evaluate(() => performance.clearMeasures('push'));
