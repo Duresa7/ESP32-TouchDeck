@@ -1,7 +1,6 @@
 # Open TouchDeck UI
 
-The React UI the Companion serves, built to [`docs/design.md`](../../docs/design.md) with the strings in
-[`docs/copy.md`](../../docs/copy.md). It talks to the Companion only through the generated client in
+The React UI the Companion serves. It talks to the Companion only through the generated client in
 `src/companion/api.gen.ts`.
 
 Run these from `app/`:

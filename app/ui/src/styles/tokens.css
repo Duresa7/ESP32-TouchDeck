@@ -7,7 +7,7 @@
  *
  * Light is the default. Dark follows prefers-color-scheme. A data-theme
  * attribute on <html> ("light" or "dark") overrides the system for the
- * Appearance setting. docs/design.md explains every token.
+ * Appearance setting.
  */
 
 :root {
@@ -101,7 +101,7 @@
   /*
    * The Device's screen. The same in both themes, because it's a backlit LCD.
    * The Firmware uses these values too. Every one is opaque, so each has an
-   * exact RGB565 equivalent (docs/design.md, "Device translation").
+   * exact RGB565 equivalent in firmware/components/ui/ui_theme.h.
    */
   --screen-bg: var(--palette-screen);
   --screen-tile: #182030;

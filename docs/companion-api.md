@@ -2,7 +2,7 @@
 
 This is the contract between the Companion and its clients: the Electron window, a browser tab, and tests. Every Companion, Electron and UI ticket builds against it. When the code and this page disagree, one of them has a bug. The `api_contract_is_documented` test fails the build when an endpoint, event or error code is missing here.
 
-Related decisions: [ADR 0001](adr/0001-rust-companion-behind-electron.md) (Rust Companion behind Electron, loopback only), [ADR 0005](adr/0005-updater-keeps-the-signing-key.md) (updates stay in Electron) and [ADR 0006](adr/0006-command-approval-on-the-pc.md) (command approvals happen on the PC). The words Device, New board, Firmware, Companion, Layout, Page, Tile, Live tile, Preset tile, Asset and Integration mean what [GLOSSARY.md](../GLOSSARY.md) says.
+Related decisions: [ADR 0001](adr/0001-rust-companion-behind-electron.md) (Rust Companion behind Electron, loopback only), [ADR 0005](adr/0005-updater-keeps-the-signing-key.md) (updates stay in Electron) and [ADR 0006](adr/0006-command-approval-on-the-pc.md) (command approvals happen on the PC).
 
 ## At a glance
 
@@ -738,7 +738,7 @@ Handlers, extractors, middleware and `Job.error` all return this body and nothin
 ```
 
 - `code` is stable, and the UI switches on it. Codes are `<namespace>.<snake_name>`.
-- `message` is one plain sentence that uses the glossary's words. It's for logs, developer tools and the **Details** disclosure. User-facing text comes from the copy guide, keyed by `code`.
+- `message` is one plain sentence. It's for logs, developer tools and the **Details** disclosure. The UI words user-facing text itself, keyed by `code`.
 - `details` is optional and typed per code.
 - An unknown code is a generic error to the client.
 
@@ -982,7 +982,7 @@ Playwright then drives the Electron window and a browser page against `--mock-de
 ## How to add an endpoint
 
 1. Find the feature module under `crates/td-companion/src/features/`. If your route belongs to a new feature, add a new module there and register it the way the feature-module rule says.
-2. Declare the request and response types with `#[derive(Serialize, Deserialize, TS)]`. Use glossary words for names and fields.
+2. Declare the request and response types with `#[derive(Serialize, Deserialize, TS)]`. Name fields with the words the rest of the API uses.
 3. Write `struct X; impl Endpoint for X` with `NAME` set to `<feature>.<action>`, the method, the path under `/api/v1`, the types and the feature's error enum. Slow Device work returns `JobRef` with `STATUS = 202` and a registered `JobKind`.
 4. Add `.endpoint::<X>()` to the feature's `feature()`. Add `.event::<E>()` for any new event.
 5. Add new error variants to the feature's enum with a `code` and a status.
