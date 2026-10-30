@@ -16,7 +16,9 @@ use ts_rs::TS;
 pub struct Service(
     Arc<Mutex<Result<Registry, Error>>>,
     Arc<Mutex<Vec<IntegrationSummary>>>,
+    Arc<Pending>,
 );
+type Pending = Mutex<HashMap<(String, String), Delivery>>;
 impl Service {
     pub fn new(mock: bool, events: Events) -> Self {
         let service = Self(
@@ -34,11 +36,13 @@ impl Service {
                 },
             }))),
             Arc::new(Mutex::new(Vec::new())),
+            Arc::default(),
         );
         if let Ok(registry) = service.0.lock().unwrap().as_ref() {
             *service.1.lock().unwrap() = registry.list();
         }
         let cache = service.1.clone();
+        let pending = service.2.clone();
         let weak = Arc::downgrade(&service.0);
         std::thread::spawn(move || {
             loop {
@@ -46,6 +50,7 @@ impl Service {
                 let Some(state) = weak.upgrade() else { break };
                 let mut state = state.lock().unwrap();
                 if let Ok(registry) = state.as_mut() {
+                    apply_pending(registry, &pending);
                     let before = serde_json::to_value(registry.list()).unwrap();
                     registry.tick();
                     *cache.lock().unwrap() = registry.list();
@@ -84,12 +89,39 @@ impl Service {
                 .collect(),
         )
     }
-    /// Records what the Companion delivered to a Device for an Integration. Skipped while the Integration is busy.
+    /// Records what the Companion delivered to a Device for an Integration. One that comes while the registry is busy
+    /// is applied by the next caller that takes the registry.
     pub fn delivered(&self, integration: &str, delivery: Delivery) {
+        self.2
+            .lock()
+            .unwrap()
+            .insert((integration.to_owned(), delivery.device.clone()), delivery);
         if let Ok(mut state) = self.0.try_lock()
             && let Ok(registry) = state.as_mut()
-            && let Ok(integration) = registry.get(integration)
         {
+            apply_pending(registry, &self.2);
+        }
+    }
+    fn with_registry<T>(
+        &self,
+        events: &Events,
+        f: impl FnOnce(&mut Registry) -> Result<T, Error>,
+    ) -> Result<T, IntegrationError> {
+        let mut guard = self.0.lock().unwrap();
+        let registry = guard.as_mut().map_err(|_| IntegrationError::Credentials)?;
+        apply_pending(registry, &self.2);
+        let before = serde_json::to_value(registry.list()).unwrap();
+        let result = f(registry).map_err(IntegrationError::from);
+        *self.1.lock().unwrap() = registry.list();
+        if before != serde_json::to_value(registry.list()).unwrap() {
+            publish(registry, events);
+        }
+        result
+    }
+}
+fn apply_pending(registry: &mut Registry, pending: &Pending) {
+    for ((integration, _), delivery) in pending.lock().unwrap().drain() {
+        if let Ok(integration) = registry.get(&integration) {
             integration.delivered(delivery);
         }
     }
@@ -187,19 +219,9 @@ async fn work<T: Send + 'static>(
     ctx: Ctx,
     f: impl FnOnce(&mut Registry) -> Result<T, Error> + Send + 'static,
 ) -> Result<T, IntegrationError> {
-    tokio::task::spawn_blocking(move || {
-        let mut guard = ctx.integrations.0.lock().unwrap();
-        let registry = guard.as_mut().map_err(|_| IntegrationError::Credentials)?;
-        let before = serde_json::to_value(registry.list()).unwrap();
-        let result = f(registry).map_err(IntegrationError::from);
-        *ctx.integrations.1.lock().unwrap() = registry.list();
-        if before != serde_json::to_value(registry.list()).unwrap() {
-            publish(registry, &ctx.events);
-        }
-        result
-    })
-    .await
-    .map_err(|_| IntegrationError::Credentials)?
+    tokio::task::spawn_blocking(move || ctx.integrations.with_registry(&ctx.events, f))
+        .await
+        .map_err(|_| IntegrationError::Credentials)?
 }
 #[derive(Serialize, Deserialize, TS)]
 pub struct IntegrationPath {
@@ -333,3 +355,39 @@ fn feature() -> Feature {
         .snapshot("integrations", |ctx| ctx.integrations.summaries())
 }
 inventory::submit! { Registration(feature) }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sent(service: &Service, events: &Events) -> Vec<(String, u64)> {
+        let list = service.with_registry(events, |r| Ok(r.list())).unwrap();
+        let this_pc = list.into_iter().find(|i| i.id == "this_pc").unwrap();
+        this_pc
+            .status
+            .delivery
+            .into_iter()
+            .map(|d| (d.device, d.sent))
+            .collect()
+    }
+
+    #[test]
+    fn a_delivery_reported_while_the_integrations_are_busy_still_shows() {
+        let events = Events::default();
+        let service = Service::new(true, events.clone());
+        let busy = service.0.lock().unwrap();
+        for sent in 3..=4 {
+            service.delivered(
+                "this_pc",
+                Delivery {
+                    device: "mock0001".into(),
+                    sent,
+                    error: None,
+                },
+            );
+        }
+        drop(busy);
+
+        assert_eq!(sent(&service, &events), [("mock0001".to_owned(), 4)]);
+    }
+}
