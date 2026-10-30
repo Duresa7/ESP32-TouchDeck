@@ -1496,8 +1496,7 @@ impl MockDeck {
         else {
             return refusal("args", "Invalid live value");
         };
-        if request.keys().any(|k| !FIELDS.contains(&k.as_str())) || !request.contains_key("value")
-        {
+        if request.keys().any(|k| !FIELDS.contains(&k.as_str())) || !request.contains_key("value") {
             return refusal("args", "Invalid live value");
         }
         if n == 0 || !(TTL_MIN_MS..=TTL_MAX_MS).contains(&ttl) {
@@ -1528,7 +1527,10 @@ impl MockDeck {
         if numbers.len() > MOCK_SERIES {
             return refused("size");
         }
-        if numbers.iter().any(|v| !v.is_finite() || v.abs() > VALUE_MAX) {
+        if numbers
+            .iter()
+            .any(|v| !v.is_finite() || v.abs() > VALUE_MAX)
+        {
             return refused("args");
         }
         let sent = json!([ttl, kind, value]);

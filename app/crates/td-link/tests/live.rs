@@ -125,7 +125,10 @@ fn reasons_round_trip_and_long_requests_cost_more() {
     ] {
         assert_eq!(LiveReason::parse(name).name(), name);
     }
-    assert_eq!((cost(0), cost(1), cost(256), cost(257), cost(600)), (1, 1, 1, 2, 3));
+    assert_eq!(
+        (cost(0), cost(1), cost(256), cost(257), cost(600)),
+        (1, 1, 1, 2, 3)
+    );
     assert!(LiveValue::Number(1e9).fits(32, 0));
     assert!(!LiveValue::Number(1e9 + 1.0).fits(32, 0));
     assert!(!LiveValue::Number(f64::NAN).fits(32, 0));
@@ -139,12 +142,21 @@ fn a_number_appends_a_sample_and_a_series_replaces_the_history() {
     let (device, session, layout) = graph_deck();
     for n in 1..=2 {
         assert_eq!(
-            send(&session, &layout, "cpu", n, &LiveValue::Number(f64::from(n) * 10.5)),
+            send(
+                &session,
+                &layout,
+                "cpu",
+                n,
+                &LiveValue::Number(f64::from(n) * 10.5)
+            ),
             Ok(n)
         );
     }
     let cpu = device.live("page", "cpu", "value").unwrap();
-    assert_eq!((cpu.n, cpu.samples, cpu.stale), (2, vec![10.5, 21.0], false));
+    assert_eq!(
+        (cpu.n, cpu.samples, cpu.stale),
+        (2, vec![10.5, 21.0], false)
+    );
     let series = LiveValue::Series((0..40).map(f64::from).take(MOCK_SERIES).collect());
     assert_eq!(send(&session, &layout, "net", 7, &series), Ok(7));
     assert_eq!(
@@ -152,7 +164,10 @@ fn a_number_appends_a_sample_and_a_series_replaces_the_history() {
         MOCK_SERIES
     );
     let too_long = LiveValue::Series(vec![1.0; MOCK_SERIES + 1]);
-    assert_eq!(refused(send(&session, &layout, "net", 8, &too_long)), LiveReason::Size);
+    assert_eq!(
+        refused(send(&session, &layout, "net", 8, &too_long)),
+        LiveReason::Size
+    );
     assert_eq!(device.live_sets().len(), 3);
     assert!(
         device
@@ -166,8 +181,14 @@ fn a_number_appends_a_sample_and_a_series_replaces_the_history() {
 fn the_device_refuses_values_for_another_layout_tile_stream_or_type() {
     let (_device, session, layout) = graph_deck();
     let one = LiveValue::Number(1.0);
-    assert_eq!(refused(send(&session, "builtin", "cpu", 1, &one)), LiveReason::Layout);
-    assert_eq!(refused(send(&session, &layout, "gone", 1, &one)), LiveReason::Tile);
+    assert_eq!(
+        refused(send(&session, "builtin", "cpu", 1, &one)),
+        LiveReason::Layout
+    );
+    assert_eq!(
+        refused(send(&session, &layout, "gone", 1, &one)),
+        LiveReason::Tile
+    );
     let stream = set_live(
         &session,
         &LiveSet {
@@ -195,9 +216,15 @@ fn the_device_refuses_values_for_another_layout_tile_stream_or_type() {
     );
     assert_eq!(refused(page), LiveReason::Page);
     let series = LiveValue::Series(vec![1.0]);
-    assert_eq!(refused(send(&session, &layout, "cpu", 1, &series)), LiveReason::Type);
+    assert_eq!(
+        refused(send(&session, &layout, "cpu", 1, &series)),
+        LiveReason::Type
+    );
     let huge = LiveValue::Number(2e9);
-    assert_eq!(refused(send(&session, &layout, "cpu", 1, &huge)), LiveReason::Args);
+    assert_eq!(
+        refused(send(&session, &layout, "cpu", 1, &huge)),
+        LiveReason::Args
+    );
     assert_eq!(send(&session, &layout, "cpu", 1, &one), Ok(1));
 }
 
@@ -208,8 +235,14 @@ fn sequence_numbers_rise_and_an_identical_retry_succeeds() {
     assert_eq!(send(&session, &layout, "cpu", 4, &five), Ok(4));
     assert_eq!(send(&session, &layout, "cpu", 4, &five), Ok(4));
     let six = LiveValue::Number(6.0);
-    assert_eq!(refused(send(&session, &layout, "cpu", 4, &six)), LiveReason::Sequence);
-    assert_eq!(refused(send(&session, &layout, "cpu", 3, &six)), LiveReason::Sequence);
+    assert_eq!(
+        refused(send(&session, &layout, "cpu", 4, &six)),
+        LiveReason::Sequence
+    );
+    assert_eq!(
+        refused(send(&session, &layout, "cpu", 3, &six)),
+        LiveReason::Sequence
+    );
     assert_eq!(device.live("page", "cpu", "value").unwrap().samples, [5.0]);
     assert_eq!(device.live_sets().len(), 1);
 
@@ -239,9 +272,15 @@ fn a_third_update_in_one_window_is_refused_with_a_retry() {
     };
     assert!((1..=1000).contains(&retry));
     assert_eq!(device.live("page", "cpu", "value").unwrap().n, MOCK_LIVE_HZ);
-    assert_eq!(send(&session, &layout, "net", 1, &LiveValue::Series(vec![1.0])), Ok(1));
+    assert_eq!(
+        send(&session, &layout, "net", 1, &LiveValue::Series(vec![1.0])),
+        Ok(1)
+    );
     thread::sleep(Duration::from_millis(u64::from(retry)));
-    assert_eq!(send(&session, &layout, "cpu", 9, &LiveValue::Number(2.0)), Ok(9));
+    assert_eq!(
+        send(&session, &layout, "cpu", 9, &LiveValue::Number(2.0)),
+        Ok(9)
+    );
 }
 
 #[test]
@@ -256,13 +295,19 @@ fn a_value_past_its_ttl_is_stale_until_a_fresh_one_arrives() {
         ttl_ms: 1_000,
         value: v,
     };
-    assert_eq!(set_live(&session, &short(1, &LiveValue::Number(3.0))), Ok(1));
+    assert_eq!(
+        set_live(&session, &short(1, &LiveValue::Number(3.0))),
+        Ok(1)
+    );
     assert!(!device.live("page", "cpu", "value").unwrap().stale);
     thread::sleep(Duration::from_millis(1_100));
     let stale = device.live("page", "cpu", "value").unwrap();
     assert!(stale.stale);
     assert_eq!(stale.samples, [3.0]);
-    assert_eq!(set_live(&session, &short(2, &LiveValue::Number(4.0))), Ok(2));
+    assert_eq!(
+        set_live(&session, &short(2, &LiveValue::Number(4.0))),
+        Ok(2)
+    );
     let fresh = device.live("page", "cpu", "value").unwrap();
     assert_eq!((fresh.stale, fresh.samples), (false, vec![3.0, 4.0]));
 }
@@ -270,7 +315,10 @@ fn a_value_past_its_ttl_is_stale_until_a_fresh_one_arrives() {
 #[test]
 fn pushing_a_layout_clears_its_live_values() {
     let (device, session, layout) = graph_deck();
-    assert_eq!(send(&session, &layout, "cpu", 1, &LiveValue::Number(1.0)), Ok(1));
+    assert_eq!(
+        send(&session, &layout, "cpu", 1, &LiveValue::Number(1.0)),
+        Ok(1)
+    );
     let mut renamed = Layout::parse(GRAPH).unwrap();
     renamed.name = "Graph 2".into();
     xfer::put_layout(&session, Orientation::Landscape, &renamed).unwrap();
@@ -280,5 +328,8 @@ fn pushing_a_layout_clears_its_live_values() {
         LiveReason::Layout
     );
     let next = layout_ref(&renamed.to_canonical_json());
-    assert_eq!(send(&session, &next, "cpu", 1, &LiveValue::Number(1.0)), Ok(1));
+    assert_eq!(
+        send(&session, &next, "cpu", 1, &LiveValue::Number(1.0)),
+        Ok(1)
+    );
 }
