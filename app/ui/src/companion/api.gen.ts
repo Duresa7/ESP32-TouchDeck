@@ -61,8 +61,16 @@ export type DeviceSettings = { idle_timeout_s: number,
 /**
  * `landscape` or `portrait`.
  */
-orientation: string, name: string | null, brightness: number | null, };
-export type DeviceSettingsPatch = { idle_timeout_s: number | null, orientation: string | null, name: string | null, brightness: number | null, };
+orientation: string, name: string | null, 
+/**
+ * A percentage, 0 to 100.
+ */
+brightness: number | null, };
+export type DeviceSettingsPatch = { idle_timeout_s: number | null, orientation: string | null, name: string | null, 
+/**
+ * A percentage, 0 to 100.
+ */
+brightness: number | null, };
 export type DeviceSummary = { id: DeviceId, rev: number, name: string | null, setup: SetupState, link: LinkState, firmware: FirmwareInfo | null, diagnostics: DeviceDiagnostics | null, capabilities: Capabilities | null, orientation: string | null, layout: JsonValue | null, key_mirror: KeyMirrorState, stable_id: boolean, };
 export type DeviceUpdated = DeviceSummary;
 export type ErrorBody = { code: string, message: string, details: JsonValue | null, };
@@ -163,8 +171,9 @@ export type SetupState = "needs-setup" | "ready";
 export type StartupSetting = { at_sign_in: boolean, };
 export type SuggestRequest = { action: TileAction, };
 export type SystemInfo = { version: string, build: string, api: string, mock: boolean, data_dir_override: boolean, };
-export type Tile = { id: string, label: string, row: number, col: number, rowSpan: number, colSpan: number, icon: string | null, asset?: string | null, action: TileAction, };
+export type Tile = { id: string, label: string, row: number, col: number, rowSpan: number, colSpan: number, icon: string | null, asset?: string | null, render?: TileRender | null, action: TileAction, };
 export type TileAction = { "type": "key", usage: number, mods: Array<Modifier>, } | { "type": "mod", mod: Modifier, } | { "type": "consumer", usage: number, } | { "type": "page", page: string, } | { "type": "none" } | { "type": "launch", path: string, args: Array<string>, cwd: string, } | { "type": "open", target: string, } | { "type": "command", program: string, args: Array<string>, cwd: string, shell: boolean, } | { "type": "widget", source: string, field: string, account: string, };
+export type TileRender = "gif";
 export type Topic = "state" | "console" | "key-mirror" | "device-events";
 export type UploadBody = Blob;
 export type Uploaded = { id: string, media_type: string, bytes: number, };
@@ -334,7 +343,11 @@ also_keep: Array<string>, }, bearer?: string, headers?: Record<string, string>) 
       list: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<Array<DeviceSummary>>('devices.list', path, query, body, bearer, headers),
       restart: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<null>('devices.restart', path, query, body, bearer, headers),
       settings_get: (path: { device: DeviceId, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<DeviceSettings>('devices.settings_get', path, query, body, bearer, headers),
-      settings_patch: (path: { device: DeviceId, }, query: null = null, body: { idle_timeout_s: number | null, orientation: string | null, name: string | null, brightness: number | null, }, bearer?: string, headers?: Record<string, string>) => call<SettingsPatched>('devices.settings_patch', path, query, body, bearer, headers),
+      settings_patch: (path: { device: DeviceId, }, query: null = null, body: { idle_timeout_s: number | null, orientation: string | null, name: string | null, 
+/**
+ * A percentage, 0 to 100.
+ */
+brightness: number | null, }, bearer?: string, headers?: Record<string, string>) => call<SettingsPatched>('devices.settings_patch', path, query, body, bearer, headers),
     },
     firmware: {
       bundled: (path: Record<string, never> = {}, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>) => call<FirmwareBuild>('firmware.bundled', path, query, body, bearer, headers),

@@ -1,0 +1,129 @@
+[
+  {
+    "m": "hello",
+    "ok": true,
+    "product": "touchdeck",
+    "proto": 2,
+    "protocols": [
+      1,
+      2
+    ],
+    "elf_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "version": "0.2.0",
+    "running": "ota_0",
+    "sinks": [
+      "log",
+      "link"
+    ],
+    "recovery": false,
+    "layout": "builtin",
+    "id": "020000000001",
+    "name": "Open TouchDeck",
+    "caps": {
+      "screen": [
+        1024,
+        600
+      ],
+      "grid": [
+        8,
+        8
+      ],
+      "pages": 8,
+      "tiles": 64,
+      "layout_bytes": 32768,
+      "layout_schemas": [
+        1,
+        2
+      ],
+      "free_bytes": 4194304,
+      "tile_kinds": [
+        "static"
+      ],
+      "asset_bytes": 12300,
+      "formats": [
+        "tdi1"
+      ],
+      "image": [
+        64,
+        64
+      ],
+      "gif_frames": 0,
+      "gif_pixels": 0,
+      "photo_bytes": 0,
+      "live_hz": 0,
+      "live_total_hz": 0,
+      "series": 0,
+      "text_bytes": 0,
+      "streams": 0
+    }
+  },
+  {
+    "m": "hello",
+    "ok": true,
+    "product": "touchdeck",
+    "proto": 2,
+    "protocols": [
+      1,
+      2
+    ],
+    "elf_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "version": "0.2.0",
+    "running": "ota_0",
+    "sinks": [
+      "log",
+      "link"
+    ],
+    "recovery": false,
+    "layout": "builtin",
+    "id": "020000000001",
+    "name": "Open TouchDeck",
+    "caps": {
+      "screen": [
+        1024,
+        600
+      ],
+      "grid": [
+        8,
+        8
+      ],
+      "pages": 8,
+      "tiles": 64,
+      "layout_bytes": 32768,
+      "layout_schemas": [
+        1,
+        2
+      ],
+      "free_bytes": 4194304,
+      "tile_kinds": [
+        "static",
+        "gif"
+      ],
+      "asset_bytes": 262144,
+      "formats": [
+        "tdi1",
+        "gif"
+      ],
+      "image": [
+        64,
+        64
+      ],
+      "gif_frames": 60,
+      "gif_pixels": 983040,
+      "photo_bytes": 0,
+      "live_hz": 0,
+      "live_total_hz": 0,
+      "series": 0,
+      "text_bytes": 0,
+      "streams": 0,
+      "anim": {
+        "image": [
+          128,
+          128
+        ],
+        "min_delay_ms": 100,
+        "page_tiles": 4,
+        "page_pixels": 65536
+      }
+    }
+  }
+]

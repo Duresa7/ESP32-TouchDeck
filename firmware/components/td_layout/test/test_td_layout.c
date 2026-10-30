@@ -14,12 +14,13 @@
     X(lone_surrogate) X(long_label)                                                                                   \
     X(long_name) X(long_title) X(missing_field) X(missing_page) X(orientation) X(overlap) X(oversize) X(page_count)   \
     X(page_missing_kind) X(schema_version) X(tile_count) X(tile_position) X(tile_span) X(truncated_json)             \
-    X(unknown_action) X(unknown_modifier) X(unknown_page_kind) X(uppercase_icon) X(wrong_type)
+    X(gif_no_asset) X(gif_unknown_render) X(gif_schema_one) X(unknown_action) X(unknown_modifier) X(unknown_page_kind) X(uppercase_icon) X(wrong_type)
 
 #define DECLARE(name)                                                                                                 \
     extern const char name##_start[] asm("_binary_" #name "_json_start");                                           \
     extern const char name##_end[] asm("_binary_" #name "_json_end");
 INVALID_FILES(DECLARE)
+DECLARE(gif)
 DECLARE(dev)
 DECLARE(full_screen)
 
@@ -166,7 +167,7 @@ TEST_CASE("dev.json parses with every action type, its spans, its chord and its 
 
 TEST_CASE("every file under schema/examples/invalid fails with the key on its first line", "[td_layout]")
 {
-    TEST_ASSERT_EQUAL_UINT32(39, sizeof k_invalid / sizeof k_invalid[0]);
+    TEST_ASSERT_EQUAL_UINT32(42, sizeof k_invalid / sizeof k_invalid[0]);
     for (size_t i = 0; i < sizeof k_invalid / sizeof k_invalid[0]; i++) {
         const char *start = k_invalid[i].start;
         const size_t len = (size_t)(k_invalid[i].end - start) - 1;
@@ -324,4 +325,11 @@ TEST_CASE("parsing builtin.json takes under 50 ms and dev.json under 200 ms", "[
     printf("td_layout: builtin %lld us, dev %lld us\n", (long long)(t1 - t0), (long long)(t2 - t1));
     TEST_ASSERT_TRUE(t1 - t0 < 50000);
     TEST_ASSERT_TRUE(t2 - t1 < 200000);
+}
+
+TEST_CASE("GIF Layout fixture parses with its Asset reference", "[td_layout]")
+{
+    td_layout_t *layout = parse_ok(gif_start, (size_t)(gif_end - gif_start) - 1);
+    TEST_ASSERT_EQUAL_STRING("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", tile(layout, "gif")->icon);
+    td_layout_free(layout);
 }

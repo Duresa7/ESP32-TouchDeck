@@ -196,6 +196,12 @@ Opens from the Device's name.
 | --- | --- |
 | Name field label | Name |
 | Name hint | Stored on {device}. |
+| Name error, empty | Give the Device a name. |
+| Name error, too long | That name is too long for the Device. |
+| Name error, control characters | Remove tabs, line breaks and other special characters. |
+| Field on older Firmware | Needs Firmware {x.y}. |
+| Field no released Firmware supports | {device}'s Firmware can't change this yet. |
+| Saved, takes effect after a restart | Saved. Restart {device} to apply it. |
 | Orientation label | Orientation |
 | Orientation options | Landscape, Portrait |
 | Orientation confirm title | Restart {device} to switch to {orientation}? |
@@ -209,11 +215,16 @@ Opens from the Device's name.
 | Firmware, behind | Firmware {version} · {latest} available |
 | Firmware button | Update |
 | Firmware progress | Updating… {pct}% |
+| Firmware, waiting for consent | Confirm on this PC to continue. |
 | Firmware done | Updated to {latest} |
+| Firmware declined, or consent not answered in 5 min | Declined on this PC. {device} still runs {version}. |
+| Firmware update cancelled | Update stopped. {device} still runs {version}. |
+| Firmware file expired | That file expired. Choose it again, then retry. |
 | Restart button | Restart |
 | Restart progress | Restarting… |
 | Restart failed | Couldn't restart {device}. Unplug it and plug it back in. |
 | Tile badge on older Firmware | Needs Firmware {x.y} |
+| Tile badge, no newer Firmware offered | Needs newer Firmware |
 | Tile badge tooltip | Update {device}'s Firmware to show this Tile. |
 | Save failed | Couldn't save to {device}. Check that it's plugged in, then retry. |
 | Not connected | Plug in {device} to change its settings. |
@@ -1064,3 +1075,21 @@ A script lists the string literals and text nodes in every non-test `.svelte` an
 | Preset tile, `disk_write_bytes_s` | Disk write |
 | Preset tile, `network_receive_bytes_s` | Network receive |
 | Preset tile, `network_send_bytes_s` | Network send |
+
+## Animated GIF Tiles
+
+| State | Copy |
+| --- | --- |
+| Choose | Choose GIF |
+| Replace | Change GIF |
+| Preparing | Preparing GIF… |
+| Fitted | Fitted to {device}: {width} × {height}, {fps} fps. |
+| Too long | This GIF is too long for {device}. Choose a shorter GIF. |
+| Too large | This GIF is too large for {device}. Choose a smaller GIF. |
+| Page budget | This Page has too many animations for {device}. Remove an animated Tile. |
+| Storage full | {device} is out of space. Remove unused Assets, then retry. |
+| Preparation failed | Couldn't prepare this GIF. Choose another GIF. |
+| Unsupported | Needs Firmware {x.y} |
+
+Put decoder and wire reasons under Details. App previews show a paused poster
+when reduced motion is requested.
