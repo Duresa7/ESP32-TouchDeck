@@ -23,6 +23,8 @@ use td_link::{
 use ts_rs::TS;
 
 const CONSENT_WAIT: Duration = Duration::from_secs(300);
+#[cfg(any(test, feature = "test-hooks"))]
+const TEST_BUNDLE: &[u8] = include_bytes!("../../../../td-link/tests/fixtures/touchdeck-test.tdfw");
 #[derive(Clone, Debug)]
 pub struct Confirmation {
     pub question: String,
@@ -75,6 +77,33 @@ impl Prompter for Native {
         dialogs::confirm(confirmation, closed)
     }
 }
+#[cfg(any(test, feature = "test-hooks"))]
+#[derive(Serialize, Deserialize, Clone, Copy, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum ConsentAnswer {
+    Accept,
+    Decline,
+}
+#[cfg(any(test, feature = "test-hooks"))]
+#[derive(Default)]
+struct Scripted(Mutex<std::collections::VecDeque<ConsentAnswer>>);
+#[cfg(any(test, feature = "test-hooks"))]
+impl Prompter for Scripted {
+    fn pick(&self) -> Result<Option<Vec<u8>>, String> {
+        Ok(Some(TEST_BUNDLE.to_vec()))
+    }
+    fn confirm(&self, _: &Confirmation, closed: &(dyn Fn() -> bool + Sync)) -> bool {
+        loop {
+            if closed() {
+                return false;
+            }
+            if let Some(answer) = self.0.lock().pop_front() {
+                return matches!(answer, ConsentAnswer::Accept);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
 struct Picked {
     target: DeviceId,
     until: Instant,
@@ -86,16 +115,14 @@ pub struct Firmware {
     dialog: Arc<AtomicBool>,
     prompter: Arc<Mutex<Arc<dyn Prompter>>>,
     bundled: Option<Arc<Bundle>>,
+    #[cfg(any(test, feature = "test-hooks"))]
+    scripted: Arc<Scripted>,
 }
 impl Firmware {
     pub(crate) fn new(mock: bool) -> Self {
         let bytes: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/bundled.tdfw"));
         #[cfg(any(test, feature = "test-hooks"))]
-        let bytes = if mock {
-            include_bytes!("../../../../td-link/tests/fixtures/touchdeck-test.tdfw").as_slice()
-        } else {
-            bytes
-        };
+        let bytes = if mock { TEST_BUNDLE } else { bytes };
         let _ = mock;
         Self {
             picked: Default::default(),
@@ -104,11 +131,20 @@ impl Firmware {
             bundled: (!bytes.is_empty()).then(|| {
                 Arc::new(Bundle::parse(bytes).expect("build.rs checked the bundled Firmware"))
             }),
+            #[cfg(any(test, feature = "test-hooks"))]
+            scripted: Default::default(),
         }
     }
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn set_prompter(&self, prompter: Arc<dyn Prompter>) {
         *self.prompter.lock() = prompter;
+    }
+    /// Replaces the native dialogs with a prompter that gives these answers in order and waits once
+    /// they run out.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn script(&self, answers: Vec<ConsentAnswer>) {
+        *self.scripted.0.lock() = answers.into();
+        self.set_prompter(self.scripted.clone());
     }
     fn bundled(&self) -> Result<Arc<Bundle>, FirmwareError> {
         self.bundled.clone().ok_or(FirmwareError::Invalid)

@@ -7,6 +7,7 @@ import { useDevices } from '../../companion/devices.ts';
 import { statusOf } from '../../screens/home-model.ts';
 import { button } from '../button.ts';
 import { FirmwareConsole } from './FirmwareConsole.tsx';
+import { FirmwareFile } from './FirmwareFile.tsx';
 import { useSystemInfo } from './system.ts';
 import { connectionText, factsOf, lastError, nameOf } from './troubleshooting.ts';
 
@@ -96,6 +97,7 @@ export function TroubleshootingView({ onBack, focusBack }: { onBack(): void; foc
       </section>
       <FirmwareConsole devices={devices} />
       <KeyTestSlot />
+      <FirmwareFile devices={devices} />
       <FirmwareRepairSlot />
     </>
   );
