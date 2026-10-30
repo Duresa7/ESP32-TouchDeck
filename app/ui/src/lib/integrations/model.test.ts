@@ -115,7 +115,7 @@ describe('status', () => {
     ['ok', false, 'Off', false, false],
     ['ok', true, 'Connected', true, false],
     ['error', true, "Can't connect", false, false],
-    ['warming', true, 'Checkingâ€¦', false, false],
+    ['warming', true, 'Checking…', false, false],
   ] as const)('%s while %s reads %s', (state, enabled, words, live, needsSetup) => {
     expect(statusOf(summary(state, enabled))).toMatchObject({ words, live, needsSetup });
   });
@@ -139,7 +139,7 @@ describe('usage', () => {
   const NOW = Date.UTC(2026, 9, 29, 12);
   const account = { key: 'codex:alice@example.com', provider: 'codex', status: 'active', plan: 'pro', success: 1, failed: 2, recent_10m: 3, five_hour: { pct: 42, reset_in: '2h' }, seven_day: null, usage_error: null };
 
-  it('reads the accounts a view carries and drops malformed ones', async () => {
+  it('maps typed account detail to the Accounts table', async () => {
     const fake = createFakeIntegrations({ configured: true, publish: () => {} });
     const response = await fake.handle(new Request('http://localhost/integrations/cliproxyapi'), '/integrations/cliproxyapi');
     if (!response) throw new Error('Missing view');
@@ -152,7 +152,7 @@ describe('usage', () => {
     expect(usageLine(usage, NOW)).toBe('Connected. 1 account, checked 12 s ago.');
     expect(usageLine({ ...usage, fails: 2 }, NOW)).toBe('The hub missed the last 2 checks. Retrying.');
     expect(usageLine({ ...usage, fails: 3, stale: true }, NOW)).toBe("Can't connect. The hub missed 3 checks, so its Tiles are greyed out.");
-    expect(usageLine({ ...usage, polled_ms: null }, NOW)).toBe('Checkingâ€¦');
+    expect(usageLine({ ...usage, polled_ms: null }, NOW)).toBe('Checking…');
   });
 
   it('words times, resets and badges as the copy guide does', () => {

@@ -170,7 +170,7 @@ export function statusOf(summary: Pick<IntegrationSummary, 'enabled' | 'status'>
   if (!summary.enabled) return { words: 'Off', live: false, needsSetup: false, detail: null };
   if (state === 'ok') return { words: 'Connected', live: true, needsSetup: false, detail: null };
   if (state === 'error') return { words: "Can't connect", live: false, needsSetup: false, detail: message };
-  return { words: 'Checkingâ€¦', live: false, needsSetup: false, detail: message };
+  return { words: 'Checking…', live: false, needsSetup: false, detail: message };
 }
 
 /** Whether an Integration is set up and on, so the Add Tile panel offers its Preset tiles. */
@@ -235,7 +235,7 @@ export function parseUsage(view: IntegrationView): Usage | null {
 
 /** The status line above the accounts, from the last checks. */
 export function usageLine(usage: Usage, now: number): string {
-  if (usage.polled_ms === null && usage.fails === 0) return 'Checkingâ€¦';
+  if (usage.polled_ms === null && usage.fails === 0) return 'Checking…';
   if (usage.stale) return `Can't connect. The hub missed ${plural(usage.fails, 'check')}, so its Tiles are greyed out.`;
   if (usage.fails > 0) return `The hub missed the last ${plural(usage.fails, 'check')}. Retrying.`;
   return `Connected. ${plural(usage.accounts.length, 'account')}, checked ${ago(usage.polled_ms, now).toLowerCase()}.`;
@@ -250,7 +250,7 @@ export function resetLine(window: UsageWindow): string {
   return window.reset_in ? `Resets in ${window.reset_in}` : 'Reset time unknown';
 }
 
-export const countsLine = (account: UsageAccount) => `${account.success} OK Â· ${account.failed} failed Â· ${account.recent_10m} in 10 min`;
+export const countsLine = (account: UsageAccount) => `${account.success} OK · ${account.failed} failed · ${account.recent_10m} in 10 min`;
 
 const TILE_LABEL_MAX = 16;
 

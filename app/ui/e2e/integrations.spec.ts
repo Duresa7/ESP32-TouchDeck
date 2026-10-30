@@ -199,7 +199,7 @@ test('shows every account with its limits, as the AI usage page did', async ({ b
   await expect(codex.getByTestId('usage-five-hour')).toContainText('Resets in 2h 10m');
   await expect(codex.getByTestId('usage-seven-day')).toContainText('10%');
   await expect(codex.getByTestId('usage-status')).toContainText('Active');
-  await expect(codex.getByTestId('usage-status')).toContainText('128 OK Â· 2 failed Â· 6 in 10 min');
+  await expect(codex.getByTestId('usage-status')).toContainText('128 OK · 2 failed · 6 in 10 min');
   await expect(page.locator('[data-testid="usage-account"][data-account="claude:Personal"]').getByTestId('usage-seven-day')).toContainText('—');
 
   await codex.getByTestId('usage-copy').click();

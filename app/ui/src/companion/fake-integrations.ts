@@ -4,7 +4,9 @@ type Frame = Record<string, unknown> & { type: string };
 
 export interface FakeIntegrationsOptions {
   publish(frame: Frame): void;
+  /** CLIProxyAPI starts set up, on and connected to a hub. Otherwise it starts as a fresh install. */
   configured?: boolean;
+  /** Delivery per Device at the start. */
   delivery?: Delivery[];
   now?: () => number;
 }
@@ -133,6 +135,7 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
   return {
     list: () => [summary()],
 
+    /** Answers a session-checked request, or returns null when it isn't an Integrations route. */
     async handle(request: Request, path: string): Promise<Response | null> {
       const method = request.method;
       if (path === '/integrations') return method === 'GET' ? json(200, [summary()]) : failure(405, 'route.method_not_allowed', 'Use GET.');
