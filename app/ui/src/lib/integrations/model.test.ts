@@ -1,3 +1,5 @@
+import { createFakeIntegrations } from '../../companion/fake-integrations.ts';
+import type { IntegrationView } from '../../companion/api.ts';
 import { describe, expect, it } from 'vitest';
 import type { ConfigField, DataStream, IntegrationSummary } from '../../companion/api.ts';
 import {
@@ -124,7 +126,7 @@ describe('status', () => {
 
   it('offers Preset tiles only from an Integration that is set up and on', () => {
     const presets = [{ id: 'plan', name: 'plan', action: { type: 'widget', source: 'cliproxyapi', field: 'plan', account: '' } }];
-    const base = { id: 'x', name: 'X', icon: '', config_schema: [], streams: [], actions: [], presets };
+    const base = { revision: 0, id: 'x', name: 'X', icon: '', config_schema: [], streams: [], actions: [], presets };
     expect(offersPresets({ ...base, ...summary('ok') })).toBe(true);
     expect(offersPresets({ ...base, ...summary('error') })).toBe(true);
     expect(offersPresets({ ...base, ...summary('ok', false) })).toBe(false);
@@ -137,11 +139,12 @@ describe('usage', () => {
   const NOW = Date.UTC(2026, 9, 29, 12);
   const account = { key: 'codex:alice@example.com', provider: 'codex', status: 'active', plan: 'pro', success: 1, failed: 2, recent_10m: 3, five_hour: { pct: 42, reset_in: '2h' }, seven_day: null, usage_error: null };
 
-  it('reads the accounts a view carries and drops malformed ones', () => {
-    const usage = parseUsage({ usage: { polled_ms: NOW, fails: 0, stale: false, accounts: [account, { key: 7 }, 'junk'] } });
-    expect(usage?.accounts).toEqual([account]);
-    expect(parseUsage({ summary: {} })).toBeNull();
-    expect(parseUsage({ usage: { accounts: 'none' } })).toBeNull();
+  it('maps typed account detail to the Accounts table', async () => {
+    const fake = createFakeIntegrations({ configured: true, publish: () => {} });
+    const response = await fake.handle(new Request('http://localhost/integrations/cliproxyapi'), '/integrations/cliproxyapi');
+    if (!response) throw new Error('Missing view');
+    const view: IntegrationView = await response.json();
+    expect(parseUsage(view)?.accounts[0]).toMatchObject({ key: 'codex:Work', five_hour: { pct: 42, reset_in: '2h 10m' } });
   });
 
   it('describes the last checks', () => {

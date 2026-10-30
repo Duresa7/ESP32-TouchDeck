@@ -38,6 +38,7 @@ pub struct IntegrationStatus {
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct IntegrationSummary {
+    pub revision: u64,
     pub id: String,
     pub name: String,
     pub icon: String,
@@ -54,6 +55,7 @@ pub struct SecretState {
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct IntegrationView {
+    pub detail: Option<CliProxyDetail>,
     pub summary: IntegrationSummary,
     pub config: Value,
     pub secrets: BTreeMap<String, SecretState>,
@@ -135,4 +137,28 @@ mod tests {
         let registration = inventory::iter::<Registration>.into_iter().next().unwrap();
         assert!(Registry::from_registrations(env, [registration, registration]).is_err());
     }
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct UsageWindow {
+    pub pct: f64,
+    pub resets_at_ms: Option<i64>,
+}
+#[derive(Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct AccountUsage {
+    pub provider: String,
+    pub account: String,
+    pub status: String,
+    pub success: u64,
+    pub failed: u64,
+    pub recent_10m: u64,
+    pub plan: Option<String>,
+    pub five_hour: Option<UsageWindow>,
+    pub seven_day: Option<UsageWindow>,
+    pub error: Option<String>,
+}
+#[derive(Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct CliProxyDetail {
+    pub accounts: Vec<AccountUsage>,
+    pub polled_ms: u64,
 }
