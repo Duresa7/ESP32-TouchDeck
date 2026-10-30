@@ -129,7 +129,7 @@ test.describe('Troubleshooting', () => {
       await expect(desk.locator('dt', { hasText: label })).toHaveCount(1);
     }
     await expect(desk.locator('[data-fact="proto"] dd')).toHaveText('2');
-    await expect(desk.locator('[data-fact="version"] dd')).toHaveText('1.4.0');
+    await expect(desk.locator('[data-fact="version"] dd')).toHaveText('1.5.0');
     await expect(desk.locator('[data-fact="elf_sha256"] dd')).toHaveText('fake');
     await expect(desk.locator('[data-fact="recovery"] dd')).toHaveText('No');
     await expect(desk.locator('[data-fact="product"] dd')).toHaveText('touchdeck');

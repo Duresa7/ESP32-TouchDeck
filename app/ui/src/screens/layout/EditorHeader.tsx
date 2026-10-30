@@ -2,12 +2,13 @@ import clsx from 'clsx';
 import { Menu } from '@base-ui/react/menu';
 import { Toggle } from '@base-ui/react/toggle';
 import { ToggleGroup } from '@base-ui/react/toggle-group';
-import { Check, ChevronDown, Eye, MoreHorizontal, Plus, RectangleHorizontal, RectangleVertical, Upload } from 'lucide-react';
+import { Check, Eye, MoreHorizontal, Plus, RectangleHorizontal, RectangleVertical, Upload } from 'lucide-react';
 import type { DeviceSummary } from '../../companion/api.ts';
 import { saveState, type EditorStore } from '../../lib/editor/store.ts';
 import type { Orientation } from '../../lib/editor/validate.ts';
 import { button } from '../../shell/button.ts';
 import { statusOf } from '../home-model.ts';
+import { DevicePanel } from './DevicePanel.tsx';
 import { useEditorState } from './editor.ts';
 import { Tip } from './Tip.tsx';
 
@@ -79,12 +80,11 @@ function LayoutMenu({ store, device, connected, onImport, onExport }: { store: E
 export interface EditorHeaderProps {
   store: EditorStore;
   device: DeviceSummary;
-  onOpenDevice?: () => void;
   onImport(): void;
   onExport(): void;
 }
 
-export function EditorHeader({ store, device, onOpenDevice, onImport, onExport }: EditorHeaderProps) {
+export function EditorHeader({ store, device, onImport, onExport }: EditorHeaderProps) {
   const name = device.name ?? 'Unnamed Device';
   const status = statusOf(device.link.state);
   const orientation = useEditorState(store, (s) => s.orientation);
@@ -96,12 +96,7 @@ export function EditorHeader({ store, device, onOpenDevice, onImport, onExport }
 
   return (
     <header className="editor-head">
-      <Tip label="Device settings">
-        <button type="button" className="device-switch" onClick={() => onOpenDevice?.()} data-testid="device-name">
-          <span className="device-switch-name">{name}</span>
-          <ChevronDown className="chev" size={16} strokeWidth={2} aria-hidden />
-        </button>
-      </Tip>
+      <DevicePanel device={device} />
       <span className={clsx('status', status.live && 'is-live')} data-testid="connection">
         <i className="led" aria-hidden />
         {status.words}

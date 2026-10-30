@@ -1,4 +1,4 @@
-import type { Delivery } from './api.ts';
+import type { Delivery, DeviceSummary } from './api.ts';
 import type { Environment } from './connection.ts';
 import { createFakeCompanion } from './fake.ts';
 import { createFakeUpdates, sampleOffer, type FakeUpdates } from './fake-updates.ts';
@@ -26,6 +26,8 @@ declare global {
     touchdeckDemo?: {
       push(id: string, order: string[]): void;
       offline(id: string): void;
+      device(id: string, change: Partial<Omit<DeviceSummary, 'id' | 'rev'>>): void;
+      firmware: { hold(id: string): void; release(id: string): void; cancel(id: string): void };
       updates: Pick<FakeUpdates, 'script' | 'finish' | 'calls'>;
       /** The opt-in topics every open event socket subscribed to, as `topic/device`. */
       topics(): string[];
@@ -44,6 +46,7 @@ export function demoEnvironment(target: Window): Environment {
     devices,
     layouts: Object.fromEntries(devices.map((d) => [d.id, demoLayout()])),
     system: { build: 'demo' },
+    brightness: Object.fromEntries(devices.filter((_, i) => i % 3 !== 2).map((d) => [d.id, 80])),
     browsers: params.get('browsers') === '0' ? [] : browsers,
     integrations: { configured: params.get('integrations') !== 'new', delivery: devices.map((d) => ({ device: d.id, sent: 42, error: null })) },
   });
@@ -52,6 +55,8 @@ export function demoEnvironment(target: Window): Environment {
   target.touchdeckDemo = {
     push: (id, order) => fake.setLayout(id, demoLayout(order)),
     offline: (id) => fake.update(id, { link: { state: 'lost', reason: 'unplugged', detail: '', at_ms: Date.UTC(2026, 9, 27, 21, 40) } }),
+    device: (id, change) => fake.update(id, change),
+    firmware: { hold: fake.firmware.hold, release: fake.firmware.release, cancel: fake.firmware.cancel },
     updates: { script: updates.script, finish: updates.finish, calls: updates.calls },
     topics: () => fake.topics.flat(),
     setHub: (up) => fake.integrations.setHub(up),

@@ -14,7 +14,7 @@ describe('Troubleshooting', () => {
       ['Product', 'touchdeck'],
       ['Protocol', '2'],
       ['Firmware build', 'fake'],
-      ['Firmware version', '1.4.0'],
+      ['Firmware version', '1.5.0'],
       ['Running from', 'ota_0'],
       ['Sends keys through', 'log, link'],
       ['Safe mode', 'No'],
