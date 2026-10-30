@@ -45,8 +45,8 @@ test('Graph waits for Firmware that draws graphs, then binds a Tile to any numer
   await expect(page.getByTestId('tile-shows-hint')).toHaveCount(0);
   await page.getByTestId('tile-shows-graph').click();
   const stream = page.getByTestId('graph-stream');
-  const first = stream.locator('optgroup').first().locator('option').first();
-  await expect(stream).toHaveValue((await first.getAttribute('value'))!);
+  const first = await stream.locator('optgroup').first().locator('option').first().getAttribute('value');
+  await expect(stream).toHaveValue(first ?? 'a first option');
   expect(await stream.locator('optgroup').evaluateAll((groups) => groups.map((g) => g.getAttribute('label')))).toEqual(['CLIProxyAPI', 'This PC']);
   await expect(stream.locator('optgroup[label="This PC"] option')).toHaveCount(10);
   await stream.selectOption('this_pc/cpu_pct');
