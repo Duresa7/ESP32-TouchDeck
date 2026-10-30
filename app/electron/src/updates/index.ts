@@ -146,27 +146,28 @@ export class Updater {
       this.staging = await mkdtemp(join(this.options.runtimeDir, 'update-'));
       const path = join(this.staging, 'setup.exe');
       const response = await this.response(release.url, AbortSignal.timeout(5 * 60 * 1000));
-      const length = response.headers.get('content-length');
-      const total = length === null ? null : Number(length);
-      if (total !== null && (!Number.isSafeInteger(total) || total <= 0 || total > MAX_DOWNLOAD)) {
-        await response.body?.cancel(); throw new InvalidDownload();
-      }
-      await this.validateFolders(this.staging);
-      const file = await open(path, 'wx', 0o600);
+      // Lock the body before the next await: fetch cancels an unread body once its Response is garbage collected.
       const reader = response.body.getReader();
-      let downloaded = 0;
-      reading = true;
       try {
-        for (;;) {
-          const item = await reader.read(); if (item.done) break;
-          downloaded += item.value.length;
-          if (downloaded > MAX_DOWNLOAD || (total !== null && downloaded > total) || (release.size !== undefined && downloaded > release.size)) throw new InvalidDownload();
-          await file.writeFile(item.value);
-          try { progress({ downloaded, total: release.size ?? total }); } catch { }
-        }
-        if ((total !== null && downloaded !== total) || (release.size !== undefined && downloaded !== release.size)) throw new SignatureFailure();
-      } finally { await reader.cancel().catch(() => {}); await file.close(); }
-      reading = false;
+        const length = response.headers.get('content-length');
+        const total = length === null ? null : Number(length);
+        if (total !== null && (!Number.isSafeInteger(total) || total <= 0 || total > MAX_DOWNLOAD)) throw new InvalidDownload();
+        await this.validateFolders(this.staging);
+        const file = await open(path, 'wx', 0o600);
+        let downloaded = 0;
+        reading = true;
+        try {
+          for (;;) {
+            const item = await reader.read(); if (item.done) break;
+            downloaded += item.value.length;
+            if (downloaded > MAX_DOWNLOAD || (total !== null && downloaded > total) || (release.size !== undefined && downloaded > release.size)) throw new InvalidDownload();
+            await file.writeFile(item.value);
+            try { progress({ downloaded, total: release.size ?? total }); } catch { }
+          }
+          if ((total !== null && downloaded !== total) || (release.size !== undefined && downloaded !== release.size)) throw new SignatureFailure();
+        } finally { await file.close(); }
+        reading = false;
+      } finally { await reader.cancel().catch(() => {}); }
       await this.verify(path, release);
       this.ready = { path, release };
       return { state: 'ready' };
