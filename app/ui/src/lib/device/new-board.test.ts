@@ -94,7 +94,7 @@ describe('installing on a New board', () => {
   const step = (store: BoardInstallStore) => boardStep(store.getState().view);
 
   beforeEach(() => {
-    fake = createFakeCompanion({ devices: [], newBoards: [newBoard({ id: 'mock00ff', port: 'COM7' })], jobMs: 2 });
+    fake = createFakeCompanion({ devices: [], newBoards: [newBoard({ id: 'mock00ff', port: 'COM7' })], jobMs: 10 });
     vi.stubGlobal('fetch', fake.fetch);
     companion = createClient(BASE, windowSession(fake.bridge));
     jobs = createJobsStore();
