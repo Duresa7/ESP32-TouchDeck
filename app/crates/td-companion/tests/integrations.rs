@@ -172,3 +172,25 @@ async fn invalid_config_unknown_fields_and_unauthenticated_calls_are_rejected() 
         assert_eq!(response.status(), 401);
     }
 }
+
+#[tokio::test]
+async fn this_pc_is_listed_with_streams_and_presets() {
+    let td = TestCompanion::start().await;
+    let list = td.call::<List>((), NoQuery, ()).await.unwrap();
+    let pc = list.iter().find(|entry| entry.id == "this_pc").unwrap();
+    assert_eq!(pc.streams.len(), 10);
+    assert_eq!(pc.presets.len(), 10);
+    let view = td
+        .call::<Get>(
+            IntegrationPath {
+                integration: "this_pc".into(),
+            },
+            NoQuery,
+            (),
+        )
+        .await
+        .unwrap();
+    assert_eq!(view.config, json!({"enabled": true}));
+    assert!(view.secrets.is_empty());
+    assert_eq!(view.summary.presets[0].name, "CPU usage");
+}

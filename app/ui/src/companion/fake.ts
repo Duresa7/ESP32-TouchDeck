@@ -4,6 +4,7 @@ import { createFakeActions } from './fake-actions.ts';
 import { createFakeConsole } from './fake-console.ts';
 import { createFakeLayouts } from './fake-layouts.ts';
 import { createFakeSessions, type FakeBrowser } from './fake-sessions.ts';
+import { fakeThisPc } from './fake-this-pc.ts';
 import { createFakeStartup } from './fake-startup.ts';
 import type { OpenTouchDeckBridge } from './session.ts';
 
@@ -145,6 +146,8 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
 
     const routed = sessions.handle(request, path, token) ?? (await startup.handle(request, path)) ?? (await consoles.handle(request, path));
     if (routed) return routed;
+    if (get && path === '/integrations') return json(200, [fakeThisPc().summary]);
+    if (get && path === '/integrations/this_pc') return json(200, fakeThisPc());
     const device = /^\/devices\/([^/]+)$/.exec(path);
     if (path === '/system' || path === '/devices' || device) {
       if (!get) return failure(405, 'route.method_not_allowed', 'Use GET.');
@@ -166,7 +169,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     }
     sockets.add(socket);
     socket.push({ type: 'hello', api: 'v1', build: system.build, session: { id: 'fake-session', kind: 'window' } });
-    socket.push({ type: 'sync', data: { devices: [...devices.values()], jobs: layouts.jobs(), approvals: actions.pending() } });
+    socket.push({ type: 'sync', data: { devices: [...devices.values()], jobs: layouts.jobs(), approvals: actions.pending(), integrations: [fakeThisPc().summary] } });
     return socket;
   }
 
