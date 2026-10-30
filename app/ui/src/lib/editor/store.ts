@@ -21,10 +21,13 @@ import {
   removePage,
   removeTile,
   resizeTile,
+  assetOf,
   setAction,
+  setAsset,
   setFullScreen,
   setGraph,
   setGridSize,
+  setIcon,
   setLabel,
   setLayoutName,
   setPageTitle,
@@ -155,7 +158,11 @@ export function assetIds(layout: Layout): string[] {
   const ids = new Set<string>();
   for (const page of layout.pages) {
     if (page.kind !== 'grid') continue;
-    for (const tile of page.tiles) if (tile.icon?.startsWith('file:')) ids.add(tile.icon.slice(5));
+    for (const tile of page.tiles) {
+      if (tile.icon?.startsWith('file:')) ids.add(tile.icon.slice(5));
+      const asset = assetOf(tile);
+      if (asset) ids.add(asset);
+    }
   }
   return [...ids];
 }
@@ -543,6 +550,16 @@ export function createEditorStore(deps: EditorDeps) {
 
     setFullScreen(on: boolean) {
       return apply((l) => setFullScreen(l, on));
+    },
+
+    setIcon(tile: string, icon: string | null) {
+      const page = state().page;
+      return page ? apply((l) => setIcon(l, page, tile, icon)) : 'no page';
+    },
+
+    setAsset(tile: string, asset: string) {
+      const page = state().page;
+      return page ? apply((l) => setAsset(l, page, tile, asset)) : 'no page';
     },
 
     async push(): Promise<void> {

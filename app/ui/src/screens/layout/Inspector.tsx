@@ -14,7 +14,8 @@ import { useUi } from '../../state/ui.ts';
 import { PresetButton } from '../integrations/PresetPreview.tsx';
 import { PendingApprovals } from './Approvals.tsx';
 import { useDeviceShows, useEditorState } from './editor.ts';
-import { KINDS, TileGlyph } from './glyphs.tsx';
+import { TileIcon } from './AssetImage.tsx';
+import { KINDS } from './glyphs.tsx';
 import { TileFields } from './TileFields.tsx';
 import { Tip } from './Tip.tsx';
 
@@ -196,7 +197,7 @@ function TileInspector({ store, page, tileId }: { store: EditorStore; page: Grid
     <>
       <div className="inspector-head" data-testid="tile-head">
         <span className="tile-thumb" aria-hidden>
-          <TileGlyph icon={tile.icon} kind={kind} size={22} />
+          <TileIcon tile={tile} kind={kind} size={22} />
         </span>
         <div className="inspector-head-text">
           <h2 className="inspector-title" data-testid="tile-title">
