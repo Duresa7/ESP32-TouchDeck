@@ -105,23 +105,22 @@ test('Restart restarts the Device and its status comes back', async ({ page }) =
 });
 
 test('updates the Firmware with progress, then shows the new version', async ({ page }) => {
-  await studio(page);
+  await studio(page, async () => {
+    await page.evaluate(() => window.touchdeckDemo?.firmware.hold('mock0002'));
+  });
   const firmware = page.getByTestId('device-panel-firmware');
+  const progress = page.getByTestId('device-panel-firmware-status');
   await expect(firmware).toContainText('Firmware 1.4.0');
-  await expect(page.getByTestId('device-panel-firmware-status')).toHaveText('1.5.0 available');
-  const seen = new Set<string>();
-  const watch = setInterval(() => {
-    void page
-      .getByTestId('device-panel-firmware-status')
-      .textContent()
-      .then((text) => text && seen.add(text), () => {});
-  }, 30);
+  await expect(progress).toHaveText('1.5.0 available');
   await page.getByTestId('device-panel-update').click();
-  await expect(page.getByTestId('device-panel-firmware-status')).toHaveText('Updated to 1.5.0', { timeout: 10_000 });
-  clearInterval(watch);
-  const steps = [...seen];
-  expect(steps.some((text) => /^Updating… \d+%$/.test(text))).toBe(true);
-  expect(steps).toContain('Restarting…');
+  await expect(progress).toHaveText('Updating… 40%');
+  await page.evaluate(() => {
+    window.touchdeckDemo?.firmware.release('mock0002');
+    window.touchdeckDemo?.firmware.hold('mock0002', 'rebooting');
+  });
+  await expect(progress).toHaveText('Restarting…');
+  await page.evaluate(() => window.touchdeckDemo?.firmware.release('mock0002'));
+  await expect(progress).toHaveText('Updated to 1.5.0', { timeout: 10_000 });
   await expect(firmware).toContainText('Firmware 1.5.0');
   await expect(page.getByTestId('device-panel-update')).toHaveCount(0);
   await expect(page.getByTestId('connection')).toHaveText('Connected');
