@@ -67,7 +67,7 @@ impl Drop for Counters {
 }
 fn physical_adapters() -> Vec<String> {
     let mut table = ptr::null_mut();
-    if unsafe { GetIfTable2(&mut table) } != 0 {
+    if unsafe { GetIfTable2(&mut table) } != 0 || table.is_null() {
         return Vec::new();
     }
     let rows = unsafe {
@@ -169,7 +169,7 @@ impl CounterSource for Counters {
             ..Default::default()
         };
         if unsafe { GlobalMemoryStatusEx(&mut memory) } != 0 && memory.ullTotalPhys > 0 {
-            let used = memory.ullTotalPhys - memory.ullAvailPhys;
+            let used = memory.ullTotalPhys.saturating_sub(memory.ullAvailPhys);
             sample.values.insert(
                 "ram_pct".into(),
                 used as f64 * 100.0 / memory.ullTotalPhys as f64,
