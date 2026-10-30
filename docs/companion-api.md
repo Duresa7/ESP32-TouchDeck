@@ -1020,3 +1020,42 @@ contract's combined wrong-or-expired message because both share `auth.code_inval
 Mock runs capture native delivery in memory. Only test-hook builds register
 `test.pairing_delivery`, which requires a window session and consumes the captures;
 its types appear only in `api.test.gen.ts`.
+
+## Animated GIF contract (implementation follows in #94)
+
+An animated Asset has `kind:"gif"`, media type `image/gif` and an id equal to
+SHA-256 of its normalized encoded bytes. GIF uploads and `assets.render` use the
+following fitting contract; the PNG/JPEG and tdi1 implementation above remains
+available. A mock Device can opt into GIF capabilities for integration tests;
+real Firmware and mock Devices default to GIF off. Absence of `caps.anim` means
+off even when `formats` includes `gif`.
+
+Source limits are 16 MiB encoded, 4096 by 4096 pixels, 300 frames and 64 MiB
+cumulative decoded RGBA, counted while streaming. Preparation proceeds in order:
+
+1. Compose source frames, including disposal 2 and 3.
+2. Fit with contain or cover to the actual Tile region, capped at `anim.image`.
+3. Resample time to at least `min_delay_ms` per frame, preserving total duration.
+4. Quantize to one global palette.
+5. Encode normalized GIF as specified in `schema/protocol/link-v2.md`.
+
+If encoded bytes exceed `asset_bytes`, step the canvas down. Enforce
+`gif_pixels` as well. Refuse output exceeding `gif_frames` as too long; never
+truncate silently. Identical input and target produce identical bytes and hash.
+Refit after a resize, orientation change or target Device change.
+
+Before Layout push, check every Page against `anim.page_tiles` and
+`anim.page_pixels` (sum of animated canvas areas, once per Tile even for reused
+Assets). Refuse the push before transferring or replacing the current Layout.
+Firmware independently enforces the same budgets and validates complete Assets.
+
+| Error code | Meaning | `details` |
+| --- | --- | --- |
+| `asset.too_large` | Source or fitted GIF exceeds a bound | `{limit, actual, unit, field}` with numeric limit/actual and field naming the source or capability limit |
+| `asset.unsupported` | GIF unavailable or encoding unsupported | `{limit, actual, field, reason}`; limit/actual identify the required and observed format or capability, reason retains the wire reason when present |
+| `layout.animation_limit` | A Page exceeds animation count or area | `{page, field, limit, actual}`; field is `page_tiles` or `page_pixels` |
+
+These are Job errors for preparation/push failures. Source upload admission
+continues to use the documented HTTP 413 `request.too_large`. Wire `size`,
+`format`, `memory` and `full` remain typed through the API; storage and allocation
+failures must not be reported as generic link text. Raw reasons go under Details.

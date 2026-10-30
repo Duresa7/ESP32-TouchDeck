@@ -39,3 +39,41 @@ TEST_CASE("Device name persists through repeated NVS opens and refused writes", 
     TEST_ASSERT_EQUAL(ESP_OK, read);
     TEST_ASSERT_EQUAL_STRING("Test Device", stored);
 }
+
+extern const char golden_hello_start[] asm("_binary_golden_hello_json_start");
+
+TEST_CASE("hello golden vectors bound escaped fields and match advertised capabilities", "[td_link]")
+{
+    cJSON *vectors = cJSON_Parse(golden_hello_start);
+    TEST_ASSERT_NOT_NULL(vectors);
+    cJSON *caps = td_link_capabilities();
+    TEST_ASSERT_NOT_NULL(caps);
+#if CONFIG_TD_GIF_CAPS
+    const int selected = 1;
+#else
+    const int selected = 0;
+#endif
+    cJSON *expected = cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(vectors, selected), "caps"), true);
+    cJSON_DeleteItemFromObjectCaseSensitive(expected, "free_bytes");
+    TEST_ASSERT_TRUE(cJSON_Compare(caps, expected, true));
+    cJSON_Delete(expected);
+    cJSON_Delete(caps);
+    char name[49], version[33];
+    memset(name, '"', 48);
+    name[48] = 0;
+    memset(version, 1, 32);
+    version[32] = 0;
+    cJSON *hello;
+    cJSON_ArrayForEach(hello, vectors) {
+        cJSON_ReplaceItemInObjectCaseSensitive(hello, "name", cJSON_CreateString(name));
+        cJSON_ReplaceItemInObjectCaseSensitive(hello, "version", cJSON_CreateString(version));
+        cJSON_ReplaceItemInObjectCaseSensitive(hello, "running", cJSON_CreateString("unknown"));
+        cJSON *limits = cJSON_GetObjectItemCaseSensitive(hello, "caps");
+        cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(limits, "free_bytes"), UINT32_MAX);
+        char *text = cJSON_PrintUnformatted(hello);
+        TEST_ASSERT_NOT_NULL(text);
+        TEST_ASSERT_LESS_OR_EQUAL_UINT(1024, strlen(text));
+        free(text);
+    }
+    cJSON_Delete(vectors);
+}

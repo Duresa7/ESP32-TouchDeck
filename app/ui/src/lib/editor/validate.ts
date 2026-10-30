@@ -14,16 +14,18 @@ export type Action =
 
 export type ActionType = Action['type'];
 
-export interface Tile {
+export type Tile = {
   id: string;
   label: string;
   row: number;
   col: number;
   rowSpan: number;
   colSpan: number;
-  icon: string | null;
   action: Action;
-}
+} & (
+  | { render?: undefined; icon: string | null; asset?: string | null }
+  | { render: 'gif'; icon: null; asset: string }
+);
 
 export interface GridPage {
   id: string;
@@ -44,7 +46,7 @@ interface DashboardPage {
 export type Page = GridPage | DashboardPage;
 
 export interface Layout {
-  schema: 1;
+  schema: 1 | 2;
   name: string;
   orientation: Orientation;
   fullScreen?: boolean;
@@ -214,8 +216,9 @@ function structuralErrors(root: unknown): LayoutError[] {
   };
 
   const tile = (value: unknown, pointer: string) => {
-    const tile = object(value, pointer, ['id', 'label', 'row', 'col', 'rowSpan', 'colSpan', 'icon', 'action'], isObject(root) && root.schema === 2 ? ['asset'] : []);
+    const tile = object(value, pointer, ['id', 'label', 'row', 'col', 'rowSpan', 'colSpan', 'icon', 'action'], isObject(root) && root.schema === 2 ? ['asset', 'render'] : []);
     if (!tile) return;
+    if (isObject(root) && root.schema === 2 && Object.hasOwn(tile, 'render') && (tile.render !== 'gif' || typeof tile.asset !== 'string')) at('icon.format', `${pointer}/render`, 'render must be gif with an Asset reference');
     if (Object.hasOwn(tile, 'id')) id(tile.id, `${pointer}/id`);
     if (Object.hasOwn(tile, 'label')) bounded(tile.label, `${pointer}/label`, LABEL);
     for (const [name, min, max, key] of [
