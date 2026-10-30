@@ -7,6 +7,7 @@ mod dialog_text;
 pub mod features;
 pub mod jobs;
 pub mod link;
+pub mod live;
 mod process;
 mod runtime;
 mod serve;

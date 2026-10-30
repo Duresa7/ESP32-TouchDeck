@@ -204,6 +204,15 @@ impl TestCompanion {
     ) {
         self.ctx.firmware.set_prompter(prompter);
     }
+    /// Reports a live sample as if the Integration had read it, ahead of what the Integration reports itself.
+    pub fn live_sample(&self, integration: &str, sample: td_host::integrations::LiveSample) {
+        let key = crate::live::StreamKey {
+            integration: integration.into(),
+            account: sample.account.clone(),
+            stream: sample.stream.clone(),
+        };
+        self.ctx.live.inject(key, sample);
+    }
     /// The mock behind a USB serial, to drive it or read what it received.
     pub fn deck(&self, id: &str) -> td_link::MockDeck {
         self.ports.deck(id).expect("a plugged mock")

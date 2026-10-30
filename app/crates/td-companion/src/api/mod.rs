@@ -35,6 +35,7 @@ pub struct Ctx {
     pub events: Events,
     pub jobs: crate::jobs::Jobs,
     pub links: crate::link::Links,
+    pub live: crate::live::Live,
     pub layouts: crate::store::LayoutStore,
     pub assets: crate::store::AssetStore,
     pub catalog: Arc<td_host::catalog::Catalog>,
@@ -75,9 +76,12 @@ impl Ctx {
         let auth = Arc::new(Mutex::new(Auth::new()));
         let lease_auth = auth.clone();
         let lease_clock = clock.clone();
+        let integrations = crate::features::integrations::Service::new(mock, events.clone());
+        let live = crate::live::Live::start(devices.clone(), links.clone(), integrations.clone());
         Self {
             actions,
-            integrations: crate::features::integrations::Service::new(mock, events.clone()),
+            integrations,
+            live,
             firmware: crate::features::firmware::Firmware::new(mock),
             desktop: Arc::new(crate::tray::Desktop::new(mock)),
             jobs: crate::jobs::Jobs::new(

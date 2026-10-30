@@ -29,7 +29,12 @@ export type AuthRevoked = Record<string, never>;
 export type BrowserKind = "browser";
 export type Builtin = { name: string, label: string, tags: Array<string>, id: string, };
 export type BundleInfo = { id: string, version: string, build: string, bytes: number, };
-export type Capabilities = { screen: [number, number], grid: [number, number], pages: number, tiles: number, layout_bytes: number, layout_schemas: Array<number>, storage_free: number, tile_kinds: Array<string>, asset_bytes: number, formats: Array<string>, image: [number, number], };
+export type Capabilities = { screen: [number, number], grid: [number, number], pages: number, tiles: number, layout_bytes: number, layout_schemas: Array<number>, storage_free: number, tile_kinds: Array<string>, asset_bytes: number, formats: Array<string>, image: [number, number], 
+/**
+ * Live values: updates a stream and the whole Device take each second, samples a graph keeps, and bytes a
+ * text value holds. All zero when the Firmware has no Live tiles.
+ */
+live_hz: number, live_total_hz: number, series: number, text_bytes: number, };
 export type CatalogHit = { source: string, name: string, id: string, aliases: Array<string>, hex: string | null, tags: Array<string>, category: string | null, svg: boolean, light: boolean, dark: boolean, license: string, license_url: string | null, guidelines: string | null, attribution_url: string, attribution: string, };
 export type CatalogQuery = { q: string, catalog: string | null, };
 export type CatalogVariant = "base" | "light" | "dark";
@@ -171,11 +176,12 @@ export type SettingsPatched = { settings: DeviceSettings,
 restart_required: boolean, };
 export type SetupState = "needs-setup" | "ready";
 export type StartupSetting = { at_sign_in: boolean, };
+export type StreamType = "number" | "series" | "text" | "image";
 export type SuggestRequest = { action: TileAction, };
 export type SystemInfo = { version: string, build: string, api: string, mock: boolean, data_dir_override: boolean, };
-export type Tile = { id: string, label: string, row: number, col: number, rowSpan: number, colSpan: number, icon: string | null, asset?: string | null, render?: TileRender | null, action: TileAction, };
+export type Tile = { id: string, label: string, row: number, col: number, rowSpan: number, colSpan: number, icon: string | null, asset?: string | null, render?: TileRender | null, streams?: { [key in string]?: StreamType } | null, action: TileAction, };
 export type TileAction = { "type": "key", usage: number, mods: Array<Modifier>, } | { "type": "mod", mod: Modifier, } | { "type": "consumer", usage: number, } | { "type": "page", page: string, } | { "type": "none" } | { "type": "launch", path: string, args: Array<string>, cwd: string, } | { "type": "open", target: string, } | { "type": "command", program: string, args: Array<string>, cwd: string, shell: boolean, } | { "type": "widget", source: string, field: string, account: string, };
-export type TileRender = "gif";
+export type TileRender = "gif" | "graph";
 export type Topic = "state" | "console" | "key-mirror" | "device-events";
 export type UploadBody = Blob;
 export type Uploaded = { id: string, media_type: string, bytes: number, };

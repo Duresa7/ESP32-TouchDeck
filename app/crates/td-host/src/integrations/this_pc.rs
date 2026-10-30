@@ -6,6 +6,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(windows)]
 mod windows;
 
+/// How long a Device shows a This PC value without a newer one before it draws it stale.
+const LIVE_TTL_MS: u32 = 5_000;
 const STREAMS: [(&str, &str, &str); 10] = [
     ("cpu_pct", "CPU usage", "%"),
     ("ram_pct", "RAM usage", "%"),
@@ -44,6 +46,8 @@ pub struct ThisPc {
     next: Option<Instant>,
     previous: Option<(Instant, BTreeMap<String, u64>)>,
     readings: Vec<Reading>,
+    live: Vec<LiveSample>,
+    samples: u64,
     unavailable: Vec<&'static str>,
     delivery: BTreeMap<String, Delivery>,
 }
@@ -56,6 +60,8 @@ impl ThisPc {
             next: None,
             previous: None,
             readings: Vec::new(),
+            live: Vec::new(),
+            samples: 0,
             unavailable: Vec::new(),
             delivery: BTreeMap::new(),
         }
@@ -84,7 +90,7 @@ impl ThisPc {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
-        self.readings = STREAMS
+        let current: Vec<(&str, &str, f64)> = STREAMS
             .iter()
             .filter_map(|(id, _, unit)| {
                 let value = *values.get(*id)?;
@@ -96,7 +102,14 @@ impl ThisPc {
                 } else {
                     value
                 };
-                Some(Reading::new(
+                Some((*id, *unit, value))
+            })
+            .collect();
+        self.samples += 1;
+        self.readings = current
+            .iter()
+            .map(|(id, unit, value)| {
+                Reading::new(
                     "this_pc",
                     "",
                     id,
@@ -104,7 +117,17 @@ impl ThisPc {
                     if *unit == "%" { value / 100.0 } else { -1.0 },
                     updated,
                     false,
-                ))
+                )
+            })
+            .collect();
+        self.live = current
+            .iter()
+            .map(|(id, _, value)| LiveSample {
+                account: String::new(),
+                stream: (*id).to_owned(),
+                sample: self.samples,
+                ttl_ms: LIVE_TTL_MS,
+                value: td_core::live::LiveValue::Number(*value),
             })
             .collect();
         self.next = Some(now + Duration::from_secs(1));
@@ -177,6 +200,7 @@ impl Integration for ThisPc {
             self.previous = None;
             self.next = None;
             self.readings.clear();
+            self.live.clear();
             self.unavailable.clear();
         }
         self.view()
@@ -195,6 +219,9 @@ impl Integration for ThisPc {
     }
     fn readings(&self) -> Vec<Reading> {
         self.readings.clone()
+    }
+    fn live(&self) -> Vec<LiveSample> {
+        self.live.clone()
     }
     fn delivered(&mut self, delivery: Delivery) {
         self.delivery.insert(delivery.device.clone(), delivery);

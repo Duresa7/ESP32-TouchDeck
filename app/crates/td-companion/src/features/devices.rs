@@ -346,6 +346,9 @@ impl Endpoint for SettingsPatch {
                 Ok((settings, restart))
             })
             .await??;
+        if orientation.is_some() {
+            ctx.live.layout_changed(id.as_str());
+        }
         let summary = ctx.devices.get(&id).ok_or(DeviceError::NotFound)?;
         Ok(SettingsPatched {
             settings: DeviceSettings {
