@@ -163,6 +163,15 @@ function Assert-Installed([string]$Version) {
     Assert-That ((Get-Item -LiteralPath $appExe).VersionInfo.ProductVersion -like "$Version*") "Open TouchDeck.exe is version $Version."
 }
 
+function Write-AppProcesses([string]$Label) {
+    $rows = @(Get-CimInstance Win32_Process -Filter "Name = 'Open TouchDeck.exe' OR Name = 'td-companion.exe'" | ForEach-Object {
+        $type = if ($_.CommandLine -match '--type=(\S+)') { $Matches[1] } else { 'main' }
+        $handle = (Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue)?.MainWindowHandle
+        "$($_.Name) pid=$($_.ProcessId) parent=$($_.ParentProcessId) type=$type window=$handle"
+    })
+    Write-Log "$Label processes: $($rows -join '; ')"
+}
+
 function Wait-Started([string]$Label) {
     Assert-That (Wait-Until { @(Get-Running $companionExe).Count -eq 1 -and (Test-Path -LiteralPath $runtimeFile) } 60) "$Label starts the installed Companion."
     Assert-That (Wait-Until { @(Get-Running $appExe).Count -gt 0 } 30) "$Label starts the Open TouchDeck window."
@@ -206,9 +215,11 @@ try {
     Assert-Installed $release.version
     $window = Start-Process -FilePath $appExe -WorkingDirectory $scratch -PassThru
     Wait-Started 'Opening the app'
+    Write-AppProcesses "Companion ready (browser pid $($window.Id))"
     Assert-That ((Get-RunValue) -ceq "`"$companionExe`" --packaged") 'The Companion registers the per-user Run entry for the installed Companion.'
     $companion = @(Get-Running $companionExe)[0].Id
     Assert-That (Wait-Until { $window.Refresh(); $window.MainWindowHandle -ne [IntPtr]::Zero } 60) 'The Open TouchDeck window appears.'
+    Write-AppProcesses 'Window shown'
     Assert-That ($window.CloseMainWindow()) 'The window accepts a close request.'
     Assert-That (Wait-Until { -not @(Get-Running $appExe).Count } 30) 'Closing the window ends Electron.'
     Assert-That (@(Get-Running $companionExe).Id -contains $companion) 'The Companion keeps running after the window closes.'
@@ -273,6 +284,7 @@ try {
     $summary.status = 'failed'
     $summary.failure = Protect-Log $_.Exception.Message
     Write-Log "FAIL: $($summary.failure)"
+    try { Write-AppProcesses 'At failure' } catch { Write-Log "Process listing failed: $($_.Exception.Message)" }
 } finally {
     foreach ($path in @($installDir, $dataDir, $configDir, $windowDir)) {
         if (Test-Path -LiteralPath $path) {
