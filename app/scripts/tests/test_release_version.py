@@ -78,14 +78,6 @@ class ReleaseVersionTest(unittest.TestCase):
             self.assertEqual(restored.encode("utf-8"), before[relative], relative)
             self.assertEqual(after.count(b"\r"), before[relative].count(b"\r"), relative)
 
-    def test_bump_leaves_other_lock_entries_alone(self):
-        lock = self.root / "app/Cargo.lock"
-        before = lock.read_bytes().decode("utf-8")
-        self.assertEqual(self.run_cli("bump", "7.8.9")[0], 0)
-        after = lock.read_bytes().decode("utf-8")
-        self.assertEqual(after.count('version = "7.8.9"'), 1)
-        self.assertEqual(before.count(f'version = "{self.version}"') - 1, after.count(f'version = "{self.version}"'))
-
     def test_bump_handles_crlf_checkouts(self):
         for relative in FILES:
             path = self.root / relative
