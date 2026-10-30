@@ -1,8 +1,8 @@
 use super::*;
 use crate::sources::Reading;
 use serde_json::json;
-use td_core::layout::TileRender;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use td_core::layout::TileRender;
 
 #[cfg(windows)]
 mod windows;
