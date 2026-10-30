@@ -3,6 +3,8 @@ import type { Environment } from './connection.ts';
 import { createFakeCompanion } from './fake.ts';
 import type { FakeSearch } from './fake-assets.ts';
 import { worstCaseHits } from './fake-catalog-worst.ts';
+import type { FakePick } from './fake-firmware.ts';
+import { freshDevice, newBoard, type Answer, type BoardKind } from './fake-new-boards.ts';
 import { createFakeUpdates, sampleOffer, type FakeUpdates } from './fake-updates.ts';
 import { demoLayout, demoScenario } from './samples.ts';
 import { windowSession, type UpdateCheck } from './session.ts';
@@ -29,7 +31,17 @@ declare global {
       push(id: string, order: string[]): void;
       offline(id: string): void;
       device(id: string, change: Partial<Omit<DeviceSummary, 'id' | 'rev'>>): void;
-      firmware: { hold(id: string): void; release(id: string): void; cancel(id: string): void };
+      firmware: { hold(id: string): void; release(id: string): void; cancel(id: string): void; picks(...answers: FakePick[]): void };
+      fresh(id: string, firmware?: { version: string; protocol: number }): void;
+      newBoards: {
+        plug(board: { id: string; port: string; kind?: BoardKind }): void;
+        unplug(id: string): void;
+        answer(id: string, answer: Answer): void;
+        confirming(id: string): boolean;
+        fail(id: string, fail: boolean): void;
+        hold(id: string, pct?: number): void;
+        release(id: string): void;
+      };
       updates: Pick<FakeUpdates, 'script' | 'finish' | 'calls'>;
       /** The opt-in topics every open event socket subscribed to, as `topic/device`. */
       topics(): string[];
@@ -66,7 +78,17 @@ export function demoEnvironment(target: Window): Environment {
     push: (id, order) => fake.setLayout(id, demoLayout(order)),
     offline: (id) => fake.update(id, { link: { state: 'lost', reason: 'unplugged', detail: '', at_ms: Date.UTC(2026, 9, 27, 21, 40) } }),
     device: (id, change) => fake.update(id, change),
-    firmware: { hold: fake.firmware.hold, release: fake.firmware.release, cancel: fake.firmware.cancel },
+    firmware: { hold: fake.firmware.hold, release: fake.firmware.release, cancel: fake.firmware.cancel, picks: fake.firmware.picks },
+    fresh: (id, firmware = { version: '1.5.0', protocol: 2 }) => fake.add(freshDevice({ id, port: 'COM9', firmware })),
+    newBoards: {
+      plug: (board) => fake.newBoards.plug(newBoard(board)),
+      unplug: fake.newBoards.unplug,
+      answer: fake.newBoards.answer,
+      confirming: fake.newBoards.confirming,
+      fail: (id, fail) => fake.newBoards.outcome(id, fail ? 'fail' : 'succeed'),
+      hold: fake.newBoards.hold,
+      release: fake.newBoards.release,
+    },
     updates: { script: updates.script, finish: updates.finish, calls: updates.calls },
     topics: () => fake.topics.flat(),
     setHub: (up) => fake.integrations.setHub(up),

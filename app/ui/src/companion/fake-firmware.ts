@@ -10,6 +10,7 @@ export interface FakeFirmwareOptions {
 }
 
 type Mode = 'normal-update' | 'rollback' | 'no-confirm';
+export type FakePick = 'firmware-file' | 'closed' | 'not-firmware' | 'dialog-open';
 const MODES: readonly Mode[] = ['normal-update', 'rollback', 'no-confirm'];
 
 const json = (status: number, body: unknown) =>
@@ -32,6 +33,7 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
   const held = new Map<string, number>();
   const waiting = new Map<string, () => void>();
   const ports = new Map<string, string>();
+  const picks: FakePick[] = [];
   let minted = 0;
 
   function setDevice(id: string, change: Partial<DeviceSummary>) {
@@ -59,7 +61,7 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
     if (!job || job.finished_ms !== null) return;
     const device = devices.get(job.scope.kind === 'device' ? job.scope.id : '');
     if (device?.firmware) {
-      const firmware = version ? { ...device.firmware, version, update_available: null } : device.firmware;
+      const firmware = version ? { ...device.firmware, version, protocol: Math.max(device.firmware.protocol, 2), update_available: null } : device.firmware;
       setDevice(device.id, { firmware, link: connected(port) });
     }
     update(job, 'result' in outcome
@@ -148,6 +150,10 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
         const body: unknown = await request.json().catch(() => null);
         const device = typeof body === 'object' && body !== null && 'device' in body && typeof body.device === 'string' ? body.device : '';
         if (!devices.has(device)) return failure(404, 'device.not_found', 'No Device with that id.');
+        const answer = picks.shift() ?? 'firmware-file';
+        if (answer === 'closed') return json(200, { bundle: null });
+        if (answer === 'not-firmware') return failure(422, 'firmware.bundle_invalid', 'The Firmware bundle is invalid or unavailable.');
+        if (answer === 'dialog-open') return failure(409, 'system.dialog_open', 'A native file dialog is already open.');
         minted += 1;
         const info: BundleInfo = { id: `bundle_fake${String(minted).padStart(8, '0')}`, version: bundled.version, build: bundled.build, bytes: BUNDLE_BYTES };
         bundles.set(info.id, { ...info, device });
@@ -179,6 +185,7 @@ export function createFakeFirmware(options: FakeFirmwareOptions) {
     },
 
     jobs: () => [...jobs.values()],
+    picks: (...answers: FakePick[]) => void picks.splice(0, picks.length, ...answers),
     hold: (device: string, pct = 40) => void held.set(device, pct),
     cancel(device: string) {
       const job = active(device);

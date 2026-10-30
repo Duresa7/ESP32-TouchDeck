@@ -17,7 +17,7 @@ async function openIntegrations(page: Page, query = '') {
 
 async function openCliProxy(page: Page, query = '') {
   await openIntegrations(page, query);
-  await page.getByTestId('integration-open').click();
+  await page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-open').click();
   await expect(page.getByTestId('integration-detail')).toHaveAttribute('data-id', 'cliproxyapi');
 }
 
@@ -38,22 +38,22 @@ async function reach(page: Page, testId: string, nth = 0) {
 
 test('lists CLIProxyAPI with its Preset tiles and a live status light', async ({ page }) => {
   await openIntegrations(page);
-  const row = page.getByTestId('integration');
+  const row = page.locator('[data-testid="integration"][data-id="cliproxyapi"]');
   await expect(row).toHaveCount(1);
   await expect(row).toHaveAttribute('data-state', 'ok');
   await expect(row).toContainText('CLIProxyAPI');
   await expect(row.getByTestId('preset')).toHaveCount(3);
   await expect(row.getByTestId('integration-more')).toHaveText('+6');
-  await expect(page.getByTestId('integration-status')).toHaveText('Connected');
-  await expect(page.getByTestId('integration-status')).toHaveAttribute('data-live', 'true');
-  await expect(page.getByTestId('integration-setup')).toHaveCount(0);
+  await expect(page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-status')).toHaveText('Connected');
+  await expect(page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-status')).toHaveAttribute('data-live', 'true');
+  await expect(page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-setup')).toHaveCount(0);
 });
 
 test('a fresh install offers Set up, which opens the form with focus on its first control', async ({ page }) => {
   await openIntegrations(page, '?integrations=new');
-  await expect(page.getByTestId('integration')).toHaveAttribute('data-state', 'not_configured');
-  await expect(page.getByTestId('integration-status')).toHaveCount(0);
-  await page.getByTestId('integration-setup').click();
+  await expect(page.locator('[data-testid="integration"][data-id="cliproxyapi"]')).toHaveAttribute('data-state', 'not_configured');
+  await expect(page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-status')).toHaveCount(0);
+  await page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-setup').click();
   await expect(page.getByTestId('config-switch')).toBeFocused();
   await expect(page.getByTestId('detail-status')).toHaveText('Not set up');
   await expect(page.getByTestId('secret-field')).toHaveAttribute('data-set', 'false');
@@ -94,8 +94,8 @@ test('setting up with a key shows it only as Set, and never keeps it in the page
   await expect(page.getByTestId('secret-state')).toHaveText('Set');
 
   await page.getByTestId('detail-back').click();
-  await expect(page.getByTestId('integration-open')).toBeFocused();
-  await expect(page.getByTestId('integration-status')).toHaveText('Connected');
+  await expect(page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-open')).toBeFocused();
+  await expect(page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-status')).toHaveText('Connected');
 });
 
 test('checks fields inline and warns before a key travels unencrypted', async ({ page }) => {
@@ -140,8 +140,8 @@ test('the status light follows the hub and the switch', async ({ page }) => {
   await expect(outcome(page)).toHaveAttribute('data-event', 'saved');
   await expect(status).toHaveText('Off');
   await page.getByTestId('detail-back').click();
-  await expect(page.getByTestId('integration-status')).toHaveText('Off');
-  await expect(page.getByTestId('integration-status')).toHaveAttribute('data-live', 'false');
+  await expect(page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-status')).toHaveText('Off');
+  await expect(page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-status')).toHaveAttribute('data-live', 'false');
 });
 
 test('Check now asks the hub once, then waits out the floor politely', async ({ page }) => {
@@ -209,7 +209,7 @@ test('shows every account with its limits, as the AI usage page did', async ({ b
 
 test('Add to Layout refuses a full Page, then places a Preset tile in the first free cell', async ({ page }) => {
   await openIntegrations(page);
-  await page.getByTestId('integration').getByTestId('preset').first().click();
+  await page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('preset').first().click();
   await expect(page.getByText('This Page is full. Make its grid bigger or add a Page.')).toBeVisible();
 
   await page.getByRole('button', { name: 'Layout', exact: true }).click();
@@ -218,7 +218,7 @@ test('Add to Layout refuses a full Page, then places a Preset tile in the first 
   await expect(page.getByTestId('tile')).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Integrations', exact: true }).click();
-  const preset = page.getByTestId('integration').getByTestId('preset').first();
+  const preset = page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('preset').first();
   await expect(preset).toHaveAttribute('aria-label', 'Add Account status to Layout');
   await preset.click();
   await expect(page.getByText("Added to Desk's Layout")).toBeVisible();
@@ -254,6 +254,11 @@ test('Add Tile lists Preset tiles by Integration and places one where it points'
 test('Add Tile points to Integrations when none offers Preset tiles', async ({ page }) => {
   await page.goto('/?integrations=new');
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
+  await page.getByRole('button', { name: 'Integrations', exact: true }).click();
+  await page.locator('[data-testid="integration"][data-id="this_pc"]').getByTestId('integration-open').click();
+  await page.getByTestId('config-switch').click();
+  await page.getByTestId('config-save').click();
+  await expect(page.getByTestId('detail-status')).toHaveText('Off');
   await page.getByRole('button', { name: 'Layout', exact: true }).click();
   await page.getByTestId('start-starter').click();
   await page.getByTestId('page-tab').filter({ hasText: 'Shortcuts' }).click();
@@ -261,7 +266,7 @@ test('Add Tile points to Integrations when none offers Preset tiles', async ({ p
   const section = page.getByTestId('add-presets');
   await expect(section).toContainText('Set up an Integration to add its Preset tiles.');
   await section.getByTestId('add-presets-setup').click();
-  await expect(page.getByTestId('integration-setup')).toBeVisible();
+  await expect(page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-setup')).toBeVisible();
 });
 
 test('focus is visible on the list and on every control of the CLIProxyAPI view', async ({ page }) => {
@@ -269,7 +274,7 @@ test('focus is visible on the list and on every control of the CLIProxyAPI view'
   for (const id of ['integration-open', 'preset', 'integration-more']) {
     expect({ id, ...(await reach(page, id)) }).toEqual({ id, visible: true, ring: true });
   }
-  await page.getByTestId('integration-open').click();
+  await page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-open').click();
   await expect(page.getByTestId('usage-account')).toHaveCount(2);
   for (const id of ['detail-back', 'config-switch', 'config-field', 'secret-replace', 'secret-forget', 'refresh', 'preset', 'usage-copy']) {
     expect({ id, ...(await reach(page, id)) }).toEqual({ id, visible: true, ring: true });

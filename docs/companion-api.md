@@ -602,6 +602,29 @@ With `test-hooks`, mock Integrations use real HTTP only for explicitly configure
 
 Each Integration's Preset tiles are in `presets`. Live tiles get their values through the Device link, never through this API ([ADR 0004](adr/0004-firmware-draws-live-tiles.md)).
 
+#### This PC
+
+`this_pc` has config `{enabled: boolean}` (default `true`), no secrets and the `refresh` action. Unknown fields are rejected. Disabling clears readings and stops collection; re-enabling resets the rate baseline. The configuration is saved beside sources.json as this-pc.json.
+
+All streams have kind `numeric`. Streams and Preset tiles use this fixed order; the Preset id matches the stream id:
+
+| Stream id | Preset tile name | Unit |
+|---|---|---|
+| `cpu_pct` | CPU usage | `%` |
+| `ram_pct` | RAM usage | `%` |
+| `ram_used_bytes` | RAM used | `bytes` |
+| `ram_total_bytes` | RAM total | `bytes` |
+| `gpu_pct` | GPU usage | `%` |
+| `disk_active_pct` | Disk activity | `%` |
+| `disk_read_bytes_s` | Disk read | `bytes/s` |
+| `disk_write_bytes_s` | Disk write | `bytes/s` |
+| `network_receive_bytes_s` | Network receive | `bytes/s` |
+| `network_send_bytes_s` | Network send | `bytes/s` |
+
+Every Preset uses `{type: "widget", source: "this_pc", account: "", field: <stream id>}`. Windows opens one PDH query and adds counters once. Collection runs at most once per second, including manual refresh. CPU uses Processor Information total Processor Utility; disk activity is 100 minus PhysicalDisk total idle time. GPU usage sums instances by engine type and takes the busiest type, capped at 100%. RAM comes from GlobalMemoryStatusEx. Disk and network rates use cumulative-byte deltas divided by elapsed monotonic time; the first sample and counter resets emit no rate. Network sums physical adapters present when the Integration starts; restart the Companion after adding an adapter.
+
+A missing counter omits only its readings; descriptors and Presets stay discoverable. Status is `error` with `Unavailable: {names}.` using the Preset names in order. Healthy streams continue. Non-Windows builds emit no readings and report `This PC needs Windows.`. Values stay inside the Companion for Device delivery, never in HTTP responses. Live tile drawing and binding are tracked in #96.
+
 ### System
 
 Feature module `system`.
@@ -662,6 +685,7 @@ Feature module `test_hooks`, compiled only with the `test-hooks` Cargo feature a
 | `test.ports` | `POST /test/ports` | `{plug: {id, kind: "device" \| "device-v1" \| "silent" \| "other-firmware" \| "busy"}}` or `{unplug: id}` → `()` |
 | `test.approvals_script` | `POST /test/approvals/script` | `{answers: ("once" \| "always" \| "deny" \| "fail" \| "never")[]}` → `()`. Sets what the `FakePrompter` answers next. `fail` acts as a dialog that can't be shown |
 | `test.clock` | `POST /test/clock` | `{advance_ms}` → `()`. Moves the Companion's clock for expiry tests |
+| `test.firmware_script` | `POST /test/firmware/script` | `{answers: ("accept" \| "decline")[]}` → `()`. Replaces the native Firmware dialogs with a scripted prompter that gives these consent answers in order and waits once they run out. Its file picker returns the test bundle |
 
 ## Mapping from today's Tauri commands and events
 

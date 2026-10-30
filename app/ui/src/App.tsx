@@ -4,6 +4,7 @@ import { Toaster, toast } from 'sonner';
 import { useCompanion } from './companion/connection.ts';
 import { useDevices } from './companion/devices.ts';
 import { Home } from './screens/Home.tsx';
+import { SetupHost } from './screens/onboarding/SetupHost.tsx';
 import { NavCluster } from './shell/NavCluster.tsx';
 import { applyTheme } from './state/theme.ts';
 import { useUi } from './state/ui.ts';
@@ -42,6 +43,7 @@ export function App() {
         </Suspense>
       )}
       <NavCluster />
+      <SetupHost />
       {window.openTouchDeck && <button className="open-browser" type="button" onClick={() => {
         void companion.auth.pair_code().catch(() => toast.error("Can't reach the Companion. Check that Open TouchDeck is running in the tray, then retry."));
       }}>Open in browser</button>}
