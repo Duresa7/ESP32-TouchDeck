@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { expect, test, type APIRequestContext, type Locator, type Page, type Response } from '@playwright/test';
-import type { ActionLog, AllowedAction, ApprovalRequest } from '../src/companion/api.ts';
+import type { ActionLog, AllowedAction, ApprovalRequest, NewBoard } from '../src/companion/api.ts';
 import type { Layout } from '../src/lib/editor/validate.ts';
 import { exportText, menu, openLayout, sorted, status, tile, waitEvent } from './layout-helpers.ts';
 
@@ -321,4 +321,113 @@ test("Key test shows the mock Device's key reports from the key-mirror topic, su
 
   await page.getByTestId('key-test-panel').locator('summary').click();
   await expect.poll(() => ops.map((op): unknown => JSON.parse(op))).toContainEqual({ op: 'unsubscribe', topic: 'key-mirror', device: 'mock0001' });
+});
+
+test('a board on a mock port shows a New board card that waits for a click, and leaves when unplugged', async ({ page, request }) => {
+  const api = await companion(request);
+  await page.goto('/');
+  await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
+
+  const plugged = await api('POST', '/test/ports', { plug: { id: 'mock00ff', kind: 'other-firmware' } });
+  expect(plugged.status()).toBe(204);
+  const card = page.getByTestId('new-board');
+  await expect(card).toHaveAttribute('data-step', 'detected', { timeout: 15_000 });
+  await expect(card).toHaveAttribute('data-id', 'mock00ff');
+  await expect(card).toContainText("doesn't run Open TouchDeck Firmware yet.");
+  await expect(card.getByTestId('board-install')).toBeVisible();
+  await expect(page.getByTestId('onboarding')).toHaveCount(0);
+
+  const unplugged = await api('POST', '/test/ports', { unplug: 'mock00ff' });
+  expect(unplugged.status()).toBe(204);
+  await expect(card).toHaveCount(0, { timeout: 15_000 });
+});
+
+test('a name saved through settings_patch ends setup, and a ready Device never opens it', async ({ page, request }) => {
+  const api = await companion(request);
+  const named = await api('PATCH', '/devices/mock0003/settings', { idle_timeout_s: null, orientation: null, name: 'Shelf', brightness: null });
+  expect(named.status()).toBe(200);
+  const device: { name: string | null; setup: string } = await (await api('GET', '/devices/mock0003')).json();
+  expect(device).toMatchObject({ name: 'Shelf', setup: 'ready' });
+
+  await page.goto('/');
+  await expect(page.getByRole('list', { name: 'Devices' }).getByRole('listitem').nth(2)).toContainText('Shelf');
+  await expect(page.getByTestId('onboarding')).toHaveCount(0);
+
+  const restored = await api('PATCH', '/devices/mock0003/settings', { idle_timeout_s: null, orientation: null, name: 'Mock Device mock0003', brightness: null });
+  expect(restored.status()).toBe(200);
+});
+
+const consent = (api: Api, answers: ('accept' | 'decline')[]) => call(api, 'POST', '/test/firmware/script', { answers });
+
+async function plugNewBoard(page: Page, api: Api, id: string) {
+  await call(api, 'POST', '/test/ports', { plug: { id, kind: 'other-firmware' } });
+  const card = page.getByTestId('new-board');
+  await expect(card).toHaveAttribute('data-id', id, { timeout: 15_000 });
+  await expect(card).toHaveAttribute('data-step', 'detected');
+  return card;
+}
+
+async function reboots(api: Api, id: string): Promise<number> {
+  const record = await api('GET', `/test/devices/${id}/record`);
+  expect(record.status()).toBe(200);
+  const { reboots }: MockRecord = await record.json();
+  return reboots;
+}
+
+test('a New board installs once this PC accepts, comes up needing setup, and setup makes it ready', async ({ page, request }) => {
+  const api = await companion(request);
+  await consent(api, []);
+  await page.goto('/');
+  await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
+  const card = await plugNewBoard(page, api, 'mock00fe');
+
+  await card.getByTestId('board-install').click();
+  await expect(card).toHaveAttribute('data-step', 'waiting');
+  await expect(card.getByTestId('board-status')).toHaveText('Confirm on this PC to continue.');
+  expect(await reboots(api, 'mock00fe')).toBe(0);
+
+  await consent(api, ['accept']);
+  const dialog = page.getByTestId('onboarding');
+  await expect(dialog).toHaveAttribute('data-device-id', 'mock00fe', { timeout: 30_000 });
+  expect(await (await api('GET', '/devices/mock00fe')).json()).toMatchObject({ setup: 'needs-setup' });
+
+  await expect(dialog).toHaveAttribute('data-step', 'name');
+  await page.getByTestId('onboarding-name').fill('Workbench');
+  await page.getByTestId('onboarding-next').click();
+  await expect(dialog).toHaveAttribute('data-step', 'orientation');
+  await page.getByTestId('onboarding-next').click();
+  await expect(dialog).toHaveAttribute('data-step', 'layout');
+  await page.getByTestId('onboarding-next').click();
+  await expect(dialog).toHaveAttribute('data-step', 'done');
+  await page.getByTestId('onboarding-done').click();
+  await expect(dialog).toHaveCount(0);
+  expect(await (await api('GET', '/devices/mock00fe')).json()).toMatchObject({ name: 'Workbench', setup: 'ready' });
+
+  await call(api, 'POST', '/test/ports', { unplug: 'mock00fe' });
+  await expect.poll(async () => (await api('DELETE', '/devices/mock00fe')).status(), { timeout: 15_000 }).toBe(204);
+});
+
+test('a declined install writes nothing, keeps the New board card, and opens no setup', async ({ page, request }) => {
+  const api = await companion(request);
+  await consent(api, []);
+  await page.goto('/');
+  await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
+  const card = await plugNewBoard(page, api, 'mock00fd');
+
+  await card.getByTestId('board-install').click();
+  await expect(card).toHaveAttribute('data-step', 'waiting');
+  await consent(api, ['decline']);
+  await expect(card).toHaveAttribute('data-step', 'declined');
+  await expect(card.getByTestId('board-status')).toHaveText('Declined on this PC. Nothing changed on the board.');
+  expect(await reboots(api, 'mock00fd')).toBe(0);
+  const boards: NewBoard[] = await (await api('GET', '/new-boards')).json();
+  expect(boards.map((b) => b.id)).toContain('mock00fd');
+  expect((await api('GET', '/devices/mock00fd')).status()).toBe(404);
+  await expect(page.getByTestId('onboarding')).toHaveCount(0);
+
+  await card.getByTestId('board-cancel').click();
+  await expect(card).toHaveAttribute('data-step', 'detected');
+  await expect(card.getByTestId('board-install')).toBeVisible();
+  await call(api, 'POST', '/test/ports', { unplug: 'mock00fd' });
+  await expect(card).toHaveCount(0, { timeout: 15_000 });
 });

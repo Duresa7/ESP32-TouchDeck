@@ -50,20 +50,23 @@ Ubuntu **24.04** is the Linux CI target. Its build packages are:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
-  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libudev-dev
+sudo apt-get install -y build-essential libudev-dev
 ```
 
-This matches [the workflow](../.github/workflows/app.yml) and [Tauri's Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux), with `libudev-dev` for serial discovery. CI additionally installs `xvfb` to run GUI tests without a physical display; it is not a desktop runtime prerequisite. Other distributions need their equivalent packages. Install Node 24, the pinned pnpm, and stable Rust separately using their upstream instructions.
+This matches [the workflow](../.github/workflows/app.yml), with `libudev-dev` for serial discovery. Other distributions need their equivalent packages. Install Node 24, the pinned pnpm, and stable Rust separately using their upstream instructions.
 
 From `app/`, the ordinary source build is:
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm tauri build
+pnpm build:ui
+cargo build -p td-companion
+pnpm --filter @touchdeck/electron build
 ```
 
-Do not enable the `e2e` feature for a distributed app. To build the Windows installer, follow [Build the installer](packaging.md#build-the-installer).
+Use `pnpm dev:electron` to run the desktop window with a mock Device. Use `pnpm lint`, `pnpm test`, `pnpm e2e:ui` and `cargo test --workspace` to check changes.
+
+Do not enable `test-hooks` for a distributed app. To build the Windows installer, follow [Build the installer](packaging.md#build-the-installer).
 
 ## Linux runtime libraries and device access
 

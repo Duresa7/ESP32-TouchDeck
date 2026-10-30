@@ -110,3 +110,44 @@ fn discovery_matches_normalized_usb_serial_and_refuses_mismatch() {
         1
     );
 }
+
+#[test]
+fn gif_caps_are_typed_opt_in_and_match_golden_hello() {
+    let vectors: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../../schema/protocol/golden-hello.json"
+    ))
+    .unwrap();
+    for (enabled, vector) in [false, true].into_iter().zip(&vectors) {
+        let device = MockDeck::v2();
+        device.set_gif_capabilities(enabled);
+        let caps = open(&device)
+            .identity(TIMEOUT)
+            .unwrap()
+            .capabilities
+            .unwrap();
+        assert_eq!(caps.gif_enabled(), enabled);
+        let mut actual = serde_json::to_value(&caps).unwrap();
+        actual["free_bytes"] = vector["caps"]["free_bytes"].clone();
+        assert_eq!(actual, vector["caps"]);
+    }
+    let mut caps: td_link::Capabilities =
+        serde_json::from_value(vectors[1]["caps"].clone()).unwrap();
+    assert_eq!(caps.anim.as_ref().unwrap().image, [128, 128]);
+    caps.anim = None;
+    assert!(!caps.gif_enabled());
+}
+
+#[test]
+fn longest_hello_fits_one_message() {
+    let mut vectors: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../../schema/protocol/golden-hello.json"
+    ))
+    .unwrap();
+    for hello in &mut vectors {
+        hello["name"] = json!("\"".repeat(48));
+        hello["version"] = json!("\u{1}".repeat(32));
+        hello["running"] = json!("unknown");
+        hello["caps"]["free_bytes"] = json!(u32::MAX);
+        assert!(serde_json::to_vec(hello).unwrap().len() <= 1024);
+    }
+}

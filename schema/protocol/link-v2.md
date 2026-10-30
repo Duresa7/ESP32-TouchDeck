@@ -45,7 +45,7 @@ association with a saved Device. It is identity, not authentication. This is the
 same factory station identity used by net-v1, never a randomized interface MAC.
 `name` follows the naming rules below. These fields never contain credentials.
 
-Every capability below is required. Bounds are ceilings, not promises of free
+Every capability below except `anim` is required. Bounds are ceilings, not promises of free
 memory. A Device advertises only implemented Tile kinds and formats. Integers
 are nonnegative JSON integers. The complete hello MUST fit one 1,024-byte payload;
 Firmware must test its maximum escaped name and longest build version.
@@ -62,6 +62,7 @@ Firmware must test its maximum escaped name and longest build version.
 | `formats` | Subset of `tdi1`, `gif`, `jpeg`; includes `tdi1` |
 | `image` | `[max_width,max_height]`, each at most screen dimensions |
 | `gif_frames`, `gif_pixels` | Maximum frames and total decoded canvas pixels across all GIF frames; zero if unsupported |
+| `anim` | Optional animation limits: `image: [width,height]`, `min_delay_ms`, `page_tiles`, `page_pixels`; positive integers. Present only with `gif` in `formats` |
 | `photo_bytes` | Maximum JPEG transfer, 0 to 131072; zero disables photos |
 | `live_hz`, `live_total_hz` | Maximum accepted updates per stream and Device per second, at most 2 and 20 |
 | `series`, `text_bytes`, `streams` | Maximum series length, text size, and streams per Tile, at most 32, 128, and 8 |
@@ -187,8 +188,13 @@ After reconnect or an uncertain result the Companion repeats put by hash.
 This is idempotent upload, not persistent partial resume. Reset never publishes
 a partial Asset; boot removes leftover temporary files.
 
-`tdi1` is exactly [icon-format.md](../icon-format.md). GIF requires GIF87a or
-GIF89a, bounded logical canvas, frames, and cumulative decoded pixels as advertised.
+`tdi1` is exactly [icon-format.md](../icon-format.md). Asset format `gif`
+requires normalized GIF89a: one global palette of at most 256 colors, no local
+palettes, full-canvas frames at 0,0, no interlace, disposal 0 or 1 only and at
+most one transparent index. Every frame delay is at least `anim.min_delay_ms`.
+NETSCAPE2.0 specifies an infinite loop. Other GIF encodings return `format`.
+Canvas dimensions obey `anim.image`, frame count obeys `gif_frames` and the sum
+of full-canvas pixels over all frames obeys `gif_pixels`.
 JPEG requires baseline sequential 8-bit grayscale or three-component JPEG,
 no progressive or arithmetic coding, dimensions within `caps.image`. Firmware
 validates complete decoding before commit and never trusts claimed dimensions.
@@ -369,3 +375,33 @@ duplicate chunks, escaped bytes, and mixed tap traffic. They are codec fixtures,
 not a claim that v2 handlers exist. The Rust test constructs frames from decoded
 fields and checks exact wire bytes, then decodes fragmented streams with the
 existing td-core codec. From `app/`, run `cargo test -p td-core --test golden_v2`.
+
+## Animated GIF admission
+
+GIF is off when `anim` is absent, even if `formats` lists `gif`. It also needs
+`gif` in `tile_kinds` and nonzero `gif_frames` and `gif_pixels`. `image` continues
+to bound static images; `anim.image` bounds animated canvases. `min_delay_ms`
+is the minimum duration of each frame, not the live-value update rate.
+`page_tiles` counts animated Tiles on each Page; `page_pixels` sums their canvas
+areas, counting repeated references separately. Every Page must fit both limits.
+
+Proposed caps, pending the combined board proof: `asset_bytes:262144`,
+`anim:{image:[128,128],min_delay_ms:100,page_tiles:4,page_pixels:65536}`,
+`gif_frames:60` and `gif_pixels:983040`. Production Firmware keeps
+`formats:["tdi1"]`, `gif_frames:0` and no `anim`. `CONFIG_TD_GIF_CAPS` defaults
+off and is a contract-test switch only until validation and playback pass proof.
+Golden hello vectors cover both states and the 1024-byte bound.
+
+Schema 2 accepts `render:"gif"` only with a non-null `asset:"sha256:<id>"`
+and `icon:null`. The referenced Asset must have format `gif`. Missing `render`
+means static. Schema 1 refuses `render`. Other render kinds in the extension
+above remain future work; they are not accepted by the current validators.
+
+Both sides enforce limits. The Companion refuses early; Firmware has the final
+say on encoded bytes, complete decoding, memory, storage and per-Page budgets,
+including existing/present Assets. Encoded bytes, dimensions, frame count,
+cumulative decoded pixels and Page budgets use wire reason `size`; invalid
+normalization, delay or loop encoding uses `format`; allocation failure uses
+`memory`; insufficient storage uses `full`. GIF cadence never uses `rate`.
+Failures preserve the committed Asset and Layout. Asset link failures retain
+the typed reason through the API rather than becoming generic link text.

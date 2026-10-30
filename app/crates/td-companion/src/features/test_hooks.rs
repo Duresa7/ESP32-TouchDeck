@@ -316,6 +316,7 @@ fn feature() -> Feature {
         .endpoint::<Ports>()
         .endpoint::<Clock>()
         .endpoint::<ApprovalsScript>()
+        .endpoint::<FirmwareScript>()
 }
 inventory::submit! { Registration(feature) }
 
@@ -341,5 +342,27 @@ impl Endpoint for ApprovalsScript {
         } else {
             Err(CommonError::NotFound)
         }
+    }
+}
+
+#[derive(Serialize, Deserialize, TS)]
+pub struct ConsentScript {
+    pub answers: Vec<crate::features::firmware::ConsentAnswer>,
+}
+pub struct FirmwareScript;
+impl Endpoint for FirmwareScript {
+    const NAME: &'static str = "test.firmware_script";
+    const METHOD: Method = Method::POST;
+    const PATH: &'static str = "/test/firmware/script";
+    const STATUS: StatusCode = StatusCode::NO_CONTENT;
+    type Path = ();
+    type Query = NoQuery;
+    type Body = ConsentScript;
+    type Ok = ();
+    type Error = CommonError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<(), CommonError> {
+        ctx.devices.mock().ok_or(CommonError::NotFound)?;
+        ctx.firmware.script(req.body.answers);
+        Ok(())
     }
 }

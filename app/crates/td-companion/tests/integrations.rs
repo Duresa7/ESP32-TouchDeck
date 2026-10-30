@@ -172,3 +172,199 @@ async fn invalid_config_unknown_fields_and_unauthenticated_calls_are_rejected() 
         assert_eq!(response.status(), 401);
     }
 }
+
+#[tokio::test]
+async fn this_pc_is_listed_with_streams_and_presets() {
+    let td = TestCompanion::start().await;
+    let list = td.call::<List>((), NoQuery, ()).await.unwrap();
+    let pc = list.iter().find(|entry| entry.id == "this_pc").unwrap();
+    assert_eq!(pc.streams.len(), 10);
+    assert_eq!(pc.presets.len(), 10);
+    let view = td
+        .call::<Get>(
+            IntegrationPath {
+                integration: "this_pc".into(),
+            },
+            NoQuery,
+            (),
+        )
+        .await
+        .unwrap();
+    assert_eq!(view.config, json!({"enabled": true}));
+    assert!(view.secrets.is_empty());
+    assert_eq!(view.summary.presets[0].name, "CPU usage");
+}
+
+#[tokio::test]
+async fn local_stub_accounts_revision_and_wire_outputs_are_safe() {
+    if std::env::var_os("TD_ACCOUNT_DETAIL_CHILD").is_none() {
+        let output = tokio::task::spawn_blocking(|| {
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "local_stub_accounts_revision_and_wire_outputs_are_safe",
+                    "--nocapture",
+                ])
+                .env("TD_ACCOUNT_DETAIL_CHILD", "1")
+                .output()
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        let logs = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        for secret in [
+            "AX17-private-BX29",
+            "CX31-private-DX43",
+            "EX59-private-FX61",
+            "GX73-private-HX89",
+            "IX97-private-JX03",
+        ] {
+            for part in [secret, &secret[..4], &secret[secret.len() - 4..]] {
+                assert!(!logs.contains(part));
+            }
+        }
+        assert!(output.status.success(), "{logs}");
+        return;
+    }
+
+    use axum::{
+        Json, Router,
+        routing::{get, post},
+    };
+    use std::sync::{Arc, Mutex};
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let paths = Arc::new(Mutex::new(Vec::new()));
+    let auth_paths = paths.clone();
+    let usage_paths = paths.clone();
+    let unexpected_paths = paths.clone();
+    let router = Router::new()
+        .route("/v0/management/auth-files", get(move || async move {
+            auth_paths.lock().unwrap().push("GET /v0/management/auth-files");
+            Json(json!({"files":[
+                {"provider":"codex","label":"Work","status":"active","auth_index":"AX17-private-BX29","success":128,"failed":2,"recent_requests":[{"success":5,"failed":1}],"id_token":{"chatgpt_account_id":"CX31-private-DX43"}},
+                {"provider":"claude","label":"Personal","status":"active","auth_index":"EX59-private-FX61","success":64,"failed":0}
+            ]}))
+        }))
+        .route("/v0/management/api-call", post(move |Json(body): Json<Value>| async move {
+            usage_paths.lock().unwrap().push("POST /v0/management/api-call");
+            assert_eq!(body["method"], "GET");
+            let url = body["url"].as_str().unwrap();
+            assert!([td_host::sources::cliproxy::CODEX_USAGE, td_host::sources::cliproxy::CLAUDE_USAGE].contains(&url));
+            if url == td_host::sources::cliproxy::CODEX_USAGE {
+                Json(json!({"status_code":200,"body":json!({"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":42,"reset_at":1800000000},"secondary_window":{"used_percent":10,"reset_at":1800500000}}}).to_string()}))
+            } else {
+                Json(json!({"status_code":403,"body":"GX73-private-HX89"}))
+            }
+        }));
+    let router = router.fallback(move || async move {
+        unexpected_paths.lock().unwrap().push("unexpected request");
+        axum::http::StatusCode::NOT_FOUND
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let td = TestCompanion::start().await;
+    td.call::<ConfigPut>(path(), NoQuery, config(&url))
+        .await
+        .unwrap();
+    td.call::<SecretPut>(
+        secret(),
+        NoQuery,
+        SecretInput {
+            value: "IX97-private-JX03".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let before = td.call::<Get>(path(), NoQuery, ()).await.unwrap();
+    assert!(before.detail.is_none());
+    let mut events = td.events().await;
+    td.call::<Refresh>(path(), NoQuery, ()).await.unwrap();
+    let after = td.call::<Get>(path(), NoQuery, ()).await.unwrap();
+    let detail = after.detail.as_ref().unwrap();
+    assert!(after.summary.revision > before.summary.revision);
+    assert_eq!(
+        serde_json::to_value(&detail.accounts).unwrap(),
+        json!([
+            {"provider":"codex","account":"Work","status":"active","success":128,"failed":2,"recent_10m":6,"plan":"pro","five_hour":{"pct":42.0,"resets_at_ms":1800000000000i64},"seven_day":{"pct":10.0,"resets_at_ms":1800500000000i64},"error":null},
+            {"provider":"claude","account":"Personal","status":"active","success":64,"failed":0,"recent_10m":0,"plan":"Claude","five_hour":null,"seven_day":null,"error":"provider refused (HTTP 403)"}
+        ])
+    );
+    let event = tokio::time::timeout(std::time::Duration::from_secs(3), events.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let event_text = event.to_text().unwrap();
+    let event: Value = serde_json::from_str(event_text).unwrap();
+    assert_eq!(event["type"], "integration.status");
+    assert_eq!(event["data"]["revision"], after.summary.revision);
+    let mut request = format!("{}/api/v1/events", td.url.replace("http:", "ws:"))
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "sec-websocket-protocol",
+        format!("touchdeck.v1, touchdeck.bearer.{}", td.token)
+            .parse()
+            .unwrap(),
+    );
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    socket.next().await.unwrap().unwrap();
+    let sync = socket.next().await.unwrap().unwrap();
+    let sync_text = sync.to_text().unwrap();
+    let frame: Value = serde_json::from_str(sync_text).unwrap();
+    assert_eq!(
+        frame["data"]["integrations"][0]["revision"],
+        after.summary.revision
+    );
+    let view = serde_json::to_string(&after).unwrap();
+    for output in [&view, event_text, sync_text] {
+        for secret in [
+            "AX17-private-BX29",
+            "CX31-private-DX43",
+            "EX59-private-FX61",
+            "GX73-private-HX89",
+            "IX97-private-JX03",
+            &td.token,
+        ] {
+            for part in [secret, &secret[..4], &secret[secret.len() - 4..]] {
+                assert!(!output.contains(part));
+            }
+        }
+        assert!(!output.contains("key_hint"));
+    }
+    assert_eq!(
+        after
+            .summary
+            .presets
+            .iter()
+            .map(|p| (p.id.as_str(), p.name.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("status", "Account status"),
+            ("success", "Requests OK"),
+            ("failed", "Requests failed"),
+            ("recent_10m", "Requests in 10 min"),
+            ("five_hour_pct", "5-hour limit used"),
+            ("seven_day_pct", "7-day limit used"),
+            ("five_hour_reset", "5-hour reset in"),
+            ("seven_day_reset", "7-day reset in"),
+            ("plan", "Plan")
+        ]
+    );
+    assert_eq!(
+        paths.lock().unwrap().as_slice(),
+        [
+            "GET /v0/management/auth-files",
+            "POST /v0/management/api-call",
+            "POST /v0/management/api-call"
+        ]
+    );
+    socket.close(None).await.unwrap();
+    server.abort();
+    let _ = server.await;
+}

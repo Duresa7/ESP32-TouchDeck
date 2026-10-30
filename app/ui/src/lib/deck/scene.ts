@@ -1,4 +1,5 @@
-import type { Action, Page, Tile } from '../editor/validate.ts';
+import type { TileAction as Action, Page, Tile } from '../../companion/api.gen.ts';
+import { assetOf } from '../editor/validate.ts';
 import { MONTSERRAT_14, MONTSERRAT_28, MONTSERRAT_48 } from './fonts.data.ts';
 import { dotX, truncDiv, tileRect, type Geometry, type Rect } from './geometry.ts';
 import { font, layoutLabel, textSize, codepoints, type Align, type Font, type Label } from './text.ts';
@@ -132,7 +133,7 @@ function buildTile(page: Page & { kind: 'grid' }, tile: Tile, g: Geometry, optio
     return view;
   }
   const glyph = tile.icon ? SYMBOLS[tile.icon] : undefined;
-  const image = fileId(tile.icon);
+  const image = fileId(tile.icon) ?? assetOf(tile);
   const stacked = glyph !== undefined || (image !== null && (options.hasImage?.(image) ?? true));
   if (!stacked) {
     const fitted = fitLabel(tile.label, rect.w, rect.h);

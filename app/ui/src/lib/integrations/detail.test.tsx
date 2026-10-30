@@ -58,7 +58,7 @@ afterEach(() => {
 describe('the Integration view', () => {
   it('starts from the sync snapshot and follows integration.status', async () => {
     await settle();
-    expect(integrations.getState().integrations.map((i) => [i.id, i.status.state])).toEqual([['cliproxyapi', 'not_configured']]);
+    expect(integrations.getState().integrations.map((i) => [i.id, i.status.state])).toEqual([['cliproxyapi', 'not_configured'], ['this_pc', 'ok']]);
     await setUp(await detail());
     await settle();
     expect(integrations.getState().integrations[0].status.state).toBe('ok');
@@ -191,10 +191,10 @@ describe('Refresh', () => {
 
   it('reads the accounts again after a check', async () => {
     const store = await detail();
-    expect(store.getState().usage?.accounts).toEqual([]);
+    expect(store.getState().usage).toBeNull();
     await setUp(store);
     await store.refresh();
-    expect(store.getState().usage?.accounts.map((a) => a.key)).toEqual(['codex:alice@example.com', 'claude:alice@example.com', 'gemini-cli:linus@example.com']);
+    expect(store.getState().usage?.accounts.map((a) => a.key)).toEqual(['codex:Work', 'claude:Personal']);
     expect(store.getState().usage?.accounts[0].five_hour).toEqual({ pct: 42, reset_in: '2h 10m' });
   });
 });

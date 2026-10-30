@@ -34,7 +34,7 @@ fn registry_schema_presets_config_and_summaries_never_contain_secret_values() {
     let file = root.join("sources.json");
     let mut r = registry(Recorder::default(), Some(file.clone()));
     let summaries = r.list();
-    assert_eq!(summaries.len(), 1);
+    assert!(summaries.iter().any(|s| s.id == "this_pc"));
     let s = &summaries[0];
     assert_eq!(s.id, "cliproxyapi");
     assert!(
@@ -43,7 +43,7 @@ fn registry_schema_presets_config_and_summaries_never_contain_secret_values() {
             .any(|f| f.name == "management_key" && f.secret)
     );
     assert!(s.presets.iter().any(|p| p.id == "five_hour_pct"));
-    for summary in summaries {
+    for summary in summaries.into_iter().filter(|s| s.id == "cliproxyapi") {
         let i = r.get(&summary.id).unwrap();
         i.configure(config("https://hub.example")).unwrap();
         i.secret_put("management_key", "fixture-private-value")
@@ -339,4 +339,24 @@ fn secret_stores_reject_ambiguous_target_components() {
             assert!(store.delete(i, f).is_err());
         }
     }
+}
+
+#[test]
+fn detail_starts_empty_and_polling_changes_the_revision() {
+    let mut r = registry(Recorder::default(), None);
+    let i = r.get("cliproxyapi").unwrap();
+    i.configure(config("https://hub.example")).unwrap();
+    i.secret_put("management_key", "fixture-key").unwrap();
+    let before = serde_json::to_value(i.view().unwrap()).unwrap();
+    assert_eq!(before["detail"], Value::Null);
+    i.refresh();
+    let after = serde_json::to_value(i.view().unwrap()).unwrap();
+    assert_eq!(after["detail"]["accounts"], json!([]));
+    assert!(after["detail"]["polled_ms"].as_u64().unwrap() > 0);
+    assert_ne!(before["summary"]["revision"], after["summary"]["revision"]);
+    i.secret_delete("management_key").unwrap();
+    assert_eq!(
+        serde_json::to_value(i.view().unwrap()).unwrap()["detail"],
+        Value::Null
+    );
 }

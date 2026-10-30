@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useStore } from 'zustand';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import type { DeviceSummary } from '../../companion/api.ts';
@@ -42,6 +43,17 @@ export function deviceStoresFor(companion: Companion, device: DeviceSummary): De
     byDevice.set(device.id, found);
   }
   return found;
+}
+
+export function useDeviceStores(device: DeviceSummary): DeviceStores {
+  const stores = deviceStoresFor(useCompanion(), device);
+  const job = device.link.state === 'updating' ? device.link.job : null;
+  useEffect(() => stores.observe(device), [stores, device]);
+  useEffect(() => {
+    const known = job ? jobsStore.getState().jobs[job] : undefined;
+    if (known) stores.firmware.attach(known);
+  }, [stores, job]);
+  return stores;
 }
 
 type Bundled = { state: 'asking' } | { state: 'known'; version: string } | { state: 'unknown' };

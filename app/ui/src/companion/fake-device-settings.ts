@@ -78,7 +78,7 @@ export function createFakeDeviceSettings(options: FakeDeviceSettingsOptions) {
     if (orientation !== null) settings.orientation = orientation;
     if (typeof idle === 'number') settings.idle_timeout_s = idle;
     if (typeof brightness === 'number') settings.brightness = brightness;
-    if (typeof name === 'string' && name !== device.name) setDevice(device.id, { name });
+    if (typeof name === 'string' && (name !== device.name || device.setup !== 'ready')) setDevice(device.id, { name, setup: 'ready' });
     return json(200, { settings: view(devices.get(device.id) ?? device), restart_required: restart });
   }
 

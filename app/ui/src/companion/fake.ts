@@ -1,11 +1,13 @@
-import type { DeviceSummary, FirmwareBuild, Layout, SystemInfo } from './api.ts';
+import type { DeviceSummary, FirmwareBuild, Layout, NewBoard, SystemInfo } from './api.ts';
 import { CLOSE_SESSION, type EventSocket } from './events.ts';
 import { createFakeActions } from './fake-actions.ts';
+import { createFakeAssets, type FakeAssetsOptions } from './fake-assets.ts';
 import { createFakeConsole } from './fake-console.ts';
 import { createFakeDeviceSettings } from './fake-device-settings.ts';
 import { createFakeFirmware } from './fake-firmware.ts';
 import { createFakeIntegrations, type FakeIntegrationsOptions } from './fake-integrations.ts';
 import { createFakeLayouts } from './fake-layouts.ts';
+import { createFakeNewBoards } from './fake-new-boards.ts';
 import { createFakeSessions, type FakeBrowser } from './fake-sessions.ts';
 import { createFakeStartup } from './fake-startup.ts';
 import type { OpenTouchDeckBridge } from './session.ts';
@@ -26,11 +28,13 @@ export interface FakeCompanionOptions {
   jobMs?: number;
   brightness?: Record<string, number>;
   bundled?: FirmwareBuild;
+  newBoards?: NewBoard[];
   /** Browsers paired before the start. */
   browsers?: readonly FakeBrowser[];
   startAtSignIn?: boolean;
   /** How CLIProxyAPI starts: not set up unless `configured`. */
   integrations?: Omit<FakeIntegrationsOptions, 'publish'>;
+  assets?: Omit<FakeAssetsOptions, 'publish'>;
 }
 
 type Frame = Record<string, unknown> & { type: string };
@@ -105,11 +109,13 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   const layouts = createFakeLayouts({ devices, publish, seed: options.layouts, delayMs: options.jobMs });
   const settings = createFakeDeviceSettings({ devices, publish, brightness: options.brightness });
   const firmware = createFakeFirmware({ devices, publish, bundled: options.bundled, stepMs: options.jobMs });
+  const newBoards = createFakeNewBoards({ devices, publish, bundled: options.bundled ?? { version: '1.5.0', build: 'fake' }, boards: options.newBoards, stepMs: options.jobMs });
   const actions = createFakeActions({ devices, publish, stored: layouts.stored });
   const sessions = createFakeSessions({ browsers: options.browsers, onRevoke: signOut });
   const startup = createFakeStartup(options.startAtSignIn);
   const consoles = createFakeConsole({ devices, publish });
   const integrations = createFakeIntegrations({ publish, ...options.integrations });
+  const assets = createFakeAssets({ publish, ...options.assets });
 
   function mint() {
     minted += 1;
@@ -146,7 +152,12 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     if (path === '/system/ping') return get ? json(200, { api: ['v1'] }) : failure(405, 'route.method_not_allowed', 'Use GET.');
     if (path.startsWith('/test/integrations/')) return integrations.test(request, path);
     if (path.startsWith('/test/'))
-      return (await firmware.test(request, path)) ?? (await actions.test(request, path)) ?? settings.record(path, await layouts.test(request, path));
+      return (
+        (await firmware.test(request, path)) ??
+        (await newBoards.test(request, path)) ??
+        (await actions.test(request, path)) ??
+        settings.record(path, await layouts.test(request, path))
+      );
 
     const auth = request.headers.get('Authorization') ?? '';
     const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
@@ -166,8 +177,10 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
       return found ? json(200, found) : failure(404, 'device.not_found', 'No Device with that id.');
     }
     return (
+      (await assets.handle(request, path)) ??
       (await settings.handle(request, path)) ??
       (await firmware.handle(request, path)) ??
+      (await newBoards.handle(request, path)) ??
       (await layouts.handle(request, path)) ??
       actions.handle(request, path) ??
       (await integrations.handle(request, path)) ??
@@ -185,7 +198,10 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     }
     sockets.add(socket);
     socket.push({ type: 'hello', api: 'v1', build: system.build, session: { id: 'fake-session', kind: 'window' } });
-    socket.push({ type: 'sync', data: { devices: [...devices.values()], jobs: [...layouts.jobs(), ...firmware.jobs()], approvals: actions.pending(), integrations: integrations.list() } });
+    socket.push({
+      type: 'sync',
+      data: { devices: [...devices.values()], jobs: [...layouts.jobs(), ...firmware.jobs(), ...assets.jobs(), ...newBoards.jobs()], new_boards: newBoards.boards(), approvals: actions.pending(), integrations: integrations.list() },
+    });
     return socket;
   }
 
@@ -195,11 +211,13 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     bridge,
     layouts,
     firmware,
+    newBoards,
     actions,
     sessions,
     startup,
     consoles,
     integrations,
+    assets,
     /** Sessions minted so far through the bridge. */
     get minted() {
       return minted;

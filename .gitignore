@@ -35,7 +35,6 @@ dist/
 # App build output and dependencies
 /app/target/
 node_modules/
-/app/src-tauri/gen/
 
 # Test output and Python caches
 test-results/

@@ -16,6 +16,7 @@ import {
   removeTile,
   resizeTile,
   setAction,
+  setAsset,
   setFullScreen,
   setGridSize,
   setIcon,
@@ -71,14 +72,14 @@ function refused(edit: Edit): string {
 }
 
 test('the bundled examples are valid', () => {
-  for (const name of ['builtin.json', 'dev.json']) {
+  for (const name of ['builtin.json', 'dev.json', 'gif.json']) {
     assert.deepEqual(validateSource(readFileSync(join(examples, name))), [], name);
   }
 });
 
 test('each of the invalid examples fails with exactly its rule key, as check-layouts.mjs reports', () => {
   const files = readdirSync(invalid).filter((name) => name.endsWith('.json'));
-  assert.equal(files.length, 39);
+  assert.equal(files.length, 42);
   const keys = new Set<string>();
   for (const name of files) {
     const bytes = readFileSync(join(invalid, name));
@@ -179,6 +180,34 @@ test('labels and icons follow the schema', () => {
   ok(setIcon(layout, 'main', 'a', 'lv:mute'));
   assert.match(refused(setIcon(layout, 'main', 'a', 'lv:nope')), /^icon\.format: /);
 });
+
+test('an Asset on a Tile makes the Layout schema 2 until no Tile uses one', () => {
+  const id = 'ab'.repeat(32);
+  const withAsset = ok(setAsset(setIconOk(small(), 'lv:mute'), 'main', 'a', id));
+  assert.equal(withAsset.schema, 2);
+  assert.deepEqual([grid(withAsset, 'main').tiles[0].icon, grid(withAsset, 'main').tiles[0].asset], [null, `sha256:${id}`]);
+  assert.equal(parseLayout(canonical(withAsset)).ok, true);
+  const back = ok(setIcon(withAsset, 'main', 'a', 'lv:next'));
+  assert.equal(back.schema, 1);
+  assert.equal(Object.hasOwn(grid(back, 'main').tiles[0], 'asset'), false);
+  assert.match(refused(setAsset(small(), 'main', 'a', 'not-a-hash')), /^icon\.format: /);
+});
+
+test('picking an icon for a GIF Tile makes it a still Tile', () => {
+  const gif = ok(setAsset(small(), 'main', 'a', 'cd'.repeat(32)));
+  const tiles = grid(gif, 'main').tiles;
+  tiles[0] = { ...tiles[0], render: 'gif', icon: null, asset: `sha256:${'cd'.repeat(32)}` };
+  assert.equal(parseLayout(canonical(gif)).ok, true);
+  const still = ok(setAsset(gif, 'main', 'a', 'ef'.repeat(32)));
+  assert.equal(Object.hasOwn(grid(still, 'main').tiles[0], 'render'), false);
+  assert.equal(grid(still, 'main').tiles[0].asset, `sha256:${'ef'.repeat(32)}`);
+  const glyph = ok(setIcon(gif, 'main', 'a', 'lv:mute'));
+  assert.deepEqual([grid(glyph, 'main').tiles[0].icon, Object.hasOwn(grid(glyph, 'main').tiles[0], 'render'), glyph.schema], ['lv:mute', false, 1]);
+});
+
+function setIconOk(layout: Layout, icon: string): Layout {
+  return ok(setIcon(layout, 'main', 'a', icon));
+}
 
 test('removeTile drops only that tile', () => {
   assert.deepEqual(

@@ -77,6 +77,7 @@ struct State {
     v2: bool,
     selected_v2: bool,
     device_name: String,
+    gif_capabilities: bool,
     settings: Settings,
     icons: BTreeSet<String>,
     icon_files: HashMap<String, Vec<u8>>,
@@ -159,6 +160,7 @@ impl MockDeck {
                 v2: false,
                 selected_v2: false,
                 device_name: "Open TouchDeck".into(),
+                gif_capabilities: false,
                 settings: Settings::default(),
                 icons: BTreeSet::new(),
                 icon_files: HashMap::new(),
@@ -202,6 +204,10 @@ impl MockDeck {
         }
     }
 
+    pub fn set_gif_capabilities(&self, enabled: bool) {
+        self.state().gif_capabilities = enabled;
+    }
+
     pub fn v2() -> Self {
         let device = Self::new();
         device.state().v2 = true;
@@ -226,10 +232,12 @@ impl MockDeck {
         self.state.lock().unwrap()
     }
 
-    /// Simulates the ROM flasher writing a validated bundle, preserving Layout storage.
+    /// Simulates the ROM flasher writing a validated bundle, preserving Layout storage. The board
+    /// then runs Firmware that speaks protocol 2.
     pub fn flash_bundle(&self, bundle: &crate::bundle::Bundle) {
         let mut state = self.state();
         state.silent = false;
+        state.v2 = true;
         state.hello.product = "touchdeck".into();
         state.hello.version = bundle.manifest.version.clone();
         state.hello.elf_sha256 = bundle.manifest.elf_sha256.clone();
@@ -980,6 +988,15 @@ impl MockDeck {
                             "layout_bytes":32768,"layout_schemas":[1,2],"free_bytes":asset_space(&state).3,"tile_kinds":["static"],
                             "asset_bytes":12300,"formats":["tdi1"],"image":[64,64],"gif_frames":0,"gif_pixels":0,
                             "photo_bytes":0,"live_hz":0,"live_total_hz":0,"series":0,"text_bytes":0,"streams":0}));
+                        if state.gif_capabilities {
+                            let caps = reply.get_mut("caps").unwrap();
+                            caps["anim"] = json!({"image":[128,128],"min_delay_ms":100,"page_tiles":4,"page_pixels":65536});
+                            caps["formats"] = json!(["tdi1", "gif"]);
+                            caps["tile_kinds"] = json!(["static", "gif"]);
+                            caps["asset_bytes"] = json!(262144);
+                            caps["gif_frames"] = json!(60);
+                            caps["gif_pixels"] = json!(983040);
+                        }
                     }
                 }
                 Ok(reply)

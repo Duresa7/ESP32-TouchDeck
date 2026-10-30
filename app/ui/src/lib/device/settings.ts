@@ -32,13 +32,35 @@ export interface DeviceSettingsDeps {
   restartTimeoutMs?: number;
 }
 
-const NAME_BYTES = 48;
+export const NAME_BYTES = 48;
+
+export type NameBreak = 'empty' | 'too-long' | 'special';
+
+export function nameBreak(name: string): NameBreak | null {
+  if (!/\S/u.test(name)) return 'empty';
+  if (new TextEncoder().encode(name).length > NAME_BYTES) return 'too-long';
+  if ([...name].some((c) => c <= '\u001f' || c === '\u007f')) return 'special';
+  return null;
+}
+
+export const SPECIAL_CHARACTERS = 'Remove tabs, line breaks and other special characters.';
 
 export function nameProblem(name: string): string | null {
-  if (!/\S/u.test(name)) return 'Give the Device a name.';
-  if (new TextEncoder().encode(name).length > NAME_BYTES) return 'That name is too long for the Device.';
-  if ([...name].some((c) => c <= '\u001f' || c === '\u007f')) return 'Remove tabs, line breaks and other special characters.';
-  return null;
+  const broken = nameBreak(name);
+  switch (broken) {
+    case null:
+      return null;
+    case 'empty':
+      return 'Give the Device a name.';
+    case 'too-long':
+      return 'That name is too long for the Device.';
+    case 'special':
+      return SPECIAL_CHARACTERS;
+    default: {
+      const _exhaustive: never = broken;
+      return _exhaustive;
+    }
+  }
 }
 
 const NO_CHANGE: DeviceSettingsPatch = { idle_timeout_s: null, orientation: null, name: null, brightness: null };

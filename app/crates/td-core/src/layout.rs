@@ -139,6 +139,13 @@ impl Page {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub enum TileRender {
+    Gif,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Tile {
     pub id: String,
@@ -150,6 +157,8 @@ pub struct Tile {
     pub icon: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render: Option<TileRender>,
     pub action: Action,
 }
 
@@ -1023,7 +1032,7 @@ impl Check {
             value,
             pointer,
             &fields,
-            if self.v2 { &["asset"] } else { &[] },
+            if self.v2 { &["asset", "render"] } else { &[] },
         ) else {
             return;
         };
@@ -1054,6 +1063,16 @@ impl Check {
                 }
             }
             Some((_, at)) => self.wrong_type(&at, "string,null"),
+        }
+        if let Some((render, at)) = self.field(obj, pointer, "render").filter(|_| self.v2)
+            && (!matches!(render, Json::Str(s) if s.text == "gif")
+                || !matches!(obj.get("asset"), Some(Json::Str(_))))
+        {
+            self.fail(
+                Rule::IconFormat,
+                &at,
+                "render must be gif with an Asset reference",
+            );
         }
         if let Some((asset, at)) = self.field(obj, pointer, "asset") {
             let valid = matches!(asset, Json::Null)
@@ -1172,7 +1191,7 @@ mod tests {
 
     #[test]
     fn bundled_layouts_are_valid() {
-        for name in ["builtin.json", "dev.json", "full-screen.json"] {
+        for name in ["builtin.json", "dev.json", "full-screen.json", "gif.json"] {
             let bytes = std::fs::read(schema_dir().join("examples").join(name)).unwrap();
             let layout =
                 Layout::parse(&bytes).unwrap_or_else(|errors| panic!("{name}: {errors:?}"));

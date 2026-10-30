@@ -11,7 +11,7 @@ identifies the app's source revision. The window title reads **Open TouchDeck**.
 version and image identity. Desktop app updates and deck firmware updates are
 separate operations.
 
-Built with Tauri 2, Svelte 5, and Rust, the app discovers USB decks and provides a debug console pane.
+Built with Electron, React, and a Rust Companion, the app discovers USB decks and provides a debug console pane.
 
 ## Install a published build
 
@@ -50,58 +50,33 @@ pwsh -NoProfile -File app/scripts/setup-windows.ps1
 
 The script installs missing development tools. Review it before running it, and
 open a new PowerShell afterward. It is a developer setup script, not the desktop
-app installer. Linux builds also need the WebKitGTK 4.1, GTK, and libudev development
-packages described in the setup guide.
+app installer. Linux builds also need the libudev development package described in the setup guide.
 
 From `app/`, build the production app:
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm tauri build
+pnpm build:ui
+cargo build -p td-companion
+pnpm --filter @touchdeck/electron build
 ```
 
-The executable is `target/release/touchdeck.exe` on Windows or
-`target/release/touchdeck` on Linux. Frontend
-assets and built-in icons are embedded in the app. Building the app does not flash
-the deck or create a published release. Firmware build and `.tdfw` instructions
-are in the [USB user guide](../docs/usage.md#install-or-update-deck-firmware).
-
-Do not enable the `e2e` feature for an app you distribute. The packaging recipe
-owns installer and release generation, including any updater configuration.
+The Companion executable is `target/debug/td-companion.exe` on Windows or
+`target/debug/td-companion` on Linux. The Companion embeds the built UI.
+The packaging recipe owns installer and release generation.
 
 ## Develop and check changes
 
 Run these commands from `app/` after installing dependencies:
 
 ```sh
-pnpm tauri dev
+pnpm dev:electron
 pnpm lint
 pnpm test
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
 cargo fmt --check
 ```
-
-`pnpm tauri dev` opens the app against real USB devices. To use the mock deck
-without a board, set the environment before starting the command. In PowerShell:
-
-```powershell
-$env:TOUCHDECK_MOCK = '1'
-$env:TOUCHDECK_INPUT = 'fake'
-pnpm tauri dev
-```
-
-In a POSIX shell:
-
-```sh
-TOUCHDECK_MOCK=1 TOUCHDECK_INPUT=fake pnpm tauri dev
-```
-
-The mock implements the app link in process, including layouts, settings,
-icons, Sources messages, and firmware update scenarios. Tests can emit key and
-press events, drop messages, or close the connection. Fake input records key
-operations without typing into the host session. Mock checks do not verify real
-serial permissions, keyboard input, credential storage, or physical panel behavior.
 
 ### Electron shell
 
@@ -128,9 +103,9 @@ tests, and from `td-companion` next to the app executable when packaged.
 | `crates/td-core` | Frame codec, link messages, layout validation, settings, and source-config path/storage helpers. |
 | `crates/td-link` | Serial and mock transports, transfers, firmware update and ROM recovery, and the link CLI. |
 | `crates/td-host` | Host input, actions, approvals, icon processing, and Sources. |
-| `src-tauri` | Desktop shell, app commands, and per-user storage integration. |
-| `src` | Svelte window and its Deck, Editor, Actions, Settings, Sources, and Update views. |
-| `e2e` | WebdriverIO specs and their runner. |
+| `crates/td-companion` | Background Companion and local API. |
+| `electron` | Desktop window and updater. |
+| `ui` | React UI and Playwright specs. |
 
 The [layout format](../schema/README.md) and
 [framed app link](../schema/protocol/link-v1.md) describe the files and protocol.
@@ -153,20 +128,15 @@ Replace `COM3` with your deck's port. The CLI prints JSON and exits `0` on succe
 
 ## Run end-to-end tests
 
-Build a separate test app, then run the specs from `app/`:
+Run the React specs against the fake Companion from `app/`:
 
 ```sh
-pnpm tauri build --features e2e
-pnpm e2e
+pnpm e2e:ui
 ```
 
-The `e2e` Cargo feature adds a WebDriver server on port 4445 or
-`TAURI_WEBDRIVER_PORT`. Never distribute that executable. `pnpm e2e` starts the
-built app for each spec and writes results and screenshots to `TD_E2E_OUT`,
-defaulting to `target/e2e`. `TD_E2E_SPEC=<name>` selects one spec.
-`TD_E2E_ATTACH_PORT=<port>` drives an already running test app.
+For the real Companion API tests:
 
-A spec named `name.spec.ts` runs on every OS, `name.win.spec.ts` only on Windows,
-and `name.linux.spec.ts` only on Linux. The Editor export spec substitutes a
-save-picker writer. It checks serialized content, not a native save dialog or an
-actual file saved by the installed app.
+```sh
+pnpm build:ui
+pnpm e2e:ui:companion
+```

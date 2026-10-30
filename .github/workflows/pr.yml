@@ -44,6 +44,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.app == 'true'
     uses: ./.github/workflows/app.yml
+    with:
+      os: '["windows-latest"]'
 
   firmware:
     needs: changes

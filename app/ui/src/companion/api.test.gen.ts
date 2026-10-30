@@ -2,6 +2,8 @@
 export type ApprovalScript = { answers: Array<ScriptAnswer>, };
 export type BoardKind = "device" | "device-v1" | "silent" | "other-firmware" | "busy";
 export type ClockAdvance = { advance_ms: number, };
+export type ConsentAnswer = "accept" | "decline";
+export type ConsentScript = { answers: Array<ConsentAnswer>, };
 export type ConsoleLine = { line: string, };
 export type Delivery = { url: string | null, notification: string | null, };
 export type DeviceId = string;
@@ -24,6 +26,7 @@ export const testEndpoints = {
   'test.clock': { method: 'POST', path: '/test/clock', access: 'session' },
   'test.console': { method: 'POST', path: '/test/devices/{device}/console', access: 'session' },
   'test.emit': { method: 'POST', path: '/test/devices/{device}/emit', access: 'session' },
+  'test.firmware_script': { method: 'POST', path: '/test/firmware/script', access: 'session' },
   'test.input_log': { method: 'GET', path: '/test/input-log', access: 'session' },
   'test.mock': { method: 'POST', path: '/test/devices/{device}/mock', access: 'session' },
   'test.pairing_delivery': { method: 'GET', path: '/test/pairing-delivery', access: 'session' },

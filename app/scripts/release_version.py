@@ -4,9 +4,8 @@
     python app/scripts/release_version.py check [--tag vX.Y.Z]
     python app/scripts/release_version.py bump X.Y.Z
 
-check exits nonzero when app/package.json and app/electron/package.json
-disagree, or when --tag is not "v" plus that version. bump rewrites only
-those version strings and leaves every other byte, line endings included, unchanged.
+check verifies the app and Electron package versions and an optional release tag.
+bump changes only those version strings, preserving all other bytes.
 """
 
 import argparse
@@ -17,8 +16,6 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
-# Each pattern captures the text before and after the one version string it owns.
-# A top-level JSON "version" follows only scalar members, so nested objects cannot be mistaken for it.
 JSON_VERSION = re.compile(r'(\A\{\s*(?:"[^"]*"\s*:\s*(?:"[^"]*"|true|false|null|-?[0-9][0-9.eE+-]*)\s*,\s*)*?'
                           r'"version"\s*:\s*")([^"]*)(")')
 PATTERNS = {

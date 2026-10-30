@@ -1,4 +1,3 @@
-// Usage: node lifecycle_update.mjs <good|tampered> <current version> <lifecycle dir> <result.json>
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';

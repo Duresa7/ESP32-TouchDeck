@@ -12,6 +12,28 @@
 #include "td_asset.h"
 #include "esp_mac.h"
 
+
+cJSON *td_link_capabilities(void)
+{
+    cJSON *caps = cJSON_Parse("{\"screen\":[1024,600],\"grid\":[8,8],\"pages\":8,\"tiles\":64,\"layout_bytes\":32768,\"layout_schemas\":[1,2],\"tile_kinds\":[\"static\"],\"asset_bytes\":12300,\"formats\":[\"tdi1\"],\"image\":[64,64],\"gif_frames\":0,\"gif_pixels\":0,\"photo_bytes\":0,\"live_hz\":0,\"live_total_hz\":0,\"series\":0,\"text_bytes\":0,\"streams\":0}");
+#if CONFIG_TD_GIF_CAPS
+    const td_link_animation_caps_t anim = { .image = {128, 128}, .min_delay_ms = 100, .page_tiles = 4, .page_pixels = 65536 };
+    cJSON *object = cJSON_AddObjectToObject(caps, "anim");
+    cJSON_AddItemToObject(object, "image", cJSON_CreateIntArray(anim.image, 2));
+    cJSON_AddNumberToObject(object, "min_delay_ms", anim.min_delay_ms);
+    cJSON_AddNumberToObject(object, "page_tiles", anim.page_tiles);
+    cJSON_AddNumberToObject(object, "page_pixels", anim.page_pixels);
+    const char *formats[] = {"tdi1", "gif"};
+    const char *kinds[] = {"static", "gif"};
+    cJSON_ReplaceItemInObjectCaseSensitive(caps, "formats", cJSON_CreateStringArray(formats, 2));
+    cJSON_ReplaceItemInObjectCaseSensitive(caps, "tile_kinds", cJSON_CreateStringArray(kinds, 2));
+    cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "asset_bytes"), 262144);
+    cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "gif_frames"), 60);
+    cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "gif_pixels"), 983040);
+#endif
+    return caps;
+}
+
 static bool s_v2;
 bool td_link_v2_selected(void) { return s_v2 && td_link_state().online; }
 
@@ -99,7 +121,7 @@ static void hello(const cJSON *request, cJSON *reply)
         snprintf(id, sizeof id, "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
         cJSON_AddStringToObject(reply, "id", id);
         cJSON_AddStringToObject(reply, "name", name);
-        cJSON *caps = cJSON_Parse("{\"screen\":[1024,600],\"grid\":[8,8],\"pages\":8,\"tiles\":64,\"layout_bytes\":32768,\"layout_schemas\":[1,2],\"tile_kinds\":[\"static\"],\"asset_bytes\":12300,\"formats\":[\"tdi1\"],\"image\":[64,64],\"gif_frames\":0,\"gif_pixels\":0,\"photo_bytes\":0,\"live_hz\":0,\"live_total_hz\":0,\"series\":0,\"text_bytes\":0,\"streams\":0}");
+        cJSON *caps = td_link_capabilities();
         if (strcmp(ui_layout_slot(), "portrait") == 0) {
             const int screen[] = {600, 1024};
             cJSON_ReplaceItemInObjectCaseSensitive(caps, "screen", cJSON_CreateIntArray(screen, 2));

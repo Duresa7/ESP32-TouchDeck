@@ -16,6 +16,7 @@ Related decisions: [ADR 0001](adr/0001-rust-companion-behind-electron.md) (Rust 
 - Every error has one shape: `{"error": {"code", "message", "details"}}`.
 - No session can approve a command. Approvals happen in a native dialog on the PC.
 - Routes are declared once with a typed `Endpoint` trait. ts-rs generates the TypeScript client, and a test fails when the committed file is stale.
+- Each generated wrapper takes an optional `AbortSignal` after its headers, so a client can drop a request it no longer needs. Query parameters set to `null` or `undefined` are left out of the URL.
 - `/api/v1` changes only by addition.
 
 ## Transport
@@ -569,7 +570,7 @@ Requests carrying a credential never follow a redirect to another origin. They s
 | Name | Method and path | Request → Response |
 |---|---|---|
 | `integrations.list` | `GET /integrations` | → `IntegrationSummary[] {id, name, icon, enabled, status, config_schema, presets}`. `status` reports delivery per Device as `{device, sent, error}` |
-| `integrations.get` | `GET /integrations/{integration}` | → `{summary, config, secrets: {[field]: {set, hint?}}}` |
+| `integrations.get` | `GET /integrations/{integration}` | → `{summary, config, secrets: {[field]: {set}}, detail}` |
 | `integrations.config_put` | `PUT /integrations/{integration}/config` | Config, checked against the Integration's schema → the same view as `integrations.get` |
 | `integrations.secret_put` | `PUT /integrations/{integration}/secrets/{field}` | `{value}` → `{hint}`. Write-only. The value never comes back and is never in `config` |
 | `integrations.secret_delete` | `DELETE /integrations/{integration}/secrets/{field}` | → `()` |
@@ -579,7 +580,50 @@ CLIProxyAPI config is `{enabled: boolean, url: string, interval_s: integer}`. Th
 
 `IntegrationSummary` also includes `streams: {id, kind, unit}[]` and `actions: string[]`. Its `status` is `{state: "ok" | "error" | "not_configured", message, delivery: {device, sent, error}[]}`. Delivery entries are supplied by the Device scheduler; an Integration without a bound Device has an empty delivery list. Presets contain `{id, name, action}` with the existing Layout action shape. Live tile readings stay inside the Companion.
 
+CLIProxyAPI `detail` is read-only and null until the first poll (and after config or secret resets). Otherwise it is `{accounts, polled_ms}`, with a Unix-millisecond poll timestamp. Each account is `{provider, account, status, success, failed, recent_10m, plan, five_hour, seven_day, error}`. `account` is the display label; `plan` and `error` are nullable strings. Each window is null or `{pct, resets_at_ms}`, with a nullable Unix-millisecond reset timestamp. Failed polls retain the last account data, with the failure in summary status. No credential, token, auth index or secret hint is included.
+
+`IntegrationSummary.revision` increases when detail changes, including resets. The existing `integration.status` event carries this revision so clients can refetch `integrations.get`; sync carries the current summary revision.
+
+CLIProxyAPI Preset tiles have this fixed order and copy names:
+
+| id | name |
+|---|---|
+| `status` | Account status |
+| `success` | Requests OK |
+| `failed` | Requests failed |
+| `recent_10m` | Requests in 10 min |
+| `five_hour_pct` | 5-hour limit used |
+| `seven_day_pct` | 7-day limit used |
+| `five_hour_reset` | 5-hour reset in |
+| `seven_day_reset` | 7-day reset in |
+| `plan` | Plan |
+
+With `test-hooks`, mock Integrations use real HTTP only for explicitly configured `http://127.0.0.1:PORT` stub URLs. Other mock URLs retain the empty fixture transport. This permits local stub tests with mock Devices and memory-only credentials.
+
 Each Integration's Preset tiles are in `presets`. Live tiles get their values through the Device link, never through this API ([ADR 0004](adr/0004-firmware-draws-live-tiles.md)).
+
+#### This PC
+
+`this_pc` has config `{enabled: boolean}` (default `true`), no secrets and the `refresh` action. Unknown fields are rejected. Disabling clears readings and stops collection; re-enabling resets the rate baseline. The configuration is saved beside sources.json as this-pc.json.
+
+All streams have kind `numeric`. Streams and Preset tiles use this fixed order; the Preset id matches the stream id:
+
+| Stream id | Preset tile name | Unit |
+|---|---|---|
+| `cpu_pct` | CPU usage | `%` |
+| `ram_pct` | RAM usage | `%` |
+| `ram_used_bytes` | RAM used | `bytes` |
+| `ram_total_bytes` | RAM total | `bytes` |
+| `gpu_pct` | GPU usage | `%` |
+| `disk_active_pct` | Disk activity | `%` |
+| `disk_read_bytes_s` | Disk read | `bytes/s` |
+| `disk_write_bytes_s` | Disk write | `bytes/s` |
+| `network_receive_bytes_s` | Network receive | `bytes/s` |
+| `network_send_bytes_s` | Network send | `bytes/s` |
+
+Every Preset uses `{type: "widget", source: "this_pc", account: "", field: <stream id>}`. Windows opens one PDH query and adds counters once. Collection runs at most once per second, including manual refresh. CPU uses Processor Information total Processor Utility; disk activity is 100 minus PhysicalDisk total idle time. GPU usage sums instances by engine type and takes the busiest type, capped at 100%. RAM comes from GlobalMemoryStatusEx. Disk and network rates use cumulative-byte deltas divided by elapsed monotonic time; the first sample and counter resets emit no rate. Network sums physical adapters present when the Integration starts; restart the Companion after adding an adapter.
+
+A missing counter omits only its readings; descriptors and Presets stay discoverable. Status is `error` with `Unavailable: {names}.` using the Preset names in order. Healthy streams continue. Non-Windows builds emit no readings and report `This PC needs Windows.`. Values stay inside the Companion for Device delivery, never in HTTP responses. Live tile drawing and binding are tracked in #96.
 
 ### System
 
@@ -641,6 +685,7 @@ Feature module `test_hooks`, compiled only with the `test-hooks` Cargo feature a
 | `test.ports` | `POST /test/ports` | `{plug: {id, kind: "device" \| "device-v1" \| "silent" \| "other-firmware" \| "busy"}}` or `{unplug: id}` → `()` |
 | `test.approvals_script` | `POST /test/approvals/script` | `{answers: ("once" \| "always" \| "deny" \| "fail" \| "never")[]}` → `()`. Sets what the `FakePrompter` answers next. `fail` acts as a dialog that can't be shown |
 | `test.clock` | `POST /test/clock` | `{advance_ms}` → `()`. Moves the Companion's clock for expiry tests |
+| `test.firmware_script` | `POST /test/firmware/script` | `{answers: ("accept" \| "decline")[]}` → `()`. Replaces the native Firmware dialogs with a scripted prompter that gives these consent answers in order and waits once they run out. Its file picker returns the test bundle |
 
 ## Mapping from today's Tauri commands and events
 
@@ -1020,3 +1065,42 @@ contract's combined wrong-or-expired message because both share `auth.code_inval
 Mock runs capture native delivery in memory. Only test-hook builds register
 `test.pairing_delivery`, which requires a window session and consumes the captures;
 its types appear only in `api.test.gen.ts`.
+
+## Animated GIF contract (implementation follows in #94)
+
+An animated Asset has `kind:"gif"`, media type `image/gif` and an id equal to
+SHA-256 of its normalized encoded bytes. GIF uploads and `assets.render` use the
+following fitting contract; the PNG/JPEG and tdi1 implementation above remains
+available. A mock Device can opt into GIF capabilities for integration tests;
+real Firmware and mock Devices default to GIF off. Absence of `caps.anim` means
+off even when `formats` includes `gif`.
+
+Source limits are 16 MiB encoded, 4096 by 4096 pixels, 300 frames and 64 MiB
+cumulative decoded RGBA, counted while streaming. Preparation proceeds in order:
+
+1. Compose source frames, including disposal 2 and 3.
+2. Fit with contain or cover to the actual Tile region, capped at `anim.image`.
+3. Resample time to at least `min_delay_ms` per frame, preserving total duration.
+4. Quantize to one global palette.
+5. Encode normalized GIF as specified in `schema/protocol/link-v2.md`.
+
+If encoded bytes exceed `asset_bytes`, step the canvas down. Enforce
+`gif_pixels` as well. Refuse output exceeding `gif_frames` as too long; never
+truncate silently. Identical input and target produce identical bytes and hash.
+Refit after a resize, orientation change or target Device change.
+
+Before Layout push, check every Page against `anim.page_tiles` and
+`anim.page_pixels` (sum of animated canvas areas, once per Tile even for reused
+Assets). Refuse the push before transferring or replacing the current Layout.
+Firmware independently enforces the same budgets and validates complete Assets.
+
+| Error code | Meaning | `details` |
+| --- | --- | --- |
+| `asset.too_large` | Source or fitted GIF exceeds a bound | `{limit, actual, unit, field}` with numeric limit/actual and field naming the source or capability limit |
+| `asset.unsupported` | GIF unavailable or encoding unsupported | `{limit, actual, field, reason}`; limit/actual identify the required and observed format or capability, reason retains the wire reason when present |
+| `layout.animation_limit` | A Page exceeds animation count or area | `{page, field, limit, actual}`; field is `page_tiles` or `page_pixels` |
+
+These are Job errors for preparation/push failures. Source upload admission
+continues to use the documented HTTP 413 `request.too_large`. Wire `size`,
+`format`, `memory` and `full` remain typed through the API; storage and allocation
+failures must not be reported as generic link text. Raw reasons go under Details.

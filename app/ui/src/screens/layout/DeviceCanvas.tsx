@@ -8,6 +8,7 @@ import type { Line } from '../../lib/deck/text.ts';
 import { THEME } from '../../lib/deck/theme.ts';
 import type { EditorStore, Target } from '../../lib/editor/store.ts';
 import type { GridPage, Layout, Tile } from '../../lib/editor/validate.ts';
+import { AssetImage } from './AssetImage.tsx';
 import { BuiltinIcon } from './glyphs.tsx';
 
 const SIZE: Record<FontSize, string> = { 48: 'var(--screen-text-legend)', 28: 'var(--screen-text-label)', 14: 'var(--screen-text-sub)' };
@@ -528,7 +529,11 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
                 {tv.texts.map((text, n) => (
                   <SceneText key={n} view={text} />
                 ))}
-                {tv.image && <span className="scene-image" style={{ left: tv.image.x, top: tv.image.y, width: tv.image.size, height: tv.image.size }} />}
+                {tv.image && (
+                  <span className="scene-image" style={{ left: tv.image.x, top: tv.image.y, width: tv.image.size, height: tv.image.size }}>
+                    <AssetImage key={tv.image.id} id={tv.image.id} size={tv.image.size} />
+                  </span>
+                )}
                 {tv.bar && <span className="scene-bar" style={{ left: tv.bar.x, top: tv.bar.y, width: tv.bar.w, height: tv.bar.h, borderRadius: tv.bar.radius }} />}
                 {mod === 'locked' && <Lock className="scene-lock" size={30} strokeWidth={3} aria-hidden />}
                 {badge !== null && (

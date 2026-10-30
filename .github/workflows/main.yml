@@ -1,0 +1,14 @@
+name: main
+
+# Run it by hand from the Actions tab to check a branch on every OS before it merges.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    uses: ./.github/workflows/app.yml
