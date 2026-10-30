@@ -150,6 +150,13 @@ names are case-sensitive and the app derives each hash from file contents. A fil
 icon names a bitmap in deck storage. The validator checks the name, not file
 presence.
 
+Schema 2 tiles may add `asset`, `render` and `streams`, as
+[USB link v2](protocol/link-v2.md#layout-references-and-live-values) defines.
+`render: "gif"` needs a `sha256:` Asset and `icon: null`. `render: "graph"` is a
+Live tile that draws one number stream, so its `streams` is exactly
+`{"value": "number"}` or `{"value": "series"}`. A Tile without `render` declares
+no streams. Schema 1 rejects all three fields.
+
 The six built-in icon names reproduce milestone 1's media icons.
 
 | Name | LVGL glyph |
@@ -272,6 +279,7 @@ keys. Rules whose key starts with `file.` or `json.` apply to the file's text, a
 | `tile.span` | `rowSpan` or `colSpan` is outside 1 to 8. |
 | `tile.bounds` | A tile extends past its page's rows or columns. |
 | `tile.overlap` | Two tiles on one page occupy the same cell. |
+| `tile.streams` | A schema 2 tile's `streams` do not match its `render`: a `graph` tile needs exactly `value` as `number` or `series`, and other tiles declare none. |
 | `icon.format` | `icon` is not `null`, a known `lv:` name, or `file:` and 16 lowercase hexadecimal digits. |
 | `action.type` | An action `type` is missing, or is not one of the nine types. |
 | `action.page-missing` | A `page` action names a page that does not exist. |

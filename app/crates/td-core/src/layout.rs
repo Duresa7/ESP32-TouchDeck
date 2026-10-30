@@ -1,7 +1,7 @@
 //! The layout format of `schema/layout.schema.json`, read with the rules of
 //! `schema/README.md`. Every failure carries the README's rule key.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -54,6 +54,7 @@ rules! {
     TileSpan => "tile.span",
     TileBounds => "tile.bounds",
     TileOverlap => "tile.overlap",
+    TileStreams => "tile.streams",
     IconFormat => "icon.format",
     ActionType => "action.type",
     PageMissing => "action.page-missing",
@@ -142,6 +143,43 @@ impl Page {
 #[serde(rename_all = "lowercase")]
 pub enum TileRender {
     Gif,
+    Graph,
+}
+
+/// The value type of one stream a Live tile declares, as `v2.live.set` sends it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub enum StreamType {
+    Number,
+    Series,
+    Text,
+    Image,
+}
+
+impl StreamType {
+    pub const ALL: [StreamType; 4] = [Self::Number, Self::Series, Self::Text, Self::Image];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Number => "number",
+            Self::Series => "series",
+            Self::Text => "text",
+            Self::Image => "image",
+        }
+    }
+}
+
+impl TileRender {
+    /// The streams this renderer binds, each with the types it accepts.
+    pub fn streams(
+        render: Option<&TileRender>,
+    ) -> &'static [(&'static str, &'static [StreamType])] {
+        match render {
+            Some(TileRender::Graph) => &[("value", &[StreamType::Number, StreamType::Series])],
+            _ => &[],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,6 +197,8 @@ pub struct Tile {
     pub asset: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub render: Option<TileRender>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub streams: Option<BTreeMap<String, StreamType>>,
     pub action: Action,
 }
 
@@ -278,6 +318,34 @@ impl Layout {
                             tile.id
                         ),
                     ));
+                }
+                let bindings = TileRender::streams(tile.render.as_ref());
+                let streams = tile.streams.clone().unwrap_or_default();
+                for (id, kind) in &streams {
+                    if !bindings
+                        .iter()
+                        .any(|(name, kinds)| name == id && kinds.contains(kind))
+                    {
+                        errors.push(error(
+                            Rule::TileStreams,
+                            format!(
+                                "page \"{page_id}\" tile \"{}\" cannot bind stream \"{id}\" as \"{}\"",
+                                tile.id,
+                                kind.name()
+                            ),
+                        ));
+                    }
+                }
+                for (name, _) in bindings {
+                    if !streams.contains_key(*name) {
+                        errors.push(error(
+                            Rule::TileStreams,
+                            format!(
+                                "page \"{page_id}\" tile \"{}\" needs stream \"{name}\"",
+                                tile.id
+                            ),
+                        ));
+                    }
                 }
                 if tile.row + tile.row_span > *rows || tile.col + tile.col_span > *cols {
                     errors.push(error(
@@ -1032,7 +1100,11 @@ impl Check {
             value,
             pointer,
             &fields,
-            if self.v2 { &["asset", "render"] } else { &[] },
+            if self.v2 {
+                &["asset", "render", "streams"]
+            } else {
+                &[]
+            },
         ) else {
             return;
         };
@@ -1064,15 +1136,36 @@ impl Check {
             }
             Some((_, at)) => self.wrong_type(&at, "string,null"),
         }
-        if let Some((render, at)) = self.field(obj, pointer, "render").filter(|_| self.v2)
-            && (!matches!(render, Json::Str(s) if s.text == "gif")
-                || !matches!(obj.get("asset"), Some(Json::Str(_))))
-        {
-            self.fail(
-                Rule::IconFormat,
-                &at,
-                "render must be gif with an Asset reference",
-            );
+        if let Some((render, at)) = self.field(obj, pointer, "render").filter(|_| self.v2) {
+            let valid = match render {
+                Json::Str(s) if s.text == "gif" => matches!(obj.get("asset"), Some(Json::Str(_))),
+                Json::Str(s) => s.text == "graph",
+                _ => false,
+            };
+            if !valid {
+                self.fail(
+                    Rule::IconFormat,
+                    &at,
+                    "render must be graph, or gif with an Asset reference",
+                );
+            }
+        }
+        if let Some((streams, at)) = self.field(obj, pointer, "streams") {
+            match streams {
+                Json::Object(members) => {
+                    let known = members.iter().all(|(_, value)| {
+                        matches!(value, Json::Str(s) if StreamType::ALL.iter().any(|t| t.name() == s.text))
+                    });
+                    if !known {
+                        self.fail(
+                            Rule::TileStreams,
+                            &at,
+                            "stream types must be number, series, text or image",
+                        );
+                    }
+                }
+                _ => self.wrong_type(&at, "object"),
+            }
         }
         if let Some((asset, at)) = self.field(obj, pointer, "asset") {
             let valid = matches!(asset, Json::Null)
@@ -1191,7 +1284,13 @@ mod tests {
 
     #[test]
     fn bundled_layouts_are_valid() {
-        for name in ["builtin.json", "dev.json", "full-screen.json", "gif.json"] {
+        for name in [
+            "builtin.json",
+            "dev.json",
+            "full-screen.json",
+            "gif.json",
+            "graph.json",
+        ] {
             let bytes = std::fs::read(schema_dir().join("examples").join(name)).unwrap();
             let layout =
                 Layout::parse(&bytes).unwrap_or_else(|errors| panic!("{name}: {errors:?}"));
@@ -1203,6 +1302,26 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn graph_tiles_declare_their_value_stream() {
+        let bytes = std::fs::read(schema_dir().join("examples/graph.json")).unwrap();
+        let layout = Layout::parse(&bytes).unwrap();
+        let Page::Grid { tiles, .. } = &layout.pages[0] else {
+            panic!("grid page")
+        };
+        assert_eq!(tiles[0].render, Some(TileRender::Graph));
+        assert_eq!(
+            tiles[0].streams.as_ref().unwrap()["value"],
+            StreamType::Number
+        );
+        assert_eq!(
+            tiles[1].streams.as_ref().unwrap()["value"],
+            StreamType::Series
+        );
+        let text = String::from_utf8(layout.to_canonical_json()).unwrap();
+        assert!(text.contains(r#""render":"graph","streams":{"value":"number"}"#));
     }
 
     #[test]
