@@ -1,9 +1,11 @@
 name: main
 
 # The full app matrix, including the Tauri e2e, after each merge. It also saves the Rust cache that pull requests restore.
+# Run it by hand from the Actions tab to check a branch on every OS before it merges.
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read

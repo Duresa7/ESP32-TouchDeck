@@ -96,6 +96,31 @@ async fn pings(client: &reqwest::Client, info: &Value) -> bool {
         .await
         .is_ok_and(|r| r.status().is_success())
 }
+/// Waits until `count` Devices are connected. The scan logs each mock Device before it connects.
+async fn connected(client: &reqwest::Client, info: &Value, token: &str, count: usize) {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let devices: Value = client
+                .get(format!("{}/api/v1/devices", url(info)))
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let links = devices.as_array().unwrap().iter();
+            if links.filter(|d| d["link"]["state"] == "connected").count() == count {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+    })
+    .await
+    .expect("the mock Devices connect");
+}
 async fn stop(child: &mut Process, client: &reqwest::Client, info: &Value, token: &str) {
     let response = client
         .post(format!("{}/api/v1/system/shutdown", url(info)))
@@ -401,6 +426,7 @@ async fn pairing_codes_reach_only_the_delivery_capture() {
     assert!(frames.last().unwrap().contains("auth.revoked"));
     let info = runtime(root.path()).await;
     let token = session(&client, &info).await;
+    connected(&client, &info, &token, 2).await;
     stop(&mut child, &client, &info, &token).await;
     let logs = [stdout.join().unwrap(), stderr.join().unwrap()];
     assert!(!logs[1].is_empty(), "the mock Devices log to stderr");
