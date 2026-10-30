@@ -4,7 +4,7 @@ Open TouchDeck connects through USB-Serial/JTAG. The running desktop app mirrors
 
 ## Running a distributed app versus building it
 
-A distributed app does not need Node, pnpm, Rust, or a C++ compiler. Windows needs the [Microsoft WebView2 Runtime](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution). Linux needs a graphical desktop, the matching WebKitGTK/GTK runtime libraries, USB serial access, and permission to create a virtual keyboard through `/dev/uinput`.
+A distributed app does not need Node, pnpm, Rust, or a C++ compiler. The Windows installer carries the Electron window, the Companion and the Firmware bundle; the [packaging guide](packaging.md) describes it. Linux needs a graphical desktop, the matching WebKitGTK/GTK runtime libraries, USB serial access, and permission to create a virtual keyboard through `/dev/uinput`.
 
 Source builds use **Node.js 24**, matching [app CI](../.github/workflows/app.yml), and the **exact pnpm version in [app/package.json](../app/package.json)** (currently `12.12.1`). Use stable Rust, at least the workspace's declared minimum in [app/Cargo.toml](../app/Cargo.toml). Firmware build prerequisites are separate from desktop setup.
 
@@ -63,7 +63,7 @@ pnpm install --frozen-lockfile
 pnpm tauri build
 ```
 
-Do not enable the `e2e` feature for a distributed app.
+Do not enable the `e2e` feature for a distributed app. To build the Windows installer, follow [Build the installer](packaging.md#build-the-installer).
 
 ## Linux runtime libraries and device access
 

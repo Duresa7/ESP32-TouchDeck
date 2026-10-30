@@ -1,60 +1,63 @@
-# Windows distribution and app updates
+# Windows installer and app updates
 
-End users download the [Windows x64 installer](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/TouchDeck-windows-x64-setup.exe) from the latest published GitHub release and run it. That link becomes usable when the release owner publishes the first release with that asset. The NSIS installer defaults to `%LOCALAPPDATA%/TouchDeck`, per user. It installs `touchdeck.exe`, with `firmware/`, `licenses/`, `LICENSE.txt`, `PACKAGING.md` and `install-manifest.json`.
+End users download the [Windows x64 installer](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe) from the latest GitHub release and run it. It installs for the current user only and needs no administrator rights, Node, Rust, Python or ESP-IDF.
 
-Users need no Node, pnpm, Rust, Python, ESP-IDF, compiler, or developer setup script. The installer embeds the Microsoft WebView2 bootstrapper: if WebView2 is missing it downloads/installs the Evergreen runtime, requiring network access and possibly local approval. An existing runtime is reused. Rust binaries use a static MSVC CRT. This is not a fully offline installer. The companion ZIP assumes WebView2 is already available. See [developer setup](https://github.com/Duresa7/ESP32-TouchDeck/blob/main/docs/setup.md) only for source builds; packaging never runs that setup script on this host.
+## What it installs
 
-## App updates versus deck firmware
+The installer is built with [electron-builder](https://www.electron.build/nsis) (NSIS, assisted mode, per user). It always installs to `%LOCALAPPDATA%\Programs\Open TouchDeck`; the folder can't be changed, so the app never lands somewhere other users can write.
 
-Open **Settings → App updates → Check for updates**. A newer release displays its version and plain-text release notes. **Download update** downloads the installer with byte progress and verifies its signature and signed version before offering installation. Current-version, offline/unavailable, invalid-signature, network and installer-error states remain visible. Checking and downloading leave Open TouchDeck running.
+| Path | What it is |
+|---|---|
+| `Open TouchDeck.exe` | The Electron window |
+| `td-companion.exe` | The Companion, with the UI and the Firmware bundle built in |
+| `resources\app.asar` | The window's code |
+| `resources\firmware\touchdeck.tdfw` | The same Firmware bundle the Companion carries, for picking by hand |
+| `resources\install-manifest.json` | Source revision, version and the Firmware bundle's hashes |
+| `resources\LICENSE.txt`, `resources\licenses\` | Licenses |
+| `Uninstall Open TouchDeck.exe` | The uninstaller |
 
-Before **Install and close Open TouchDeck**, export any unsaved layout edits, disconnect the deck and finish deck operations. A backend reservation excludes installation from active deck transfers and blocks new transfers while installation starts. A connected deck also prevents installation. Windows then starts the installer and closes Open TouchDeck; installation progress appears in the installer. Open TouchDeck does not automatically relaunch. Open it again when installation finishes. The separate **Update** tab selects `.tdfw` bundles for the deck, not desktop app updates.
+It adds Start menu and desktop shortcuts and an entry in **Installed apps**. On its first start the Companion adds the per-user Run value `Open TouchDeck` so it starts at sign-in (see [companion-api.md](companion-api.md#tray-and-startup-implementation-decisions-79)).
 
-The application identifier remains `io.github.duresa7.touchdeck`. Upgrades replace binaries/resources and retain per-user config, approvals, source settings/state and icon cache. They do not modify the deck's stored layouts. No profile deletion or explicit uninstall is part of updating. Unsaved editor state is in memory: export before closing. Actual installed upgrade/preservation needs a disposable Windows environment; source/fixture checks alone do not establish it.
+User data stays outside the install folder: `%LOCALAPPDATA%\io.github.duresa7.touchdeck` (Companion data and its runtime file), `%APPDATA%\io.github.duresa7.touchdeck` and `%APPDATA%\Open TouchDeck` (the window).
 
-The bundled firmware always installs as `firmware/touchdeck.tdfw`. `install-manifest.json` records its version, source revision, bundle SHA-256, and image/ELF hashes.
+## Install, update and uninstall
 
-Updater signatures authenticate artifacts using the embedded public key. `requireSignedVersion` binds metadata version to the signed version, preventing an old artifact from being advertised under a newer number. TLS and signature checks remain enabled. Metadata checks have a 15-second total deadline. Installer downloads have no total deadline, with a 15-second connect timeout and a 30-second read timeout that resets as data arrives. A failed installer launch keeps the app window and verified download available. Offline retry guidance appears only for network or unavailable-release errors. Updater signatures are separate from Windows Authenticode signing: this work supplies no Authenticode certificate, SmartScreen reputation or store approval.
+- **Install or reinstall.** Before it replaces files, the installer stops a running Companion through its own shutdown route: it reads the runtime file, checks the Companion's HMAC proof before it sends the pairing token, takes `system.lock` and calls `system.shutdown`. It waits up to 15 seconds, then ends only processes whose path is exactly the installed `td-companion.exe`. If a Device is busy with a Job such as a Firmware update, the installer stops and says so. It then closes the window.
+- **Downgrade.** An installer older than the installed version refuses to run (exit code 5). Uninstall first to go back.
+- **Update.** Open TouchDeck checks `latest.json`, downloads the installer, and checks its signature with the updater key built into the app (ADR 0005) before and right before running it. It takes `system.lock`, stops the Companion, starts the installer with `/S --updated --force-run` and quits. The installer replaces the files silently and starts Open TouchDeck again.
+- **Uninstall.** Stops the Companion and the window the same way, removes the files, shortcuts, the uninstall entry, the Run value (only when it points at this install) and the startup marker, so a later install turns startup at sign-in back on. It **keeps user data** unless you answer Yes when it asks, or pass `--delete-app-data` to a silent uninstall. Integration secrets in Windows Credential Manager stay either way.
 
-## Uninstall
+Installers are not Authenticode-signed: there's no certificate, so Windows SmartScreen may warn. The update signature is separate from Authenticode and is always checked.
 
-Uninstall removes the app and its installed resources without editing Claude settings.
-See the [usage guide](usage.md) for the one-time cleanup note for earlier pre-release builds.
+## Update signing
 
-The NSIS template deletes `touchdeck.exe` once. Right after an update another process can hold the new binary for a moment, so the postuninstall hook retries the delete for up to 10 seconds, then marks it for deletion at reboot, and removes the install folder when it is empty. Update mode skips this.
+The update key is the existing updater key ([ADR 0005](adr/0005-updater-keeps-the-signing-key.md)). The release build signs the installer with the Tauri CLI signer (`tauri signer sign --app-version X.Y.Z`), which writes the minisign signature the Electron updater verifies, with the version bound in its trusted comment. Never regenerate or replace the key: every installed copy trusts it.
 
-Source config lives in `%APPDATA%\io.github.duresa7.touchdeck\sources.json`, outside the install folder. The uninstaller's **Delete app data** option removes the Tauri identifier folders; a silent uninstall keeps that data. The CLIProxyAPI management key stays in Windows Credential Manager (`touchdeck` / `cliproxyapi-management-key`) after uninstall.
+The key lives in the `release` GitHub environment: `TAURI_UPDATER_PUBLIC_KEY` (variable), `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (secrets). Only `main` and `v*` tags can deploy to it.
 
-The `installer-lifecycle` CI job runs only on a disposable GitHub-hosted Windows runner, as part of every **windows release** run. To check an installer change before a release, start **installer lifecycle** by hand from the Actions tab (`gh workflow run installer-lifecycle.yml --ref <branch>`). It proves fresh installation, a passive `/P /UPDATE` replacement, byte-for-byte config/data preservation, absence of the removed usage helper, and clean uninstall. Five additional update/uninstall rounds retain coverage of the main-executable deletion retry. Never run the lifecycle script on an operator's PC.
-
-## Release-owner bootstrap and publication
-
-The repository contains no durable private key or disposable test public key. The base updater `pubkey` is empty; development candidates report that release signing is not configured. The release recipe injects the selected public key through an external build configuration. Before the first real release, the owner must generate/back up a durable Tauri updater keypair, configure `TAURI_UPDATER_PUBLIC_KEY` and matching secrets `TAURI_SIGNING_PRIVATE_KEY` and optionally `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the `release` GitHub environment. Losing that private key prevents updates to clients trusting it; do not replace it casually. Root owns durable secret bootstrap and publication.
-
-The **windows release** workflow (`.github/workflows/release-windows.yml`) builds the installer and matching radio-free firmware on a disposable Windows runner, then verifies the signed installer with the real Tauri updater against local HTTPS fixtures. It runs only at release time, never on pull requests. A manual run is a dry run with the durable key. Pushing a `vX.Y.Z` tag builds with the durable key and publishes. Both also run the **app**, **firmware** and **installer lifecycle** checks on the same commit, without secrets. Pull requests run only the **app** and **firmware** checks, once; merging to `main` does not rerun them. The build job holds only a read token. A separate publish job, which runs no build code and waits for every check, creates a draft, uploads every asset, checks them and only then publishes the release as latest. It refuses to replace a published release. A release contains:
+A release contains:
 
 ```text
-TouchDeck-windows-x64-setup.exe
-TouchDeck-windows-x64-setup.exe.sig
+OpenTouchDeck-windows-x64-setup.exe
+OpenTouchDeck-windows-x64-setup.exe.sig
 latest.json
 release-manifest.json
-SHA256SUMS
 touchdeck.tdfw
-touchdeck-<source-sha-prefix>-windows-x64-candidate.zip
+SHA256SUMS
 ```
 
-Clients check `https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/latest.json`; metadata points to the versioned release's signed installer. Keep installer/signature/metadata together. Because the release is published only after all of its assets are uploaded, that URL never points at a half-uploaded release. `app/scripts/release_version.py check` fails when `app/package.json`, `app/src-tauri/Cargo.toml`, the app entry in `app/Cargo.lock` and `tauri.conf.json` disagree; the workflow also rejects a tag differing from the app version and a tagged commit that is not on `main`.
+`latest.json` holds the version, notes, date and, for `windows-x86_64`, the installer URL, its signature and its size. Installed apps read `https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/latest.json`.
 
 ## Shipping an update
 
-1. Bump every app version in one command (Python 3.11+), then open a pull request with the result and merge it:
+1. Bump every app version in one command (Python 3.11+), open a pull request with the result and merge it. `check` fails when `app/package.json`, `app/electron/package.json`, `app/src-tauri/tauri.conf.json`, `app/src-tauri/Cargo.toml` and the app entry in `app/Cargo.lock` disagree.
 
    ```sh
    python app/scripts/release_version.py bump X.Y.Z
    python app/scripts/release_version.py check
    ```
 
-2. Tag the merged commit on `main` with an annotated tag. Its message becomes the release notes that **Settings → App updates** shows; a tag without a message gets `TouchDeck vX.Y.Z`.
+2. Tag the merged commit on `main` with an annotated tag. Its message becomes the release notes.
 
    ```sh
    git switch main
@@ -63,62 +66,50 @@ Clients check `https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/downlo
    git push origin vX.Y.Z
    ```
 
-3. The tag push runs the **windows release** workflow. It checks the tag against the app version, runs the app, firmware and installer lifecycle checks on the tagged commit, builds, signs with the durable key, verifies the installer against the local HTTPS fixtures and publishes the release. Installed apps then find the update in **Settings → App updates**.
+3. The tag push runs **windows release** (`.github/workflows/release-windows.yml`). It runs the app, Firmware and installer lifecycle checks on the tagged commit without secrets, builds and signs with the durable key, and a separate publish job, which runs no build code, uploads every asset to a draft and only then publishes it as latest.
 
-To rehearse a release without publishing, open the Actions tab, choose **windows release**, then **Run workflow**, and give it a commit or tag on `main` (default `main`). That dry run builds and verifies with the durable key and keeps the assets as a workflow artifact. It never creates a tag or a release. From a terminal:
+To rehearse without publishing, run **windows release** by hand on a commit on `main`. It builds and signs with the durable key and keeps the assets as a workflow artifact:
 
 ```sh
 gh workflow run release-windows.yml --ref main -f ref=main
 ```
 
-The updater signing key (`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) and `TAURI_UPDATER_PUBLIC_KEY` live in the `release` GitHub environment, which only `main` and `v*` tags can deploy to, and dry runs only build commits already on `main`.
+If a tag's run fails for a transient reason, re-run it; the publish job reuses its own draft. If the source needs a fix, ship the next patch version instead of moving the tag.
 
-Never regenerate the updater signing key. Every installed app trusts the public key it was built with, so assets signed by a new key are rejected and those installs can no longer update themselves. If a tag's run fails for a transient reason, re-run it from the Actions tab; the publish job reuses its own leftover draft. If the source needs a fix, land it on `main` and ship the next patch version instead of moving the tag.
+## Installer lifecycle check
 
-## Reproduce the build
+`installer-lifecycle.yml` runs on a disposable GitHub-hosted Windows runner as part of every **windows release** run. Run it by hand to check an installer change on a branch:
 
-Use an existing Windows x64 development environment: Rust/MSVC C++ tools, Node 24+, the pinned pnpm version, Python 3.10+ and ESP-IDF 6.1 with ESP32-S3 tools. Activate ESP-IDF so `IDF_PATH`, Python and toolchain PATH match. Build only a clean committed source revision, using a new output directory outside the checkout:
+```sh
+gh workflow run installer-lifecycle.yml --ref <branch>
+```
+
+It builds a test-signed candidate with a throwaway key that is deleted after signing, plus a second installer at the next patch version signed with the same throwaway key. Then `app/scripts/installer_lifecycle.ps1`:
+
+1. installs silently and opens the app: the window and the Companion start, and the Companion registers the Run value;
+2. runs the real Electron updater (`app/scripts/lifecycle_update.mjs`, connected to the installed Companion as the window is) against a loopback feed that serves the newer installer with one byte changed, and expects a signature failure with nothing installed;
+3. updates to the newer installer through the same updater: lock, shutdown, `/S --updated --force-run`, restart, user data kept byte for byte;
+4. runs the older installer over the newer one and expects it to refuse;
+5. uninstalls silently with the Companion running: its runtime file is gone (it shut down cleanly), and the files, uninstall entry and Run value are gone while user data stays;
+6. reinstalls and uninstalls with `--delete-app-data`, and expects the data folders gone.
+
+The script refuses to run outside GitHub Actions: it writes the real per-user registry. It uploads only a sanitized log and summary.
+
+## Build the installer
+
+Use Windows x64 with Rust (MSVC), Node 24, the pinned pnpm, Python 3.11+ and ESP-IDF 6.1 with ESP32-S3 tools, and activate ESP-IDF. Build a clean committed revision into a new folder outside the checkout:
 
 ```powershell
-git rev-parse HEAD
 Set-Location app
 pnpm install --frozen-lockfile
-# The existing signing environment supplies the private key; never put it in command-line arguments.
-python scripts/package_windows.py build --out E:/touchdeck-artifacts/final-head-001 `
+# The signing environment supplies the private key; never put it on the command line.
+python scripts/package_windows.py build --out E:/touchdeck-artifacts/build-001 `
   --public-key-file E:/secure-public-material/touchdeck-updater.pub `
-  --notes-file E:/touchdeck-artifacts/release-notes.md `
-  --build-lock E:/ESP32-TouchDeck/.verify/m3-build.lock
+  --notes-file E:/touchdeck-artifacts/release-notes.md
 ```
 
-`npm run package:windows -- --out ...` runs the same recipe. An empty pnpm version is not success; use the already installed `node <global-node-modules>/pnpm/bin/pnpm.mjs` entry point if necessary. Local packaging does not install tools or alter host configuration. Cold builds download dependencies and Tauri's NSIS/WebView bootstrapper build inputs.
+The recipe builds the Firmware and audits it radio-free, builds the UI, builds the Companion with `cargo build --release --locked -p td-companion` and the Firmware bundle embedded, refuses a Companion with test hooks, builds the Electron code with the updater public key, packages it with electron-builder and signs the installer.
 
-For an unpublished candidate, pass **`--test-signing` instead of `--public-key-file`**, with no durable signing environment. It generates an external disposable key, captures/discards the signer's key output, embeds only the test public key in that candidate's external config/binary, and deletes the private key after signing. The installer is named `TouchDeck-windows-x64-TEST-ONLY-setup.exe` and the manifest records `test_signing:true`. Never publish these assets or copy the test key into shipping config. `--portable-only` produces a diagnostic ZIP; portable-only is not the product release path.
+For an unpublished candidate, pass `--test-signing` instead of `--public-key-file`, with no signing environment. It generates a throwaway key, builds the installer named `OpenTouchDeck-windows-x64-TEST-ONLY-setup.exe` and the next-patch installer for the lifecycle check, and deletes the private key. Never publish these assets. On a PC without ESP-IDF, a test-signed candidate can reuse a checked bundle with `--firmware-bundle <file.tdfw>`; releases always build the Firmware.
 
-The recipe atomically holds shared `m3-build.lock` during firmware compilation, and removes only its own lock on success/failure. Retry after another owner releases it; never delete a foreign lock. Fresh external Cargo/firmware directories prevent e2e binary reuse. Cargo uses `--locked --no-default-features` and static CRT; the production dependency graph excludes WebDriver. Tauri embeds frontend assets and built-in icons. Firmware config and actual linked components exclude Wi-Fi/Bluetooth and retain USB-Serial/JTAG. The existing `firmware/tools/make_bundle.py` creates/checks `.tdfw`; its format is unchanged.
-
-The companion ZIP contains the app, install resources, firmware, `manifest.json`, `SHA256SUMS` and `build/production-dependencies.txt`. Manifests identify the full source SHA, target/features, tools, resources, firmware image/ELF hashes and radio audit. Release checksums cover uploaded assets. Checksums detect corruption, not publisher authenticity. ZIP order/times/permissions are fixed; compiler paths/times can vary, so cross-machine bit identity is not promised.
-
-```powershell
-python app/scripts/package_windows.py verify '<out>/touchdeck-<sha>-windows-x64-candidate.zip'
-python firmware/tools/make_bundle.py --check '<out>/payload/firmware/touchdeck.tdfw'
-python app/scripts/verify_updater.py --assets '<out>/release-assets' --out E:/touchdeck-artifacts/https-fixture-001 `
-  --cargo-target '<out>/build/app' --openssl 'C:/Program Files/Git/usr/bin/openssl.exe'
-```
-
-The fixture uses the real Tauri updater and actual signed installer over local HTTPS, trusting a test CA only in that client. It never changes the OS trust store or disables TLS. It accepts the correct signature and a steady download lasting longer than the metadata deadline. A stalled download fails at the read timeout. It rejects invalid TLS, altered payload bytes, mismatched signed version, malformed metadata and offline endpoints, and checks current-version behavior. It never executes the installer. This does not prove an installed upgrade or the eventual published GitHub endpoint.
-
-## Isolated production smoke
-
-Extract the companion ZIP and use scripts from its source revision:
-
-```powershell
-pwsh -NoProfile -File app/scripts/smoke_windows.ps1 -PackageDir '<extracted-folder>' -Scratch E:/touchdeck-artifacts/smoke-001
-# Inspect Editor/icons, Sources usage limits and Settings/App updates in the production window.
-pwsh -NoProfile -File app/scripts/smoke_windows.ps1 -Scratch E:/touchdeck-artifacts/smoke-001 -Stop
-```
-
-The launcher uses mock transport, fake input, an empty working directory and scratch source/temp paths. `TOUCHDECK_APP_DATA_DIR` redirects Tauri config/log/cache and WebView storage before initialization; it requires an absolute directory and fails closed if invalid. It also redirects source config (`config/`) when `TOUCHDECK_CONFIG_DIR` is unset, and a run with it set never moves files out of the old source folders. Unset preserves normal paths. The smoke removes `WEBVIEW2_USER_DATA_FOLDER` from the child's environment and requires `app/webview/EBWebView` under scratch, exercising the app's `data_directory` override. `APPDATA` alone cannot override Windows Known Folders. Source/temp paths have separate launcher overrides. Default app/source paths are snapshotted before/after; changes fail smoke. This does not measure all OS/WebView incidental writes. Installer execution is disabled in mock sessions. Do not change credentials or trigger real input.
-
-Repeat final-head builds/checks after dependent fixes land. Current artifacts are candidates. Board flashing, real input and physical checks are excluded. Linux/macOS installers/updater delivery are not implemented here. Fresh-machine installation, real upgrade/preservation and published endpoint behavior must remain unverified without their evidence.
-
-References: [official Tauri updater guide](https://v2.tauri.app/plugin/updater/) and [JavaScript updater API](https://v2.tauri.app/reference/javascript/updater/). Backend-owned commands keep installation behind the reservation; direct plugin installer commands are not granted to the frontend capability.
+The recipe holds the shared `.verify/m3-build.lock` while it compiles Firmware and removes only its own lock. Never delete another owner's lock.

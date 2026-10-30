@@ -1,6 +1,9 @@
 ; Open TouchDeck additions to the electron-builder NSIS template.
 !include LogicLib.nsh
 !include WordFunc.nsh
+; The template skips these when customCheckAppRunning is defined; the stock check below needs them.
+!include getProcessInfo.nsh
+Var pid
 
 !define TOUCHDECK_DATA "io.github.duresa7.touchdeck"
 !define TOUCHDECK_RUN_KEY "Software\Microsoft\Windows\CurrentVersion\Run"
