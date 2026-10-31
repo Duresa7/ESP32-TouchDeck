@@ -169,9 +169,9 @@ The user starts pairing from **Open in browser** in the tray or in the window. T
 
 1. It opens `http://127.0.0.1:PORT/pair#code=XXXX-XXXX-XXXX` in the default browser. The code is in the fragment, which browsers never send to a server or in a `Referer`.
 2. It shows the code for typing by hand only in a native tray notification. The window never displays or copies the code or link. Pairing codes never appear in API responses; `POST /auth/pair-codes` returns only `{expires_ms}` after the Companion opens the default browser itself.
-3. The Companion always opens the fragment form. It can't tell whether a browser dropped the fragment, so it never retries with another link; the code in the tray notification is the fallback. The `/pair` page also accepts `/pair?code=…`. The query form is allowed because the code is single-use, lasts 120 s and never leaves loopback. The page removes the fragment and the query with `history.replaceState(null, '', '/pair')` before it connects or renders anything.
+3. The Companion always opens the fragment form. It can't tell whether a browser dropped the fragment, so it never retries with another link; the code in the tray notification is the fallback. The `/pair` page reads no code from the query string, because the server sees a query and the browser keeps it in history. It removes the fragment and any query with `history.replaceState(null, '', '/pair')` before it connects or renders anything.
 
-The `/pair` page says "Pair this browser again after the Companion restarts." It reads the code from the fragment, the query, or a text field where the user types it. Input ignores case, spaces and dashes, and reads `O` as `0` and `I` or `L` as `1`. The page sends `POST /api/v1/auth/pair` with `{code, label}`, where `label` comes from the user agent (for example "Edge on Windows"), and receives `{id, token}`. It stores the token in `localStorage` as `touchdeck.session`, then goes to `/`.
+The `/pair` page says "Pair this browser again after the Companion restarts." It reads the code from the fragment or a text field where the user types it. Input ignores case, spaces and dashes, and reads `O` as `0` and `I` or `L` as `1`. The page sends `POST /api/v1/auth/pair` with `{code, label}`, where `label` comes from the user agent (for example "Edge on Windows"), and receives `{id, token}`. It stores the token in `localStorage` as `touchdeck.session`, then goes to `/`.
 
 - A used, expired or wrong code returns 401 `auth.code_invalid`. The page says "This pairing code has expired or is wrong. Choose Open in browser from the tray icon again."
 - After the lockout it returns 429 `auth.code_locked`.
@@ -209,11 +209,11 @@ Browsers can't set headers on a WebSocket. The client opens `new WebSocket(url, 
 - reads the token from the `touchdeck.bearer.*` entry,
 - selects only `touchdeck.v1` in its reply, so the token is never echoed.
 
-No token ever goes in a query string. Close codes:
+No token ever goes in a query string. An upgrade with an invalid, expired or revoked session is refused with HTTP 401 before any socket exists. A browser page can't read that status: it sees only close code 1006, the same as a network drop. So a client whose socket closes before its `hello` checks its session with `GET /system`, which answers 401 for a dead session. Close codes on an open socket:
 
 | Code | Meaning |
 |---|---|
-| 4401 | The session is invalid, expired or revoked |
+| 4401 | The session became invalid, expired or was revoked while the socket was open |
 | 4008 | The client is too slow (see Backpressure) |
 | 1001 | The Companion is shutting down |
 
@@ -658,20 +658,28 @@ HTTP example (GET is the only method; there is no configurable method field):
 `headers` maps HTTP header names to unique vault field ids, **never header
 values**. Saving settings creates the corresponding write-only secret controls.
 Write each value through `integrations.secret_put`. Values are bound to the
-configured URL's origin and deleted on removal or origin change. Same-origin
-path changes retain them. Credentials use the existing `credential_transport`
+configured URL's origin and the source's `tls_pin`. They are deleted when the
+field is removed, the origin changes, or the pin is added, changed or cleared, so
+a new pin never receives a secret entered under the old trust. Same-origin
+path changes retain them. Because of that, a `text` source pointed at a
+same-origin endpoint that echoes request headers can read its own secret back as a
+live value. This is accepted: the user configures both the endpoint and the
+secret. Credentials use the existing `credential_transport`
 policy: HTTPS, or an explicitly typed loopback/private-address HTTP exception.
 URLs cannot contain user information, query strings or fragments; put credentials
 in secret headers. Host, Content-Length, Transfer-Encoding and Connection cannot
 be overridden. Header values cannot contain control characters.
 
-HTTP requests have a 10-second deadline and a 1 MiB body limit. All redirects
-are refused. Without a pin, TLS uses the platform verifier. `tls_pin`, when set,
-is exactly 64 hexadecimal digits representing the server leaf certificate's
-SHA-256 fingerprint. That exact certificate is trusted for this request, including
-self-signed certificates; a different certificate is rejected even if otherwise
-trusted. TLS handshake signatures are still verified. No global verification
-setting is changed. Certificate rotation requires updating the pin.
+HTTP sources use the shared `Fetch::request` transport described under Proxmox:
+one 10-second deadline covering connect, TLS, headers and the whole body, a 1 MiB
+body limit, and no redirects. Without a pin, TLS uses the platform verifier.
+`tls_pin`, when set, is exactly 64 hexadecimal digits representing the server leaf
+certificate's SHA-256 fingerprint, and needs an `https://` URL; a pin with an
+`http://` URL is rejected with `integration.config_invalid` and an issue on the
+`sources` path. With a pin, that leaf certificate is the only one accepted,
+including a self-signed one; a different certificate is rejected even if the
+system trusts it. TLS handshake signatures are still verified. No global
+verification setting is changed. Certificate rotation requires updating the pin.
 
 The value path grammar is `$` followed by `.key` or `[index]` segments, with at
 most 32 segments. Keys use ASCII letters, digits and underscores and cannot start
@@ -685,7 +693,11 @@ Command input is `{type: "command", program: <absolute path>, args: [<string>],
 value_path: <path or null>}`. Windows accepts executable `.exe` and `.com` paths,
 not batch files. Arguments are passed directly, without a shell. There is no
 stdin, stderr is discarded, stdout must be UTF-8 and is capped at 64 KiB. The
-process is killed and reaped on timeout (10 s) or oversized output. A value path
+command runs in its own Windows Job object (on Unix, its own process group). When
+the run ends, on success, timeout (10 s) or oversized output, every process in it
+is stopped, including background processes the command started, and the command
+is reaped. Output is complete when stdout closes, so a background process that
+keeps stdout open makes the run time out at 10 s. A value path
 parses stdout as JSON using the same rules. With `value_path: null`, trimmed
 stdout is parsed as a number or used as text. Programs inherit the Companion's
 working folder and environment; do not put credentials in command arguments.
@@ -699,11 +711,15 @@ unused Run once past that deadline asks again. Always allow persists through the
 existing grant store and can be revoked with `actions.allowed_remove`, after
 which the next collection asks again. Argument changes require approval. Denied or expired
 requests never run; their decisions remain blocked for the Companion session.
-Restart the Companion to request the same denied command again.
+Restart the Companion to request the same denied command again. The Companion keeps
+at most 256 of these answers. When the list is full, a new command drops the oldest
+answer, so it can still ask; a command whose answer was dropped asks again.
+While a source waits for approval it isn't failing: it rechecks every second
+without backing off, so a Run once answer is used well before its deadline.
 
 Polling is serial within the Integration. Manual refresh and configuration
 changes preserve a one-second request floor. Each failed source backs off
-exponentially, capped at one hour. The last good value remains until its Device
+exponentially, capped at one hour. Waiting for approval doesn't count as a failure. The last good value remains until its Device
 TTL expires. Successful samples have rising sequence numbers and a TTL of three
 times the configured interval, clamped to 1000–60000 ms. Disabling clears live
 output. Presets follow source order: `{name} value`, then `{name} graph` for each
@@ -715,6 +731,88 @@ certificate failure, redirects, invalid values and command failure. Upstream
 bodies, transport diagnostics and stdout/stderr are never included in status,
 logs or API responses. Values are delivered internally through `readings()` and
 `live()`.
+
+#### Proxmox
+
+`proxmox` reads only `GET /api2/json/cluster/resources`. Config is
+`{enabled: boolean, url: string, interval_s: integer, tls_pin: string}`;
+`tls_pin` may be omitted or empty. Defaults: disabled, `https://example.invalid:8006`,
+15 seconds, no pin. The URL must be an origin with no path, query, credentials or
+fragment. Intervals clamp to 5–3600 seconds. Unknown fields are rejected. Config
+is saved beside sources.json as proxmox.json.
+
+Write-only vault fields `token_id` and `token_secret` form
+`Authorization: PVEAPIToken=<token_id>=<token_secret>`. The token id has the
+Proxmox form `<user>@<realm>!<tokenid>`; both fields are secrets. Create a
+privilege-separated token with the read-only `PVEAuditor` role, granting the
+required audit permissions to both the user and token. Counts cover only resources
+visible to that token. An origin change or a `tls_pin` change deletes both secrets,
+so a new pin can never receive a token entered under the old one. No upstream response
+body, credential or raw transport error is included in status.
+
+`tls_pin` is the server leaf certificate's SHA-256 fingerprint: 64 hex digits, or
+the colon-separated form the Proxmox GUI shows (`AB:CD:…`). It is stored as 64
+lowercase hex digits without colons. A pin needs an `https://` URL; a pin with an
+`http://` URL is rejected with `integration.config_invalid` and an issue on the
+`tls_pin` path. Obtain it through a trusted channel. With no pin, the system trust
+store must accept the certificate. With a pin, the leaf must match exactly; its
+TLS handshake signature must still verify. A matching pin explicitly authorizes
+a self-signed certificate, including its name and validity period. A wrong pin
+fails even for a publicly trusted certificate. Renewing the certificate requires
+updating the pin. Certificate checking is never disabled globally.
+
+The shared `Fetch::request(GetRequest)` seam supplies a GET-only request with
+secret headers (Proxmox sends `Authorization`; Custom sends its configured headers)
+and an optional certificate pin. Header values are marked sensitive. A request
+with headers must pass `credential_transport`. A 3xx reply is a redirect error and
+isn't followed. Production uses a
+per-request reqwest/rustls client because ureq's supported configuration does not
+expose a custom verifier. Redirects and ambient proxies are disabled. Each
+request carries one deadline, 10 seconds after the poll starts, covering connect,
+TLS, headers and the whole body; a server that trickles the body still fails with
+the timeout error at that deadline. The response is capped at 1 MiB while it streams.
+Polling is synchronous, with at most one request in flight. Errors double the
+interval up to 3600 seconds; refresh, config changes and secret writes cannot
+bypass an existing deadline. Failed polls clear live values and legacy readings;
+the Device expires previous live values by their TTL.
+
+All streams are `numeric`:
+
+| Stream | Unit | Account |
+|---|---|---|
+| `cpu_pct` | `%` | `node/<node>`, `qemu/<vmid>` or `lxc/<vmid>` |
+| `ram_pct` | `%` | Same resource ids |
+| `running` | `boolean` | Guest id; 1 running, 0 stopped |
+| `running_guests` | `guests` | `cluster` |
+| `total_guests` | `guests` | `cluster` |
+
+CPU is the API fraction × 100 (already normalized by Proxmox); RAM is
+`mem / maxmem × 100`. CPU is clamped to 0–1 before scaling and `mem` to at most
+`maxmem`. Offline nodes, stopped guests and resources with status `unknown` count
+as not running and omit CPU/RAM rather than inventing samples. Each node and guest
+is parsed on its own. One with a wrong-typed field, a bad or duplicate id, another
+status value, or missing metrics while running is skipped; the rest of the poll
+still updates, the state stays `ok`, and `status.message` gives the skipped count.
+A body that isn't JSON or has no `data` array fails the poll. Unrelated resource
+types are ignored. Successful polls increase the
+sample counter even when values are unchanged. TTL is three polling intervals,
+clamped to 1000–60000 ms. Values remain within the Device's numeric bounds.
+
+Presets are generated after discovery: nodes sorted by resource id, each offering
+**Node CPU graph**, **Node CPU**, **Node RAM graph**, **Node RAM**; then guests
+sorted by resource id, each offering **Guest status**; finally **Running guests**.
+The action contains the concrete resource account. Graph Presets use `render: graph`;
+value Presets use the existing plain Live tile. No new renderer is needed.
+Guest CPU/RAM and total guest count can also be bound by editing the Tile action.
+
+Errors distinguish token rejection (401/403), timeout, oversized response,
+certificate verification, malformed data and transport failure. The schema-driven
+Integrations form renders the pin as a string and both credentials as secret fields.
+Tests use a handwritten fixture based on the vendor's
+[cluster resources schema](https://github.com/proxmox/pve-manager/blob/master/PVE/API2/Cluster.pm)
+and [API documentation](https://pve.proxmox.com/pve-docs/api-viewer/#/cluster/resources),
+with synthetic values only. Real-server permission and certificate testing remains
+part of post-release validation.
 
 #### This PC
 
@@ -1144,7 +1242,7 @@ Never add a public route, a CORS header, a route that answers approvals, or a ro
 | Upload, decode, socket or approval floods exhaust the Companion | **Reduced.** Aggregate and per-session limits, bounded queues, render concurrency and saturation tests |
 | A session holds the install lock indefinitely | **Reduced.** Window-only owner-bound 10-minute lease, released on session end or expiry |
 | A local process guesses a typed pairing code | **Reduced.** 60-bit codes, 120 s, single use, and a lockout after 5 wrong tries |
-| Browsers may drop the URL fragment when the Companion opens the link | **Resolved.** The query form is allowed, and the user can type the code |
+| Browsers may drop the URL fragment when the Companion opens the link | **Resolved.** The user can type the code from the tray notification |
 | A tray program's dialog may not get the foreground on Windows | **Reduced.** The tray notification and `approvals.show`. The approval waits up to 5 minutes |
 | `assets.create` with `kind: "app"` takes any path, so a session can learn whether a file exists | **Accepted.** The Companion returns only a rendered icon, never file contents |
 | The build-script registry may confuse rust-analyzer | **Resolved.** #71 uses `inventory` (see Feature modules) |
@@ -1173,7 +1271,7 @@ Development and mock starts never enable startup automatically.
 | `system.startup_put` | PUT | `/system/startup` | `{at_sign_in: bool}` | `{at_sign_in: bool}` | Any session |
 
 The Windows shell receives the fragment URL directly. The Companion can't detect a
-dropped fragment, so it never retries with the query form; the code in the tray
+dropped fragment, so it never retries with another link; the code in the tray
 notification is the fallback, as How a browser pairs says. Pairing rejection uses the
 contract's combined wrong-or-expired message because both share `auth.code_invalid`.
 Mock runs capture native delivery in memory. Only test-hook builds register

@@ -1,10 +1,15 @@
 mod command;
 mod path;
 use super::*;
+use crate::sources::network::{FetchError, GetRequest, TIMEOUT, parse_pin};
 pub use command::CommandApproval;
 use serde_json::json;
 use std::time::{Duration, Instant};
 use td_core::live::LiveValue;
+
+const WAITING: &str = "Waiting for approval on this PC.";
+const PIN_NEEDS_HTTPS: &str =
+    "A certificate pin needs an https:// address. Change the address or clear the pin.";
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -72,11 +77,16 @@ impl Settings {
                     headers,
                     tls_pin,
                 } => {
+                    let origin = secrets::origin(url).map_err(|_| Error::ConfigInvalid)?;
                     if let Some(pin) = tls_pin {
-                        crate::sources::custom_http::fingerprint(pin)
-                            .map_err(|_| Error::ConfigInvalid)?;
+                        parse_pin(pin).ok_or(Error::ConfigInvalid)?;
+                        if !origin.starts_with("https://") {
+                            return Err(Error::ConfigField {
+                                field: "sources",
+                                message: PIN_NEEDS_HTTPS,
+                            });
+                        }
                     }
-                    secrets::origin(url).map_err(|_| Error::ConfigInvalid)?;
                     if url.len() > 2048 || headers.len() > 16 {
                         return Err(Error::ConfigInvalid);
                     }
@@ -129,13 +139,18 @@ impl Settings {
         }
         Ok(())
     }
-    fn fields(&self) -> BTreeMap<String, String> {
+    fn fields(&self) -> BTreeMap<String, (&str, Option<&str>)> {
         self.sources
             .iter()
             .flat_map(|s| match &s.input {
-                Input::Http { url, headers, .. } => headers
+                Input::Http {
+                    url,
+                    headers,
+                    tls_pin,
+                    ..
+                } => headers
                     .values()
-                    .map(|field| (field.clone(), url.clone()))
+                    .map(|field| (field.clone(), (url.as_str(), tls_pin.as_deref())))
                     .collect(),
                 _ => Vec::new(),
             })
@@ -248,8 +263,26 @@ impl Custom {
                     })
                     .collect::<Result<Vec<_>, &'static str>>()?;
                 self.fetch
-                    .custom_get(url, &headers, tls_pin.as_deref())
-                    .map_err(crate::sources::custom_http::HttpError::message)?
+                    .request(&GetRequest {
+                        url,
+                        headers: &headers,
+                        tls_pin: tls_pin.as_deref().and_then(parse_pin),
+                        deadline: Instant::now() + TIMEOUT,
+                    })
+                    .map_err(|e| match e {
+                        FetchError::Unauthorized => {
+                            "The server refused access. Check the secret headers."
+                        }
+                        FetchError::Timeout => "The server didn't answer within 10 s.",
+                        FetchError::TooLarge => "The HTTP reply is over 1 MiB.",
+                        FetchError::Tls => {
+                            "Can't verify the server certificate. Check the TLS fingerprint."
+                        }
+                        FetchError::Redirect => "The server redirected. Use its final address.",
+                        FetchError::Transport => {
+                            "Couldn't fetch the value. Check the HTTP address."
+                        }
+                    })?
             }
             Input::Command { program, args, .. } => {
                 if !self
@@ -257,9 +290,9 @@ impl Custom {
                     .as_ref()
                     .is_some_and(|a| a.approved(program, args))
                 {
-                    return Err("Waiting for approval on this PC.");
+                    return Err(WAITING);
                 }
-                command::capture(program, args)?
+                command::capture(program, args, Duration::from_secs(10))?
             }
         };
         if body.len() > 1024 * 1024 {
@@ -310,8 +343,8 @@ impl Integration for Custom {
             .settings
             .fields()
             .into_iter()
-            .map(|(field, url)| {
-                let origin = secrets::origin(&url).map_err(|_| Error::ConfigInvalid)?;
+            .map(|(field, (url, _))| {
+                let origin = secrets::origin(url).map_err(|_| Error::ConfigInvalid)?;
                 let set = self
                     .secrets
                     .get("custom", &field)
@@ -335,9 +368,10 @@ impl Integration for Custom {
             return self.view();
         }
         let next = settings.fields();
-        for (field, url) in self.settings.fields() {
-            if next.get(&field).and_then(|s| secrets::origin(s).ok()) != secrets::origin(&url).ok()
-            {
+        for (field, (url, pin)) in self.settings.fields() {
+            if next.get(&field).is_none_or(|&(next_url, next_pin)| {
+                secrets::origin(next_url).ok() != secrets::origin(url).ok() || next_pin != pin
+            }) {
                 self.secrets
                     .delete("custom", &field)
                     .map_err(|_| Error::Credentials)?;
@@ -362,7 +396,7 @@ impl Integration for Custom {
     }
     fn secret_put(&mut self, field: &str, value: &str) -> Result<(), Error> {
         let fields = self.settings.fields();
-        let url = fields.get(field).ok_or(Error::ConfigInvalid)?;
+        let &(url, _) = fields.get(field).ok_or(Error::ConfigInvalid)?;
         secrets::credential_transport(url).map_err(|_| Error::ConfigInvalid)?;
         if value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control) {
             return Err(Error::ConfigInvalid);
@@ -414,7 +448,7 @@ impl Integration for Custom {
                 value: None,
                 error: None,
             });
-            match result {
+            let delay = match result {
                 Ok(value) => {
                     self.sequence += 1;
                     sample.updated = crate::sources::unix_ms(std::time::SystemTime::now());
@@ -427,14 +461,19 @@ impl Integration for Custom {
                     });
                     sample.failures = 0;
                     sample.error = None;
+                    Duration::from_secs(source.interval_s)
+                }
+                Err(WAITING) => {
+                    sample.error = Some(WAITING);
+                    Duration::from_secs(1)
                 }
                 Err(error) => {
                     sample.failures = (sample.failures + 1).min(12);
                     sample.error = Some(error);
+                    Duration::from_secs((source.interval_s * (1 << sample.failures)).min(3600))
                 }
-            }
-            sample.next = Instant::now()
-                + Duration::from_secs((source.interval_s * (1 << sample.failures)).min(3600));
+            };
+            sample.next = Instant::now() + delay;
             self.revision += 1;
         }
     }

@@ -3098,7 +3098,6 @@ dependencies = [
  "td-core",
  "tempfile",
  "time",
- "tokio",
  "ts-rs",
  "ureq",
  "url",

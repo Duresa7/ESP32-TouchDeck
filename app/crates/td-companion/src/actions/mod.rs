@@ -607,11 +607,18 @@ impl td_host::integrations::CommandApproval for Actions {
             Some(_) => return false,
             None => {}
         }
-        if state.pending.iter().any(|p| p.request.hash == hash)
-            || state.pending.len() >= 16
-            || state.custom_answers.len() >= 256
-        {
+        if state.pending.iter().any(|p| p.request.hash == hash) || state.pending.len() >= 16 {
             return false;
+        }
+        while state.custom_answers.len() >= 256 {
+            let oldest = state
+                .custom_answers
+                .iter()
+                .min_by_key(|(_, (_, deadline))| *deadline)
+                .map(|(hash, _)| hash.clone());
+            if let Some(oldest) = oldest {
+                state.custom_answers.remove(&oldest);
+            }
         }
         state.serial += 1;
         let request = ApprovalRequest {
@@ -721,5 +728,28 @@ mod custom_tests {
         actions.script(vec![ScriptAnswer::Never]);
         assert!(!actions.approved("example.exe", &[]));
         assert_eq!(actions.pending().len(), 1);
+    }
+    #[test]
+    fn a_full_answer_list_drops_its_oldest_entry_so_new_commands_still_ask() {
+        let actions = service();
+        actions.script(vec![ScriptAnswer::Deny]);
+        assert!(!actions.approved("example.exe", &["0".into()]));
+        resolved(&actions);
+        for i in 1..256 {
+            actions.0.clock.advance(Duration::from_secs(1));
+            actions.0.state.lock().custom_answers.insert(
+                format!("synthetic-{i}"),
+                (
+                    Answer::Deny,
+                    actions.0.clock.now() + Duration::from_secs(300),
+                ),
+            );
+        }
+        actions.script(vec![ScriptAnswer::Never]);
+        assert!(!actions.approved("example.exe", &["new".into()]));
+        assert_eq!(actions.pending().len(), 1);
+        assert!(!actions.approved("example.exe", &["0".into()]));
+        assert_eq!(actions.pending().len(), 2);
+        assert!(actions.0.state.lock().custom_answers.len() <= 256);
     }
 }

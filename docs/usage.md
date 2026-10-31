@@ -429,3 +429,18 @@ key. Source builds carry no updater key and say that release signing is not
 configured. The first installation always comes from the installer on GitHub
 Releases. Source and portable copies are replaced by hand: close the app, then
 rebuild or extract the new copy.
+
+## Use Open TouchDeck from a browser
+
+Keep the Companion running on this PC. Choose **Open in browser** from its tray
+menu or the desktop window. The default browser opens and pairs automatically.
+If it asks for a code, enter the code from the tray notification within two minutes.
+To use another browser on this PC, open the same address and enter a fresh code.
+
+Pairing survives a page refresh. After the Companion restarts, choose **Open in
+browser** again. Settings lists paired browsers; **Forget** immediately signs
+that browser out, including its other tabs. Other browsers stay paired. You can
+also forget this browser from its own Settings.
+
+App update installation runs in the desktop window. Browser access is local to
+this PC; it does not expose the Companion to other computers on the network.

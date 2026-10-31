@@ -175,6 +175,11 @@ pub enum IntegrationError {
     NotFound,
     #[error("Invalid Integration config.")]
     ConfigInvalid,
+    #[error("Invalid Integration config.")]
+    ConfigField {
+        field: &'static str,
+        message: &'static str,
+    },
     #[error("The credential store is unavailable.")]
     Credentials,
     #[error(transparent)]
@@ -185,6 +190,7 @@ impl From<Error> for IntegrationError {
         match e {
             Error::NotFound => Self::NotFound,
             Error::ConfigInvalid => Self::ConfigInvalid,
+            Error::ConfigField { field, message } => Self::ConfigField { field, message },
             Error::Credentials => Self::Credentials,
             Error::Storage => Self::Common(CommonError::Internal),
         }
@@ -199,7 +205,7 @@ impl ApiError for IntegrationError {
     fn status(&self) -> StatusCode {
         match self {
             Self::NotFound => StatusCode::NOT_FOUND,
-            Self::ConfigInvalid => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::ConfigInvalid | Self::ConfigField { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Credentials => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Common(e) => e.status(),
         }
@@ -207,7 +213,7 @@ impl ApiError for IntegrationError {
     fn code(&self) -> &'static str {
         match self {
             Self::NotFound => Self::CODES[0],
-            Self::ConfigInvalid => Self::CODES[1],
+            Self::ConfigInvalid | Self::ConfigField { .. } => Self::CODES[1],
             Self::Credentials => Self::CODES[2],
             Self::Common(e) => e.code(),
         }
@@ -216,6 +222,9 @@ impl ApiError for IntegrationError {
         match self {
             Self::ConfigInvalid => {
                 Some(serde_json::json!({"issues":[{"message":"Check the Integration fields."}]}))
+            }
+            Self::ConfigField { field, message } => {
+                Some(serde_json::json!({"issues":[{"path":field,"message":message}]}))
             }
             Self::Common(e) => e.details(),
             _ => None,

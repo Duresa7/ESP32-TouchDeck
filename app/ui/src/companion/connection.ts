@@ -40,9 +40,10 @@ export function connect(
   actions: ActionsStore = actionsStore,
   integrations: IntegrationsStore = integrationsStore,
 ): Connection {
+  const companion = createClient(env.base, env.session);
   return {
-    companion: createClient(env.base, env.session),
-    events: openEvents({ url: eventsUrl(env.base), session: env.session, store, jobs, actions, integrations, open: env.open, onNewBuild }),
+    companion,
+    events: openEvents({ url: eventsUrl(env.base), session: env.session, store, jobs, actions, integrations, open: env.open, onNewBuild, probe: () => companion.system.get() }),
   };
 }
 

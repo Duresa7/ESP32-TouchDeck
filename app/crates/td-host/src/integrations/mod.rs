@@ -2,6 +2,7 @@
 mod cliproxy;
 mod custom;
 pub use custom::CommandApproval;
+mod proxmox;
 pub mod secrets;
 pub mod this_pc;
 use serde::{Deserialize, Serialize};
@@ -70,6 +71,10 @@ pub struct IntegrationView {
 pub enum Error {
     NotFound,
     ConfigInvalid,
+    ConfigField {
+        field: &'static str,
+        message: &'static str,
+    },
     Credentials,
     Storage,
 }

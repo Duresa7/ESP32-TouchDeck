@@ -402,6 +402,8 @@ async fn pairing_codes_reach_only_the_delivery_capture() {
     assert_eq!(p.pair(&first).await, 401);
     assert_eq!(p.pair("ZZZZ-ZZZZ-ZZZZ").await, 401);
     assert_eq!(p.pair(&replacement).await, 200);
+    let paired: Value = serde_json::from_str(p.bodies.last().unwrap()).unwrap();
+    let browser_token = paired["token"].as_str().unwrap().to_owned();
     let expired = p.mint().await;
     assert_eq!(
         p.post("/test/clock", Some(json!({"advance_ms": 121_000})))
@@ -430,6 +432,17 @@ async fn pairing_codes_reach_only_the_delivery_capture() {
     stop(&mut child, &client, &info, &token).await;
     let logs = [stdout.join().unwrap(), stderr.join().unwrap()];
     assert!(!logs[1].is_empty(), "the mock Devices log to stderr");
+    for text in logs.iter().chain(&frames) {
+        assert!(!text.contains(&browser_token), "a browser token leaked");
+    }
+    for body in &p.bodies {
+        if body.contains("\"error\"") {
+            assert!(
+                !body.contains(&browser_token),
+                "a browser token leaked in an error"
+            );
+        }
+    }
 
     let seen: Vec<&String> = p.bodies.iter().chain(&frames).chain(&logs).collect();
     assert_eq!((p.secrets.len(), p.bodies.len()), (15, 18));
