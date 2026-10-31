@@ -20,6 +20,13 @@ pub struct Service(
 );
 type Pending = Mutex<HashMap<(String, String), Delivery>>;
 impl Service {
+    pub fn command_approval(&self, approval: Arc<dyn td_host::integrations::CommandApproval>) {
+        if let Ok(registry) = self.0.lock().unwrap().as_mut()
+            && let Ok(custom) = registry.get("custom")
+        {
+            custom.command_approval(approval);
+        }
+    }
     pub fn new(mock: bool, events: Events) -> Self {
         let service = Self(
             Arc::new(Mutex::new(Registry::new(Environment {

@@ -1,5 +1,7 @@
 //! Integration descriptors and runtime contract. Modules register their factory once.
 mod cliproxy;
+mod custom;
+pub use custom::CommandApproval;
 pub mod secrets;
 pub mod this_pc;
 use serde::{Deserialize, Serialize};
@@ -73,6 +75,7 @@ pub enum Error {
 }
 
 pub trait Integration: Send {
+    fn command_approval(&mut self, _approval: Arc<dyn CommandApproval>) {}
     fn summary(&self) -> IntegrationSummary;
     fn view(&self) -> Result<IntegrationView, Error>;
     fn configure(&mut self, config: Value) -> Result<IntegrationView, Error>;

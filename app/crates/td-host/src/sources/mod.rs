@@ -6,6 +6,7 @@
 //! CLIProxyAPI lists auth files, then POSTs read-only provider GETs through the hub.
 
 pub mod cliproxy;
+pub mod custom_http;
 pub mod scheduler;
 
 use std::fs;

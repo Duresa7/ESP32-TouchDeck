@@ -78,6 +78,7 @@ impl Ctx {
         let lease_auth = auth.clone();
         let lease_clock = clock.clone();
         let integrations = crate::features::integrations::Service::new(mock, events.clone());
+        integrations.command_approval(Arc::new(actions.clone()));
         let live = crate::live::Live::start(devices.clone(), links.clone(), integrations.clone());
         Self {
             actions,
