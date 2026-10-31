@@ -195,7 +195,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     const token = bearer?.slice('touchdeck.bearer.'.length) ?? '';
     const socket = new FakeSocket(sockets, token);
     if (!new URL(url).pathname.endsWith('/api/v1/events') || !protocols.includes('touchdeck.v1') || sessions.status(token) !== 'live') {
-      socket.close(CLOSE_SESSION);
+      socket.close(1006);
       return socket;
     }
     sockets.add(socket);
