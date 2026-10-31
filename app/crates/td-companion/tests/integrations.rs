@@ -396,3 +396,42 @@ async fn unifi_is_discoverable_with_safe_config_and_presets() {
     assert!(!view.secrets["username"].set);
     assert!(!view.secrets["password"].set);
 }
+
+#[tokio::test]
+async fn proxmox_is_listed_and_has_a_safe_config_view() {
+    let td = TestCompanion::start().await;
+    let list = td.call::<List>((), NoQuery, ()).await.unwrap();
+    assert!(list.iter().any(|i| i.id == "proxmox"));
+    let view = td
+        .call::<Get>(
+            IntegrationPath {
+                integration: "proxmox".into(),
+            },
+            NoQuery,
+            (),
+        )
+        .await
+        .unwrap();
+    assert_eq!(view.summary.name, "Proxmox");
+    assert_eq!(view.summary.status.state, "not_configured");
+    assert!(!view.secrets["token_id"].set);
+    assert!(!view.secrets["token_secret"].set);
+}
+#[tokio::test]
+async fn proxmox_rejects_a_pin_over_plain_http_on_the_pin_field() {
+    let td = TestCompanion::start().await;
+    let response = reqwest::Client::new()
+        .put(format!("{}/api/v1/integrations/proxmox/config", td.url))
+        .bearer_auth(&td.token)
+        .json(&json!({"enabled":true,"url":"http://127.0.0.1:8006","interval_s":15,"tls_pin":"ab".repeat(32)}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 422);
+    let error = &response.json::<Value>().await.unwrap()["error"];
+    assert_eq!(error["code"], "integration.config_invalid");
+    assert_eq!(
+        error["details"]["issues"],
+        json!([{"path":"tls_pin","message":"A certificate pin needs an https:// address. Change the address or clear the pin."}])
+    );
+}

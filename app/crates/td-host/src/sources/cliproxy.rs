@@ -393,6 +393,12 @@ pub trait Fetch: Send + Sync {
     ) -> Result<super::session_http::Response, super::session_http::Failure> {
         Err(super::session_http::Failure::Connection)
     }
+    fn request(
+        &self,
+        _: &super::network::GetRequest<'_>,
+    ) -> Result<String, super::network::FetchError> {
+        Err(super::network::FetchError::Transport)
+    }
     fn get(&self, url: &str, bearer: &str) -> Result<String, String>;
     fn post_json(&self, url: &str, bearer: &str, body: &Value) -> Result<String, String>;
 }
@@ -474,6 +480,12 @@ impl Fetch for HttpFetch {
         request: super::session_http::Request,
     ) -> Result<super::session_http::Response, super::session_http::Failure> {
         super::session_http::send(request)
+    }
+    fn request(
+        &self,
+        request: &super::network::GetRequest<'_>,
+    ) -> Result<String, super::network::FetchError> {
+        super::network::get(request)
     }
     fn get(&self, url: &str, bearer: &str) -> Result<String, String> {
         crate::integrations::secrets::credential_transport(url)?;

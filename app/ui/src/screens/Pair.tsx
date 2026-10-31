@@ -5,9 +5,8 @@ import './pair.css';
 
 export function takePairingCode(location: Location, history: History): string {
   const fragment = new URLSearchParams(location.hash.slice(1)).get('code');
-  const query = new URLSearchParams(location.search).get('code');
   history.replaceState(null, '', '/pair');
-  return fragment ?? query ?? '';
+  return fragment ?? '';
 }
 
 function browserLabel(): string {

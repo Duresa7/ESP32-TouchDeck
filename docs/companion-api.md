@@ -169,9 +169,9 @@ The user starts pairing from **Open in browser** in the tray or in the window. T
 
 1. It opens `http://127.0.0.1:PORT/pair#code=XXXX-XXXX-XXXX` in the default browser. The code is in the fragment, which browsers never send to a server or in a `Referer`.
 2. It shows the code for typing by hand only in a native tray notification. The window never displays or copies the code or link. Pairing codes never appear in API responses; `POST /auth/pair-codes` returns only `{expires_ms}` after the Companion opens the default browser itself.
-3. The Companion always opens the fragment form. It can't tell whether a browser dropped the fragment, so it never retries with another link; the code in the tray notification is the fallback. The `/pair` page also accepts `/pair?code=…`. The query form is allowed because the code is single-use, lasts 120 s and never leaves loopback. The page removes the fragment and the query with `history.replaceState(null, '', '/pair')` before it connects or renders anything.
+3. The Companion always opens the fragment form. It can't tell whether a browser dropped the fragment, so it never retries with another link; the code in the tray notification is the fallback. The `/pair` page reads no code from the query string, because the server sees a query and the browser keeps it in history. It removes the fragment and any query with `history.replaceState(null, '', '/pair')` before it connects or renders anything.
 
-The `/pair` page says "Pair this browser again after the Companion restarts." It reads the code from the fragment, the query, or a text field where the user types it. Input ignores case, spaces and dashes, and reads `O` as `0` and `I` or `L` as `1`. The page sends `POST /api/v1/auth/pair` with `{code, label}`, where `label` comes from the user agent (for example "Edge on Windows"), and receives `{id, token}`. It stores the token in `localStorage` as `touchdeck.session`, then goes to `/`.
+The `/pair` page says "Pair this browser again after the Companion restarts." It reads the code from the fragment or a text field where the user types it. Input ignores case, spaces and dashes, and reads `O` as `0` and `I` or `L` as `1`. The page sends `POST /api/v1/auth/pair` with `{code, label}`, where `label` comes from the user agent (for example "Edge on Windows"), and receives `{id, token}`. It stores the token in `localStorage` as `touchdeck.session`, then goes to `/`.
 
 - A used, expired or wrong code returns 401 `auth.code_invalid`. The page says "This pairing code has expired or is wrong. Choose Open in browser from the tray icon again."
 - After the lockout it returns 429 `auth.code_locked`.
@@ -209,11 +209,11 @@ Browsers can't set headers on a WebSocket. The client opens `new WebSocket(url, 
 - reads the token from the `touchdeck.bearer.*` entry,
 - selects only `touchdeck.v1` in its reply, so the token is never echoed.
 
-No token ever goes in a query string. Close codes:
+No token ever goes in a query string. An upgrade with an invalid, expired or revoked session is refused with HTTP 401 before any socket exists. A browser page can't read that status: it sees only close code 1006, the same as a network drop. So a client whose socket closes before its `hello` checks its session with `GET /system`, which answers 401 for a dead session. Close codes on an open socket:
 
 | Code | Meaning |
 |---|---|
-| 4401 | The session is invalid, expired or revoked |
+| 4401 | The session became invalid, expired or was revoked while the socket was open |
 | 4008 | The client is too slow (see Backpressure) |
 | 1001 | The Companion is shutting down |
 
@@ -620,6 +620,85 @@ The Companion's live router (`td_companion::live`) reads each connected v2 Devic
 - **Values a Tile can't take.** A series is cut to its newest `series` numbers and text to `text_bytes`. A value of the wrong type, or a number outside ±1e9, is never sent.
 
 Each Integration's `status.delivery` counts the values each Device accepted and carries the last refusal.
+
+#### Proxmox
+
+`proxmox` reads only `GET /api2/json/cluster/resources`. Config is
+`{enabled: boolean, url: string, interval_s: integer, tls_pin: string}`;
+`tls_pin` may be omitted or empty. Defaults: disabled, `https://example.invalid:8006`,
+15 seconds, no pin. The URL must be an origin with no path, query, credentials or
+fragment. Intervals clamp to 5–3600 seconds. Unknown fields are rejected. Config
+is saved beside sources.json as proxmox.json.
+
+Write-only vault fields `token_id` and `token_secret` form
+`Authorization: PVEAPIToken=<token_id>=<token_secret>`. The token id has the
+Proxmox form `<user>@<realm>!<tokenid>`; both fields are secrets. Create a
+privilege-separated token with the read-only `PVEAuditor` role, granting the
+required audit permissions to both the user and token. Counts cover only resources
+visible to that token. An origin change or a `tls_pin` change deletes both secrets,
+so a new pin can never receive a token entered under the old one. No upstream response
+body, credential or raw transport error is included in status.
+
+`tls_pin` is the server leaf certificate's SHA-256 fingerprint: 64 hex digits, or
+the colon-separated form the Proxmox GUI shows (`AB:CD:…`). It is stored as 64
+lowercase hex digits without colons. A pin needs an `https://` URL; a pin with an
+`http://` URL is rejected with `integration.config_invalid` and an issue on the
+`tls_pin` path. Obtain it through a trusted channel. With no pin, the system trust
+store must accept the certificate. With a pin, the leaf must match exactly; its
+TLS handshake signature must still verify. A matching pin explicitly authorizes
+a self-signed certificate, including its name and validity period. A wrong pin
+fails even for a publicly trusted certificate. Renewing the certificate requires
+updating the pin. Certificate checking is never disabled globally.
+
+The shared `Fetch::request(GetRequest)` seam supplies a GET-only request with an
+arbitrary authorization header and optional certificate pin. Production uses a
+per-request reqwest/rustls client because ureq's supported configuration does not
+expose a custom verifier. Redirects and ambient proxies are disabled. Each
+request carries one deadline, 10 seconds after the poll starts, covering connect,
+TLS, headers and the whole body; a server that trickles the body still fails with
+the timeout error at that deadline. The response is capped at 1 MiB while it streams.
+Polling is synchronous, with at most one request in flight. Errors double the
+interval up to 3600 seconds; refresh, config changes and secret writes cannot
+bypass an existing deadline. Failed polls clear live values and legacy readings;
+the Device expires previous live values by their TTL.
+
+All streams are `numeric`:
+
+| Stream | Unit | Account |
+|---|---|---|
+| `cpu_pct` | `%` | `node/<node>`, `qemu/<vmid>` or `lxc/<vmid>` |
+| `ram_pct` | `%` | Same resource ids |
+| `running` | `boolean` | Guest id; 1 running, 0 stopped |
+| `running_guests` | `guests` | `cluster` |
+| `total_guests` | `guests` | `cluster` |
+
+CPU is the API fraction × 100 (already normalized by Proxmox); RAM is
+`mem / maxmem × 100`. CPU is clamped to 0–1 before scaling and `mem` to at most
+`maxmem`. Offline nodes, stopped guests and resources with status `unknown` count
+as not running and omit CPU/RAM rather than inventing samples. Each node and guest
+is parsed on its own. One with a wrong-typed field, a bad or duplicate id, another
+status value, or missing metrics while running is skipped; the rest of the poll
+still updates, the state stays `ok`, and `status.message` gives the skipped count.
+A body that isn't JSON or has no `data` array fails the poll. Unrelated resource
+types are ignored. Successful polls increase the
+sample counter even when values are unchanged. TTL is three polling intervals,
+clamped to 1000–60000 ms. Values remain within the Device's numeric bounds.
+
+Presets are generated after discovery: nodes sorted by resource id, each offering
+**Node CPU graph**, **Node CPU**, **Node RAM graph**, **Node RAM**; then guests
+sorted by resource id, each offering **Guest status**; finally **Running guests**.
+The action contains the concrete resource account. Graph Presets use `render: graph`;
+value Presets use the existing plain Live tile. No new renderer is needed.
+Guest CPU/RAM and total guest count can also be bound by editing the Tile action.
+
+Errors distinguish token rejection (401/403), timeout, oversized response,
+certificate verification, malformed data and transport failure. The schema-driven
+Integrations form renders the pin as a string and both credentials as secret fields.
+Tests use a handwritten fixture based on the vendor's
+[cluster resources schema](https://github.com/proxmox/pve-manager/blob/master/PVE/API2/Cluster.pm)
+and [API documentation](https://pve.proxmox.com/pve-docs/api-viewer/#/cluster/resources),
+with synthetic values only. Real-server permission and certificate testing remains
+part of post-release validation.
 
 #### This PC
 
@@ -1120,7 +1199,7 @@ Never add a public route, a CORS header, a route that answers approvals, or a ro
 | Upload, decode, socket or approval floods exhaust the Companion | **Reduced.** Aggregate and per-session limits, bounded queues, render concurrency and saturation tests |
 | A session holds the install lock indefinitely | **Reduced.** Window-only owner-bound 10-minute lease, released on session end or expiry |
 | A local process guesses a typed pairing code | **Reduced.** 60-bit codes, 120 s, single use, and a lockout after 5 wrong tries |
-| Browsers may drop the URL fragment when the Companion opens the link | **Resolved.** The query form is allowed, and the user can type the code |
+| Browsers may drop the URL fragment when the Companion opens the link | **Resolved.** The user can type the code from the tray notification |
 | A tray program's dialog may not get the foreground on Windows | **Reduced.** The tray notification and `approvals.show`. The approval waits up to 5 minutes |
 | `assets.create` with `kind: "app"` takes any path, so a session can learn whether a file exists | **Accepted.** The Companion returns only a rendered icon, never file contents |
 | The build-script registry may confuse rust-analyzer | **Resolved.** #71 uses `inventory` (see Feature modules) |
@@ -1149,7 +1228,7 @@ Development and mock starts never enable startup automatically.
 | `system.startup_put` | PUT | `/system/startup` | `{at_sign_in: bool}` | `{at_sign_in: bool}` | Any session |
 
 The Windows shell receives the fragment URL directly. The Companion can't detect a
-dropped fragment, so it never retries with the query form; the code in the tray
+dropped fragment, so it never retries with another link; the code in the tray
 notification is the fallback, as How a browser pairs says. Pairing rejection uses the
 contract's combined wrong-or-expired message because both share `auth.code_invalid`.
 Mock runs capture native delivery in memory. Only test-hook builds register
