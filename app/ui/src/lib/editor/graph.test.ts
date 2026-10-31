@@ -12,9 +12,9 @@ const hub: IntegrationSummary = {
   id: 'hub',
   name: 'Hub',
   streams: [
-    { id: 'title', kind: 'text', unit: null },
-    { id: 'five_hour_pct', kind: 'numeric', unit: '%' },
-    { id: 'requests', kind: 'numeric', unit: null },
+    { id: 'title', kind: 'text', unit: null, settable: false },
+    { id: 'five_hour_pct', kind: 'numeric', unit: '%', settable: false },
+    { id: 'requests', kind: 'numeric', unit: null, settable: false },
   ],
   presets: [{ id: 'five_hour_pct', name: 'five hour pct', action: { type: 'widget', source: 'hub', field: 'five_hour_pct', account: '' } }],
 };
@@ -53,7 +53,7 @@ test('a Preset becomes a graph only when its Integration offers it as one and it
   assert.deepEqual(presetGraph(cpu, thisPc), { integration: 'this_pc', stream: 'cpu_pct' });
   assert.equal(presetGraph(hub.presets[0], hub), null);
   assert.equal(presetGraph({ ...cpu, render: 'graph' }, hub), null);
-  const text = { ...hub, streams: [{ id: 'cpu_pct', kind: 'text', unit: null }], id: 'this_pc' };
+  const text = { ...hub, streams: [{ id: 'cpu_pct', kind: 'text', unit: null, settable: false }], id: 'this_pc' };
   assert.equal(presetGraph(cpu, text), null);
   assert.equal(presetGraph({ ...cpu, action: { type: 'none' } }, thisPc), null);
 });

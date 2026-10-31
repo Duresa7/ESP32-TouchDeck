@@ -102,7 +102,7 @@ fn live_requests_match_the_golden_frames_byte_for_byte() {
         assert_eq!(set.to_payload(), expected, "{}", fixture["name"]);
         checked += 1;
     }
-    assert_eq!(checked, 5);
+    assert_eq!(checked, 7);
 }
 
 #[test]

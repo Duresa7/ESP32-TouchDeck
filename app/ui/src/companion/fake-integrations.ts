@@ -111,7 +111,7 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
         { name: 'interval_s', kind: 'integer', secret: false },
         { name: SECRET, kind: 'string', secret: true },
       ],
-      streams: STREAMS.map(([id, kind, unit]) => ({ id, kind, unit })),
+      streams: STREAMS.map(([id, kind, unit]) => ({ id, kind, unit, settable: false })),
       actions: ['refresh'],
       presets: PRESETS.map(([id, name]) => ({ id, name, action: { type: 'widget', source: ID, field: id, account: '' } })),
     };

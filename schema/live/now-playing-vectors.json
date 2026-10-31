@@ -1,0 +1,1089 @@
+{
+  "about": "Shared now-playing geometry, in pixels relative to the Tile. The Companion encodes covers to the art box, and the Firmware, the app preview and the Companion hit-test taps with the part zones, so all three must produce these values. art = min(h - 2*pad, floor((w - 2*pad) * 2 / 5), art_max), and no art below art_min; the art box sits pad from the left, centered vertically. The text column starts pad after the art, or at pad without art, and ends pad before the right edge. The controls row shows when h >= row_min_tile_h and the text column is at least row_min_text_w wide: it is row_h tall, pad above the bottom edge, and split into previous, play_pause and next, each floor(text_w / 3) wide with the remainder on next. Without the row, the whole Tile is play_pause. A zone holds x from its x up to but not including x + w, and the same for y. With state 0 (nothing playing) no tap names a part. Whoever changes a constant regenerates these vectors.",
+  "constants": {
+    "pad": 20,
+    "art_max": 256,
+    "art_min": 48,
+    "row_h": 56,
+    "row_min_tile_h": 200,
+    "row_min_text_w": 180
+  },
+  "cases": [
+    {
+      "name": "a large Tile with art and the row",
+      "w": 496,
+      "h": 384,
+      "art": {
+        "x": 20,
+        "y": 101,
+        "size": 182
+      },
+      "text": {
+        "x": 222,
+        "w": 254
+      },
+      "controls": true,
+      "parts": [
+        {
+          "part": "previous",
+          "x": 222,
+          "y": 308,
+          "w": 84,
+          "h": 56
+        },
+        {
+          "part": "play_pause",
+          "x": 306,
+          "y": 308,
+          "w": 84,
+          "h": 56
+        },
+        {
+          "part": "next",
+          "x": 390,
+          "y": 308,
+          "w": 86,
+          "h": 56
+        }
+      ],
+      "hits": [
+        {
+          "x": 264,
+          "y": 336,
+          "state": 2,
+          "part": "previous"
+        },
+        {
+          "x": 264,
+          "y": 336,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 305,
+          "y": 336,
+          "state": 1,
+          "part": "previous"
+        },
+        {
+          "x": 306,
+          "y": 336,
+          "state": 1,
+          "part": "play_pause"
+        },
+        {
+          "x": 348,
+          "y": 336,
+          "state": 2,
+          "part": "play_pause"
+        },
+        {
+          "x": 348,
+          "y": 336,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 389,
+          "y": 336,
+          "state": 1,
+          "part": "play_pause"
+        },
+        {
+          "x": 390,
+          "y": 336,
+          "state": 1,
+          "part": "next"
+        },
+        {
+          "x": 433,
+          "y": 336,
+          "state": 2,
+          "part": "next"
+        },
+        {
+          "x": 433,
+          "y": 336,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 475,
+          "y": 336,
+          "state": 1,
+          "part": "next"
+        },
+        {
+          "x": 476,
+          "y": 336,
+          "state": 1,
+          "part": null
+        },
+        {
+          "x": 111,
+          "y": 192,
+          "state": 2,
+          "part": null
+        },
+        {
+          "x": 223,
+          "y": 21,
+          "state": 2,
+          "part": null
+        }
+      ]
+    },
+    {
+      "name": "a wide short Tile",
+      "w": 1000,
+      "h": 136,
+      "art": {
+        "x": 20,
+        "y": 20,
+        "size": 96
+      },
+      "text": {
+        "x": 136,
+        "w": 844
+      },
+      "controls": false,
+      "parts": [
+        {
+          "part": "play_pause",
+          "x": 0,
+          "y": 0,
+          "w": 1000,
+          "h": 136
+        }
+      ],
+      "hits": [
+        {
+          "x": 500,
+          "y": 68,
+          "state": 2,
+          "part": "play_pause"
+        },
+        {
+          "x": 500,
+          "y": 68,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 68,
+          "y": 68,
+          "state": 2,
+          "part": "play_pause"
+        }
+      ]
+    },
+    {
+      "name": "a wider Tile where art reaches its cap",
+      "w": 744,
+      "h": 384,
+      "art": {
+        "x": 20,
+        "y": 64,
+        "size": 256
+      },
+      "text": {
+        "x": 296,
+        "w": 428
+      },
+      "controls": true,
+      "parts": [
+        {
+          "part": "previous",
+          "x": 296,
+          "y": 308,
+          "w": 142,
+          "h": 56
+        },
+        {
+          "part": "play_pause",
+          "x": 438,
+          "y": 308,
+          "w": 142,
+          "h": 56
+        },
+        {
+          "part": "next",
+          "x": 580,
+          "y": 308,
+          "w": 144,
+          "h": 56
+        }
+      ],
+      "hits": [
+        {
+          "x": 367,
+          "y": 336,
+          "state": 2,
+          "part": "previous"
+        },
+        {
+          "x": 367,
+          "y": 336,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 437,
+          "y": 336,
+          "state": 1,
+          "part": "previous"
+        },
+        {
+          "x": 438,
+          "y": 336,
+          "state": 1,
+          "part": "play_pause"
+        },
+        {
+          "x": 509,
+          "y": 336,
+          "state": 2,
+          "part": "play_pause"
+        },
+        {
+          "x": 509,
+          "y": 336,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 579,
+          "y": 336,
+          "state": 1,
+          "part": "play_pause"
+        },
+        {
+          "x": 580,
+          "y": 336,
+          "state": 1,
+          "part": "next"
+        },
+        {
+          "x": 652,
+          "y": 336,
+          "state": 2,
+          "part": "next"
+        },
+        {
+          "x": 652,
+          "y": 336,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 723,
+          "y": 336,
+          "state": 1,
+          "part": "next"
+        },
+        {
+          "x": 724,
+          "y": 336,
+          "state": 1,
+          "part": null
+        },
+        {
+          "x": 148,
+          "y": 192,
+          "state": 2,
+          "part": null
+        },
+        {
+          "x": 297,
+          "y": 21,
+          "state": 2,
+          "part": null
+        }
+      ]
+    },
+    {
+      "name": "the whole screen",
+      "w": 1024,
+      "h": 600,
+      "art": {
+        "x": 20,
+        "y": 172,
+        "size": 256
+      },
+      "text": {
+        "x": 296,
+        "w": 708
+      },
+      "controls": true,
+      "parts": [
+        {
+          "part": "previous",
+          "x": 296,
+          "y": 524,
+          "w": 236,
+          "h": 56
+        },
+        {
+          "part": "play_pause",
+          "x": 532,
+          "y": 524,
+          "w": 236,
+          "h": 56
+        },
+        {
+          "part": "next",
+          "x": 768,
+          "y": 524,
+          "w": 236,
+          "h": 56
+        }
+      ],
+      "hits": [
+        {
+          "x": 414,
+          "y": 552,
+          "state": 2,
+          "part": "previous"
+        },
+        {
+          "x": 414,
+          "y": 552,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 531,
+          "y": 552,
+          "state": 1,
+          "part": "previous"
+        },
+        {
+          "x": 532,
+          "y": 552,
+          "state": 1,
+          "part": "play_pause"
+        },
+        {
+          "x": 650,
+          "y": 552,
+          "state": 2,
+          "part": "play_pause"
+        },
+        {
+          "x": 650,
+          "y": 552,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 767,
+          "y": 552,
+          "state": 1,
+          "part": "play_pause"
+        },
+        {
+          "x": 768,
+          "y": 552,
+          "state": 1,
+          "part": "next"
+        },
+        {
+          "x": 886,
+          "y": 552,
+          "state": 2,
+          "part": "next"
+        },
+        {
+          "x": 886,
+          "y": 552,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 1003,
+          "y": 552,
+          "state": 1,
+          "part": "next"
+        },
+        {
+          "x": 1004,
+          "y": 552,
+          "state": 1,
+          "part": null
+        },
+        {
+          "x": 148,
+          "y": 300,
+          "state": 2,
+          "part": null
+        },
+        {
+          "x": 297,
+          "y": 21,
+          "state": 2,
+          "part": null
+        }
+      ]
+    },
+    {
+      "name": "a tall Tile",
+      "w": 584,
+      "h": 480,
+      "art": {
+        "x": 20,
+        "y": 131,
+        "size": 217
+      },
+      "text": {
+        "x": 257,
+        "w": 307
+      },
+      "controls": true,
+      "parts": [
+        {
+          "part": "previous",
+          "x": 257,
+          "y": 404,
+          "w": 102,
+          "h": 56
+        },
+        {
+          "part": "play_pause",
+          "x": 359,
+          "y": 404,
+          "w": 102,
+          "h": 56
+        },
+        {
+          "part": "next",
+          "x": 461,
+          "y": 404,
+          "w": 103,
+          "h": 56
+        }
+      ],
+      "hits": [
+        {
+          "x": 308,
+          "y": 432,
+          "state": 2,
+          "part": "previous"
+        },
+        {
+          "x": 308,
+          "y": 432,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 358,
+          "y": 432,
+          "state": 1,
+          "part": "previous"
+        },
+        {
+          "x": 359,
+          "y": 432,
+          "state": 1,
+          "part": "play_pause"
+        },
+        {
+          "x": 410,
+          "y": 432,
+          "state": 2,
+          "part": "play_pause"
+        },
+        {
+          "x": 410,
+          "y": 432,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 460,
+          "y": 432,
+          "state": 1,
+          "part": "play_pause"
+        },
+        {
+          "x": 461,
+          "y": 432,
+          "state": 1,
+          "part": "next"
+        },
+        {
+          "x": 512,
+          "y": 432,
+          "state": 2,
+          "part": "next"
+        },
+        {
+          "x": 512,
+          "y": 432,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 563,
+          "y": 432,
+          "state": 1,
+          "part": "next"
+        },
+        {
+          "x": 564,
+          "y": 432,
+          "state": 1,
+          "part": null
+        },
+        {
+          "x": 128,
+          "y": 239,
+          "state": 2,
+          "part": null
+        },
+        {
+          "x": 258,
+          "y": 21,
+          "state": 2,
+          "part": null
+        }
+      ]
+    },
+    {
+      "name": "a small Tile has art but no row",
+      "w": 240,
+      "h": 176,
+      "art": {
+        "x": 20,
+        "y": 48,
+        "size": 80
+      },
+      "text": {
+        "x": 120,
+        "w": 100
+      },
+      "controls": false,
+      "parts": [
+        {
+          "part": "play_pause",
+          "x": 0,
+          "y": 0,
+          "w": 240,
+          "h": 176
+        }
+      ],
+      "hits": [
+        {
+          "x": 120,
+          "y": 88,
+          "state": 2,
+          "part": "play_pause"
+        },
+        {
+          "x": 120,
+          "y": 88,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 60,
+          "y": 88,
+          "state": 2,
+          "part": "play_pause"
+        }
+      ]
+    },
+    {
+      "name": "a narrow Tile too small for art",
+      "w": 140,
+      "h": 176,
+      "art": null,
+      "text": {
+        "x": 20,
+        "w": 100
+      },
+      "controls": false,
+      "parts": [
+        {
+          "part": "play_pause",
+          "x": 0,
+          "y": 0,
+          "w": 140,
+          "h": 176
+        }
+      ],
+      "hits": [
+        {
+          "x": 70,
+          "y": 88,
+          "state": 2,
+          "part": "play_pause"
+        },
+        {
+          "x": 70,
+          "y": 88,
+          "state": 0,
+          "part": null
+        }
+      ]
+    },
+    {
+      "name": "a short Tile keeps art and taps whole",
+      "w": 496,
+      "h": 136,
+      "art": {
+        "x": 20,
+        "y": 20,
+        "size": 96
+      },
+      "text": {
+        "x": 136,
+        "w": 340
+      },
+      "controls": false,
+      "parts": [
+        {
+          "part": "play_pause",
+          "x": 0,
+          "y": 0,
+          "w": 496,
+          "h": 136
+        }
+      ],
+      "hits": [
+        {
+          "x": 248,
+          "y": 68,
+          "state": 2,
+          "part": "play_pause"
+        },
+        {
+          "x": 248,
+          "y": 68,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 68,
+          "y": 68,
+          "state": 2,
+          "part": "play_pause"
+        }
+      ]
+    },
+    {
+      "name": "just tall enough for the row",
+      "w": 600,
+      "h": 200,
+      "art": {
+        "x": 20,
+        "y": 20,
+        "size": 160
+      },
+      "text": {
+        "x": 200,
+        "w": 380
+      },
+      "controls": true,
+      "parts": [
+        {
+          "part": "previous",
+          "x": 200,
+          "y": 124,
+          "w": 126,
+          "h": 56
+        },
+        {
+          "part": "play_pause",
+          "x": 326,
+          "y": 124,
+          "w": 126,
+          "h": 56
+        },
+        {
+          "part": "next",
+          "x": 452,
+          "y": 124,
+          "w": 128,
+          "h": 56
+        }
+      ],
+      "hits": [
+        {
+          "x": 263,
+          "y": 152,
+          "state": 2,
+          "part": "previous"
+        },
+        {
+          "x": 263,
+          "y": 152,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 325,
+          "y": 152,
+          "state": 1,
+          "part": "previous"
+        },
+        {
+          "x": 326,
+          "y": 152,
+          "state": 1,
+          "part": "play_pause"
+        },
+        {
+          "x": 389,
+          "y": 152,
+          "state": 2,
+          "part": "play_pause"
+        },
+        {
+          "x": 389,
+          "y": 152,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 451,
+          "y": 152,
+          "state": 1,
+          "part": "play_pause"
+        },
+        {
+          "x": 452,
+          "y": 152,
+          "state": 1,
+          "part": "next"
+        },
+        {
+          "x": 516,
+          "y": 152,
+          "state": 2,
+          "part": "next"
+        },
+        {
+          "x": 516,
+          "y": 152,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 579,
+          "y": 152,
+          "state": 1,
+          "part": "next"
+        },
+        {
+          "x": 580,
+          "y": 152,
+          "state": 1,
+          "part": null
+        },
+        {
+          "x": 100,
+          "y": 100,
+          "state": 2,
+          "part": null
+        },
+        {
+          "x": 201,
+          "y": 21,
+          "state": 2,
+          "part": null
+        }
+      ]
+    },
+    {
+      "name": "one pixel too short for the row",
+      "w": 600,
+      "h": 199,
+      "art": {
+        "x": 20,
+        "y": 20,
+        "size": 159
+      },
+      "text": {
+        "x": 199,
+        "w": 381
+      },
+      "controls": false,
+      "parts": [
+        {
+          "part": "play_pause",
+          "x": 0,
+          "y": 0,
+          "w": 600,
+          "h": 199
+        }
+      ],
+      "hits": [
+        {
+          "x": 300,
+          "y": 99,
+          "state": 2,
+          "part": "play_pause"
+        },
+        {
+          "x": 300,
+          "y": 99,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 99,
+          "y": 99,
+          "state": 2,
+          "part": "play_pause"
+        }
+      ]
+    },
+    {
+      "name": "a text column just wide enough for the row",
+      "w": 372,
+      "h": 300,
+      "art": {
+        "x": 20,
+        "y": 84,
+        "size": 132
+      },
+      "text": {
+        "x": 172,
+        "w": 180
+      },
+      "controls": true,
+      "parts": [
+        {
+          "part": "previous",
+          "x": 172,
+          "y": 224,
+          "w": 60,
+          "h": 56
+        },
+        {
+          "part": "play_pause",
+          "x": 232,
+          "y": 224,
+          "w": 60,
+          "h": 56
+        },
+        {
+          "part": "next",
+          "x": 292,
+          "y": 224,
+          "w": 60,
+          "h": 56
+        }
+      ],
+      "hits": [
+        {
+          "x": 202,
+          "y": 252,
+          "state": 2,
+          "part": "previous"
+        },
+        {
+          "x": 202,
+          "y": 252,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 231,
+          "y": 252,
+          "state": 1,
+          "part": "previous"
+        },
+        {
+          "x": 232,
+          "y": 252,
+          "state": 1,
+          "part": "play_pause"
+        },
+        {
+          "x": 262,
+          "y": 252,
+          "state": 2,
+          "part": "play_pause"
+        },
+        {
+          "x": 262,
+          "y": 252,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 291,
+          "y": 252,
+          "state": 1,
+          "part": "play_pause"
+        },
+        {
+          "x": 292,
+          "y": 252,
+          "state": 1,
+          "part": "next"
+        },
+        {
+          "x": 322,
+          "y": 252,
+          "state": 2,
+          "part": "next"
+        },
+        {
+          "x": 322,
+          "y": 252,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 351,
+          "y": 252,
+          "state": 1,
+          "part": "next"
+        },
+        {
+          "x": 352,
+          "y": 252,
+          "state": 1,
+          "part": null
+        },
+        {
+          "x": 86,
+          "y": 150,
+          "state": 2,
+          "part": null
+        },
+        {
+          "x": 173,
+          "y": 21,
+          "state": 2,
+          "part": null
+        }
+      ]
+    },
+    {
+      "name": "a text column one pixel too narrow for the row",
+      "w": 371,
+      "h": 300,
+      "art": {
+        "x": 20,
+        "y": 84,
+        "size": 132
+      },
+      "text": {
+        "x": 172,
+        "w": 179
+      },
+      "controls": false,
+      "parts": [
+        {
+          "part": "play_pause",
+          "x": 0,
+          "y": 0,
+          "w": 371,
+          "h": 300
+        }
+      ],
+      "hits": [
+        {
+          "x": 185,
+          "y": 150,
+          "state": 2,
+          "part": "play_pause"
+        },
+        {
+          "x": 185,
+          "y": 150,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 86,
+          "y": 150,
+          "state": 2,
+          "part": "play_pause"
+        }
+      ]
+    },
+    {
+      "name": "art at its 48 pixel floor",
+      "w": 160,
+      "h": 88,
+      "art": {
+        "x": 20,
+        "y": 20,
+        "size": 48
+      },
+      "text": {
+        "x": 88,
+        "w": 52
+      },
+      "controls": false,
+      "parts": [
+        {
+          "part": "play_pause",
+          "x": 0,
+          "y": 0,
+          "w": 160,
+          "h": 88
+        }
+      ],
+      "hits": [
+        {
+          "x": 80,
+          "y": 44,
+          "state": 2,
+          "part": "play_pause"
+        },
+        {
+          "x": 80,
+          "y": 44,
+          "state": 0,
+          "part": null
+        },
+        {
+          "x": 44,
+          "y": 44,
+          "state": 2,
+          "part": "play_pause"
+        }
+      ]
+    },
+    {
+      "name": "art one pixel under the floor",
+      "w": 159,
+      "h": 87,
+      "art": null,
+      "text": {
+        "x": 20,
+        "w": 119
+      },
+      "controls": false,
+      "parts": [
+        {
+          "part": "play_pause",
+          "x": 0,
+          "y": 0,
+          "w": 159,
+          "h": 87
+        }
+      ],
+      "hits": [
+        {
+          "x": 79,
+          "y": 43,
+          "state": 2,
+          "part": "play_pause"
+        },
+        {
+          "x": 79,
+          "y": 43,
+          "state": 0,
+          "part": null
+        }
+      ]
+    }
+  ]
+}

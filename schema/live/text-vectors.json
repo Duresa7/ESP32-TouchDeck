@@ -1,0 +1,208 @@
+{
+  "about": "Shared text vectors for live text values. td_core::live::fit_text and the app preview must turn each input into its output: controls, DEL and line or paragraph separators become spaces; zero-width characters, the BOM, variation selectors and combining marks go; Latin Extended-A and the Romanian comma-below letters fold to their base letters; lookalike dashes, thin spaces and single angle quotes fold into the Device glyph set (docs/design.md, Fonts on the Device); every run of White_Space becomes one space and the ends trim; then the text is cut to max_bytes at a character boundary and a trailing space trims again. Other characters pass through, and the Device draws the ones it lacks as placeholder boxes.",
+  "cases": [
+    {
+      "kind": "clean",
+      "name": "tab and newline become spaces",
+      "max_bytes": 128,
+      "input": "Song\u0009Title\u000aLive",
+      "output": "Song Title Live"
+    },
+    {
+      "kind": "clean",
+      "name": "C1 controls and DEL become spaces",
+      "max_bytes": 128,
+      "input": "A\u0085B\u007fC\u009fD",
+      "output": "A B C D"
+    },
+    {
+      "kind": "clean",
+      "name": "line and paragraph separators become spaces",
+      "max_bytes": 128,
+      "input": "One\u2028Two\u2029Three",
+      "output": "One Two Three"
+    },
+    {
+      "kind": "clean",
+      "name": "zero-width characters and the BOM are dropped",
+      "max_bytes": 128,
+      "input": "\ufeffZero\u200bWidth\u200cNon\u200dJoin\u2060er",
+      "output": "ZeroWidthNonJoiner"
+    },
+    {
+      "kind": "clean",
+      "name": "variation selectors are dropped",
+      "max_bytes": 128,
+      "input": "Heart ❤\ufe0f",
+      "output": "Heart ❤"
+    },
+    {
+      "kind": "clean",
+      "name": "whitespace runs collapse and the ends trim",
+      "max_bytes": 128,
+      "input": "  Many   spaces \u00a0 here\u0009 ",
+      "output": "Many spaces here"
+    },
+    {
+      "kind": "clean",
+      "name": "empty text stays empty",
+      "max_bytes": 128,
+      "input": "",
+      "output": ""
+    },
+    {
+      "kind": "clean",
+      "name": "only controls becomes empty",
+      "max_bytes": 128,
+      "input": "\u0001\u0002 \u007f",
+      "output": ""
+    },
+    {
+      "kind": "clean",
+      "name": "quotes and backslashes stay",
+      "max_bytes": 128,
+      "input": "Say \"hi\" \\ bye",
+      "output": "Say \"hi\" \\ bye"
+    },
+    {
+      "kind": "fold",
+      "name": "Latin-1 stays",
+      "max_bytes": 128,
+      "input": "Beyoncé — Café Déjà Vu Ærø",
+      "output": "Beyoncé — Café Déjà Vu Ærø"
+    },
+    {
+      "kind": "fold",
+      "name": "Latin Extended-A folds to its base letter",
+      "max_bytes": 128,
+      "input": "Łódź Šibenik Œuvre İstanbul",
+      "output": "Lódz Sibenik OEuvre Istanbul"
+    },
+    {
+      "kind": "fold",
+      "name": "letters without a decomposition use the table",
+      "max_bytes": 128,
+      "input": "Đorđe Ħal ı Ĳ ĸ Ŀ Ŋ Ŧ ſ",
+      "output": "Dorde Hal i IJ k L N T s"
+    },
+    {
+      "kind": "fold",
+      "name": "Romanian comma-below letters fold",
+      "max_bytes": 128,
+      "input": "Ștefan Țara și ț",
+      "output": "Stefan Tara si t"
+    },
+    {
+      "kind": "fold",
+      "name": "lookalike dashes become the en dash",
+      "max_bytes": 128,
+      "input": "A‐B‑C‒D―E",
+      "output": "A–B–C–D–E"
+    },
+    {
+      "kind": "fold",
+      "name": "thin and narrow spaces become spaces",
+      "max_bytes": 128,
+      "input": "a\u2009b\u202fc\u2002d\u3000e",
+      "output": "a b c d e"
+    },
+    {
+      "kind": "fold",
+      "name": "single angle quotes become less-than and greater-than",
+      "max_bytes": 128,
+      "input": "‹Live›",
+      "output": "<Live>"
+    },
+    {
+      "kind": "fold",
+      "name": "combining marks are dropped",
+      "max_bytes": 128,
+      "input": "Cafe\u0301 Noe\u0308l",
+      "output": "Cafe Noel"
+    },
+    {
+      "kind": "fold",
+      "name": "the Device set punctuation stays",
+      "max_bytes": 128,
+      "input": "“Hello” ‘there’ • … −5 – —",
+      "output": "“Hello” ‘there’ • … −5 – —"
+    },
+    {
+      "kind": "fold",
+      "name": "scripts the Device cannot draw pass through",
+      "max_bytes": 128,
+      "input": "Кино 東京 🎵",
+      "output": "Кино 東京 🎵"
+    },
+    {
+      "kind": "cut",
+      "name": "ASCII is cut at the limit",
+      "max_bytes": 128,
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "output": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "kind": "cut",
+      "name": "text at the limit is kept whole",
+      "max_bytes": 128,
+      "input": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "output": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "kind": "cut",
+      "name": "a two-byte character is never split",
+      "max_bytes": 128,
+      "input": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccé",
+      "output": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "kind": "cut",
+      "name": "a three-byte character is never split",
+      "max_bytes": 128,
+      "input": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd東",
+      "output": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "kind": "cut",
+      "name": "a four-byte character is never split",
+      "max_bytes": 128,
+      "input": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee🎵",
+      "output": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    {
+      "kind": "cut",
+      "name": "a space before the cut is trimmed",
+      "max_bytes": 128,
+      "input": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff g",
+      "output": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "kind": "cut",
+      "name": "folding runs before the cut",
+      "max_bytes": 128,
+      "input": "ŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁ",
+      "output": "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL"
+    },
+    {
+      "kind": "cut",
+      "name": "a small limit",
+      "max_bytes": 5,
+      "input": "Hello world",
+      "output": "Hello"
+    },
+    {
+      "kind": "cut",
+      "name": "a zero limit",
+      "max_bytes": 0,
+      "input": "Hello",
+      "output": ""
+    },
+    {
+      "kind": "cut",
+      "name": "a long multibyte title",
+      "max_bytes": 128,
+      "input": "Bohemian Rhapsody – Remastered 2011 · Łódź Live at Wembley ’86 — Queen • A Night at the Opera (Deluxe) 東京",
+      "output": "Bohemian Rhapsody – Remastered 2011 · Lódz Live at Wembley ’86 — Queen • A Night at the Opera (Deluxe) 東京"
+    }
+  ]
+}

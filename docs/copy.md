@@ -1182,3 +1182,27 @@ tile. A stale graph keeps its last line at 60% opacity, as on the Device.
 | Pin over HTTP | A certificate pin needs an https:// address. Change the address or clear the pin. |
 | Connection | Couldn't reach Proxmox. Check the address and connection, then retry. |
 | Vault | Credential store unavailable. Retry after unlocking it. |
+
+## Volume and Media
+
+| Context | Copy |
+|---|---|
+| Integration names | Volume; Media |
+| Presets | Volume bar; Now playing |
+| Idle Tile | Nothing playing |
+| Unsupported Tile | Needs Firmware {x.y} |
+| Volume status / failed action | No playback device. |
+| Non-Windows Volume status | Volume needs Windows. |
+| Non-Windows Media status | Media needs Windows. |
+| Failed media action, idle | Nothing is playing. |
+| Failed media action, timeout or false | The player didn't respond. |
+| Successful mute action | Mute changed. |
+| Successful volume gesture | Volume changed. |
+| Successful previous action | Previous track. |
+| Successful play_pause action | Playback changed. |
+| Successful next action | Next track. |
+| Cover storage failure | {device} is out of space for cover art. Remove unused Assets, then retry. |
+
+Integration action-log entries use kind integration and status ok or failed.
+A completed drag has one entry. An idle Media Integration is healthy; backend
+failures use error status. Wire/decoder details belong under Details.

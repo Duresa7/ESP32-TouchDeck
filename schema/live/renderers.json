@@ -1,0 +1,72 @@
+{
+  "about": "The streams each Live tile renderer binds, and the parts its taps can name. schema/check-layouts.mjs reads this table; td_core::layout::TileRender::streams, RENDER_STREAMS in app/ui/src/lib/editor/validate.ts and firmware/components/td_layout/td_layout_parse.c must match it. A Tile declares every required stream, may declare the optional ones, and declares no others.",
+  "renderers": {
+    "graph": {
+      "streams": {
+        "value": {
+          "types": [
+            "number",
+            "series"
+          ],
+          "required": true
+        }
+      },
+      "parts": [],
+      "input": false
+    },
+    "bar": {
+      "streams": {
+        "value": {
+          "types": [
+            "number"
+          ],
+          "required": true
+        },
+        "muted": {
+          "types": [
+            "number"
+          ],
+          "required": false
+        }
+      },
+      "parts": [
+        "mute"
+      ],
+      "input": true
+    },
+    "now-playing": {
+      "streams": {
+        "title": {
+          "types": [
+            "text"
+          ],
+          "required": true
+        },
+        "artist": {
+          "types": [
+            "text"
+          ],
+          "required": true
+        },
+        "cover": {
+          "types": [
+            "image"
+          ],
+          "required": true
+        },
+        "state": {
+          "types": [
+            "number"
+          ],
+          "required": true
+        }
+      },
+      "parts": [
+        "previous",
+        "play_pause",
+        "next"
+      ],
+      "input": false
+    }
+  }
+}

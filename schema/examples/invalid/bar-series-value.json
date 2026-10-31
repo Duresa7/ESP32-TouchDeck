@@ -1,0 +1,38 @@
+expected: tile.streams
+{
+  "schema": 2,
+  "name": "Media",
+  "orientation": "landscape",
+  "pages": [
+    {
+      "id": "media",
+      "title": "Media",
+      "kind": "grid",
+      "rows": 2,
+      "cols": 4,
+      "tiles": [
+        {
+          "id": "volume",
+          "label": "Volume",
+          "row": 0,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 2,
+          "icon": null,
+          "render": "bar",
+          "streams": {
+            "value": "series",
+            "muted": "number"
+          },
+          "input": true,
+          "action": {
+            "type": "widget",
+            "source": "volume",
+            "field": "level",
+            "account": ""
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -532,7 +532,7 @@ While a Firmware Job holds a Device, its `link.state` is `updating`.
 
 ### Assets
 
-Feature module `assets`. Assets reach a Device only through `layouts.push`, which sends whatever the Layout uses and the Device lacks.
+Feature module `assets`. Assets reach a Device through `layouts.push` and the internal live-cover delivery path. Neither path exposes arbitrary local files.
 
 | Name | Method and path | Request → Response |
 |---|---|---|
@@ -582,7 +582,7 @@ Requests carrying a credential never follow a redirect to another origin. They s
 
 CLIProxyAPI config is `{enabled: boolean, url: string, interval_s: integer}`. The URL is trimmed and the interval has a 60-second floor. Unknown fields, including `management_key`, are rejected in config. Its write-only secret field is `management_key`; the secret-write hint is the constant `Set`, including for short keys. Identical config writes preserve the polling deadline. Background polls, manual refreshes, config resets and secret writes share a 15-second minimum spacing between polling attempts.
 
-`IntegrationSummary` also includes `streams: {id, kind, unit}[]` and `actions: string[]`. Its `status` is `{state: "ok" | "error" | "not_configured", message, delivery: {device, sent, error}[]}`. Delivery entries are supplied by the Device scheduler; an Integration without a bound Device has an empty delivery list. Presets contain `{id, name, action}` with the existing Layout action shape. Live tile readings stay inside the Companion.
+`IntegrationSummary` also includes `streams: {id, kind, unit, settable}[]` (`DataStream.settable` defaults to false) and `actions: string[]`. Its `status` is `{state: "ok" | "error" | "not_configured", message, delivery: {device, sent, error}[]}`. Delivery entries are supplied by the Device scheduler; an Integration without a bound Device has an empty delivery list. Presets contain `{id, name, action}` with the existing Layout action shape. Live tile readings stay inside the Companion.
 
 CLIProxyAPI `detail` is read-only and null until the first poll (and after config or secret resets). Otherwise it is `{accounts, polled_ms}`, with a Unix-millisecond poll timestamp. Each account is `{provider, account, status, success, failed, recent_10m, plan, five_hour, seven_day, error}`. `account` is the display label; `plan` and `error` are nullable strings. Each window is null or `{pct, resets_at_ms}`, with a nullable Unix-millisecond reset timestamp. Failed polls retain the last account data, with the failure in summary status. No credential, token, auth index or secret hint is included.
 
@@ -604,7 +604,7 @@ CLIProxyAPI Preset tiles have this fixed order and copy names:
 
 With `test-hooks`, mock Integrations use real HTTP only for explicitly configured `http://127.0.0.1:PORT` stub URLs. Other mock URLs retain the empty fixture transport. This permits local stub tests with mock Devices and memory-only credentials.
 
-Each Integration's Preset tiles are in `presets`, each `{id, name, action, render?}`. `render`, when present, is how the Tile draws its stream, such as `graph`. The app then adds the Preset as a schema 2 Tile with that `render` and `streams: {value: "number"}` if the Device lists it in `tile_kinds`, and as a plain Live tile otherwise. Live tiles get their values through the Device link, never through this API ([ADR 0004](adr/0004-firmware-draws-live-tiles.md)).
+Each Integration's Preset tiles are in `presets`, each `{id, name, action, render?, streams?, input?}`. `PresetTile.streams` declares the renderer's named stream types; omission falls back to `{value:"number"}` for a live renderer. `input:true` enables bar dragging and is otherwise omitted. A media Preset requires its renderer in `tile_kinds`: show "Needs Firmware {x.y}" and retain the last compatible Layout if unsupported. Never downgrade an interactive Preset to a plain widget. Live readings remain internal to the Companion ([ADR 0004](adr/0004-firmware-draws-live-tiles.md)).
 
 #### Live tile bindings
 
@@ -613,13 +613,85 @@ A schema 2 Tile with `streams` binds them through its `widget` action. `source` 
 The Companion's live router (`td_companion::live`) reads each connected v2 Device's active Layout over the link: `layout state`, then the stored bytes, whose SHA-256 is the `layout` of every `v2.live.set`. It reads only the Integration streams that some Device's Layout binds. Integrations report typed samples through `Integration::live`. Each sample carries a counter that rises with every new sample, even one equal to the last, because a graph advances on each, and a `ttl_ms`.
 
 - **Changes only.** The router sends a Tile stream when its Integration has a newer sample than the Device holds. It keeps only the newest sample per stream, so samples that arrive between rounds coalesce and nothing queues.
-- **Pace.** Each stream waits at least 900 ms between values, or `1000 / live_hz` ms when that is longer. The Device's requests in any one second stay within `live_total_hz`, counting each request as one more for every 256 bytes past the first 256.
+- **Pace.** Polling streams wait at least 900 ms between values; Control streams use `max(500 ms, 1000 / live_hz)`. The Device's requests in any one second stay within `live_total_hz`, counting each request as one more for every 256 bytes past the first 256.
 - **`rate`.** The router waits `retry_ms` before it sends the Device anything else, and doubles the wait for each further `rate` in a row, up to 8 seconds.
 - **Sequence.** `n` rises for every new value sent to a Device. A send whose reply never came goes again with the same `n` and value, so a value the Device already took isn't added twice.
 - **Resend.** A new link session, a Layout push or an orientation change sends every bound value again. A `layout`, `page`, `tile`, `stream` or `type` refusal makes the router read the Device's Layout again.
 - **Values a Tile can't take.** A series is cut to its newest `series` numbers and text to `text_bytes`. A value of the wrong type, or a number outside ±1e9, is never sent.
 
 Each Integration's `status.delivery` counts the values each Device accepted and carries the last refusal.
+
+#### Control and live cover delivery
+
+`Integration::control() -> Option<Arc<dyn Control>>` defaults to None. A Control
+is held beside the Service mutex, outside the registry lock. Its `live()` returns
+newest samples without blocking, `subscribe(wake)` registers a wake callback,
+`act(account, action, timeout)` completes within the timeout, `set(account,
+stream, value)` queues without blocking, and `picture(id)` returns owned source
+bytes. ControlError is UnknownAccount, UnknownAction, NotSettable, OutOfRange,
+or Unavailable(message). A wake starts a live round immediately; `LiveCaps`
+requires any supported live kind, not specifically graph.
+
+Control MUST NOT start a process. No public API route reaches act or set.
+Only Device touch events (or test-hook MockDeck events) reach them. Process
+launching Integrations continue through ADR 0006 approval. Resolve the Tile's
+source/account from the cached active Layout; require input and a settable
+stream for sets, drop non-finite values, clamp to 0..1, and coalesce moves.
+Limit actions to ten per Device per second and a two-second timeout. The action
+log gains `kind:"integration"`, status `ok` or `failed`, and copy.md detail.
+A completed gesture logs once, never per move. No new API endpoint is added.
+
+Image samples name source pictures owned by Control, never arbitrary URLs.
+On a track change publish cover null at once with new metadata. Discard stale
+metadata, thumbnail and encoding completions by session/track generation.
+Decode at most 4 MiB source, 4096 by 4096 pixels and 64 MiB decoded memory;
+center-crop to the shared Tile art box and encode baseline JPEG at most 32 KiB
+using the photo quality ladder. Upload by SHA-256 with put_asset before sending
+the image reference. Text goes first; encoding stays outside the link lock.
+Keep at most four cover Assets per Device/session, deleting oldest unreferenced
+covers first, and sweep leftover JPEG covers at session start. A referenced
+Asset remains protected by the Device's in-use refusal. On asset refusal forget
+the known id and upload again; busy retries next round. On full, remove covers
+except the current ones and retry once; then report the out-of-space error.
+
+Before push, exceeding live_images across all Pages returns HTTP 422
+`layout.live_image_limit`, details `{limit,actual}`. Firmware independently
+refuses with size. Caps absence means zero images. Covers never cross the UI API.
+
+#### Volume
+
+Integration id `volume`, name "Volume", config `{enabled}` default true, no
+secrets. Empty account follows Windows default playback endpoint eRender /
+eMultimedia; other accounts return UnknownAccount. Streams: `level` numeric
+0..1, settable true; `muted` numeric 0/1, settable false. Action `mute` toggles.
+A level above zero unmutes. Core Audio callbacks only post to the owning MTA
+worker; unregister and release there before COM uninitialization.
+
+Preset `volume_bar`, "Volume bar", uses widget source volume, account empty,
+field level, render bar, streams `{value:"number",muted:"number"}`, input true.
+Publish actual OS readback, including our own changes, and heartbeat every 10 s
+with ttl_ms 30000. No playback endpoint is an error; non-Windows reports
+"Volume needs Windows." Disabling stops collection and clears samples.
+
+#### Media
+
+Integration id `media`, name "Media", config `{enabled}` default true, no
+secrets. Empty account follows GSMTC GetCurrentSession; others return
+UnknownAccount. Streams title/artist are text, cover image, state numeric:
+0 idle, 1 paused/stopped, 2 playing. None are settable. Actions are previous,
+play_pause and next. Preset `now_playing`, "Now playing", uses widget source
+media, empty account, field title, render now-playing and all four required
+streams. Field is unused because there is no value stream.
+
+A separate MTA worker owns WinRT objects and event subscriptions; callbacks
+only mark dirty/wake it. Session changes revoke old handlers. Bound async waits
+and discard late generations. False command results are failures. Do not fetch
+track-supplied URLs. No session is idle, not an error: "Nothing playing", empty
+artist, null cover, hidden controls. Paused retains metadata. Recheck thumbnail
+at 300 ms, 1 s and 3 s after title changes; never publish an old generation.
+Heartbeat every 10 s with ttl_ms 30000. Non-Windows reports "Media needs Windows."
+
+These sections define steps B through I; step A adds contracts and mocks only.
 
 #### Proxmox
 

@@ -45,7 +45,7 @@ association with a saved Device. It is identity, not authentication. This is the
 same factory station identity used by net-v1, never a randomized interface MAC.
 `name` follows the naming rules below. These fields never contain credentials.
 
-Every capability below except `anim` is required. Bounds are ceilings, not promises of free
+Every capability below except `anim` and `live_images` is required. Bounds are ceilings, not promises of free
 memory. A Device advertises only implemented Tile kinds and formats. Integers
 are nonnegative JSON integers. The complete hello MUST fit one 1,024-byte payload;
 Firmware must test its maximum escaped name and longest build version.
@@ -63,6 +63,7 @@ Firmware must test its maximum escaped name and longest build version.
 | `image` | `[max_width,max_height]`, each at most screen dimensions |
 | `gif_frames`, `gif_pixels` | Maximum frames and total decoded canvas pixels across all GIF frames; zero if unsupported |
 | `anim` | Optional animation limits: `image: [width,height]`, `min_delay_ms`, `page_tiles`, `page_pixels`; positive integers. Present only with `gif` in `formats` |
+| `live_images` | Optional maximum (at most 64) Tiles declaring an image stream across the whole Layout; absent means 0. The media profile advertises 4 |
 | `photo_bytes` | Maximum JPEG transfer, 0 to 131072; zero disables photos |
 | `live_hz`, `live_total_hz` | Maximum accepted updates per stream and Device per second, at most 2 and 20 |
 | `series`, `text_bytes`, `streams` | Maximum series length, text size, and streams per Tile, at most 32, 128, and 8 |
@@ -80,7 +81,7 @@ Every new request is a type 1 JSON object with `m`, flags 0, and a unique pendin
 sequence. Replies use the same `m` and sequence, flags 1, and Boolean `ok`.
 All v2 names start with `v2.`. Except hello, they require selected v2 or return
 `not-negotiated`. Unknown v2 names return `unsupported` on v2 Firmware.
-There are no new unsolicited events. Existing press and key events remain v1.
+The unsolicited `v2.input` event and optional `press.part` extend touch input on selected v2 sessions. Existing key events remain unchanged.
 
 A failure is `{"m":"v2.name.set","ok":false,"reason":"args","error":"Invalid name"}`.
 `reason` is stable; `error` is human-readable, at most 96 UTF-8 bytes.
@@ -210,17 +211,30 @@ It retains schema 1 rules except `schema:2` and these optional Tile properties:
 and `streams`, an object mapping stream ids to one of `number`, `series`, `text`,
 or `image`. Missing `render` means `static`; missing `streams` means empty.
 Stream ids match `^[a-z0-9_]{1,15}$`. `asset` and a non-null `icon` cannot coexist.
-Static Assets use tdi1 or JPEG; gif Tiles require a GIF Asset. Other render kinds
-may use a static Asset as their background. The initial renderer bindings are
-`graph.value` as number or series, `bar.value` as number in the range 0 to 1,
-and now-playing `title` and `artist` as text plus `cover` as image. These names
-refer to stream ids on the respective Tile, not dotted wire names. Other
-stream ids or types are invalid in the Layout. Static, gif, photo-frame, and
-clock Tiles declare no streams. A graph number appends one sample, retaining
-at most `caps.series` samples; a series replaces that history. A bar value
-outside 0 to 1 returns `args`. Now-playing controls retain the existing action
-and press event path. Photo-frame Tiles select the Device-wide idle mode,
-which shows one picture on the whole screen. Clock Tiles use the shared clock.
+Static Assets use tdi1; gif Tiles require a GIF Asset. In this release JPEG
+Assets serve image live values only. `bar` and `now-playing` reject a non-null
+`asset`. Schema 2 also permits `input:true` only on a `bar` with a `widget`
+action; omission means read-only, and explicit false is invalid.
+
+| Renderer | Stream | Type | Required |
+|---|---|---|---|
+| graph | value | number or series | yes |
+| bar | value | number, 0..1 | yes |
+| bar | muted | number, nonzero means muted | no |
+| now-playing | title | text | yes |
+| now-playing | artist | text | yes |
+| now-playing | cover | image | yes |
+| now-playing | state | number: 0 idle, 1 paused, 2 playing | yes |
+
+Unknown streams and wrong types are invalid. Static and gif Tiles declare no
+streams. A graph number appends one sample up to `caps.series`; a series replaces
+history. A bar value outside 0..1 returns `args`. Now-playing hides controls at
+state 0. Renderer geometry and hit regions are in
+[shared vectors](../live/now-playing-vectors.json).
+
+Every Page is built at activation: count image-bearing Tiles across the entire
+Layout, including inactive Pages. Exceeding `caps.live_images` returns `size`
+before commit. Repeated images still count once per Tile.
 
 The existing `layout.put` and `xfer.end` carry schema 2 only after v2 negotiation
 and advertisement in `layout_schemas`. They retain v1 framing, errors, CRC-32,
@@ -244,7 +258,7 @@ or an older `n` returns `sequence`. Success returns `n`.
 | `number` | A finite JSON number in the inclusive range -1e9 to 1e9 |
 | `series` | 1 to `caps.series` numbers in that range, oldest first; replaces the full series |
 | `text` | A string up to `caps.text_bytes` UTF-8 bytes, empty permitted |
-| `image` | null to clear, or `sha256:<id>` for an existing tdi1 or JPEG Asset |
+| `image` | null to clear, or `sha256:<id>` for an existing JPEG Asset within `caps.image` |
 
 `ttl_ms` is 1000 to 60000. Receipt uses the Device's monotonic clock; no clock
 synchronization is needed. On expiry, Firmware retains the last value, draws it
@@ -259,6 +273,47 @@ return `rate` without changing value, counter, or expiry. The Companion normally
 sends at 1 Hz, coalesces queued updates per stream, and never builds an unbounded
 queue. It limits serialized live requests to 256 bytes for the budget below;
 larger valid values reduce the update count to retain the same byte budget.
+
+Text size counts decoded UTF-8 bytes, not JSON escape bytes. Empty text is valid;
+control characters follow the string rules above, and oversize text returns
+`size`. The Companion cleans, folds and scalar-cuts using `fit_text` and
+[text vectors](../live/text-vectors.json). The Device ellipsizes visually and
+uses placeholder boxes for glyphs it lacks; there is no marquee.
+
+An image reference is checked before committing value, counter or expiry.
+Missing, incompatible or undecodable JPEG returns `asset`; allocation failure
+returns `memory`. Decode once outside the live lock, swap on the UI task, and
+retain the Asset reference until the UI releases it. An identical image heartbeat
+requires no decode. Null clears the art immediately. On track change send null
+with the new title; never retain the previous track's cover beside new metadata.
+
+The media profile uses `text_bytes:128`, `streams:4`, `formats:["tdi1","jpeg"]`,
+`image:[256,256]`, `asset_bytes:32768`, and `live_images:4`. With GIF enabled,
+retain its larger `asset_bytes:262144`, add `gif` and its `anim` caps. These are
+contract profiles, not a claim that production Firmware implements them yet.
+
+## Touch input events
+
+A selected v2 session may add `part` to `press`. It matches `^[a-z_]{1,15}$`:
+`previous`, `play_pause`, `next` for now-playing, or `mute` for a bar declaring
+`muted`. A tap outside a part sends no part. Compact now-playing Tiles use the
+whole Tile for play/pause. Idle now-playing has no active control zones.
+
+`v2.input` is a type 1 unsolicited frame, flags 2, frame sequence 0:
+
+```json
+{"m":"v2.input","page":"media","tile":"volume","stream":"value","phase":"move","value":0.4213,"seq":118,"t":5234112}
+```
+
+`phase` is `move` or `end`; `value` is finite, 0..1, rounded to four decimals.
+`seq` is a rising u32 since boot, separate from press counters; `t` is boot ms.
+Only a bar with `input:true` sends it. Moves are latest-only snapshots at most
+every 50 ms, followed by an immediate end replacing any pending move. No ack
+or replay is required. A tap on the track does nothing: the gesture must pass
+pager slop. Press-lost ends it; session/Layout change or offline cancels it.
+Stale or unset values disable input. During dragging the Device draws locally;
+after lift it settles until live readback is within 0.01 or 1.5 s elapses, then
+draws the newest live value. Mute is never predicted. A set above zero unmutes.
 
 ## Photo frame, idle, and clock
 
@@ -358,6 +413,9 @@ remain implementation measurements; arithmetic does not prove UI responsiveness.
 | `v2.idle.get`, `v2.idle.set`, `v2.clock.set` | Unknown-message error | Uses v1 settings only |
 | Schema 2 in `layout.put` | Transfer can open; validation at `xfer.end` rejects schema 2 | Never sends; keeps compatible schema 1 Layout |
 | Chunks and acks | Existing transfer engine may consume them | Never sends v2 data unless a negotiated put succeeded |
+| `v2.input`, `press.part` | Never emitted | Never inferred from v1 presses |
+| Media renderers on older v2 Firmware | Missing caps/kinds | Needs Firmware; retain compatible Layout |
+| New Device with old Companion | `part` is an unknown optional field; `v2.input` is an unknown event | Old Companion ignores the extension |
 | Existing messages and events | Unchanged | Same names, framing, retries, and errors |
 
 ## Golden frames and verification
@@ -394,8 +452,8 @@ Golden hello vectors cover both states and the 1024-byte bound.
 
 Schema 2 accepts `render:"gif"` only with a non-null `asset:"sha256:<id>"`
 and `icon:null`. The referenced Asset must have format `gif`. Missing `render`
-means static. Schema 1 refuses `render`. Other render kinds in the extension
-above remain future work; they are not accepted by the current validators.
+means static. Schema 1 refuses `render`. The shared validators also accept the graph, bar and now-playing contracts;
+production capability advertisement still requires implementation and proof.
 
 Both sides enforce limits. The Companion refuses early; Firmware has the final
 say on encoded bytes, complete decoding, memory, storage and per-Page budgets,

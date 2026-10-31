@@ -5,7 +5,7 @@ pub mod secrets;
 pub mod this_pc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use ts_rs::TS;
 
 #[derive(Clone, Serialize, Deserialize, TS)]
@@ -19,6 +19,9 @@ pub struct DataStream {
     pub id: String,
     pub kind: String,
     pub unit: Option<String>,
+    /// A Device's `input` Tile can set it, through the Integration's `Control`.
+    #[serde(default)]
+    pub settable: bool,
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct PresetTile {
@@ -28,6 +31,12 @@ pub struct PresetTile {
     /// How the Tile draws its stream, when not as a value with its label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub render: Option<td_core::layout::TileRender>,
+    /// The streams the Tile declares, by the renderer's stream id, when it binds more than its field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub streams: Option<BTreeMap<String, td_core::layout::StreamType>>,
+    /// The Tile takes a drag that sets its `value` stream.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub input: bool,
 }
 #[derive(Clone, Serialize, Deserialize, TS)]
 pub struct Delivery {
@@ -93,8 +102,39 @@ pub trait Integration: Send {
     }
     /// The Device service reports delivery independently of upstream polling.
     fn delivered(&mut self, delivery: Delivery);
+    /// The handle Devices reach this Integration through without the registry lock. Built-in Integrations
+    /// that act on the PC have one.
+    fn control(&self) -> Option<Arc<dyn Control>> {
+        None
+    }
 }
-/// The newest value of one Integration stream, for Live tiles.
+/// What a Device asks of an Integration, without the registry lock. It starts no process, and no API route
+/// reaches it: only a Device's press `part` and `v2.input` do.
+pub trait Control: Send + Sync {
+    /// The newest samples, without blocking.
+    fn live(&self) -> Vec<LiveSample>;
+    /// Called once. The Integration calls `wake` when a sample changes, so delivery doesn't wait for a round.
+    fn subscribe(&self, wake: Arc<dyn Fn() + Send + Sync>);
+    /// Runs the action a Tile part names, blocking at most `timeout`.
+    fn act(&self, account: &str, action: &str, timeout: Duration) -> Result<(), ControlError>;
+    /// Sets a settable stream from a Device's drag. Queues it and returns without blocking.
+    fn set(&self, account: &str, stream: &str, value: f64) -> Result<(), ControlError>;
+    /// The source picture an `image` sample of this Control names.
+    fn picture(&self, _id: &str) -> Option<Arc<[u8]>> {
+        None
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ControlError {
+    UnknownAccount,
+    UnknownAction,
+    NotSettable,
+    OutOfRange,
+    /// The OS backend can't do it now, in the words the action log shows.
+    Unavailable(String),
+}
+/// The newest value of one Integration stream, for Live tiles. An `image` value names a source picture that
+/// [`Control::picture`] holds; the Companion turns it into a cover Asset before any Device sees it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LiveSample {
     pub account: String,
@@ -164,6 +204,55 @@ mod tests {
         };
         let registration = inventory::iter::<Registration>.into_iter().next().unwrap();
         assert!(Registry::from_registrations(env, [registration, registration]).is_err());
+    }
+
+    #[test]
+    fn polling_integrations_have_no_control() {
+        let env = Environment {
+            secrets: Arc::new(secrets::MemorySecrets::default()),
+            config_file: None,
+            fetch: Arc::new(|| Box::new(crate::sources::HttpFetch::new())),
+        };
+        let registry = Registry::new(env).unwrap();
+        assert!(!registry.0.is_empty());
+        for (id, integration) in &registry.0 {
+            assert!(integration.control().is_none(), "{id}");
+            let summary = integration.summary();
+            assert!(summary.streams.iter().all(|s| !s.settable), "{id}");
+            assert!(summary.presets.iter().all(|p| !p.input), "{id}");
+        }
+    }
+
+    #[test]
+    fn settable_and_media_preset_fields_are_optional_on_the_wire() {
+        let stream: DataStream = serde_json::from_value(
+            serde_json::json!({"id": "cpu", "kind": "numeric", "unit": "%"}),
+        )
+        .unwrap();
+        assert!(!stream.settable);
+        let preset = PresetTile {
+            id: "volume".into(),
+            name: "Volume".into(),
+            action: serde_json::json!({"type": "widget", "source": "volume", "field": "level", "account": ""}),
+            render: Some(td_core::layout::TileRender::Bar),
+            streams: Some(BTreeMap::from([
+                ("value".into(), td_core::layout::StreamType::Number),
+                ("muted".into(), td_core::layout::StreamType::Number),
+            ])),
+            input: true,
+        };
+        let wire = serde_json::to_value(&preset).unwrap();
+        assert_eq!(wire["render"], "bar");
+        assert_eq!(wire["streams"]["muted"], "number");
+        assert_eq!(wire["input"], true);
+        let plain = PresetTile {
+            render: None,
+            streams: None,
+            input: false,
+            ..preset
+        };
+        let wire = serde_json::to_value(&plain).unwrap();
+        assert!(wire.get("streams").is_none() && wire.get("input").is_none());
     }
 }
 

@@ -169,9 +169,9 @@ describe('usage', () => {
 
 describe('Preset tiles', () => {
   const streams: DataStream[] = [
-    { id: 'five_hour_pct', kind: 'numeric', unit: '%' },
-    { id: 'success', kind: 'numeric', unit: 'requests' },
-    { id: 'plan', kind: 'text', unit: null },
+    { id: 'five_hour_pct', kind: 'numeric', unit: '%', settable: false },
+    { id: 'success', kind: 'numeric', unit: 'requests', settable: false },
+    { id: 'plan', kind: 'text', unit: null, settable: false },
   ];
   const preset = (field: string) => ({ id: field, name: field.replaceAll('_', ' '), action: { type: 'widget', source: 'cliproxyapi', field, account: '' } });
 

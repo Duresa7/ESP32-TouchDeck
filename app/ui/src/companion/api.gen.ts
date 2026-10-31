@@ -34,7 +34,11 @@ export type Capabilities = { screen: [number, number], grid: [number, number], p
  * Live values: updates a stream and the whole Device take each second, samples a graph keeps, and bytes a
  * text value holds. All zero when the Firmware has no Live tiles.
  */
-live_hz: number, live_total_hz: number, series: number, text_bytes: number, };
+live_hz: number, live_total_hz: number, series: number, text_bytes: number, 
+/**
+ * The most Tiles in a Layout that declare an `image` stream. Zero when the Firmware draws no cover art.
+ */
+live_images: number, };
 export type CatalogHit = { source: string, name: string, id: string, aliases: Array<string>, hex: string | null, tags: Array<string>, category: string | null, svg: boolean, light: boolean, dark: boolean, license: string, license_url: string | null, guidelines: string | null, attribution_url: string, attribution: string, };
 export type CatalogQuery = { q: string, catalog: string | null, };
 export type CatalogVariant = "base" | "light" | "dark";
@@ -44,7 +48,11 @@ export type CompanionStopping = { reason: string, };
 export type ConfigField = { name: string, kind: string, secret: boolean, };
 export type ConsoleLine = { line: string, };
 export type CreateAsset = { source: AssetSource, fit?: Fit, };
-export type DataStream = { id: string, kind: string, unit: string | null, };
+export type DataStream = { id: string, kind: string, unit: string | null, 
+/**
+ * A Device's `input` Tile can set it, through the Integration's `Control`.
+ */
+settable: boolean, };
 export type Delivery = { device: string, sent: number, error: string | null, };
 export type DeviceAdded = DeviceSummary;
 export type DeviceAssets = { ids: Array<string>, storage_free: number, };
@@ -167,7 +175,15 @@ export type PresetTile = { id: string, name: string, action: JsonValue,
 /**
  * How the Tile draws its stream, when not as a value with its label.
  */
-render?: TileRender | null, };
+render?: TileRender | null, 
+/**
+ * The streams the Tile declares, by the renderer's stream id, when it binds more than its field.
+ */
+streams?: { [key in string]?: StreamType } | null, 
+/**
+ * The Tile takes a drag that sets its `value` stream.
+ */
+input?: boolean, };
 export type Proof = { proof: string, };
 export type ProofRequest = { nonce: string, };
 export type PruneProgress = { removed: number, total: number, };
@@ -205,9 +221,13 @@ export type StartupSetting = { at_sign_in: boolean, };
 export type StreamType = "number" | "series" | "text" | "image";
 export type SuggestRequest = { action: TileAction, };
 export type SystemInfo = { version: string, build: string, api: string, mock: boolean, data_dir_override: boolean, };
-export type Tile = { id: string, label: string, row: number, col: number, rowSpan: number, colSpan: number, icon: string | null, asset?: string | null, render?: TileRender | null, streams?: { [key in string]?: StreamType } | null, action: TileAction, };
+export type Tile = { id: string, label: string, row: number, col: number, rowSpan: number, colSpan: number, icon: string | null, asset?: string | null, render?: TileRender | null, streams?: { [key in string]?: StreamType } | null, 
+/**
+ * A `bar` Tile the finger can drag to set its `value` stream. Written only when true.
+ */
+input?: boolean, action: TileAction, };
 export type TileAction = { "type": "key", usage: number, mods: Array<Modifier>, } | { "type": "mod", mod: Modifier, } | { "type": "consumer", usage: number, } | { "type": "page", page: string, } | { "type": "none" } | { "type": "launch", path: string, args: Array<string>, cwd: string, } | { "type": "open", target: string, } | { "type": "command", program: string, args: Array<string>, cwd: string, shell: boolean, } | { "type": "widget", source: string, field: string, account: string, };
-export type TileRender = "gif" | "graph";
+export type TileRender = "gif" | "graph" | "bar" | "now-playing";
 export type Topic = "state" | "console" | "key-mirror" | "device-events";
 export type UploadBody = Blob;
 export type Uploaded = { id: string, media_type: string, bytes: number, };

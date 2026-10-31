@@ -595,6 +595,7 @@ mod tests {
                     page: "apps".into(),
                     tile: "launch".into(),
                     kind: "launch".into(),
+                    part: None,
                     seq: 1,
                     t: 10,
                 });
@@ -613,6 +614,7 @@ mod tests {
                 page: "apps".into(),
                 tile: "launch".into(),
                 kind: "launch".into(),
+                part: None,
                 seq: 1,
                 t: 10
             }
