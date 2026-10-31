@@ -1178,5 +1178,7 @@ tile. A stale graph keeps its last line at 60% opacity, as on the Device.
 | Response limit | Proxmox sent more than 1 MiB. Check the server. |
 | Certificate | Couldn't verify the Proxmox certificate. Check the SHA-256 pin or system trust store. |
 | Malformed data | Couldn't read the Proxmox response. Check the server. |
+| Skipped resources | Unreadable Proxmox resources skipped: {count}. |
+| Pin over HTTP | A certificate pin needs an https:// address. Change the address or clear the pin. |
 | Connection | Couldn't reach Proxmox. Check the address and connection, then retry. |
 | Vault | Credential store unavailable. Retry after unlocking it. |

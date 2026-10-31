@@ -1,7 +1,7 @@
 use super::*;
 use crate::sources::{
     Reading,
-    network::{FetchError, GetRequest, MAX_BODY, parse_pin},
+    network::{FetchError, GetRequest, MAX_BODY, TIMEOUT, parse_pin},
 };
 use serde_json::json;
 use std::time::{Duration, Instant, SystemTime};
@@ -10,6 +10,8 @@ use td_core::{layout::TileRender, live::LiveValue};
 const FIELDS: [&str; 2] = ["token_id", "token_secret"];
 const INVALID: &str = "Couldn't read the Proxmox response. Check the server.";
 const LARGE: &str = "Proxmox sent more than 1 MiB. Check the server.";
+const PIN_NEEDS_HTTPS: &str =
+    "A certificate pin needs an https:// address. Change the address or clear the pin.";
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Settings {
@@ -38,16 +40,31 @@ impl Settings {
         }
         secrets::credential_transport(&self.url).map_err(|_| Error::ConfigInvalid)?;
         self.interval_s = self.interval_s.clamp(5, 3600);
-        self.tls_pin = self.tls_pin.trim().to_ascii_lowercase();
-        if !self.tls_pin.is_empty() && parse_pin(&self.tls_pin).is_none() {
+        let pin = self.tls_pin.trim().to_ascii_lowercase();
+        let groups: Vec<_> = pin.split(':').collect();
+        self.tls_pin = if groups.len() == 32 && groups.iter().all(|g| g.len() == 2) {
+            groups.concat()
+        } else {
+            pin
+        };
+        if self.tls_pin.is_empty() {
+            return Ok(self);
+        }
+        if parse_pin(&self.tls_pin).is_none() {
             return Err(Error::ConfigInvalid);
+        }
+        if !self.url.starts_with("https://") {
+            return Err(Error::ConfigField {
+                field: "tls_pin",
+                message: PIN_NEEDS_HTTPS,
+            });
         }
         Ok(self)
     }
 }
 #[derive(Deserialize)]
 struct Resources {
-    data: Vec<Resource>,
+    data: Vec<Value>,
 }
 #[derive(Deserialize)]
 struct Resource {
@@ -67,39 +84,59 @@ struct ValueSample {
 struct PollData {
     values: Vec<ValueSample>,
     resources: Vec<Resource>,
+    skipped: usize,
+}
+fn measure(r: &Resource) -> Option<(bool, Option<[f64; 2]>)> {
+    let prefix = format!("{}/", r.kind);
+    if !r.id.starts_with(&prefix)
+        || r.id.len() <= prefix.len()
+        || r.id.len() > 128
+        || !r
+            .id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"/._-".contains(&c))
+    {
+        return None;
+    }
+    let online = match (r.kind.as_str(), r.status.as_deref()?) {
+        ("node", "online") | ("qemu" | "lxc", "running") => true,
+        ("node", "offline") | ("qemu" | "lxc", "stopped") | (_, "unknown") => false,
+        _ => return None,
+    };
+    if !online {
+        return Some((false, None));
+    }
+    let cpu = r.cpu.filter(|n| n.is_finite())?.clamp(0.0, 1.0);
+    let max = r.maxmem.filter(|n| n.is_finite() && *n > 0.0)?;
+    let mem = r.mem.filter(|n| n.is_finite())?.clamp(0.0, max);
+    Some((true, Some([cpu * 100.0, mem / max * 100.0])))
 }
 fn parse(body: &str) -> Result<PollData, &'static str> {
     if body.len() > MAX_BODY {
         return Err(LARGE);
     }
     let reply: Resources = serde_json::from_str(body).map_err(|_| INVALID)?;
-    let mut resources: Vec<_> = reply
-        .data
-        .into_iter()
-        .filter(|r| matches!(r.kind.as_str(), "node" | "qemu" | "lxc"))
-        .collect();
+    let mut skipped = 0;
+    let mut resources = Vec::new();
+    for value in reply.data {
+        match value.get("type").and_then(Value::as_str) {
+            Some("node" | "qemu" | "lxc") => match serde_json::from_value::<Resource>(value) {
+                Ok(r) => resources.push(r),
+                Err(_) => skipped += 1,
+            },
+            Some(_) => {}
+            None => skipped += 1,
+        }
+    }
     resources.sort_by(|a, b| a.id.cmp(&b.id));
     let mut seen = std::collections::BTreeSet::new();
     let mut samples = Vec::new();
     let mut running = 0;
     let mut total = 0;
-    for r in &resources {
-        let prefix = format!("{}/", r.kind);
-        if !r.id.starts_with(&prefix)
-            || r.id.len() <= prefix.len()
-            || r.id.len() > 128
-            || !r
-                .id
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || b"/._-".contains(&c))
-            || !seen.insert(&r.id)
-        {
-            return Err(INVALID);
-        }
-        let online = match (r.kind.as_str(), r.status.as_deref()) {
-            ("node", Some("online")) | ("qemu" | "lxc", Some("running")) => true,
-            ("node", Some("offline")) | ("qemu" | "lxc", Some("stopped")) => false,
-            _ => return Err(INVALID),
+    resources.retain(|r| {
+        let Some((online, metrics)) = measure(r).filter(|_| seen.insert(r.id.clone())) else {
+            skipped += 1;
+            return false;
         };
         let mut add = |stream, value| {
             samples.push(ValueSample {
@@ -113,23 +150,12 @@ fn parse(body: &str) -> Result<PollData, &'static str> {
             running += usize::from(online);
             add("running", f64::from(online));
         }
-        if online {
-            let cpu = r
-                .cpu
-                .filter(|n| n.is_finite() && *n >= 0.0 && *n <= 1.0)
-                .ok_or(INVALID)?;
-            let mem = r
-                .mem
-                .filter(|n| n.is_finite() && *n >= 0.0)
-                .ok_or(INVALID)?;
-            let max = r
-                .maxmem
-                .filter(|n| n.is_finite() && *n > 0.0 && mem <= *n)
-                .ok_or(INVALID)?;
-            add("cpu_pct", cpu * 100.0);
-            add("ram_pct", mem / max * 100.0);
+        if let Some([cpu, ram]) = metrics {
+            add("cpu_pct", cpu);
+            add("ram_pct", ram);
         }
-    }
+        true
+    });
     for (stream, value) in [("running_guests", running), ("total_guests", total)] {
         samples.push(ValueSample {
             account: "cluster".into(),
@@ -140,6 +166,7 @@ fn parse(body: &str) -> Result<PollData, &'static str> {
     Ok(PollData {
         values: samples,
         resources,
+        skipped,
     })
 }
 struct Proxmox {
@@ -153,6 +180,7 @@ struct Proxmox {
     readings: Vec<Reading>,
     live: Vec<LiveSample>,
     resources: Vec<Resource>,
+    skipped: usize,
     message: Option<String>,
     delivery: BTreeMap<String, Delivery>,
 }
@@ -170,6 +198,7 @@ impl Proxmox {
         self.readings.clear();
         self.live.clear();
         self.resources.clear();
+        self.skipped = 0;
         self.message = None;
     }
     fn poll(&mut self, now: Instant) {
@@ -179,10 +208,15 @@ impl Proxmox {
         let result = self.collect();
         self.samples = self.samples.saturating_add(1);
         match result {
-            Ok(Some(PollData { values, resources })) => {
+            Ok(Some(PollData {
+                values,
+                resources,
+                skipped,
+            })) => {
                 self.failures = 0;
                 self.message = None;
                 self.resources = resources;
+                self.skipped = skipped;
                 let updated = crate::sources::unix_ms(SystemTime::now());
                 self.readings = values
                     .iter()
@@ -217,6 +251,7 @@ impl Proxmox {
             Err(message) => {
                 self.failures = self.failures.saturating_add(1);
                 self.message = Some(message.into());
+                self.skipped = 0;
                 self.live.clear();
                 self.readings.clear();
             }
@@ -238,7 +273,7 @@ impl Proxmox {
         let (Some(id), Some(secret)) = (id, secret) else {
             return Ok(None);
         };
-        let body = self.fetch.request(&GetRequest { url:&format!("{}/api2/json/cluster/resources",self.settings.url), authorization:&format!("PVEAPIToken={id}={secret}"), tls_pin:parse_pin(&self.settings.tls_pin) }).map_err(|e| match e {
+        let body = self.fetch.request(&GetRequest { url:&format!("{}/api2/json/cluster/resources",self.settings.url), authorization:&format!("PVEAPIToken={id}={secret}"), tls_pin:parse_pin(&self.settings.tls_pin), deadline: Instant::now() + TIMEOUT }).map_err(|e| match e {
             FetchError::Unauthorized => "Proxmox rejected the token. Check its read-only permissions.",
             FetchError::Timeout => "Proxmox didn't answer within 10 s. Check the connection, then retry.",
             FetchError::TooLarge => LARGE,
@@ -283,13 +318,11 @@ impl Integration for Proxmox {
                 Some("Credential store unavailable. Retry after unlocking it.".into()),
             ),
             Ok(fields) if fields.iter().any(Option::is_none) => ("not_configured", None),
+            _ if self.message.is_some() => ("error", self.message.clone()),
             _ => (
-                if self.message.is_some() {
-                    "error"
-                } else {
-                    "ok"
-                },
-                self.message.clone(),
+                "ok",
+                (self.skipped > 0)
+                    .then(|| format!("Unreadable Proxmox resources skipped: {}.", self.skipped)),
             ),
         };
         IntegrationSummary {
@@ -453,6 +486,7 @@ fn load(env: &Environment) -> Result<Proxmox, Error> {
         readings: Vec::new(),
         live: Vec::new(),
         resources: Vec::new(),
+        skipped: 0,
         message: None,
         delivery: BTreeMap::new(),
     })
@@ -465,6 +499,7 @@ inventory::submit! {Registration(create)}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     struct Recorded;
     impl crate::sources::Fetch for Recorded {
         fn get(&self, _: &str, _: &str) -> Result<String, String> {
@@ -504,19 +539,82 @@ mod tests {
         assert!(integration.live().is_empty());
         assert_eq!(integration.view().unwrap().config["interval_s"], 3600);
     }
+    struct Failing(Arc<AtomicUsize>);
+    impl crate::sources::Fetch for Failing {
+        fn get(&self, _: &str, _: &str) -> Result<String, String> {
+            unreachable!()
+        }
+        fn post_json(&self, _: &str, _: &str, _: &Value) -> Result<String, String> {
+            unreachable!()
+        }
+        fn request(&self, _: &GetRequest<'_>) -> Result<String, FetchError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Err(FetchError::Transport)
+        }
+    }
+    #[test]
+    fn each_failure_doubles_the_wait_before_the_next_poll() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetch_calls = calls.clone();
+        let mut integration = load(&Environment {
+            secrets: Arc::new(secrets::MemorySecrets::default()),
+            config_file: None,
+            fetch: Arc::new(move || Box::new(Failing(fetch_calls.clone()))),
+        })
+        .unwrap();
+        integration.configure(json!({"enabled":true,"url":"https://example.invalid:8006","interval_s":5,"tls_pin":""})).unwrap();
+        for f in FIELDS {
+            integration.secret_put(f, "fixture-private-value").unwrap();
+        }
+        let start = Instant::now();
+        integration.poll(start);
+        for (seconds, expected) in [(9, 1), (10, 2), (29, 2), (30, 3), (69, 3), (70, 4)] {
+            integration.poll(start + Duration::from_secs(seconds));
+            assert_eq!(calls.load(Ordering::SeqCst), expected, "at {seconds} s");
+        }
+    }
+    #[test]
+    fn a_pin_needs_https_and_accepts_the_colon_form() {
+        let colons = (0..32)
+            .map(|i| format!("{i:02X}"))
+            .collect::<Vec<_>>()
+            .join(":");
+        let bare = (0..32).map(|i| format!("{i:02x}")).collect::<String>();
+        let settings = Settings {
+            tls_pin: colons.clone(),
+            ..Settings::default()
+        }
+        .validate()
+        .unwrap();
+        assert_eq!(settings.tls_pin, bare);
+        let Err(Error::ConfigField { field, message }) = (Settings {
+            url: "http://127.0.0.1:8006".into(),
+            tls_pin: colons,
+            ..Settings::default()
+        })
+        .validate() else {
+            panic!("a pin over plain HTTP was accepted");
+        };
+        assert_eq!((field, message), ("tls_pin", PIN_NEEDS_HTTPS));
+        assert!(
+            Settings {
+                url: "http://127.0.0.1:8006".into(),
+                ..Settings::default()
+            }
+            .validate()
+            .is_ok()
+        );
+    }
     #[test]
     fn metrics_and_config_reject_invalid_input_without_echoing_it() {
-        for body in [
-            r#"{"data":[{"type":"node","id":"node/example.invalid","status":"online","cpu":2,"mem":1,"maxmem":4}]}"#,
-            r#"{"data":[{"type":"qemu","id":"qemu/100","status":"unknown"}]}"#,
-            r#"{"data":[{"type":"node","id":"node/example.invalid","status":"online","cpu":0.5,"mem":1,"maxmem":0}]}"#,
-        ] {
+        for body in [r#"{"data":{}}"#, r#"{"data":[1,2"#] {
             assert!(parse(body).is_err());
         }
         for (url, pin) in [
             ("https://example.invalid/path", ""),
             ("https://example.invalid?token=redacted", ""),
             ("https://example.invalid", "bad-pin"),
+            ("https://example.invalid", "AB:CD"),
             ("http://example.invalid", ""),
         ] {
             assert!(

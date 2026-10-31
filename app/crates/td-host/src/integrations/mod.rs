@@ -69,6 +69,10 @@ pub struct IntegrationView {
 pub enum Error {
     NotFound,
     ConfigInvalid,
+    ConfigField {
+        field: &'static str,
+        message: &'static str,
+    },
     Credentials,
     Storage,
 }

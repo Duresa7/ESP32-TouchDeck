@@ -1,13 +1,19 @@
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use sha2::{Digest, Sha256};
-use std::{io::Read, sync::Arc, time::Duration};
+use std::{
+    io::Read,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 pub const MAX_BODY: usize = 1024 * 1024;
+pub const TIMEOUT: Duration = Duration::from_secs(10);
 pub struct GetRequest<'a> {
     pub url: &'a str,
     pub authorization: &'a str,
     pub tls_pin: Option<[u8; 32]>,
+    pub deadline: Instant,
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FetchError {
@@ -100,9 +106,14 @@ pub fn get(request: &GetRequest<'_>) -> Result<String, FetchError> {
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(verifier))
         .with_no_client_auth();
+    let remaining = request
+        .deadline
+        .checked_duration_since(Instant::now())
+        .filter(|d| !d.is_zero())
+        .ok_or(FetchError::Timeout)?;
     let client = reqwest::blocking::Client::builder()
         .use_preconfigured_tls(tls)
-        .timeout(Duration::from_secs(10))
+        .timeout(remaining)
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy()
         .build()
@@ -112,6 +123,7 @@ pub fn get(request: &GetRequest<'_>) -> Result<String, FetchError> {
     authorization.set_sensitive(true);
     let response = client
         .get(request.url)
+        .timeout(remaining)
         .header(reqwest::header::AUTHORIZATION, authorization)
         .header(reqwest::header::ACCEPT, "application/json")
         .send()
@@ -140,7 +152,13 @@ pub fn get(request: &GetRequest<'_>) -> Result<String, FetchError> {
     response
         .take(MAX_BODY as u64 + 1)
         .read_to_end(&mut bytes)
-        .map_err(|_| FetchError::Timeout)?;
+        .map_err(|_| {
+            if Instant::now() >= request.deadline {
+                FetchError::Timeout
+            } else {
+                FetchError::Transport
+            }
+        })?;
     if bytes.len() > MAX_BODY {
         return Err(FetchError::TooLarge);
     }
@@ -150,7 +168,12 @@ pub fn get(request: &GetRequest<'_>) -> Result<String, FetchError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{io::Write, net::TcpListener, thread};
+    use std::{
+        io::Write,
+        net::{TcpListener, TcpStream},
+        sync::atomic::{AtomicBool, Ordering},
+        thread,
+    };
 
     #[test]
     fn certificate_pin_is_checked_before_any_http_credentials_are_sent() {
@@ -201,6 +224,7 @@ mod tests {
                     1 => Some([0; 32]),
                     _ => Some(pin),
                 },
+                deadline: Instant::now() + TIMEOUT,
             });
             let received = server.join().unwrap();
             if mode == 2 {
@@ -222,33 +246,130 @@ mod tests {
             get(&GetRequest {
                 url: &format!("https://{address}"),
                 authorization: "fixture-private-value",
-                tls_pin: None
+                tls_pin: None,
+                deadline: Instant::now() + TIMEOUT,
             }),
             Err(FetchError::Transport)
         );
     }
 
+    fn local(reply: impl FnOnce(TcpStream) + Send + 'static) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(12)))
+                .unwrap();
+            let mut bytes = [0; 4096];
+            let n = socket.read(&mut bytes).unwrap();
+            assert!(bytes[..n].starts_with(b"GET /api2/json/cluster/resources HTTP/1.1"));
+            reply(socket);
+        });
+        format!("http://{address}/api2/json/cluster/resources")
+    }
+    fn fetch(url: &str, timeout: Duration) -> Result<String, FetchError> {
+        get(&GetRequest {
+            url,
+            authorization: "fixture-private-value",
+            tls_pin: None,
+            deadline: Instant::now() + timeout,
+        })
+    }
+
     #[test]
-    fn http_status_redirects_and_body_limits_are_enforced() {
-        for (response,expected) in [
-            ("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n".into(),FetchError::Unauthorized),
-            ("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".into(),FetchError::Unauthorized),
-            ("HTTP/1.1 302 Found\r\nLocation: https://other.example.invalid/\r\nContent-Length: 0\r\n\r\n".into(),FetchError::Transport),
-            (format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", MAX_BODY+1),FetchError::TooLarge),
-            (format!("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{}", "x".repeat(MAX_BODY+1)),FetchError::TooLarge),
+    fn http_status_and_declared_length_are_enforced() {
+        for (response, expected) in [
+            (
+                "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n".to_owned(),
+                FetchError::Unauthorized,
+            ),
+            (
+                "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".to_owned(),
+                FetchError::Unauthorized,
+            ),
+            (
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+                    MAX_BODY + 1
+                ),
+                FetchError::TooLarge,
+            ),
         ] {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            let address = listener.local_addr().unwrap();
-            let server = thread::spawn(move || {
-                let (mut socket,_) = listener.accept().unwrap();
-                socket.set_read_timeout(Some(Duration::from_secs(12))).unwrap();
-                let mut bytes = [0;4096]; let n = socket.read(&mut bytes).unwrap();
-                assert!(bytes[..n].starts_with(b"GET /api2/json/cluster/resources HTTP/1.1"));
+            let url = local(move |mut socket| {
                 let _ = socket.write_all(response.as_bytes());
             });
-            let result = get(&GetRequest {url:&format!("http://{address}/api2/json/cluster/resources"),authorization:"fixture-private-value",tls_pin:None});
-            server.join().unwrap();
-            assert_eq!(result,Err(expected));
+            assert_eq!(fetch(&url, TIMEOUT), Err(expected));
         }
+    }
+
+    #[test]
+    fn a_trickled_body_times_out_at_the_whole_request_deadline() {
+        let url = local(|mut socket| {
+            let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\n");
+            for _ in 0..20 {
+                if socket.write_all(b"x").is_err() {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(300));
+            }
+        });
+        let start = Instant::now();
+        assert_eq!(
+            fetch(&url, Duration::from_secs(1)),
+            Err(FetchError::Timeout)
+        );
+        assert!(start.elapsed() < Duration::from_millis(1500));
+    }
+
+    #[test]
+    fn a_redirect_is_not_followed() {
+        let second = TcpListener::bind("127.0.0.1:0").unwrap();
+        let target = second.local_addr().unwrap();
+        second.set_nonblocking(true).unwrap();
+        let done = Arc::new(AtomicBool::new(false));
+        let hit = thread::spawn({
+            let done = done.clone();
+            move || {
+                loop {
+                    let finished = done.load(Ordering::SeqCst);
+                    if let Ok((mut socket, _)) = second.accept() {
+                        socket.set_nonblocking(false).unwrap();
+                        let _ = socket.read(&mut [0; 4096]);
+                        let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}");
+                        return true;
+                    }
+                    if finished {
+                        return false;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
+        });
+        let url = local(move |mut socket| {
+            let _ = socket.write_all(
+                format!(
+                    "HTTP/1.1 302 Found\r\nLocation: http://{target}/\r\nContent-Length: 0\r\n\r\n"
+                )
+                .as_bytes(),
+            );
+        });
+        let result = fetch(&url, Duration::from_secs(5));
+        done.store(true, Ordering::SeqCst);
+        assert!(!hit.join().unwrap());
+        assert_eq!(result, Err(FetchError::Transport));
+    }
+
+    #[test]
+    fn a_body_without_a_length_is_cut_off_after_1_mib() {
+        let url = local(|mut socket| {
+            let _ = socket.write_all(b"HTTP/1.1 200 OK\r\n\r\n");
+            let _ = socket.write_all(&vec![b'x'; 2 * MAX_BODY]);
+            let _ = socket.read(&mut [0; 1]);
+        });
+        assert_eq!(
+            fetch(&url, Duration::from_secs(5)),
+            Err(FetchError::TooLarge)
+        );
     }
 }
