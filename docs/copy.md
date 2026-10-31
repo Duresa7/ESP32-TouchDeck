@@ -1143,6 +1143,7 @@ A script lists the string literals and text nodes in every non-test `.svelte` an
 | Too large | This GIF is too large for {device}. Choose a smaller GIF. |
 | Page budget | This Page has too many animations for {device}. Remove an animated Tile. |
 | Storage full | {device} is out of space. Remove unused Assets, then retry. |
+| Decoded source too large | This GIF needs more than 64 MiB to decode all its frames. Choose a smaller or shorter GIF. |
 | Preparation failed | Couldn't prepare this GIF. Choose another GIF. |
 | Unsupported | Needs Firmware {x.y} |
 

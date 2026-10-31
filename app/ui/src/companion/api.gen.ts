@@ -4,6 +4,7 @@ export type ActionLog = { id: string, device: DeviceId, at_ms: number, page: str
 export type ActionQuery = { device: DeviceId | null, };
 export type AllowedAction = { hash: string, granted_ms: number, kind: string, program: string, args: Array<string>, cwd: string, shell: boolean, };
 export type AllowedPath = { hash: string, };
+export type AnimationCapabilities = { image: [number, number], min_delay_ms: number, page_tiles: number, page_pixels: number, };
 export type Answer = "once" | "always" | "deny" | "expired";
 export type ApprovalPath = { id: string, };
 export type ApprovalRequest = { id: string, device: DeviceId, page: string, tile: string, hash: string, created_ms: number, kind: string, program: string, args: Array<string>, cwd: string, shell: boolean, };
@@ -12,10 +13,10 @@ export type AssetBytes = Blob;
 export type AssetPath = { asset: string, };
 export type AssetRef = { id: string, 
 /**
- * `tdi1`, the Device's icon format.
+ * The encoded format: `tdi1` or `gif`.
  */
 kind: string, width: number, height: number, bytes: number, };
-export type AssetSource = { "kind": "app", path: string, } | { "kind": "catalog", catalog: string, id: string, variant: CatalogVariant, padding: number, background: [number, number, number, number] | null, tint: [number, number, number] | null, } | { "kind": "upload", upload: string, };
+export type AssetSource = { "kind": "gif", upload: string, device: string, target: GifTarget, } | { "kind": "app", path: string, } | { "kind": "catalog", catalog: string, id: string, variant: CatalogVariant, padding: number, background: [number, number, number, number] | null, tint: [number, number, number] | null, } | { "kind": "upload", upload: string, };
 export type AssetSync = { 
 /**
  * Assets the Layout uses that the Device lacked and the Companion sent.
@@ -29,7 +30,7 @@ export type AuthRevoked = Record<string, never>;
 export type BrowserKind = "browser";
 export type Builtin = { name: string, label: string, tags: Array<string>, id: string, };
 export type BundleInfo = { id: string, version: string, build: string, bytes: number, };
-export type Capabilities = { screen: [number, number], grid: [number, number], pages: number, tiles: number, layout_bytes: number, layout_schemas: Array<number>, storage_free: number, tile_kinds: Array<string>, asset_bytes: number, formats: Array<string>, image: [number, number], photo_bytes: number, 
+export type Capabilities = { anim?: AnimationCapabilities, gif_frames?: number, gif_pixels?: number, screen: [number, number], grid: [number, number], pages: number, tiles: number, layout_bytes: number, layout_schemas: Array<number>, storage_free: number, tile_kinds: Array<string>, asset_bytes: number, formats: Array<string>, image: [number, number], photo_bytes: number, 
 /**
  * Live values: updates a stream and the whole Device take each second, samples a graph keeps, and bytes a
  * text value holds. All zero when the Firmware has no Live tiles.
@@ -92,6 +93,7 @@ export type FirmwareRequest = { bundle: string, };
 export type FirmwareResult = { message: string, version: string, };
 export type FirmwareTarget = { device: DeviceId, };
 export type Fit = "contain" | "cover";
+export type GifTarget = { width: number, height: number, background: [number, number, number], };
 export type Hello = { api: string, build: string, session: ClientInfo, };
 export type InstallLock = { lock: string, };
 export type IntegrationPath = { integration: string, };
@@ -272,7 +274,7 @@ export const endpoints = {
   'system.startup_put': { method: 'PUT', path: '/system/startup', access: 'session' },
   'system.unlock': { method: 'DELETE', path: '/system/lock/{lock}', access: 'session' },
 } as const;
-export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.render_failed' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'companion.installing' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'firmware.bundle_invalid' | 'firmware.bundle_not_found' | 'firmware.confirm_timeout' | 'firmware.declined' | 'firmware.failed' | 'firmware.rolled_back' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.changed' | 'layout.invalid' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'new_board.not_found' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'system.busy' | 'system.dialog_open' | 'upload.not_found';
+export type ErrorCode = 'action.not_found' | 'approval.not_found' | 'asset.not_found' | 'asset.refused' | 'asset.render_failed' | 'asset.too_large' | 'asset.unsupported' | 'auth.code_invalid' | 'auth.code_locked' | 'auth.expired' | 'auth.forbidden' | 'auth.invalid' | 'auth.missing' | 'auth.revoked' | 'companion.installing' | 'console.forbidden' | 'device.busy' | 'device.connected' | 'device.link' | 'device.needs_firmware' | 'device.not_connected' | 'device.not_found' | 'device.timeout' | 'firmware.bundle_invalid' | 'firmware.bundle_not_found' | 'firmware.confirm_timeout' | 'firmware.declined' | 'firmware.failed' | 'firmware.rolled_back' | 'integration.config_invalid' | 'integration.credentials' | 'integration.not_found' | 'internal' | 'job.cancelled' | 'job.not_cancellable' | 'job.not_found' | 'layout.animation_limit' | 'layout.changed' | 'layout.invalid' | 'layout.not_found' | 'layout.orientation_mismatch' | 'layout.stored_invalid' | 'limits.exceeded' | 'new_board.not_found' | 'request.invalid' | 'request.media_type' | 'request.timeout' | 'request.too_large' | 'route.method_not_allowed' | 'route.not_found' | 'security.host' | 'security.origin' | 'system.busy' | 'system.dialog_open' | 'upload.not_found';
 export type SyncData = {
   approvals: Array<ApprovalRequest>,
   devices: Array<DeviceSummary>,

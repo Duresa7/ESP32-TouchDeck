@@ -36,6 +36,14 @@ impl From<&icons::Builtin> for Builtin {
 
 #[derive(Debug, thiserror::Error)]
 pub enum AssetError {
+    #[error(
+        "This GIF is too large. Choose a smaller GIF. Decoded frames together must fit within 64 MiB."
+    )]
+    TooLarge(serde_json::Value),
+    #[error("This Device or Asset does not support the requested format.")]
+    Unsupported(serde_json::Value),
+    #[error("The Device could not store this Asset. Remove unused Assets, then retry.")]
+    Refused { reason: String },
     #[error("The Asset does not exist.")]
     NotFound,
     #[error("The upload expired or never existed.")]
@@ -51,6 +59,9 @@ pub enum AssetError {
 }
 impl ApiError for AssetError {
     const CODES: &'static [&'static str] = &[
+        "asset.too_large",
+        "asset.unsupported",
+        "asset.refused",
         "asset.not_found",
         "upload.not_found",
         "asset.render_failed",
@@ -62,6 +73,9 @@ impl ApiError for AssetError {
     ];
     fn status(&self) -> StatusCode {
         match self {
+            Self::TooLarge(_) | Self::Unsupported(_) | Self::Refused { .. } => {
+                StatusCode::UNPROCESSABLE_ENTITY
+            }
             Self::NotFound | Self::UploadNotFound => StatusCode::NOT_FOUND,
             Self::RenderFailed(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Device(e) => e.status(),
@@ -71,6 +85,9 @@ impl ApiError for AssetError {
     }
     fn code(&self) -> &'static str {
         match self {
+            Self::TooLarge(_) => "asset.too_large",
+            Self::Unsupported(_) => "asset.unsupported",
+            Self::Refused { .. } => "asset.refused",
             Self::NotFound => "asset.not_found",
             Self::UploadNotFound => "upload.not_found",
             Self::RenderFailed(_) => "asset.render_failed",
@@ -81,6 +98,8 @@ impl ApiError for AssetError {
     }
     fn details(&self) -> Option<serde_json::Value> {
         match self {
+            Self::TooLarge(details) | Self::Unsupported(details) => Some(details.clone()),
+            Self::Refused { reason } => Some(serde_json::json!({"reason":reason})),
             Self::Device(e) => e.details(),
             Self::Job(e) => e.details(),
             Self::Common(e) => e.details(),
@@ -192,6 +211,11 @@ impl Endpoint for File {
 #[derive(Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum AssetSource {
+    Gif {
+        upload: String,
+        device: String,
+        target: GifTarget,
+    },
     /// The icon of the program at `path`. Only its icon resource is read.
     App {
         path: String,
@@ -209,6 +233,12 @@ pub enum AssetSource {
     Upload {
         upload: String,
     },
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct GifTarget {
+    pub width: u16,
+    pub height: u16,
+    pub background: [u8; 3],
 }
 /// How an image that isn't square fills the Tile: whole inside it, or cropped to fill it.
 #[derive(Clone, Copy, Default, Serialize, Deserialize, TS)]
@@ -233,7 +263,7 @@ pub struct RenderProgress {
 #[derive(Serialize, Deserialize, TS)]
 pub struct AssetRef {
     pub id: String,
-    /// `tdi1`, the Device's icon format.
+    /// The encoded format: `tdi1` or `gif`.
     pub kind: String,
     pub width: u32,
     pub height: u32,
@@ -282,6 +312,48 @@ fn render(
     };
     job.progress(&progress(0));
     let image = match source {
+        AssetSource::Gif {
+            upload,
+            device,
+            target,
+        } => {
+            let caps = gif_caps(ctx, &device)?;
+            let limits = gif_limits(&caps)?;
+            let bytes = ctx
+                .uploads
+                .take(owner, &upload, ctx.clock.now())
+                .ok_or(AssetError::UploadNotFound)?;
+            let output = td_host::gif_normalize::normalize_gif_with_background(
+                &bytes,
+                td_host::gif_normalize::Target {
+                    width: target.width,
+                    height: target.height,
+                    fit: match fit {
+                        Fit::Contain => td_host::gif_normalize::Fit::Contain,
+                        Fit::Cover => td_host::gif_normalize::Fit::Cover,
+                    },
+                },
+                &limits,
+                target.background,
+            )
+            .map_err(gif_error)?;
+            job.check()?;
+            let id = ctx
+                .assets
+                .put(&output.bytes)
+                .map_err(AssetError::RenderFailed)?;
+            job.progress(&RenderProgress {
+                frames_done: output.frames as u32,
+                frames_total: output.frames as u32,
+            });
+            return Ok(AssetRef {
+                id,
+                kind: "gif".into(),
+                width: output.width.into(),
+                height: output.height.into(),
+                bytes: output.bytes.len() as u64,
+            });
+        }
         AssetSource::App { path } => {
             icons::app_icon(std::path::Path::new(&path)).map_err(AssetError::RenderFailed)?
         }
@@ -538,5 +610,118 @@ impl Endpoint for OnDevice {
     }
 }
 pub(crate) fn asset_link(error: td_link::asset::AssetError) -> AssetError {
-    DeviceLinkError::Link(error.to_string()).into()
+    use td_link::asset::{AssetError as E, AssetReason as R};
+    match error {
+        E::Refused {
+            reason: reason @ (R::Format | R::Unsupported),
+            ..
+        } => unsupported("format", "supported encoding", "refused", reason.name()),
+        E::Refused {
+            reason: R::Size, ..
+        } => AssetError::TooLarge(
+            serde_json::json!({"reason":"size","field":"device_limit","limit":null,"actual":null,"unit":"unknown"}),
+        ),
+        E::Refused { reason, .. } => AssetError::Refused {
+            reason: reason.name().into(),
+        },
+        E::Size(actual) => too_large(
+            "asset_bytes",
+            td_link::asset::ASSET_BYTES_MAX,
+            actual,
+            "bytes",
+        ),
+        E::Link(error) => DeviceLinkError::from_xfer(XferError::Link(error)).into(),
+        E::Xfer(error) => DeviceLinkError::from_xfer(error).into(),
+        other => DeviceLinkError::Link(other.to_string()).into(),
+    }
+}
+
+pub(crate) fn unsupported(field: &str, limit: &str, actual: &str, reason: &str) -> AssetError {
+    AssetError::Unsupported(
+        serde_json::json!({"field":field,"limit":limit,"actual":actual,"reason":reason}),
+    )
+}
+pub(crate) fn too_large(field: &str, limit: usize, actual: usize, unit: &str) -> AssetError {
+    AssetError::TooLarge(
+        serde_json::json!({"field":field,"limit":limit,"actual":actual,"unit":unit}),
+    )
+}
+pub(crate) fn gif_caps(
+    ctx: &Ctx,
+    device: &str,
+) -> Result<crate::devices::Capabilities, AssetError> {
+    let (summary, _) = ctx.links.connected(device)?;
+    summary
+        .capabilities
+        .filter(|caps| {
+            caps.anim.as_ref().is_some_and(|a| {
+                a.image.iter().all(|n| *n > 0)
+                    && a.min_delay_ms > 0
+                    && a.page_tiles > 0
+                    && a.page_pixels > 0
+            }) && caps.formats.iter().any(|f| f == "gif")
+                && caps.tile_kinds.iter().any(|f| f == "gif")
+                && caps.gif_frames.unwrap_or(0) > 0
+                && caps.gif_pixels.unwrap_or(0) > 0
+        })
+        .ok_or_else(|| unsupported("anim", "enabled", "disabled", "unsupported"))
+}
+pub(crate) fn gif_limits(
+    caps: &crate::devices::Capabilities,
+) -> Result<td_host::gif_normalize::AnimLimits, AssetError> {
+    let anim = caps
+        .anim
+        .as_ref()
+        .ok_or_else(|| unsupported("anim", "enabled", "absent", "unsupported"))?;
+    Ok(td_host::gif_normalize::AnimLimits {
+        image: (
+            anim.image[0].min(4096) as u16,
+            anim.image[1].min(4096) as u16,
+        ),
+        min_delay_ms: anim.min_delay_ms,
+        max_frames: caps.gif_frames.unwrap_or(0) as usize,
+        max_frame_pixels_total: caps.gif_pixels.unwrap_or(0) as usize,
+        max_bytes: caps.asset_bytes as usize,
+    })
+}
+fn gif_error(error: td_host::gif_normalize::GifError) -> AssetError {
+    use td_host::gif_normalize::{GifError as E, SourceLimit as S};
+    match error {
+        E::SourceTooLarge {
+            kind,
+            limit,
+            actual,
+        } => {
+            let (field, unit) = match kind {
+                S::Bytes => ("source_bytes", "bytes"),
+                S::Width => ("source_width", "pixels"),
+                S::Height => ("source_height", "pixels"),
+                S::Frames => ("source_frames", "frames"),
+                S::DecodedRgba => ("decoded_rgba", "bytes"),
+            };
+            too_large(field, limit, actual, unit)
+        }
+        E::TooLong { max_frames, needed } => too_large("gif_frames", max_frames, needed, "frames"),
+        E::TooLarge {
+            max_bytes,
+            smallest,
+        } => too_large("asset_bytes", max_bytes, smallest, "bytes"),
+        E::PixelLimit { limit, smallest } => too_large("gif_pixels", limit, smallest, "pixels"),
+        other => AssetError::RenderFailed(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod gif_errors {
+    use super::*;
+    #[test]
+    fn retains_device_refusal_reason() {
+        for reason in ["size", "format", "memory", "full"] {
+            let error = asset_link(td_link::asset::AssetError::Refused {
+                reason: td_link::asset::AssetReason::parse(reason),
+                error: "refused".into(),
+            });
+            assert_eq!(error.details().unwrap()["reason"], reason);
+        }
+    }
 }

@@ -74,10 +74,12 @@ impl AssetStore {
         }
         self.cache.get(id)
     }
-    /// Blocking. Stores a `TDI1` file and returns its id.
+    /// Blocking. Validates and stores an Asset and returns its content hash.
     pub fn put(&self, file: &[u8]) -> Result<String, String> {
-        if !td_host::icon_pack::is_icon(file) {
-            return Err("Invalid tdi1 Asset".into());
+        if !td_host::icon_pack::is_icon(file)
+            && td_host::gif_normalize::inspect_normalized(file).is_err()
+        {
+            return Err("Invalid Asset".into());
         }
         let id = td_link::asset::asset_id(file);
         td_core::app_dirs::write_atomic(&self.dir.join(format!("{id}.bin")), file)

@@ -64,6 +64,13 @@ fn issues(errors: Vec<td_core::layout::LayoutError>) -> Vec<LayoutIssue> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum LayoutError {
+    #[error("This Page has too many animations. Remove an animated Tile.")]
+    AnimationLimit {
+        page: String,
+        field: &'static str,
+        limit: u64,
+        actual: u64,
+    },
     #[error("The Layout has {} problems.", .0.len())]
     Invalid(Vec<LayoutIssue>),
     #[error("The path and the Layout name different orientations.")]
@@ -83,6 +90,7 @@ pub enum LayoutError {
 }
 impl ApiError for LayoutError {
     const CODES: &'static [&'static str] = &[
+        "layout.animation_limit",
         "layout.invalid",
         "layout.orientation_mismatch",
         "layout.changed",
@@ -96,6 +104,7 @@ impl ApiError for LayoutError {
     ];
     fn status(&self) -> StatusCode {
         match self {
+            Self::AnimationLimit { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Invalid(_) | Self::OrientationMismatch => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Changed { .. } => StatusCode::PRECONDITION_FAILED,
             Self::NotFound => StatusCode::NOT_FOUND,
@@ -107,6 +116,7 @@ impl ApiError for LayoutError {
     }
     fn code(&self) -> &'static str {
         match self {
+            Self::AnimationLimit { .. } => "layout.animation_limit",
             Self::Invalid(_) => "layout.invalid",
             Self::OrientationMismatch => "layout.orientation_mismatch",
             Self::Changed { .. } => "layout.changed",
@@ -119,6 +129,12 @@ impl ApiError for LayoutError {
     }
     fn details(&self) -> Option<serde_json::Value> {
         match self {
+            Self::AnimationLimit {
+                page,
+                field,
+                limit,
+                actual,
+            } => Some(serde_json::json!({"page":page,"field":field,"limit":limit,"actual":actual})),
             Self::Invalid(issues) | Self::StoredInvalid(issues) => {
                 Some(serde_json::json!({ "issues": issues }))
             }
@@ -318,6 +334,7 @@ fn push(
         if let Some(expected) = &expected {
             expected.check(read(session, layout.orientation)?.map(|(_, r)| r))?;
         }
+        check_animations(ctx, device, layout)?;
         let mut assets = send_missing_assets(ctx, session, layout, job)?;
         let wanted = td_host::icons::asset_ids(layout);
         if layout.schema == 2 {
@@ -348,8 +365,14 @@ fn push(
                     .assets
                     .get(id)
                     .ok_or(super::assets::AssetError::NotFound)?;
-                td_link::asset::put_asset(session, &file, td_link::asset::AssetFormat::Tdi1)
-                    .map_err(super::assets::asset_link)?;
+                td_link::asset::put_asset(
+                    session,
+                    &file,
+                    td_link::asset::AssetFormat::sniff(&file).ok_or_else(|| {
+                        super::assets::unsupported("format", "tdi1 or gif", "unknown", "format")
+                    })?,
+                )
+                .map_err(super::assets::asset_link)?;
                 assets.sent.push(id.clone());
                 progress.assets_sent += 1;
                 progress.bytes_sent += file.len() as u64;
@@ -422,3 +445,95 @@ fn feature() -> Feature {
         .job::<PushJob>()
 }
 inventory::submit! { Registration(feature) }
+
+fn check_animations(ctx: &Ctx, device: &str, layout: &Layout) -> Result<(), Stop> {
+    use super::assets::{AssetError, gif_caps, gif_limits, too_large, unsupported};
+    use td_core::layout::{Page, TileRender};
+    for page in &layout.pages {
+        let Page::Grid { id, tiles, .. } = page else {
+            continue;
+        };
+        let mut count = 0u64;
+        let mut pixels = 0u64;
+        for tile in tiles {
+            let Some(asset) = &tile.asset else { continue };
+            let Some(bytes) = ctx
+                .assets
+                .get(asset.strip_prefix("sha256:").unwrap_or(asset))
+            else {
+                if tile.render == Some(TileRender::Gif) {
+                    return Err(AssetError::NotFound.into());
+                }
+                continue;
+            };
+            let gif = td_link::asset::AssetFormat::sniff(&bytes)
+                == Some(td_link::asset::AssetFormat::Gif);
+            if gif != (tile.render == Some(TileRender::Gif)) {
+                return Err(
+                    unsupported("render", "matching Asset format", "mismatch", "format").into(),
+                );
+            }
+            if !gif {
+                continue;
+            }
+            let caps = gif_caps(ctx, device)?;
+            let limits = gif_limits(&caps)?;
+            let info = td_host::gif_normalize::inspect_normalized(&bytes)
+                .map_err(|_| unsupported("format", "normalized gif", "invalid", "format"))?;
+            for (field, limit, actual, unit) in [
+                ("asset_bytes", limits.max_bytes, bytes.len(), "bytes"),
+                (
+                    "anim.width",
+                    usize::from(limits.image.0),
+                    usize::from(info.width),
+                    "pixels",
+                ),
+                (
+                    "anim.height",
+                    usize::from(limits.image.1),
+                    usize::from(info.height),
+                    "pixels",
+                ),
+                ("gif_frames", limits.max_frames, info.frames, "frames"),
+                (
+                    "gif_pixels",
+                    limits.max_frame_pixels_total,
+                    usize::from(info.width) * usize::from(info.height) * info.frames,
+                    "pixels",
+                ),
+            ] {
+                if actual > limit {
+                    return Err(too_large(field, limit, actual, unit).into());
+                }
+            }
+            if info.min_delay_ms < limits.min_delay_ms {
+                return Err(unsupported(
+                    "min_delay_ms",
+                    &limits.min_delay_ms.to_string(),
+                    &info.min_delay_ms.to_string(),
+                    "format",
+                )
+                .into());
+            }
+            count += 1;
+            pixels += u64::from(info.width) * u64::from(info.height);
+            if let Some(anim) = caps.anim {
+                for (field, limit, actual) in [
+                    ("page_tiles", u64::from(anim.page_tiles), count),
+                    ("page_pixels", u64::from(anim.page_pixels), pixels),
+                ] {
+                    if actual > limit {
+                        return Err(LayoutError::AnimationLimit {
+                            page: id.clone(),
+                            field,
+                            limit,
+                            actual,
+                        }
+                        .into());
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}

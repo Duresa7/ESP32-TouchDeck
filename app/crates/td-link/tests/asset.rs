@@ -309,3 +309,13 @@ fn an_empty_or_oversize_file_never_leaves_the_computer() {
     assert_eq!(error.reason(), Some(&AssetReason::Size));
     assert_eq!(device.chunk_bytes(), 0);
 }
+
+#[test]
+fn gif_declaration_must_match_committed_bytes() {
+    let deck = MockDeck::v2();
+    deck.set_gif_capabilities(true);
+    let session = open(&deck);
+    let error = put_asset(&session, &icon(7), AssetFormat::Gif).unwrap_err();
+    assert_eq!(error.reason(), Some(&AssetReason::Format));
+    assert!(list_assets(&session).unwrap().is_empty());
+}

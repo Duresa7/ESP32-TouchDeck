@@ -23,7 +23,7 @@ const json = (status: number, body: unknown) =>
 const failure = (status: number, code: string, message: string, details: unknown = null) => json(status, { error: { code, message, details } });
 
 const UPLOAD_MAX = 16 * 1024 * 1024;
-const UPLOAD_TYPES: ReadonlySet<string> = new Set(['image/png', 'image/jpeg']);
+const UPLOAD_TYPES: ReadonlySet<string> = new Set(['image/png', 'image/jpeg', 'image/gif']);
 
 function pause(ms: number | Promise<void>, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -128,6 +128,12 @@ export function createFakeAssets(options: FakeAssetsOptions) {
         if (failing.has(source.id)) return { problem: 'Icon download failed: the CDN did not answer' };
         return { file: disc(`catalog:${source.catalog}:${source.id}`, source.tint) };
       }
+      case 'gif': {
+        const bytes = uploads.get(source.upload);
+        uploads.delete(source.upload);
+        if (!bytes) return { problem: 'upload.not_found' };
+        return { file: new Uint8Array([71,73,70,56,57,97,1,0,1,0,128,0,0,0,0,0,255,255,255,33,255,11,78,69,84,83,67,65,80,69,50,46,48,3,1,0,0,0,33,249,4,4,10,0,0,0,44,0,0,0,0,1,0,1,0,0,2,2,68,1,0,59]) };
+      }
       case 'upload': {
         const bytes = uploads.get(source.upload);
         uploads.delete(source.upload);
@@ -173,7 +179,8 @@ export function createFakeAssets(options: FakeAssetsOptions) {
       }
       const id = await sha256(outcome.file);
       files.set(id, outcome.file);
-      const result: AssetRef = { id, kind: 'tdi1', width: TDI1_SIDE, height: TDI1_SIDE, bytes: outcome.file.length };
+      const gif = body.source.kind === 'gif';
+      const result: AssetRef = { id, kind: gif ? 'gif' : 'tdi1', width: gif ? 1 : TDI1_SIDE, height: gif ? 1 : TDI1_SIDE, bytes: outcome.file.length };
       update(now, { state: 'succeeded', progress: { frames_done: 1, frames_total: 1 }, result, cancellable: false, finished_ms: Date.now() });
     }, renderMs);
     return job;
@@ -181,8 +188,14 @@ export function createFakeAssets(options: FakeAssetsOptions) {
 
   function isCreateAsset(value: unknown): value is CreateAsset {
     if (typeof value !== 'object' || value === null || !('source' in value)) return false;
+    if ('fit' in value && value.fit !== undefined && value.fit !== null && value.fit !== 'contain' && value.fit !== 'cover') return false;
     const source = value.source;
-    return typeof source === 'object' && source !== null && 'kind' in source && ['app', 'catalog', 'upload'].includes(String(source.kind));
+    if (typeof source === 'object' && source !== null && 'kind' in source && source.kind === 'gif') {
+      if (!('upload' in source) || typeof source.upload !== 'string' || !('device' in source) || typeof source.device !== 'string' || !('target' in source)) return false;
+      const target = source.target;
+      return typeof target === 'object' && target !== null && 'width' in target && typeof target.width === 'number' && Number.isInteger(target.width) && target.width > 0 && target.width <= 65535 && 'height' in target && typeof target.height === 'number' && Number.isInteger(target.height) && target.height > 0 && target.height <= 65535 && 'background' in target && Array.isArray(target.background) && target.background.length === 3 && target.background.every((v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 255);
+    }
+    return typeof source === 'object'  && source !== null && 'kind' in source && ['app', 'catalog', 'upload'].includes(String(source.kind));
   }
 
   return {
@@ -215,7 +228,7 @@ export function createFakeAssets(options: FakeAssetsOptions) {
       if (path === '/uploads') {
         if (method !== 'POST') return failure(405, 'route.method_not_allowed', 'Use POST.');
         const type = request.headers.get('Content-Type') ?? '';
-        if (!UPLOAD_TYPES.has(type)) return failure(415, 'request.media_type', 'Uploads take PNG or JPEG images.');
+        if (!UPLOAD_TYPES.has(type)) return failure(415, 'request.media_type', 'Uploads take PNG, JPEG or GIF images.');
         const bytes = new Uint8Array(await request.arrayBuffer());
         if (bytes.length > UPLOAD_MAX) return failure(413, 'request.too_large', 'The image is larger than 16 MiB.');
         const id = `upl_${String(uploads.size + 1).padStart(16, '0')}`;
@@ -234,7 +247,7 @@ export function createFakeAssets(options: FakeAssetsOptions) {
         await listBuiltins();
         const bytes = files.get(decodeURIComponent(file[1]));
         if (!bytes) return failure(404, 'asset.not_found', 'No Asset with that id.');
-        return new Response(new Uint8Array(bytes), { status: 200, headers: { 'Content-Type': 'application/vnd.touchdeck.tdi1' } });
+        return new Response(new Uint8Array(bytes), { status: 200, headers: { 'Content-Type': bytes[0] === 71 ? 'image/gif' : 'application/vnd.touchdeck.tdi1' } });
       }
       const job = /^\/jobs\/([^/]+)$/.exec(path);
       if (job) {

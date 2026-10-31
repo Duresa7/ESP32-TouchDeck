@@ -184,3 +184,91 @@ async fn pending_upload_limit_recovers_after_consumption() {
     );
     upload(&td).await;
 }
+
+#[tokio::test]
+async fn gif_upload_is_accepted_for_preparation() {
+    let td = TestCompanion::start().await;
+    let bytes = vec![
+        71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 128, 0, 0, 0, 0, 0, 255, 255, 255, 44, 0, 0, 0, 0, 1,
+        0, 1, 0, 0, 2, 2, 68, 1, 0, 59,
+    ];
+    let response = td
+        .raw()
+        .post("/api/v1/uploads")
+        .bearer_auth(&td.token)
+        .header("content-type", "image/gif")
+        .body(bytes)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["media_type"],
+        "image/gif"
+    );
+}
+
+#[tokio::test]
+async fn gif_prepare_and_push_respects_page_budget() {
+    let td = TestCompanion::start().await;
+    let device = td.plug_device("mock0001").await;
+    td.unplug(&device).await;
+    td.deck(&device).set_gif_capabilities(true);
+    td.plug_device("mock0001").await;
+    let bytes = vec![
+        71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 128, 0, 0, 0, 0, 0, 255, 255, 255, 44, 0, 0, 0, 0, 1,
+        0, 1, 0, 0, 2, 2, 68, 1, 0, 59,
+    ];
+    let upload: Value = td
+        .raw()
+        .post("/api/v1/uploads")
+        .bearer_auth(&td.token)
+        .header("content-type", "image/gif")
+        .body(bytes)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let body = json!({"source":{"kind":"gif","upload":upload["id"],"device":device,"target":{"width":128,"height":128,"background":[20,30,40]}},"fit":"contain"});
+    let response = td
+        .raw()
+        .post("/api/v1/assets")
+        .bearer_auth(&td.token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 202);
+    let job = response.json().await.unwrap();
+    let done = td.wait(&job).await;
+    assert_eq!(done.state, JobState::Succeeded, "{done:?}");
+    let result = done.result.unwrap();
+    assert_eq!(result["kind"], "gif");
+    let id = result["id"].as_str().unwrap();
+    let make_layout = |count| {
+        serde_json::from_value::<Layout>(json!({
+        "schema":2,"name":"Animations","orientation":"landscape",
+        "pages":[{"kind":"grid","id":"main","title":"Main","rows":1,"cols":5,
+        "tiles":(0..count).map(|col| json!({"id":format!("t{col}"),"label":"GIF","row":0,"col":col,"rowSpan":1,"colSpan":1,"render":"gif","asset":format!("sha256:{id}"),"action":{"type":"none"}})).collect::<Vec<_>>() }]
+    })).unwrap()
+    };
+    let path = || LayoutPath {
+        device: device.to_string(),
+        orientation: Orientation::Landscape,
+    };
+    let job = td
+        .call::<Push>(path(), NoQuery, LayoutBody::new(&make_layout(5)))
+        .await
+        .unwrap();
+    let done = td.wait(&job).await;
+    assert_eq!(done.error.unwrap().code, "layout.animation_limit");
+    let job = td
+        .call::<Push>(path(), NoQuery, LayoutBody::new(&make_layout(1)))
+        .await
+        .unwrap();
+    let done = td.wait(&job).await;
+    assert_eq!(done.state, JobState::Succeeded, "{done:?}");
+    assert_eq!(done.result.unwrap()["assets"]["sent"], json!([id]));
+}
