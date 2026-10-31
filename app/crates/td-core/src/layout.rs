@@ -1427,7 +1427,12 @@ mod tests {
                 })
                 .collect::<serde_json::Map<_, _>>()
                 .into();
-            assert_eq!(ours, renderers[render.name()]["streams"], "{}", render.name());
+            assert_eq!(
+                ours,
+                renderers[render.name()]["streams"],
+                "{}",
+                render.name()
+            );
             assert_eq!(
                 serde_json::to_value(render).unwrap(),
                 Value::String(render.name().into())
@@ -1450,7 +1455,10 @@ mod tests {
                 Some(TileRender::NowPlaying)
             ]
         );
-        assert_eq!([tiles[0].input, tiles[1].input, tiles[2].input], [true, false, false]);
+        assert_eq!(
+            [tiles[0].input, tiles[1].input, tiles[2].input],
+            [true, false, false]
+        );
         assert!(!tiles[1].streams.as_ref().unwrap().contains_key("muted"));
         let text = String::from_utf8(layout.to_canonical_json()).unwrap();
         assert!(text.contains(r#""render":"now-playing""#));

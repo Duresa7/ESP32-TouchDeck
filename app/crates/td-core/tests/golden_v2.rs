@@ -157,7 +157,12 @@ fn device_events_round_trip_through_the_event_type_byte_for_byte() {
         }
         let payload = unhex(&fixture["decoded"]["payload_hex"]);
         let event: Event = serde_json::from_slice(&payload).unwrap();
-        assert_eq!(serde_json::to_vec(&event).unwrap(), payload, "{}", fixture["name"]);
+        assert_eq!(
+            serde_json::to_vec(&event).unwrap(),
+            payload,
+            "{}",
+            fixture["name"]
+        );
         events.push(event);
     }
     assert!(events.contains(&Event::Press {
@@ -214,7 +219,10 @@ fn media_hellos_fit_one_payload_with_the_new_caps() {
                 .iter()
                 .any(|value| value == item)
         };
-        assert!(has("tile_kinds", "bar") && has("tile_kinds", "now-playing"), "{name}");
+        assert!(
+            has("tile_kinds", "bar") && has("tile_kinds", "now-playing"),
+            "{name}"
+        );
         assert!(has("formats", "jpeg"), "{name}");
         assert_eq!(caps.get("anim").is_some(), gif, "{name}");
     }
@@ -226,7 +234,10 @@ fn live_text_keeps_its_escapes_and_multibyte_characters_within_text_bytes() {
     let fixture = frame(&fixtures, "v2.live.set-text-multibyte-request");
     let text = String::from_utf8(unhex(&fixture["decoded"]["payload_hex"])).unwrap();
     let slash = '\\';
-    for escape in [format!("{slash}\"Halo{slash}\""), format!(" {slash}{slash} ")] {
+    for escape in [
+        format!("{slash}\"Halo{slash}\""),
+        format!(" {slash}{slash} "),
+    ] {
         assert!(text.contains(&escape), "{escape}");
     }
     let value = fixture["message"]["value"].as_str().unwrap();

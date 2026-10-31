@@ -3,10 +3,8 @@ use td_core::live::fit_text;
 
 #[test]
 fn fit_text_turns_every_shared_vector_into_its_output() {
-    let vectors: Value = serde_json::from_str(include_str!(
-        "../../../../schema/live/text-vectors.json"
-    ))
-    .unwrap();
+    let vectors: Value =
+        serde_json::from_str(include_str!("../../../../schema/live/text-vectors.json")).unwrap();
     let cases = vectors["cases"].as_array().unwrap();
     for kind in ["clean", "fold", "cut"] {
         assert!(cases.iter().any(|case| case["kind"] == kind), "{kind}");

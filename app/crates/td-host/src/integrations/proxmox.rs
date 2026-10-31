@@ -290,6 +290,8 @@ impl Proxmox {
                 name: name.into(),
                 action: json!({"type":"widget","source":"proxmox","account":account,"field":field}),
                 render: graph.then_some(TileRender::Graph),
+                streams: None,
+                input: false,
             })
         };
         for r in self.resources.iter().filter(|r| r.kind == "node") {
@@ -363,6 +365,7 @@ impl Integration for Proxmox {
                 id: id.into(),
                 kind: "numeric".into(),
                 unit: Some(unit.into()),
+                settable: false,
             })
             .collect(),
             actions: vec!["refresh".into()],

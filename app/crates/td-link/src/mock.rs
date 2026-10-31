@@ -31,10 +31,8 @@ const HEARTBEAT: Duration = Duration::from_secs(2);
 const BUILTIN: &[u8] = include_bytes!("../../../../schema/examples/builtin.json");
 /// The space a mock Device has for Assets until a test sets another.
 pub const ASSET_CAPACITY: u64 = 4 * 1024 * 1024;
-/// The largest Asset a mock Device with the volume and media caps takes: a cover JPEG.
 const MEDIA_ASSET_BYTES: usize = 32768;
 const GIF_ASSET_BYTES: usize = 262144;
-/// The largest picture, in pixels a side, a mock Device with the volume and media caps decodes.
 const MEDIA_IMAGE: u16 = 256;
 const MEDIA_TEXT_BYTES: usize = 128;
 const MEDIA_LIVE_IMAGES: usize = 4;
@@ -175,7 +173,6 @@ struct State {
     assets: BTreeMap<String, Vec<u8>>,
     asset_capacity: u64,
     chunk_bytes: usize,
-    /// The format the open Asset put declared.
     asset_format: Option<AssetFormat>,
     /// The xfer of the last Asset transfer that closed and what `v2.asset.end` answered for it.
     asset_end: Option<(u8, Map<String, Value>)>,
@@ -201,7 +198,6 @@ fn arrived(request: &Map<String, Value>) -> Value {
 }
 
 impl State {
-    /// The `caps` a v2 hello reports, with `free_bytes` from the Asset space left.
     fn capabilities(&self) -> Value {
         let mut caps = json!({"screen":[1024,600],"grid":[8,8],"pages":8,"tiles":64,
             "layout_bytes":32768,"layout_schemas":[1,2],"free_bytes":asset_space(self).3,"tile_kinds":["static","graph","photo-frame","clock"],
@@ -243,7 +239,6 @@ impl State {
         }
     }
 
-    /// Whether a live image value still names this Asset, which makes deleting it `in-use`.
     fn shows(&self, id: &str) -> bool {
         let reference = format!("sha256:{id}");
         self.live
@@ -1466,9 +1461,6 @@ impl MockDeck {
     }
 }
 
-/// The width and height of a baseline or extended sequential 8-bit JPEG with one or three components, read from
-/// its frame header. `None` for anything else, such as progressive or arithmetic coding or a file cut short. The
-/// Firmware decodes the whole file; this mock checks only the structure.
 fn jpeg_size(data: &[u8]) -> Option<(u16, u16)> {
     if !data.starts_with(&[0xFF, 0xD8]) || !data.ends_with(&[0xFF, 0xD9]) {
         return None;
@@ -1487,7 +1479,7 @@ fn jpeg_size(data: &[u8]) -> Option<(u16, u16)> {
         let length = usize::from(u16::from_be_bytes([*data.get(at + 2)?, *data.get(at + 3)?]));
         let segment = data.get(at + 4..at + 2 + length).filter(|_| length >= 2)?;
         match marker {
-            0xC0 | 0xC1 => {
+            0xC0 => {
                 let [precision, h0, h1, w0, w1, components, ..] = *segment else {
                     return None;
                 };
@@ -1497,7 +1489,7 @@ fn jpeg_size(data: &[u8]) -> Option<(u16, u16)> {
                 }
                 size = Some((w, h));
             }
-            0xC2..=0xCF if !matches!(marker, 0xC4 | 0xC8 | 0xCC) => return None,
+            0xC1..=0xCF if !matches!(marker, 0xC4 | 0xC8 | 0xCC) => return None,
             0xDA => return size,
             _ => {}
         }

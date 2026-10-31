@@ -107,20 +107,32 @@ test('each of the invalid examples fails with exactly its rule key, as check-lay
 });
 
 test('RENDER_STREAMS binds the streams the shared renderer table lists', () => {
-  const table = JSON.parse(readFileSync(join(schema, 'live', 'renderers.json'), 'utf8')) as { renderers: Record<string, { streams: unknown }> };
-  const shared = Object.fromEntries(Object.entries(table.renderers).map(([name, renderer]) => [name, renderer.streams]));
+  const table: unknown = JSON.parse(readFileSync(join(schema, 'live', 'renderers.json'), 'utf8'));
+  assert.ok(table && typeof table === 'object' && 'renderers' in table);
+  const renderers = table.renderers;
+  assert.ok(renderers && typeof renderers === 'object');
+  const shared = Object.fromEntries(Object.entries(renderers).map(([name, value]: [string, unknown]) => {
+    assert.ok(value && typeof value === 'object' && 'streams' in value);
+    return [name, value.streams];
+  }));
   assert.deepEqual(RENDER_STREAMS, shared);
 });
 
 test('a bar Tile may leave out muted, and only a bar with a widget action takes input', () => {
-  const media = JSON.parse(readFileSync(join(examples, 'media.json'), 'utf8')) as Layout;
-  const level = grid(media, 'media').tiles.find((t) => t.id === 'level')!;
+  const parsed = parseLayout(readFileSync(join(examples, 'media.json')));
+  assert.ok(parsed.ok);
+  const media = parsed.layout;
+  const level = grid(media, 'media').tiles.find((t) => t.id === 'level');
+  assert.ok(level);
   assert.deepEqual(level.streams, { value: 'number' });
-  const volume = grid(media, 'media').tiles.find((t) => t.id === 'volume')!;
+  const volume = grid(media, 'media').tiles.find((t) => t.id === 'volume');
+  assert.ok(volume);
   assert.equal(volume.input, true);
   assert.deepEqual(validateLayout(media), []);
   const graphed = ok(setGraph(media, 'media', 'volume', { integration: 'this_pc', stream: 'cpu_pct' }));
-  assert.equal(Object.hasOwn(grid(graphed, 'media').tiles.find((t) => t.id === 'volume')!, 'input'), false);
+  const changed = grid(graphed, 'media').tiles.find((t) => t.id === 'volume');
+  assert.ok(changed);
+  assert.equal(Object.hasOwn(changed, 'input'), false);
 });
 
 test('text rules apply to the raw source', () => {

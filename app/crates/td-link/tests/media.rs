@@ -23,7 +23,6 @@ fn open(device: &MockDeck) -> (Session, Receiver<Incoming>) {
     (session, events)
 }
 
-/// A v2 mock with the volume and media caps, showing the media example Layout.
 fn media_deck() -> (MockDeck, Session, Receiver<Incoming>, String) {
     let device = MockDeck::v2();
     device.set_media_capabilities(true);
@@ -34,7 +33,6 @@ fn media_deck() -> (MockDeck, Session, Receiver<Incoming>, String) {
     (device, session, events, reference)
 }
 
-/// A JPEG with only the segments the Device's structure check reads: SOI, a frame header, a scan, EOI.
 fn jpeg(width: u16, height: u16, frame: u8, pad: usize) -> Vec<u8> {
     let mut bytes = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
     bytes.extend_from_slice(b"JFIF\0\x01\x01\0\0\x01\0\x01\0\0");
@@ -197,6 +195,8 @@ fn jpeg_assets_are_baseline_within_the_image_cap() {
     let caps = session.identity(TIMEOUT).unwrap().capabilities.unwrap();
     assert_eq!(caps.image, [256, 256]);
     assert_eq!(caps.asset_bytes, 32768);
+    let extended = put_asset(&session, &jpeg(64, 64, 0xC1, 10), AssetFormat::Jpeg).unwrap_err();
+    assert_eq!(extended.reason(), Some(&AssetReason::Format));
     let progressive = put_asset(&session, &jpeg(64, 64, 0xC2, 10), AssetFormat::Jpeg).unwrap_err();
     assert_eq!(progressive.reason(), Some(&AssetReason::Format));
     let wide = put_asset(&session, &jpeg(257, 64, 0xC0, 10), AssetFormat::Jpeg).unwrap_err();
