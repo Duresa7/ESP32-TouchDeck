@@ -41,7 +41,7 @@ pub const MOCK_SERIES: usize = 32;
 enum Target {
     Layout(Orientation),
     Icon(String),
-    Asset(String),
+    Asset(String, AssetFormat),
     Photo(String),
     Update,
 }
@@ -879,7 +879,7 @@ impl MockDeck {
             return Ok(Map::new());
         }
         if let Some(Inbound {
-            target: Target::Asset(_) | Target::Photo(_),
+            target: Target::Asset(..) | Target::Photo(_),
             xfer: open,
             ..
         }) = &state.inbound
@@ -914,7 +914,7 @@ impl MockDeck {
         let orientation = match inbound.target {
             Target::Layout(orientation) => orientation,
             Target::Update => return Err("firmware uses update.end".into()),
-            Target::Asset(_) | Target::Photo(_) => unreachable!("a v2 put returned above"),
+            Target::Asset(..) | Target::Photo(_) => unreachable!("a v2 put returned above"),
             Target::Icon(id) => {
                 if !data.starts_with(b"TDI1") {
                     return Err("not a TDI1 icon".into());
@@ -1143,7 +1143,7 @@ impl MockDeck {
                     if matches!(
                         &state.inbound,
                         Some(Inbound {
-                            target: Target::Asset(_) | Target::Photo(_),
+                            target: Target::Asset(..) | Target::Photo(_),
                             ..
                         })
                     ) {
@@ -1339,7 +1339,7 @@ fn asset_space(state: &State) -> (u64, u64, u64, u64) {
     let used: u64 = state.assets.values().map(|data| data.len() as u64).sum();
     let reserved = match &state.inbound {
         Some(Inbound {
-            target: Target::Asset(_),
+            target: Target::Asset(..),
             bytes,
             ..
         }) => *bytes as u64,
@@ -1400,7 +1400,7 @@ impl MockDeck {
                 let items: Vec<Value> = rest
                     .by_ref()
                     .take(ASSET_PAGE)
-                    .map(|(id, data)| json!({"id": id, "bytes": data.len(), "format": "tdi1"}))
+                    .map(|(id, data)| json!({"id": id, "bytes": data.len(), "format": AssetFormat::sniff(data).map(AssetFormat::name)}))
                     .collect();
                 let next = match rest.next() {
                     Some(_) => items.last().map(|item| item["id"].clone()),
@@ -1425,14 +1425,24 @@ impl MockDeck {
                 if !only(&["id", "bytes", "format"]) {
                     return refused("args");
                 }
-                if AssetFormat::parse(format) != Some(AssetFormat::Tdi1) {
+                if AssetFormat::parse(format) != Some(AssetFormat::Tdi1)
+                    && !(state.gif_capabilities && format == "gif")
+                {
                     return refused("format");
                 }
-                if bytes > ASSET_BYTES as u64 {
+                if bytes
+                    > if state.gif_capabilities {
+                        262144
+                    } else {
+                        ASSET_BYTES as u64
+                    }
+                {
                     return refused("size");
                 }
                 if let Some(stored) = state.assets.get(&id) {
-                    if stored.len() as u64 != bytes {
+                    if stored.len() as u64 != bytes
+                        || AssetFormat::sniff(stored).map(AssetFormat::name) != Some(format)
+                    {
                         return refused("format");
                     }
                     return Map::from_iter([
@@ -1450,7 +1460,10 @@ impl MockDeck {
                 state.asset_end = None;
                 state.inbound = Some(Inbound {
                     xfer,
-                    target: Target::Asset(id),
+                    target: Target::Asset(
+                        id,
+                        AssetFormat::parse(format).expect("validated format"),
+                    ),
                     bytes: bytes as usize,
                     crc32: 0,
                     data: Vec::with_capacity(bytes as usize),
@@ -1471,7 +1484,7 @@ impl MockDeck {
                     return refused("args");
                 };
                 let open = matches!(&state.inbound,
-                    Some(Inbound { target: Target::Asset(_), xfer: open, .. }) if u64::from(*open) == xfer);
+                    Some(Inbound { target: Target::Asset(..), xfer: open, .. }) if u64::from(*open) == xfer);
                 if !open {
                     return match &state.asset_end {
                         Some((done, reply)) if u64::from(*done) == xfer => reply.clone(),
@@ -1483,14 +1496,30 @@ impl MockDeck {
                     state.inbound = Some(inbound);
                     return refused("incomplete");
                 }
-                let Target::Asset(id) = inbound.target else {
+                let Target::Asset(id, format) = inbound.target else {
                     unreachable!("matched an Asset put")
+                };
+                let valid = match format {
+                    AssetFormat::Tdi1 => inbound.data.len() == ICON_BYTES,
+                    AssetFormat::Gif if state.gif_capabilities => {
+                        td_host::gif_normalize::inspect_normalized(&inbound.data).is_ok_and(
+                            |info| {
+                                info.width <= 128
+                                    && info.height <= 128
+                                    && info.frames <= 60
+                                    && info.min_delay_ms >= 100
+                                    && usize::from(info.width)
+                                        * usize::from(info.height)
+                                        * info.frames
+                                        <= 983040
+                            },
+                        )
+                    }
+                    _ => false,
                 };
                 let reply = if asset_id(&inbound.data) != id {
                     refused("hash")
-                } else if AssetFormat::sniff(&inbound.data) != Some(AssetFormat::Tdi1)
-                    || inbound.data.len() != ICON_BYTES
-                {
+                } else if AssetFormat::sniff(&inbound.data) != Some(format) || !valid {
                     refused("format")
                 } else {
                     let bytes = inbound.data.len();
@@ -1508,7 +1537,7 @@ impl MockDeck {
                     return refused("args");
                 };
                 if matches!(&state.inbound,
-                    Some(Inbound { target: Target::Asset(open), .. }) if *open == id)
+                    Some(Inbound { target: Target::Asset(open, _), .. }) if *open == id)
                 {
                     return refused("busy");
                 }

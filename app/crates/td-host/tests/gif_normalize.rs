@@ -594,3 +594,43 @@ fn many_fitted_colors_use_a_deterministic_bounded_palette() {
     assert_eq!(decoded.len(), 20);
     assert!(decoded.iter().flat_map(|f| f.pixels()).all(|p| p[3] == 255));
 }
+
+#[test]
+fn admission_rejects_truncated_and_non_normalized_gifs() {
+    use td_host::gif_normalize::inspect_normalized;
+    let normalized =
+        normalize_gif(&source(4, 4, &[frame(4, 4, 1, 10)]), target(), &limits()).unwrap();
+    assert!(inspect_normalized(&normalized.bytes).is_ok());
+    assert!(inspect_normalized(&normalized.bytes[..normalized.bytes.len() - 1]).is_err());
+    assert!(inspect_normalized(&source(4, 4, &[frame(4, 4, 1, 10)])).is_err());
+}
+
+#[test]
+fn uses_tile_background_for_pixels_that_turn_transparent() {
+    use td_host::gif_normalize::normalize_gif_with_background;
+    let mut clear = frame(4, 4, 0, 10);
+    clear.transparent = Some(0);
+    let mut sprite = frame(1, 1, 1, 10);
+    sprite.dispose = gif::DisposalMethod::Background;
+    let input = source(4, 4, &[clear.clone(), sprite, clear]);
+    let output = normalize_gif_with_background(&input, target(), &limits(), [20, 30, 40]).unwrap();
+    assert_eq!(
+        played(&output.bytes)[2].get_pixel(0, 0).0,
+        [20, 30, 40, 255]
+    );
+}
+
+#[test]
+fn admission_rejects_changing_transparent_indices() {
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = gif::Encoder::new(&mut bytes, 4, 4, &[0, 0, 0, 255, 0, 0]).unwrap();
+        encoder.set_repeat(gif::Repeat::Infinite).unwrap();
+        for index in [0, 1] {
+            let mut f = frame(4, 4, 0, 10);
+            f.transparent = Some(index);
+            encoder.write_frame(&f).unwrap();
+        }
+    }
+    assert!(td_host::gif_normalize::inspect_normalized(&bytes).is_err());
+}
