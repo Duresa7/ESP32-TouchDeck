@@ -306,14 +306,15 @@ static td_asset_format_t read_item(td_asset_item_t *item)
     asset_path(path, item->id);
     struct stat st;
     uint8_t head[HEAD_BYTES] = { 0 };
-    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0 || st.st_size > TD_GIF_MAX_BYTES) {
-        return TD_ASSET_FMT_NONE;
-    }
-    item->bytes = (uint32_t)st.st_size;
     const int fd = open(path, O_RDONLY);
     if (fd < 0) {
         return TD_ASSET_FMT_NONE;
     }
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0 || st.st_size > TD_GIF_MAX_BYTES) {
+        close(fd);
+        return TD_ASSET_FMT_NONE;
+    }
+    item->bytes = (uint32_t)st.st_size;
     const ssize_t n = read(fd, head, sizeof head);
     close(fd);
     return n == HEAD_BYTES ? detect(head, item->bytes) : TD_ASSET_FMT_NONE;
