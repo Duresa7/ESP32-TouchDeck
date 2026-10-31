@@ -531,7 +531,16 @@ fn untimed(access: &Routes, request: &Request) -> bool {
 }
 fn admit(ctx: &Ctx, access: &Routes, mut request: Request) -> Result<Request, CommonError> {
     let h = request.headers();
-    let header = |name: &str| h.get(name).map(|v| v.to_str().unwrap_or(""));
+    // A repeated header is ambiguous, so it counts as an invalid value, never as its first one.
+    let header = |name: &str| {
+        let mut values = h.get_all(name).iter();
+        let first = values.next().map(|v| v.to_str().unwrap_or(""));
+        if values.next().is_some() {
+            Some("")
+        } else {
+            first
+        }
+    };
     security::admit(
         &security::RequestMeta {
             host: header("host"),

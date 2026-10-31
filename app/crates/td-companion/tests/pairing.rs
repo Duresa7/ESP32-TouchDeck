@@ -387,6 +387,36 @@ async fn browser_guards_cover_routes_before_auth() {
         }
     }
 }
+#[tokio::test]
+async fn repeated_host_or_origin_is_refused() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let td = TestCompanion::start().await;
+    let host = td.url.trim_start_matches("http://").to_owned();
+    for (headers, status) in [
+        (format!("Host: {host}\r\nHost: evil.example\r\n"), "421"),
+        (
+            format!("Host: {host}\r\nOrigin: http://{host}\r\nOrigin: http://evil.example\r\n"),
+            "403",
+        ),
+    ] {
+        let hits = td.handler_hits();
+        let mut stream = tokio::net::TcpStream::connect(&host).await.unwrap();
+        stream
+            .write_all(
+                format!("GET /pair HTTP/1.1\r\n{headers}Connection: close\r\n\r\n").as_bytes(),
+            )
+            .await
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+        let line = response.lines().next().unwrap_or_default();
+        assert!(
+            line.starts_with(&format!("HTTP/1.1 {status}")),
+            "{headers:?}: {line}"
+        );
+        assert_eq!(td.handler_hits(), hits);
+    }
+}
 async fn events(td: &TestCompanion, token: &str) -> Socket {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     let mut request = format!("{}/api/v1/events", td.url.replace("http:", "ws:"))

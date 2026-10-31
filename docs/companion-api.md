@@ -209,11 +209,11 @@ Browsers can't set headers on a WebSocket. The client opens `new WebSocket(url, 
 - reads the token from the `touchdeck.bearer.*` entry,
 - selects only `touchdeck.v1` in its reply, so the token is never echoed.
 
-No token ever goes in a query string. Close codes:
+No token ever goes in a query string. An upgrade with an invalid, expired or revoked session is refused with HTTP 401 before any socket exists. A browser page can't read that status: it sees only close code 1006, the same as a network drop. So a client whose socket closes before its `hello` checks its session with `GET /system`, which answers 401 for a dead session. Close codes on an open socket:
 
 | Code | Meaning |
 |---|---|
-| 4401 | The session is invalid, expired or revoked |
+| 4401 | The session became invalid, expired or was revoked while the socket was open |
 | 4008 | The client is too slow (see Backpressure) |
 | 1001 | The Companion is shutting down |
 
