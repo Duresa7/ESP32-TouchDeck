@@ -22,6 +22,7 @@ use td_core::{Layout, Request};
 pub use td_core::app_dirs::write_atomic;
 
 pub use cliproxy::{Account, CliProxy, Fetch, HttpFetch, ProxyInfo};
+pub mod session_http;
 pub use scheduler::Scheduler;
 
 pub const CLIPROXYAPI: &str = "cliproxyapi";

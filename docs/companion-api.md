@@ -644,6 +644,77 @@ Every Preset uses `{type: "widget", source: "this_pc", account: "", field: <stre
 
 A missing counter omits only its readings; descriptors and Presets stay discoverable. Status is `error` with `Unavailable: {names}.` using the Preset names in order. Healthy streams continue. Non-Windows builds emit no readings and report `This PC needs Windows.`. Values stay inside the Companion for Device delivery, never in HTTP responses. Each collection is one live sample per stream with `ttl_ms` 5000, so a Device shows This PC values stale five seconds after collection stops.
 
+#### UniFi
+
+`unifi` reads one site from a classic controller or a UniFi OS console using a
+read-only **local** account. Cloud accounts and MFA login are not supported.
+Config is `{enabled: boolean, url: string, site: string, unifi_os: boolean,
+interval_s: integer, tls_pin: string}`. Defaults are disabled, an example URL,
+`default`, UniFi OS, 10 seconds and an empty pin. The URL must be an origin,
+without a path, credentials, query or fragment. Site ids use `[a-z0-9_-]+`, up to
+128 bytes. Intervals are clamped to 5–3600 seconds. Unknown fields are rejected.
+Config is saved beside sources.json as `unifi.json`.
+
+`username` and `password` are write-only, origin-bound vault secrets. Use an
+account restricted to read-only access to the chosen site. Changing origins
+forgets both credentials; changing credentials or config logs out the old
+session first. Disabling also logs out and clears readings. Logout is best-effort
+when a controller cannot be reached; the local session is always discarded.
+Session cookies and CSRF tokens exist only in memory. Requests require HTTPS,
+except explicit loopback HTTP for local testing. This is stricter than the shared
+private-address HTTP exception.
+
+Classic controllers use `POST /api/login` and `POST /logout`. UniFi OS uses
+`POST /api/auth/login` and `POST /api/auth/logout`, with the returned cookie and
+`X-CSRF-Token`. Every cookie the login sets is sent back, which classic
+controllers need. The sole data request is `GET /api/s/{site}/stat/health`, prefixed
+with `/proxy/network` on UniFi OS. A 401 retries login once and repeats the GET;
+a second 401 or any 403 reports refused access. No network configuration is
+written. Each request times out after 10 seconds, accepts at most 1 MiB,
+follows no redirects and ignores proxy environment variables. Polls are synchronous, with one in flight. Manual refresh,
+config changes and secret changes preserve the polling deadline. Errors double
+the interval, capped at 3600 seconds; success restores the configured interval.
+
+For a self-signed controller, enter the leaf certificate's SHA-256 fingerprint
+as 64 hexadecimal characters in `tls_pin`, verified independently on the
+controller. Normal system trust is checked first. If it rejects the certificate,
+only that exact fingerprint permits the connection; TLS handshake signatures
+are still verified. An empty or wrong pin cannot accept an untrusted certificate.
+A pin does not restrict certificates already accepted by system trust. The
+shared `Fetch::session_request` seam carries headers, response status and TLS
+pin; existing bearer-based fetch operations keep their behavior.
+
+All streams are `numeric`. `account` is the configured site id. Client counts
+include users and guests; total is the sum of the client counts the site
+reports. Throughput is the
+controller's `rx_bytes-r` and `tx_bytes-r` in bytes/s, without unit conversion.
+
+| Stream | Unit | Preset tile (ordered) | Render |
+|---|---|---|---|
+| `clients_total` | `clients` | 1. Connected clients | Value |
+| `clients_wired` | `clients` | — | — |
+| `clients_wireless` | `clients` | — | — |
+| `wan_receive_bytes_s` | `bytes/s` | 2. WAN receive | Graph |
+| `wan_send_bytes_s` | `bytes/s` | 3. WAN send | Graph |
+
+Samples rise on every successful reading, even unchanged values. TTL is three
+times the interval, clamped to 1000–60000 ms. A site without a gateway or switch
+reports `status: "unknown"` for `wan` or `lan`; those streams are left out of
+the reading and the rest continue. Malformed JSON, `rc` other than `ok`,
+duplicate subsystems, wrongly typed, negative or nonfinite numbers, numbers
+above 1e9, or a reply with no stream at all reject the whole reading. Errors stop fresh live samples and mark legacy readings
+stale. Status uses `not_configured`, `ok` and `error`; bodies and credentials are
+never included. Errors distinguish authentication, timeout, certificate failure,
+response size and unreadable responses. Device delivery status remains separate.
+
+Tests use hand-authored, synthetic responses through `Fetch`
+(`tests/fixtures/unifi-health*.json`, scrubbed to documentation addresses);
+they are not captures from a real controller. The current [vendor API guide](https://help.ui.com/hc/en-us/articles/30076656117655-Getting-Started-with-the-Official-UniFi-API)
+points to version-specific local documentation. Public vendor documentation for
+the legacy session endpoints was not available during implementation. Confirm
+these fixtures and throughput semantics against classic and UniFi OS hardware
+before release; the newer API-key protocol is outside this Integration's scope.
+
 ### System
 
 Feature module `system`.

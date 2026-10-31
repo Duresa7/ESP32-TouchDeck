@@ -387,6 +387,12 @@ pub fn readings(accounts: &[Account], updated: u64, stale: bool) -> Vec<Reading>
 
 /// Management requests only. Implementations must not log headers or request bodies.
 pub trait Fetch: Send + Sync {
+    fn session_request(
+        &self,
+        _request: super::session_http::Request,
+    ) -> Result<super::session_http::Response, super::session_http::Failure> {
+        Err(super::session_http::Failure::Connection)
+    }
     fn get(&self, url: &str, bearer: &str) -> Result<String, String>;
     fn post_json(&self, url: &str, bearer: &str, body: &Value) -> Result<String, String>;
 }
@@ -463,6 +469,12 @@ fn response_body(mut response: ureq::http::Response<ureq::Body>) -> Result<Strin
 }
 
 impl Fetch for HttpFetch {
+    fn session_request(
+        &self,
+        request: super::session_http::Request,
+    ) -> Result<super::session_http::Response, super::session_http::Failure> {
+        super::session_http::send(request)
+    }
     fn get(&self, url: &str, bearer: &str) -> Result<String, String> {
         crate::integrations::secrets::credential_transport(url)?;
         response_body(

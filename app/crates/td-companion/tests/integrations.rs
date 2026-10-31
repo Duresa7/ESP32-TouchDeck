@@ -368,3 +368,31 @@ async fn local_stub_accounts_revision_and_wire_outputs_are_safe() {
     server.abort();
     let _ = server.await;
 }
+
+#[tokio::test]
+async fn unifi_is_discoverable_with_safe_config_and_presets() {
+    let td = TestCompanion::start().await;
+    let list = td.call::<List>((), NoQuery, ()).await.unwrap();
+    assert!(list.iter().any(|i| i.id == "unifi"));
+    let view = td
+        .call::<Get>(
+            IntegrationPath {
+                integration: "unifi".into(),
+            },
+            NoQuery,
+            (),
+        )
+        .await
+        .unwrap();
+    assert_eq!(view.config["site"], "default");
+    assert_eq!(
+        view.summary
+            .presets
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Connected clients", "WAN receive", "WAN send"]
+    );
+    assert!(!view.secrets["username"].set);
+    assert!(!view.secrets["password"].set);
+}
