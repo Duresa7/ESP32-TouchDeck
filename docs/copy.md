@@ -1164,3 +1164,19 @@ when reduced motion is requested.
 
 The stream picker groups streams by Integration and names each by its Preset
 tile. A stale graph keeps its last line at 60% opacity, as on the Device.
+
+### Proxmox
+
+| Element | String |
+|---|---|
+| Integration | Proxmox |
+| Presets, per node | Node CPU graph, Node CPU, Node RAM graph, Node RAM |
+| Preset, per guest | Guest status |
+| Preset, cluster | Running guests |
+| Token rejected | Proxmox rejected the token. Check its read-only permissions. |
+| Timeout | Proxmox didn't answer within 10 s. Check the connection, then retry. |
+| Response limit | Proxmox sent more than 1 MiB. Check the server. |
+| Certificate | Couldn't verify the Proxmox certificate. Check the SHA-256 pin or system trust store. |
+| Malformed data | Couldn't read the Proxmox response. Check the server. |
+| Connection | Couldn't reach Proxmox. Check the address and connection, then retry. |
+| Vault | Credential store unavailable. Retry after unlocking it. |

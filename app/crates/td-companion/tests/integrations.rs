@@ -368,3 +368,23 @@ async fn local_stub_accounts_revision_and_wire_outputs_are_safe() {
     server.abort();
     let _ = server.await;
 }
+#[tokio::test]
+async fn proxmox_is_listed_and_has_a_safe_config_view() {
+    let td = TestCompanion::start().await;
+    let list = td.call::<List>((), NoQuery, ()).await.unwrap();
+    assert!(list.iter().any(|i| i.id == "proxmox"));
+    let view = td
+        .call::<Get>(
+            IntegrationPath {
+                integration: "proxmox".into(),
+            },
+            NoQuery,
+            (),
+        )
+        .await
+        .unwrap();
+    assert_eq!(view.summary.name, "Proxmox");
+    assert_eq!(view.summary.status.state, "not_configured");
+    assert!(!view.secrets["token_id"].set);
+    assert!(!view.secrets["token_secret"].set);
+}
