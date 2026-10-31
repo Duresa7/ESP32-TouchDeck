@@ -27,6 +27,7 @@ import {
   setLabel,
   validateLayout,
   validateSource,
+  RENDER_STREAMS,
   type Edit,
   type GridPage,
   type Layout,
@@ -73,14 +74,14 @@ function refused(edit: Edit): string {
 }
 
 test('the bundled examples are valid', () => {
-  for (const name of ['builtin.json', 'dev.json', 'gif.json', 'graph.json']) {
+  for (const name of ['builtin.json', 'dev.json', 'gif.json', 'graph.json', 'media.json']) {
     assert.deepEqual(validateSource(readFileSync(join(examples, name))), [], name);
   }
 });
 
 test('each of the invalid examples fails with exactly its rule key, as check-layouts.mjs reports', () => {
   const files = readdirSync(invalid).filter((name) => name.endsWith('.json'));
-  assert.equal(files.length, 46);
+  assert.equal(files.length, 55);
   const keys = new Set<string>();
   for (const name of files) {
     const bytes = readFileSync(join(invalid, name));
@@ -103,6 +104,23 @@ test('each of the invalid examples fails with exactly its rule key, as check-lay
       .filter((key): key is string => key !== undefined),
   );
   assert.deepEqual([...keys].sort(), [...documented].sort());
+});
+
+test('RENDER_STREAMS binds the streams the shared renderer table lists', () => {
+  const table = JSON.parse(readFileSync(join(schema, 'live', 'renderers.json'), 'utf8')) as { renderers: Record<string, { streams: unknown }> };
+  const shared = Object.fromEntries(Object.entries(table.renderers).map(([name, renderer]) => [name, renderer.streams]));
+  assert.deepEqual(RENDER_STREAMS, shared);
+});
+
+test('a bar Tile may leave out muted, and only a bar with a widget action takes input', () => {
+  const media = JSON.parse(readFileSync(join(examples, 'media.json'), 'utf8')) as Layout;
+  const level = grid(media, 'media').tiles.find((t) => t.id === 'level')!;
+  assert.deepEqual(level.streams, { value: 'number' });
+  const volume = grid(media, 'media').tiles.find((t) => t.id === 'volume')!;
+  assert.equal(volume.input, true);
+  assert.deepEqual(validateLayout(media), []);
+  const graphed = ok(setGraph(media, 'media', 'volume', { integration: 'this_pc', stream: 'cpu_pct' }));
+  assert.equal(Object.hasOwn(grid(graphed, 'media').tiles.find((t) => t.id === 'volume')!, 'input'), false);
 });
 
 test('text rules apply to the raw source', () => {
@@ -197,7 +215,7 @@ test('an Asset on a Tile makes the Layout schema 2 until no Tile uses one', () =
 test('picking an icon for a GIF Tile makes it a still Tile', () => {
   const gif = ok(setAsset(small(), 'main', 'a', 'cd'.repeat(32)));
   const tiles = grid(gif, 'main').tiles;
-  const { streams: _streams, ...still0 } = tiles[0];
+  const { streams: _streams, input: _input, ...still0 } = tiles[0];
   tiles[0] = { ...still0, render: 'gif', icon: null, asset: `sha256:${'cd'.repeat(32)}` };
   assert.equal(parseLayout(canonical(gif)).ok, true);
   const still = ok(setAsset(gif, 'main', 'a', 'ef'.repeat(32)));

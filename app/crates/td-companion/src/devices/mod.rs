@@ -99,6 +99,8 @@ pub struct Capabilities {
     pub live_total_hz: u32,
     pub series: u32,
     pub text_bytes: u32,
+    /// The most Tiles in a Layout that declare an `image` stream. Zero when the Firmware draws no cover art.
+    pub live_images: u32,
 }
 impl From<&td_link::Capabilities> for Capabilities {
     fn from(c: &td_link::Capabilities) -> Self {
@@ -119,6 +121,7 @@ impl From<&td_link::Capabilities> for Capabilities {
             live_total_hz: c.live_total_hz,
             series: c.series,
             text_bytes: c.text_bytes,
+            live_images: c.live_images.unwrap_or(0),
         }
     }
 }

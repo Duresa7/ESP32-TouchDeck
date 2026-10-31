@@ -273,7 +273,9 @@
         "render": {
           "enum": [
             "gif",
-            "graph"
+            "graph",
+            "bar",
+            "now-playing"
           ],
           "x-rules": {
             "enum": "icon.format"
@@ -281,6 +283,12 @@
         },
         "streams": {
           "type": "object"
+        },
+        "input": {
+          "const": true,
+          "x-rules": {
+            "const": "tile.input"
+          }
         }
       },
       "allOf": [
@@ -526,7 +534,8 @@
                     "properties": {
                       "asset": false,
                       "render": false,
-                      "streams": false
+                      "streams": false,
+                      "input": false
                     },
                     "type": "object"
                   },
@@ -559,32 +568,98 @@
                   "type": "array",
                   "items": {
                     "type": "object",
-                    "if": {
-                      "required": [
-                        "render"
-                      ],
-                      "properties": {
-                        "render": {
-                          "const": "gif"
-                        }
-                      }
-                    },
-                    "then": {
-                      "required": [
-                        "asset"
-                      ],
-                      "x-rules": {
-                        "required": "icon.format"
-                      },
-                      "properties": {
-                        "asset": {
-                          "type": "string",
+                    "allOf": [
+                      {
+                        "if": {
+                          "required": [
+                            "render"
+                          ],
+                          "properties": {
+                            "render": {
+                              "const": "gif"
+                            }
+                          }
+                        },
+                        "then": {
+                          "required": [
+                            "asset"
+                          ],
                           "x-rules": {
-                            "type": "icon.format"
+                            "required": "icon.format"
+                          },
+                          "properties": {
+                            "asset": {
+                              "type": "string",
+                              "x-rules": {
+                                "type": "icon.format"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "if": {
+                          "required": [
+                            "render"
+                          ],
+                          "properties": {
+                            "render": {
+                              "enum": [
+                                "bar",
+                                "now-playing"
+                              ]
+                            }
+                          }
+                        },
+                        "then": {
+                          "properties": {
+                            "asset": {
+                              "type": "null",
+                              "x-rules": {
+                                "type": "icon.format"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "if": {
+                          "required": [
+                            "input"
+                          ],
+                          "properties": {
+                            "input": true
+                          }
+                        },
+                        "then": {
+                          "required": [
+                            "render"
+                          ],
+                          "x-rules": {
+                            "required": "tile.input"
+                          },
+                          "properties": {
+                            "render": {
+                              "const": "bar",
+                              "x-rules": {
+                                "const": "tile.input"
+                              }
+                            },
+                            "action": {
+                              "type": "object",
+                              "properties": {
+                                "type": {
+                                  "const": "widget",
+                                  "x-rules": {
+                                    "const": "tile.input"
+                                  }
+                                }
+                              }
+                            }
                           }
                         }
                       }
-                    }
+                    ]
                   }
                 }
               }

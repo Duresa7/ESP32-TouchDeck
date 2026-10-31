@@ -55,6 +55,7 @@ rules! {
     TileBounds => "tile.bounds",
     TileOverlap => "tile.overlap",
     TileStreams => "tile.streams",
+    TileInput => "tile.input",
     IconFormat => "icon.format",
     ActionType => "action.type",
     PageMissing => "action.page-missing",
@@ -138,12 +139,15 @@ impl Page {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum TileRender {
     Gif,
     Graph,
+    Bar,
+    #[serde(rename = "now-playing")]
+    NowPlaying,
 }
 
 /// The value type of one stream a Live tile declares, as `v2.live.set` sends it.
@@ -170,14 +174,57 @@ impl StreamType {
     }
 }
 
+/// One stream a renderer binds: its id, the types it accepts, and whether a Tile must declare it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderStream {
+    pub id: &'static str,
+    pub kinds: &'static [StreamType],
+    pub required: bool,
+}
+
+const fn stream(id: &'static str, kinds: &'static [StreamType], required: bool) -> RenderStream {
+    RenderStream {
+        id,
+        kinds,
+        required,
+    }
+}
+
+const GRAPH_STREAMS: &[RenderStream] = &[stream(
+    "value",
+    &[StreamType::Number, StreamType::Series],
+    true,
+)];
+const BAR_STREAMS: &[RenderStream] = &[
+    stream("value", &[StreamType::Number], true),
+    stream("muted", &[StreamType::Number], false),
+];
+const NOW_PLAYING_STREAMS: &[RenderStream] = &[
+    stream("title", &[StreamType::Text], true),
+    stream("artist", &[StreamType::Text], true),
+    stream("cover", &[StreamType::Image], true),
+    stream("state", &[StreamType::Number], true),
+];
+
 impl TileRender {
+    pub const ALL: [TileRender; 4] = [Self::Gif, Self::Graph, Self::Bar, Self::NowPlaying];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Gif => "gif",
+            Self::Graph => "graph",
+            Self::Bar => "bar",
+            Self::NowPlaying => "now-playing",
+        }
+    }
+
     /// The streams this renderer binds, each with the types it accepts.
-    pub fn streams(
-        render: Option<&TileRender>,
-    ) -> &'static [(&'static str, &'static [StreamType])] {
+    pub fn streams(render: Option<&TileRender>) -> &'static [RenderStream] {
         match render {
-            Some(TileRender::Graph) => &[("value", &[StreamType::Number, StreamType::Series])],
-            _ => &[],
+            Some(TileRender::Graph) => GRAPH_STREAMS,
+            Some(TileRender::Bar) => BAR_STREAMS,
+            Some(TileRender::NowPlaying) => NOW_PLAYING_STREAMS,
+            Some(TileRender::Gif) | None => &[],
         }
     }
 }
@@ -199,6 +246,9 @@ pub struct Tile {
     pub render: Option<TileRender>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub streams: Option<BTreeMap<String, StreamType>>,
+    /// A `bar` Tile the finger can drag to set its `value` stream. Written only when true.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub input: bool,
     pub action: Action,
 }
 
@@ -324,7 +374,7 @@ impl Layout {
                 for (id, kind) in &streams {
                     if !bindings
                         .iter()
-                        .any(|(name, kinds)| name == id && kinds.contains(kind))
+                        .any(|binding| binding.id == id && binding.kinds.contains(kind))
                     {
                         errors.push(error(
                             Rule::TileStreams,
@@ -336,13 +386,13 @@ impl Layout {
                         ));
                     }
                 }
-                for (name, _) in bindings {
-                    if !streams.contains_key(*name) {
+                for binding in bindings.iter().filter(|binding| binding.required) {
+                    if !streams.contains_key(binding.id) {
                         errors.push(error(
                             Rule::TileStreams,
                             format!(
-                                "page \"{page_id}\" tile \"{}\" needs stream \"{name}\"",
-                                tile.id
+                                "page \"{page_id}\" tile \"{}\" needs stream \"{}\"",
+                                tile.id, binding.id
                             ),
                         ));
                     }
@@ -1101,7 +1151,7 @@ impl Check {
             pointer,
             &fields,
             if self.v2 {
-                &["asset", "render", "streams"]
+                &["asset", "render", "streams", "input"]
             } else {
                 &[]
             },
@@ -1136,17 +1186,40 @@ impl Check {
             }
             Some((_, at)) => self.wrong_type(&at, "string,null"),
         }
-        if let Some((render, at)) = self.field(obj, pointer, "render").filter(|_| self.v2) {
-            let valid = match render {
-                Json::Str(s) if s.text == "gif" => matches!(obj.get("asset"), Some(Json::Str(_))),
-                Json::Str(s) => s.text == "graph",
-                _ => false,
+        let render = self
+            .field(obj, pointer, "render")
+            .filter(|_| self.v2)
+            .map(|(render, at)| {
+                let kind = match render {
+                    Json::Str(s) => TileRender::ALL.into_iter().find(|r| r.name() == s.text),
+                    _ => None,
+                };
+                (kind, at)
+            });
+        if let Some((kind, at)) = &render {
+            let asset = matches!(obj.get("asset"), Some(Json::Str(_)));
+            let valid = match kind {
+                Some(TileRender::Gif) => asset,
+                Some(TileRender::Bar | TileRender::NowPlaying) => !asset,
+                Some(TileRender::Graph) => true,
+                None => false,
             };
             if !valid {
                 self.fail(
                     Rule::IconFormat,
+                    at,
+                    "render must be graph, bar or now-playing, or gif with an Asset reference; bar and now-playing take no Asset",
+                );
+            }
+        }
+        if let Some((input, at)) = self.field(obj, pointer, "input").filter(|_| self.v2) {
+            let bar = matches!(render, Some((Some(TileRender::Bar), _)));
+            let widget = matches!(obj.get("action"), Some(Json::Object(action)) if matches!(Obj(action).get("type"), Some(Json::Str(kind)) if kind.text == "widget"));
+            if !matches!(input, Json::Bool(true)) || !bar || !widget {
+                self.fail(
+                    Rule::TileInput,
                     &at,
-                    "render must be graph, or gif with an Asset reference",
+                    "input must be true, on a bar Tile with a widget action",
                 );
             }
         }
@@ -1290,6 +1363,7 @@ mod tests {
             "full-screen.json",
             "gif.json",
             "graph.json",
+            "media.json",
         ] {
             let bytes = std::fs::read(schema_dir().join("examples").join(name)).unwrap();
             let layout =
@@ -1322,6 +1396,67 @@ mod tests {
         );
         let text = String::from_utf8(layout.to_canonical_json()).unwrap();
         assert!(text.contains(r#""render":"graph","streams":{"value":"number"}"#));
+    }
+
+    #[test]
+    fn renderer_streams_match_the_shared_table() {
+        let table: Value = serde_json::from_slice(
+            &std::fs::read(schema_dir().join("live/renderers.json")).unwrap(),
+        )
+        .unwrap();
+        let renderers = table["renderers"].as_object().unwrap();
+        let live: Vec<TileRender> = TileRender::ALL
+            .into_iter()
+            .filter(|render| !TileRender::streams(Some(render)).is_empty())
+            .collect();
+        let mut names: Vec<&str> = live.iter().map(|render| render.name()).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            renderers.keys().map(String::as_str).collect::<Vec<_>>()
+        );
+        for render in live {
+            let ours: Value = TileRender::streams(Some(&render))
+                .iter()
+                .map(|stream| {
+                    let kinds: Vec<&str> = stream.kinds.iter().map(|kind| kind.name()).collect();
+                    (
+                        stream.id.to_owned(),
+                        serde_json::json!({"types": kinds, "required": stream.required}),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>()
+                .into();
+            assert_eq!(ours, renderers[render.name()]["streams"], "{}", render.name());
+            assert_eq!(
+                serde_json::to_value(render).unwrap(),
+                Value::String(render.name().into())
+            );
+        }
+    }
+
+    #[test]
+    fn media_tiles_take_optional_streams_and_input_round_trips() {
+        let bytes = std::fs::read(schema_dir().join("examples/media.json")).unwrap();
+        let layout = Layout::parse(&bytes).unwrap();
+        let Page::Grid { tiles, .. } = &layout.pages[0] else {
+            panic!("grid page")
+        };
+        assert_eq!(
+            [tiles[0].render, tiles[1].render, tiles[2].render],
+            [
+                Some(TileRender::Bar),
+                Some(TileRender::Bar),
+                Some(TileRender::NowPlaying)
+            ]
+        );
+        assert_eq!([tiles[0].input, tiles[1].input, tiles[2].input], [true, false, false]);
+        assert!(!tiles[1].streams.as_ref().unwrap().contains_key("muted"));
+        let text = String::from_utf8(layout.to_canonical_json()).unwrap();
+        assert!(text.contains(r#""render":"now-playing""#));
+        assert_eq!(text.matches(r#""input":true"#).count(), 1);
+        assert!(!text.contains(r#""input":false"#));
+        assert_eq!(Layout::parse(text.as_bytes()).unwrap(), layout);
     }
 
     #[test]

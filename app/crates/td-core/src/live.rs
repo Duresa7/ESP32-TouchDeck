@@ -42,6 +42,59 @@ impl LiveValue {
     }
 }
 
+/// Base letters for U+0100 to U+017F, Latin Extended-A, which the Device font lacks.
+const LATIN_EXTENDED_A: [&str; 128] = [
+    "A", "a", "A", "a", "A", "a", "C", "c", "C", "c", "C", "c", "C", "c", "D", "d", "D", "d", "E", "e", "E", "e",
+    "E", "e", "E", "e", "E", "e", "G", "g", "G", "g", "G", "g", "G", "g", "H", "h", "H", "h", "I", "i", "I", "i",
+    "I", "i", "I", "i", "I", "i", "IJ", "ij", "J", "j", "K", "k", "k", "L", "l", "L", "l", "L", "l", "L", "l", "L",
+    "l", "N", "n", "N", "n", "N", "n", "'n", "N", "n", "O", "o", "O", "o", "O", "o", "OE", "oe", "R", "r", "R", "r",
+    "R", "r", "S", "s", "S", "s", "S", "s", "S", "s", "T", "t", "T", "t", "T", "t", "U", "u", "U", "u", "U", "u",
+    "U", "u", "U", "u", "U", "u", "W", "w", "Y", "y", "Y", "Z", "z", "Z", "z", "Z", "z", "s",
+];
+
+/// Text an Integration reports, made fit for a Device that draws `max_bytes` of the glyph set in `docs/design.md`
+/// (Fonts on the Device), by the rules and vectors in `schema/live/text-vectors.json`.
+pub fn fit_text(text: &str, max_bytes: usize) -> String {
+    let mut folded = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\u{0}'..='\u{1f}' | '\u{7f}'..='\u{9f}' | '\u{2028}' | '\u{2029}' => folded.push(' '),
+            '\u{200b}'..='\u{200d}'
+            | '\u{2060}'
+            | '\u{feff}'
+            | '\u{fe00}'..='\u{fe0f}'
+            | '\u{300}'..='\u{36f}' => {}
+            '\u{100}'..='\u{17f}' => folded.push_str(LATIN_EXTENDED_A[c as usize - 0x100]),
+            '\u{218}' => folded.push('S'),
+            '\u{219}' => folded.push('s'),
+            '\u{21a}' => folded.push('T'),
+            '\u{21b}' => folded.push('t'),
+            '\u{2010}'..='\u{2012}' | '\u{2015}' => folded.push('\u{2013}'),
+            '\u{2000}'..='\u{200a}' | '\u{202f}' | '\u{205f}' | '\u{3000}' => folded.push(' '),
+            '\u{2039}' => folded.push('<'),
+            '\u{203a}' => folded.push('>'),
+            c => folded.push(c),
+        }
+    }
+    let mut fitted = String::with_capacity(max_bytes.min(folded.len()));
+    for word in folded.split_whitespace() {
+        let gap = usize::from(!fitted.is_empty());
+        if fitted.len() + gap >= max_bytes {
+            break;
+        }
+        if gap == 1 {
+            fitted.push(' ');
+        }
+        for c in word.chars() {
+            if fitted.len() + c.len_utf8() > max_bytes {
+                return fitted.trim_end_matches(' ').to_owned();
+            }
+            fitted.push(c);
+        }
+    }
+    fitted.trim_end_matches(' ').to_owned()
+}
+
 /// A whole number goes on the wire without a fraction, as `schema/protocol/golden-frames-v2.json` writes it.
 fn wire_number<S: Serializer>(value: f64, serializer: S) -> Result<S::Ok, S::Error> {
     if value.fract() == 0.0 && value.abs() <= VALUE_MAX {

@@ -87,6 +87,20 @@ pub enum Event {
         page: String,
         tile: String,
         kind: String,
+        /// The renderer control the tap lifted in, such as `next` on a now-playing Tile. Only on a v2 session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        part: Option<String>,
+        seq: u32,
+        t: u64,
+    },
+    /// A drag on a Tile that takes input: snapshots at most every 50 ms, then one `end`. Only on a v2 session.
+    #[serde(rename = "v2.input")]
+    Input {
+        page: String,
+        tile: String,
+        stream: String,
+        phase: InputPhase,
+        value: f64,
         seq: u32,
         t: u64,
     },
@@ -103,6 +117,13 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         usage: Option<u16>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InputPhase {
+    Move,
+    End,
 }
 
 /// A response message: the request's `m`, `ok`, and the fields that message defines.

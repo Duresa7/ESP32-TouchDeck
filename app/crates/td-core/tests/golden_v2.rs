@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::time::Instant;
 
 use serde_json::Value;
-use td_core::{Body, Frame, Item, Role, StreamDecoder};
+use td_core::{Body, Event, Frame, InputPhase, Item, Role, StreamDecoder};
 
 fn fixtures() -> Value {
     serde_json::from_str(include_str!(
@@ -136,4 +136,111 @@ fn v2_bulk_traffic_keeps_tap_events_at_every_read_size() {
             assert_eq!(stream["errors"], decoder.errors());
         }
     }
+}
+
+fn frame<'a>(fixtures: &'a Value, name: &str) -> &'a Value {
+    fixtures["frames"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|fixture| fixture["name"] == name)
+        .unwrap_or_else(|| panic!("no fixture {name}"))
+}
+
+#[test]
+fn device_events_round_trip_through_the_event_type_byte_for_byte() {
+    let fixtures = fixtures();
+    let mut events = Vec::new();
+    for fixture in fixtures["frames"].as_array().unwrap() {
+        if fixture["decoded"]["flags"] != 2 {
+            continue;
+        }
+        let payload = unhex(&fixture["decoded"]["payload_hex"]);
+        let event: Event = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(serde_json::to_vec(&event).unwrap(), payload, "{}", fixture["name"]);
+        events.push(event);
+    }
+    assert!(events.contains(&Event::Press {
+        page: "media".into(),
+        tile: "np".into(),
+        kind: "widget".into(),
+        part: Some("next".into()),
+        seq: 42,
+        t: 5123456,
+    }));
+    for (phase, value, seq, t) in [
+        (InputPhase::Move, 0.4213, 118, 5234112),
+        (InputPhase::End, 0.42, 119, 5234160),
+    ] {
+        assert!(events.contains(&Event::Input {
+            page: "media".into(),
+            tile: "vol".into(),
+            stream: "value".into(),
+            phase,
+            value,
+            seq,
+            t,
+        }));
+    }
+    let tap = frame(&fixtures, "tap-event");
+    let tap: Event = serde_json::from_slice(&unhex(&tap["decoded"]["payload_hex"])).unwrap();
+    assert!(matches!(tap, Event::Press { part: None, .. }));
+}
+
+#[test]
+fn media_hellos_fit_one_payload_with_the_new_caps() {
+    let fixtures = fixtures();
+    for (name, gif) in [
+        ("hello-media-max-response", false),
+        ("hello-media-gif-max-response", true),
+    ] {
+        let payload = unhex(&frame(&fixtures, name)["decoded"]["payload_hex"]);
+        assert!(payload.len() <= td_core::frame::PAYLOAD_MAX, "{name}");
+        let hello: Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(hello["name"], "\"".repeat(48), "{name}");
+        assert_eq!(hello["version"], "\"".repeat(32), "{name}");
+        let caps = &hello["caps"];
+        assert_eq!(caps["free_bytes"], u32::MAX, "{name}");
+        assert_eq!(
+            [&caps["text_bytes"], &caps["streams"], &caps["live_images"]],
+            [128, 4, 4],
+            "{name}"
+        );
+        assert_eq!(caps["image"], serde_json::json!([256, 256]), "{name}");
+        let has = |field: &str, item: &str| {
+            caps[field]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == item)
+        };
+        assert!(has("tile_kinds", "bar") && has("tile_kinds", "now-playing"), "{name}");
+        assert!(has("formats", "jpeg"), "{name}");
+        assert_eq!(caps.get("anim").is_some(), gif, "{name}");
+    }
+}
+
+#[test]
+fn live_text_keeps_its_escapes_and_multibyte_characters_within_text_bytes() {
+    let fixtures = fixtures();
+    let fixture = frame(&fixtures, "v2.live.set-text-multibyte-request");
+    let text = String::from_utf8(unhex(&fixture["decoded"]["payload_hex"])).unwrap();
+    let slash = '\\';
+    for escape in [format!("{slash}\"Halo{slash}\""), format!(" {slash}{slash} ")] {
+        assert!(text.contains(&escape), "{escape}");
+    }
+    let value = fixture["message"]["value"].as_str().unwrap();
+    assert!(value.len() <= 128);
+    for width in 2..=4 {
+        assert!(value.chars().any(|c| c.len_utf8() == width), "{width}");
+        assert!(text.chars().any(|c| c.len_utf8() == width), "{width}");
+    }
+    assert_eq!(
+        frame(&fixtures, "v2.live.set-cover-error-asset")["message"]["reason"],
+        "asset"
+    );
+    assert_eq!(
+        frame(&fixtures, "v2.asset.put-jpeg-request")["message"]["format"],
+        "jpeg"
+    );
 }

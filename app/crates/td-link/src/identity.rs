@@ -36,6 +36,9 @@ pub struct Capabilities {
     pub series: u32,
     pub text_bytes: u32,
     pub streams: u32,
+    /// The most Tiles in a Layout that declare an `image` stream. Absent means none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_images: Option<u32>,
 }
 impl Capabilities {
     pub fn gif_enabled(&self) -> bool {
@@ -68,6 +71,7 @@ impl Capabilities {
             && self.series <= 32
             && self.text_bytes <= 128
             && self.streams <= 8
+            && self.live_images.is_none_or(|n| n <= 64)
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

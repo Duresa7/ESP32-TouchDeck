@@ -12,7 +12,8 @@ use serde_json::{Map, Value, json};
 use td_core::frame::CHUNK_DATA_MAX;
 use td_core::layout::{Page, StreamType, UPLOAD_MAX};
 use td_core::{
-    Body, Event, Frame, Hello, ICON_PAGE, Item, Layout, Orientation, Role, Settings, StreamDecoder,
+    Body, Event, Frame, Hello, ICON_PAGE, InputPhase, Item, Layout, Orientation, Role, Settings,
+    StreamDecoder,
 };
 
 use crate::asset::{ASSET_PAGE, AssetFormat, asset_id, refusal, valid_asset_id};
@@ -30,7 +31,13 @@ const HEARTBEAT: Duration = Duration::from_secs(2);
 const BUILTIN: &[u8] = include_bytes!("../../../../schema/examples/builtin.json");
 /// The space a mock Device has for Assets until a test sets another.
 pub const ASSET_CAPACITY: u64 = 4 * 1024 * 1024;
-const ASSET_BYTES: usize = ICON_BYTES;
+/// The largest Asset a mock Device with the volume and media caps takes: a cover JPEG.
+const MEDIA_ASSET_BYTES: usize = 32768;
+const GIF_ASSET_BYTES: usize = 262144;
+/// The largest picture, in pixels a side, a mock Device with the volume and media caps decodes.
+const MEDIA_IMAGE: u16 = 256;
+const MEDIA_TEXT_BYTES: usize = 128;
+const MEDIA_LIVE_IMAGES: usize = 4;
 /// The live caps a mock Device advertises, as the Firmware does.
 pub const MOCK_LIVE_HZ: u32 = 2;
 pub const MOCK_LIVE_TOTAL_HZ: u32 = 16;
@@ -128,6 +135,7 @@ struct State {
     selected_v2: bool,
     device_name: String,
     gif_capabilities: bool,
+    media_capabilities: bool,
     settings: Settings,
     icons: BTreeSet<String>,
     icon_files: HashMap<String, Vec<u8>>,
@@ -159,6 +167,7 @@ struct State {
     reboots: u32,
     key_seq: u32,
     press_seq: u32,
+    input_seq: u32,
     update_sha: Option<String>,
     update_pending: Option<(String, String)>,
     update_mode: String,
@@ -166,6 +175,8 @@ struct State {
     assets: BTreeMap<String, Vec<u8>>,
     asset_capacity: u64,
     chunk_bytes: usize,
+    /// The format the open Asset put declared.
+    asset_format: Option<AssetFormat>,
     /// The xfer of the last Asset transfer that closed and what `v2.asset.end` answered for it.
     asset_end: Option<(u8, Map<String, Value>)>,
     live: Live,
@@ -190,6 +201,57 @@ fn arrived(request: &Map<String, Value>) -> Value {
 }
 
 impl State {
+    /// The `caps` a v2 hello reports, with `free_bytes` from the Asset space left.
+    fn capabilities(&self) -> Value {
+        let mut caps = json!({"screen":[1024,600],"grid":[8,8],"pages":8,"tiles":64,
+            "layout_bytes":32768,"layout_schemas":[1,2],"free_bytes":asset_space(self).3,"tile_kinds":["static","graph","photo-frame","clock"],
+            "asset_bytes":ICON_BYTES,"formats":["tdi1"],"image":[64,64],"gif_frames":0,"gif_pixels":0,
+            "photo_bytes":PHOTO_BYTES_MAX,"live_hz":MOCK_LIVE_HZ,"live_total_hz":MOCK_LIVE_TOTAL_HZ,"series":MOCK_SERIES,"text_bytes":0,"streams":1});
+        if self.gif_capabilities {
+            caps["anim"] =
+                json!({"image":[128,128],"min_delay_ms":100,"page_tiles":4,"page_pixels":65536});
+            caps["formats"] = json!(["tdi1", "gif"]);
+            caps["tile_kinds"] = json!(["static", "graph", "gif", "photo-frame", "clock"]);
+            caps["asset_bytes"] = json!(GIF_ASSET_BYTES);
+            caps["gif_frames"] = json!(60);
+            caps["gif_pixels"] = json!(983040);
+        }
+        if self.media_capabilities {
+            let kinds = caps["tile_kinds"]
+                .as_array_mut()
+                .expect("tile kinds are a list");
+            let at = kinds.len() - 2;
+            kinds.splice(at..at, [json!("bar"), json!("now-playing")]);
+            caps["formats"]
+                .as_array_mut()
+                .expect("formats are a list")
+                .push(json!("jpeg"));
+            caps["image"] = json!([MEDIA_IMAGE, MEDIA_IMAGE]);
+            caps["asset_bytes"] = json!(self.asset_bytes());
+            caps["text_bytes"] = json!(MEDIA_TEXT_BYTES);
+            caps["streams"] = json!(4);
+            caps["live_images"] = json!(MEDIA_LIVE_IMAGES);
+        }
+        caps
+    }
+
+    fn asset_bytes(&self) -> usize {
+        match (self.gif_capabilities, self.media_capabilities) {
+            (true, _) => GIF_ASSET_BYTES,
+            (false, true) => MEDIA_ASSET_BYTES,
+            (false, false) => ICON_BYTES,
+        }
+    }
+
+    /// Whether a live image value still names this Asset, which makes deleting it `in-use`.
+    fn shows(&self, id: &str) -> bool {
+        let reference = format!("sha256:{id}");
+        self.live
+            .slots
+            .values()
+            .any(|slot| slot.value == reference.as_str())
+    }
+
     fn record_set(&mut self, request: &Map<String, Value>) {
         self.sets.push(arrived(request));
     }
@@ -229,6 +291,7 @@ impl MockDeck {
                 selected_v2: false,
                 device_name: "Open TouchDeck".into(),
                 gif_capabilities: false,
+                media_capabilities: false,
                 settings: Settings::default(),
                 icons: BTreeSet::new(),
                 icon_files: HashMap::new(),
@@ -260,6 +323,7 @@ impl MockDeck {
                 reboots: 0,
                 key_seq: 0,
                 press_seq: 0,
+                input_seq: 0,
                 update_sha: None,
                 update_pending: None,
                 update_mode: String::new(),
@@ -267,6 +331,7 @@ impl MockDeck {
                 assets: BTreeMap::new(),
                 asset_capacity: ASSET_CAPACITY,
                 chunk_bytes: 0,
+                asset_format: None,
                 asset_end: None,
                 live: Live::new(),
                 live_sets: Vec::new(),
@@ -284,6 +349,13 @@ impl MockDeck {
 
     pub fn set_gif_capabilities(&self, enabled: bool) {
         self.state().gif_capabilities = enabled;
+    }
+
+    /// Advertises the volume and media caps a v2 hello will carry: `bar` and `now-playing` Tiles, text live values
+    /// up to 128 bytes, four streams a Tile, JPEG cover Assets up to 256 pixels a side, and four cover Tiles a
+    /// Layout. Off by default, like Firmware without them.
+    pub fn set_media_capabilities(&self, enabled: bool) {
+        self.state().media_capabilities = enabled;
     }
 
     pub fn v2() -> Self {
@@ -440,10 +512,59 @@ impl MockDeck {
             page: page.into(),
             tile: tile.into(),
             kind: kind.into(),
+            part: None,
             seq,
             t: self.uptime_ms(),
         });
         seq
+    }
+
+    /// Emits a tap that lifted inside a renderer control. Only a v2 session hears the `part`, as on the Firmware.
+    pub fn emit_press_part(&self, page: &str, tile: &str, kind: &str, part: &str) -> u32 {
+        let (seq, v2) = {
+            let mut state = self.state();
+            state.press_seq += 1;
+            (state.press_seq, state.selected_v2)
+        };
+        self.emit(&Event::Press {
+            page: page.into(),
+            tile: tile.into(),
+            kind: kind.into(),
+            part: v2.then(|| part.into()),
+            seq,
+            t: self.uptime_ms(),
+        });
+        seq
+    }
+
+    /// Emits one drag snapshot, its value rounded to 4 decimals as the Firmware sends it, and returns its `seq`.
+    /// A v1 session gets nothing, so this returns `None`.
+    pub fn emit_input(
+        &self,
+        page: &str,
+        tile: &str,
+        stream: &str,
+        phase: InputPhase,
+        value: f64,
+    ) -> Option<u32> {
+        let seq = {
+            let mut state = self.state();
+            if !state.selected_v2 {
+                return None;
+            }
+            state.input_seq += 1;
+            state.input_seq
+        };
+        self.emit(&Event::Input {
+            page: page.into(),
+            tile: tile.into(),
+            stream: stream.into(),
+            phase,
+            value: (value * 10_000.0).round() / 10_000.0,
+            seq,
+            t: self.uptime_ms(),
+        });
+        Some(seq)
     }
 
     fn next_key_seq(&self) -> u32 {
@@ -927,8 +1048,31 @@ impl MockDeck {
                 ]));
             }
         };
-        if let Err(errors) = Layout::parse(&data) {
-            return Err(format!("invalid layout: {}", errors[0]));
+        let layout =
+            Layout::parse(&data).map_err(|errors| format!("invalid layout: {}", errors[0]))?;
+        let covers = layout
+            .pages
+            .iter()
+            .filter_map(|page| match page {
+                Page::Grid { tiles, .. } => Some(tiles),
+                Page::Dashboard { .. } => None,
+            })
+            .flatten()
+            .filter(|tile| {
+                tile.streams
+                    .as_ref()
+                    .is_some_and(|streams| streams.values().any(|kind| *kind == StreamType::Image))
+            })
+            .count();
+        let limit = if state.media_capabilities {
+            MEDIA_LIVE_IMAGES
+        } else {
+            0
+        };
+        if covers > limit {
+            return Err(format!(
+                "size: {covers} Tiles declare an image stream; this Device draws {limit}"
+            ));
         }
         state.layouts.insert(orientation, data);
         if orientation == state.shown {
@@ -1154,20 +1298,7 @@ impl MockDeck {
                         reply.insert("proto".into(), json!(2));
                         reply.insert("id".into(), json!("020000000001"));
                         reply.insert("name".into(), json!(state.device_name));
-                        reply.insert("caps".into(), json!({"screen":[1024,600],"grid":[8,8],"pages":8,"tiles":64,
-                            "layout_bytes":32768,"layout_schemas":[1,2],"free_bytes":asset_space(&state).3,"tile_kinds":["static","graph","photo-frame","clock"],
-                            "asset_bytes":12300,"formats":["tdi1"],"image":[64,64],"gif_frames":0,"gif_pixels":0,
-                            "photo_bytes":PHOTO_BYTES_MAX,"live_hz":MOCK_LIVE_HZ,"live_total_hz":MOCK_LIVE_TOTAL_HZ,"series":MOCK_SERIES,"text_bytes":0,"streams":1}));
-                        if state.gif_capabilities {
-                            let caps = reply.get_mut("caps").unwrap();
-                            caps["anim"] = json!({"image":[128,128],"min_delay_ms":100,"page_tiles":4,"page_pixels":65536});
-                            caps["formats"] = json!(["tdi1", "gif"]);
-                            caps["tile_kinds"] =
-                                json!(["static", "graph", "gif", "photo-frame", "clock"]);
-                            caps["asset_bytes"] = json!(262144);
-                            caps["gif_frames"] = json!(60);
-                            caps["gif_pixels"] = json!(983040);
-                        }
+                        reply.insert("caps".into(), state.capabilities());
                     }
                 }
                 Ok(reply)
@@ -1335,6 +1466,45 @@ impl MockDeck {
     }
 }
 
+/// The width and height of a baseline or extended sequential 8-bit JPEG with one or three components, read from
+/// its frame header. `None` for anything else, such as progressive or arithmetic coding or a file cut short. The
+/// Firmware decodes the whole file; this mock checks only the structure.
+fn jpeg_size(data: &[u8]) -> Option<(u16, u16)> {
+    if !data.starts_with(&[0xFF, 0xD8]) || !data.ends_with(&[0xFF, 0xD9]) {
+        return None;
+    }
+    let mut at = 2;
+    let mut size = None;
+    loop {
+        if *data.get(at)? != 0xFF {
+            return None;
+        }
+        let marker = *data.get(at + 1)?;
+        if marker == 0xFF {
+            at += 1;
+            continue;
+        }
+        let length = usize::from(u16::from_be_bytes([*data.get(at + 2)?, *data.get(at + 3)?]));
+        let segment = data.get(at + 4..at + 2 + length).filter(|_| length >= 2)?;
+        match marker {
+            0xC0 | 0xC1 => {
+                let [precision, h0, h1, w0, w1, components, ..] = *segment else {
+                    return None;
+                };
+                let (w, h) = (u16::from_be_bytes([w0, w1]), u16::from_be_bytes([h0, h1]));
+                if precision != 8 || !matches!(components, 1 | 3) || w == 0 || h == 0 {
+                    return None;
+                }
+                size = Some((w, h));
+            }
+            0xC2..=0xCF if !matches!(marker, 0xC4 | 0xC8 | 0xCC) => return None,
+            0xDA => return size,
+            _ => {}
+        }
+        at += 2 + length;
+    }
+}
+
 fn asset_space(state: &State) -> (u64, u64, u64, u64) {
     let used: u64 = state.assets.values().map(|data| data.len() as u64).sum();
     let reserved = match &state.inbound {
@@ -1400,7 +1570,10 @@ impl MockDeck {
                 let items: Vec<Value> = rest
                     .by_ref()
                     .take(ASSET_PAGE)
-                    .map(|(id, data)| json!({"id": id, "bytes": data.len(), "format": "tdi1"}))
+                    .map(|(id, data)| {
+                        let format = AssetFormat::sniff(data).map_or("tdi1", AssetFormat::name);
+                        json!({"id": id, "bytes": data.len(), "format": format})
+                    })
                     .collect();
                 let next = match rest.next() {
                     Some(_) => items.last().map(|item| item["id"].clone()),
@@ -1425,10 +1598,12 @@ impl MockDeck {
                 if !only(&["id", "bytes", "format"]) {
                     return refused("args");
                 }
-                if AssetFormat::parse(format) != Some(AssetFormat::Tdi1) {
-                    return refused("format");
-                }
-                if bytes > ASSET_BYTES as u64 {
+                let format = match AssetFormat::parse(format) {
+                    Some(AssetFormat::Tdi1) => AssetFormat::Tdi1,
+                    Some(AssetFormat::Jpeg) if state.media_capabilities => AssetFormat::Jpeg,
+                    _ => return refused("format"),
+                };
+                if bytes > state.asset_bytes() as u64 {
                     return refused("size");
                 }
                 if let Some(stored) = state.assets.get(&id) {
@@ -1448,6 +1623,7 @@ impl MockDeck {
                 }
                 let xfer = MockDeck::next_xfer(state);
                 state.asset_end = None;
+                state.asset_format = Some(format);
                 state.inbound = Some(Inbound {
                     xfer,
                     target: Target::Asset(id),
@@ -1486,12 +1662,22 @@ impl MockDeck {
                 let Target::Asset(id) = inbound.target else {
                     unreachable!("matched an Asset put")
                 };
+                let declared = state.asset_format.take();
+                let checked = match AssetFormat::sniff(&inbound.data) {
+                    _ if declared.is_none() => Err("format"),
+                    found if found != declared => Err("format"),
+                    Some(AssetFormat::Tdi1) if inbound.data.len() == ICON_BYTES => Ok(()),
+                    Some(AssetFormat::Jpeg) => match jpeg_size(&inbound.data) {
+                        Some((w, h)) if w > MEDIA_IMAGE || h > MEDIA_IMAGE => Err("size"),
+                        Some(_) => Ok(()),
+                        None => Err("format"),
+                    },
+                    _ => Err("format"),
+                };
                 let reply = if asset_id(&inbound.data) != id {
                     refused("hash")
-                } else if AssetFormat::sniff(&inbound.data) != Some(AssetFormat::Tdi1)
-                    || inbound.data.len() != ICON_BYTES
-                {
-                    refused("format")
+                } else if let Err(reason) = checked {
+                    refused(reason)
                 } else {
                     let bytes = inbound.data.len();
                     state.assets.insert(id.clone(), inbound.data);
@@ -1512,6 +1698,9 @@ impl MockDeck {
                 {
                     return refused("busy");
                 }
+                if state.shows(&id) {
+                    return refused("in-use");
+                }
                 let deleted = state.assets.remove(&id).is_some();
                 Map::from_iter([("deleted".to_owned(), json!(deleted))])
             }
@@ -1522,7 +1711,8 @@ impl MockDeck {
 
 impl MockDeck {
     /// Answers `v2.live.set` with the Firmware's checks in the Firmware's order: fields, Layout, Page, Tile,
-    /// stream, type, value, sequence, then rate. A graph stream is the only kind it draws.
+    /// stream, type, value, sequence, then rate. It draws numbers and series, and with the media caps text and
+    /// images too.
     fn live_set(&self, request: &Map<String, Value>) -> Map<String, Value> {
         const FIELDS: [&str; 9] = [
             "m", "layout", "page", "tile", "stream", "n", "ttl_ms", "type", "value",
@@ -1592,11 +1782,40 @@ impl MockDeck {
         let Some(declared) = found.streams.as_ref().and_then(|s| s.get(stream)) else {
             return refused("stream");
         };
-        if *declared != kind || !matches!(kind, StreamType::Number | StreamType::Series) {
+        let media = self.state().media_capabilities;
+        if *declared != kind || !(matches!(kind, StreamType::Number | StreamType::Series) || media)
+        {
             return refused("type");
         }
-        if numbers.is_empty() {
-            return refused("args");
+        match (kind, &value) {
+            (StreamType::Text, Value::String(text)) => {
+                if text.chars().any(|c| c <= '\u{1f}' || c == '\u{7f}') {
+                    return refused("args");
+                }
+                if text.len() > MEDIA_TEXT_BYTES {
+                    return refused("size");
+                }
+            }
+            (StreamType::Image, Value::String(reference)) => {
+                let Some(id) = reference
+                    .strip_prefix("sha256:")
+                    .filter(|id| valid_asset_id(id))
+                else {
+                    return refused("args");
+                };
+                let state = self.state();
+                let cover = state.assets.get(id).is_some_and(|data| {
+                    AssetFormat::sniff(data) == Some(AssetFormat::Jpeg)
+                        && jpeg_size(data)
+                            .is_some_and(|(w, h)| w <= MEDIA_IMAGE && h <= MEDIA_IMAGE)
+                });
+                if !cover {
+                    return refused("asset");
+                }
+            }
+            (StreamType::Image, _) => {}
+            _ if numbers.is_empty() => return refused("args"),
+            _ => {}
         }
         if numbers.len() > MOCK_SERIES {
             return refused("size");

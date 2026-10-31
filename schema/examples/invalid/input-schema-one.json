@@ -1,0 +1,30 @@
+expected: shape.unknown-field
+{
+  "schema": 1,
+  "name": "Media",
+  "orientation": "landscape",
+  "pages": [
+    {
+      "id": "media",
+      "title": "Media",
+      "kind": "grid",
+      "rows": 2,
+      "cols": 4,
+      "tiles": [
+        {
+          "id": "level",
+          "label": "Level",
+          "row": 1,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 2,
+          "icon": null,
+          "action": {
+            "type": "none"
+          },
+          "input": true
+        }
+      ]
+    }
+  ]
+}

@@ -95,8 +95,8 @@ fn asset_requests_match_the_golden_frames_byte_for_byte() {
         checked += 1;
     }
     assert_eq!(
-        checked, 6,
-        "stat, list, put, end, put-present and delete requests"
+        checked, 7,
+        "stat, list, put, end, put-present, put-jpeg and delete requests"
     );
 }
 
@@ -135,6 +135,10 @@ fn asset_replies_in_the_golden_frames_parse_to_typed_values() {
             "v2.asset.put-response" => {
                 let opened: PutOpened = reply_fields(&reply).unwrap();
                 assert_eq!((opened.present, opened.xfer), (false, Some(1)));
+            }
+            "v2.asset.put-jpeg-response" => {
+                let opened: PutOpened = reply_fields(&reply).unwrap();
+                assert_eq!((opened.present, opened.xfer), (false, Some(3)));
             }
             "v2.asset.put-present-response" => {
                 let opened: PutOpened = reply_fields(&reply).unwrap();

@@ -23,18 +23,41 @@ export type Tile = {
   colSpan: number;
   action: Action;
 } & (
-  | { render?: undefined; icon: string | null; asset?: string | null; streams?: undefined }
-  | { render: 'gif'; icon: null; asset: string; streams?: undefined }
-  | { render: 'graph'; icon: string | null; asset?: string | null; streams: GraphStreams }
+  | { render?: undefined; icon: string | null; asset?: string | null; streams?: undefined; input?: undefined }
+  | { render: 'gif'; icon: null; asset: string; streams?: undefined; input?: undefined }
+  | { render: 'graph'; icon: string | null; asset?: string | null; streams: GraphStreams; input?: undefined }
+  | { render: 'bar'; icon: string | null; asset?: null; streams: BarStreams; input?: true }
+  | { render: 'now-playing'; icon: string | null; asset?: null; streams: NowPlayingStreams; input?: undefined }
 );
 
 export type StreamType = 'number' | 'series' | 'text' | 'image';
 
 /** A graph Tile's one stream: a number appends a sample, a series replaces the history. */
 export type GraphStreams = { value: 'number' | 'series' };
+/** A bar Tile's level from 0 to 1, and whether it is muted. */
+export type BarStreams = { value: 'number'; muted?: 'number' };
+/** A now-playing Tile's track, its cover Asset, and 0 nothing playing, 1 paused or 2 playing. */
+export type NowPlayingStreams = { title: 'text'; artist: 'text'; cover: 'image'; state: 'number' };
+
+export type Renderer = 'graph' | 'bar' | 'now-playing';
+export interface RenderStream {
+  types: readonly StreamType[];
+  required: boolean;
+}
 
 const STREAM_TYPES: readonly StreamType[] = ['number', 'series', 'text', 'image'];
-const RENDER_STREAMS: Record<string, Record<string, readonly StreamType[]>> = { graph: { value: ['number', 'series'] } };
+/** The streams each Live tile renderer binds, as schema/live/renderers.json lists them. */
+export const RENDER_STREAMS: Record<Renderer, Record<string, RenderStream>> = {
+  graph: { value: { types: ['number', 'series'], required: true } },
+  bar: { value: { types: ['number'], required: true }, muted: { types: ['number'], required: false } },
+  'now-playing': {
+    title: { types: ['text'], required: true },
+    artist: { types: ['text'], required: true },
+    cover: { types: ['image'], required: true },
+    state: { types: ['number'], required: true },
+  },
+};
+const isRenderer = (render: unknown): render is Renderer => typeof render === 'string' && Object.hasOwn(RENDER_STREAMS, render);
 
 export interface GridPage {
   id: string;
@@ -225,10 +248,15 @@ function structuralErrors(root: unknown): LayoutError[] {
   };
 
   const tile = (value: unknown, pointer: string) => {
-    const tile = object(value, pointer, ['id', 'label', 'row', 'col', 'rowSpan', 'colSpan', 'icon', 'action'], isObject(root) && root.schema === 2 ? ['asset', 'render', 'streams'] : []);
+    const tile = object(value, pointer, ['id', 'label', 'row', 'col', 'rowSpan', 'colSpan', 'icon', 'action'], isObject(root) && root.schema === 2 ? ['asset', 'render', 'streams', 'input'] : []);
     if (!tile) return;
-    if (isObject(root) && root.schema === 2 && Object.hasOwn(tile, 'render') && tile.render !== 'graph' && (tile.render !== 'gif' || typeof tile.asset !== 'string')) {
-      at('icon.format', `${pointer}/render`, 'render must be graph, or gif with an Asset reference');
+    const v2 = isObject(root) && root.schema === 2;
+    if (v2 && Object.hasOwn(tile, 'render')) {
+      const drawn = tile.render === 'gif' ? typeof tile.asset === 'string' : isRenderer(tile.render) && (tile.render === 'graph' || typeof tile.asset !== 'string');
+      if (!drawn) at('icon.format', `${pointer}/render`, 'render must be graph, bar or now-playing, or gif with an Asset reference; bar and now-playing take no Asset');
+    }
+    if (v2 && Object.hasOwn(tile, 'input') && (tile.input !== true || tile.render !== 'bar' || !isObject(tile.action) || tile.action.type !== 'widget')) {
+      at('tile.input', `${pointer}/input`, 'input must be true, on a bar Tile with a widget action');
     }
     if (Object.hasOwn(tile, 'streams')) {
       const streams = tile.streams;
@@ -320,13 +348,13 @@ function semanticErrors(layout: Layout): LayoutError[] {
       if (tile.action.type === 'page' && !pageIds.has(tile.action.page)) {
         errors.push(fail('action.page-missing', `page "${page.id}" tile "${tile.id}" references missing page "${tile.action.page}"`));
       }
-      const bindings = (tile.render && RENDER_STREAMS[tile.render]) || {};
+      const bindings: Record<string, RenderStream> = isRenderer(tile.render) ? RENDER_STREAMS[tile.render] : {};
       const streams: Record<string, string> = tile.streams ?? {};
       for (const [id, type] of Object.entries(streams)) {
-        if (!bindings[id]?.some((allowed) => allowed === type)) errors.push(fail('tile.streams', `page "${page.id}" tile "${tile.id}" cannot bind stream "${id}" as ${JSON.stringify(type)}`));
+        if (!bindings[id]?.types.some((allowed) => allowed === type)) errors.push(fail('tile.streams', `page "${page.id}" tile "${tile.id}" cannot bind stream "${id}" as ${JSON.stringify(type)}`));
       }
-      for (const id of Object.keys(bindings)) {
-        if (!Object.hasOwn(streams, id)) errors.push(fail('tile.streams', `page "${page.id}" tile "${tile.id}" needs stream "${id}"`));
+      for (const [id, binding] of Object.entries(bindings)) {
+        if (binding.required && !Object.hasOwn(streams, id)) errors.push(fail('tile.streams', `page "${page.id}" tile "${tile.id}" needs stream "${id}"`));
       }
       if (tile.row + tile.rowSpan > page.rows || tile.col + tile.colSpan > page.cols) {
         errors.push(fail('tile.bounds', `page "${page.id}" tile "${tile.id}" exceeds grid bounds ${page.rows}x${page.cols}`));
@@ -530,7 +558,7 @@ export interface GraphBinding {
 
 /** The Tile drawn as a graph of the bound stream. A graph Tile's action is its binding, and it shows no icon. */
 export function graphTile(tile: Tile, binding: GraphBinding): Tile {
-  const { render: _render, streams: _streams, asset: _asset, ...rest } = tile;
+  const { render: _render, streams: _streams, asset: _asset, input: _input, ...rest } = tile;
   return {
     ...rest,
     icon: null,
@@ -543,7 +571,7 @@ export function graphTile(tile: Tile, binding: GraphBinding): Tile {
 /** Draws the Tile as a graph of the bound stream, or, with null, as its label again. */
 export function setGraph(layout: Layout, page: string, id: string, binding: GraphBinding | null): Edit {
   return redrawTile(layout, page, id, (tile) => {
-    const { render: _render, streams: _streams, asset: _asset, ...rest } = tile;
+    const { render: _render, streams: _streams, asset: _asset, input: _input, ...rest } = tile;
     return binding ? graphTile(rest, binding) : { ...rest, icon: null };
   });
 }
@@ -572,7 +600,7 @@ function redrawTile(layout: Layout, page: string, id: string, change: (tile: Til
 
 function iconEdit(layout: Layout, page: string, id: string, icon: string | null, asset: string | null): Edit {
   return redrawTile(layout, page, id, (tile) => {
-    const { render: _render, streams: _streams, icon: _icon, asset: _asset, ...rest } = tile;
+    const { render: _render, streams: _streams, icon: _icon, asset: _asset, input: _input, ...rest } = tile;
     return asset === null ? { ...rest, icon } : { ...rest, icon: null, asset };
   });
 }
