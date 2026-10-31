@@ -36,10 +36,10 @@ impl From<&icons::Builtin> for Builtin {
 
 #[derive(Debug, thiserror::Error)]
 pub enum AssetError {
-    #[error(
-        "This GIF is too large. Choose a smaller GIF. Decoded frames together must fit within 64 MiB."
-    )]
+    #[error("{}", too_large_message(.0))]
     TooLarge(serde_json::Value),
+    #[error("This GIF is too short. Choose a GIF that plays for at least {limit} ms.")]
+    TooShort { limit: u32, actual: u32 },
     #[error("This Device or Asset does not support the requested format.")]
     Unsupported(serde_json::Value),
     #[error("The Device could not store this Asset. Remove unused Assets, then retry.")]
@@ -50,6 +50,8 @@ pub enum AssetError {
     UploadNotFound,
     #[error("The image or icon couldn't be rendered: {0}")]
     RenderFailed(String),
+    #[error("Couldn't prepare this GIF. Choose another GIF.")]
+    GifFailed { reason: &'static str },
     #[error(transparent)]
     Device(#[from] DeviceLinkError),
     #[error(transparent)]
@@ -60,6 +62,7 @@ pub enum AssetError {
 impl ApiError for AssetError {
     const CODES: &'static [&'static str] = &[
         "asset.too_large",
+        "asset.too_short",
         "asset.unsupported",
         "asset.refused",
         "asset.not_found",
@@ -73,11 +76,12 @@ impl ApiError for AssetError {
     ];
     fn status(&self) -> StatusCode {
         match self {
-            Self::TooLarge(_) | Self::Unsupported(_) | Self::Refused { .. } => {
-                StatusCode::UNPROCESSABLE_ENTITY
-            }
+            Self::TooLarge(_)
+            | Self::TooShort { .. }
+            | Self::Unsupported(_)
+            | Self::Refused { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             Self::NotFound | Self::UploadNotFound => StatusCode::NOT_FOUND,
-            Self::RenderFailed(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::RenderFailed(_) | Self::GifFailed { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Device(e) => e.status(),
             Self::Job(e) => e.status(),
             Self::Common(e) => e.status(),
@@ -86,11 +90,12 @@ impl ApiError for AssetError {
     fn code(&self) -> &'static str {
         match self {
             Self::TooLarge(_) => "asset.too_large",
+            Self::TooShort { .. } => "asset.too_short",
             Self::Unsupported(_) => "asset.unsupported",
             Self::Refused { .. } => "asset.refused",
             Self::NotFound => "asset.not_found",
             Self::UploadNotFound => "upload.not_found",
-            Self::RenderFailed(_) => "asset.render_failed",
+            Self::RenderFailed(_) | Self::GifFailed { .. } => "asset.render_failed",
             Self::Device(e) => e.code(),
             Self::Job(e) => e.code(),
             Self::Common(e) => e.code(),
@@ -99,7 +104,11 @@ impl ApiError for AssetError {
     fn details(&self) -> Option<serde_json::Value> {
         match self {
             Self::TooLarge(details) | Self::Unsupported(details) => Some(details.clone()),
+            Self::TooShort { limit, actual } => Some(
+                serde_json::json!({"field":"duration_ms","limit":limit,"actual":actual,"unit":"ms"}),
+            ),
             Self::Refused { reason } => Some(serde_json::json!({"reason":reason})),
+            Self::GifFailed { reason } => Some(serde_json::json!({"reason":reason})),
             Self::Device(e) => e.details(),
             Self::Job(e) => e.details(),
             Self::Common(e) => e.details(),
@@ -234,6 +243,7 @@ pub enum AssetSource {
         upload: String,
     },
 }
+const GIF_TARGET_MAX: u16 = 4096;
 #[derive(Serialize, Deserialize, TS)]
 pub struct GifTarget {
     pub width: u16,
@@ -291,6 +301,17 @@ impl Endpoint for Create {
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
         let owner = req.client().id.clone();
         let CreateAsset { source, fit } = req.body;
+        if let AssetSource::Gif { target, .. } = &source
+            && ![target.width, target.height]
+                .iter()
+                .all(|side| (1..=GIF_TARGET_MAX).contains(side))
+        {
+            return Err(CommonError::invalid(
+                "body",
+                format!("target width and height must be from 1 to {GIF_TARGET_MAX}"),
+            )
+            .into());
+        }
         let work = ctx.clone();
         Ok(ctx
             .jobs
@@ -341,7 +362,7 @@ fn render(
             let id = ctx
                 .assets
                 .put(&output.bytes)
-                .map_err(AssetError::RenderFailed)?;
+                .map_err(|_| AssetError::GifFailed { reason: "invalid" })?;
             job.progress(&RenderProgress {
                 frames_done: output.frames as u32,
                 frames_total: output.frames as u32,
@@ -707,7 +728,31 @@ fn gif_error(error: td_host::gif_normalize::GifError) -> AssetError {
             smallest,
         } => too_large("asset_bytes", max_bytes, smallest, "bytes"),
         E::PixelLimit { limit, smallest } => too_large("gif_pixels", limit, smallest, "pixels"),
-        other => AssetError::RenderFailed(other.to_string()),
+        E::TooShort {
+            min_delay_ms,
+            duration_ms,
+        } => AssetError::TooShort {
+            limit: min_delay_ms,
+            actual: duration_ms,
+        },
+        E::NotGif => AssetError::GifFailed { reason: "not_gif" },
+        E::Corrupt => AssetError::GifFailed { reason: "corrupt" },
+        E::InvalidLimits => AssetError::GifFailed {
+            reason: "invalid_limits",
+        },
+        E::TimedOut => AssetError::GifFailed {
+            reason: "timed_out",
+        },
+    }
+}
+
+fn too_large_message(details: &serde_json::Value) -> &'static str {
+    match details["field"].as_str() {
+        Some("decoded_rgba") => {
+            "This GIF needs more than 64 MiB to decode all its frames. Choose a smaller or shorter GIF."
+        }
+        Some("gif_frames" | "source_frames") => "This GIF is too long. Choose a shorter GIF.",
+        _ => "This GIF is too large. Choose a smaller GIF.",
     }
 }
 
@@ -722,6 +767,75 @@ mod gif_errors {
                 error: "refused".into(),
             });
             assert_eq!(error.details().unwrap()["reason"], reason);
+        }
+    }
+
+    #[test]
+    fn too_large_message_follows_the_field() {
+        use td_host::gif_normalize::{GifError as E, SourceLimit as S};
+        let long = "This GIF is too long. Choose a shorter GIF.";
+        let large = "This GIF is too large. Choose a smaller GIF.";
+        let decoded = "This GIF needs more than 64 MiB to decode all its frames. Choose a smaller or shorter GIF.";
+        let source = |kind| E::SourceTooLarge {
+            kind,
+            limit: 1,
+            actual: 2,
+        };
+        for (error, message) in [
+            (
+                gif_error(E::TooLong {
+                    max_frames: 60,
+                    needed: 61,
+                }),
+                long,
+            ),
+            (gif_error(source(S::Frames)), long),
+            (gif_error(source(S::DecodedRgba)), decoded),
+            (gif_error(source(S::Bytes)), large),
+            (gif_error(source(S::Width)), large),
+            (
+                gif_error(E::TooLarge {
+                    max_bytes: 1,
+                    smallest: 2,
+                }),
+                large,
+            ),
+            (
+                gif_error(E::PixelLimit {
+                    limit: 1,
+                    smallest: 2,
+                }),
+                large,
+            ),
+            (
+                asset_link(td_link::asset::AssetError::Refused {
+                    reason: td_link::asset::AssetReason::parse("size"),
+                    error: "refused".into(),
+                }),
+                large,
+            ),
+        ] {
+            assert_eq!(error.code(), "asset.too_large");
+            assert_eq!(error.to_string(), message, "{:?}", error.details());
+        }
+    }
+
+    #[test]
+    fn preparation_failures_carry_a_reason_not_debug_text() {
+        use td_host::gif_normalize::GifError as E;
+        for (error, reason) in [
+            (E::NotGif, "not_gif"),
+            (E::Corrupt, "corrupt"),
+            (E::TimedOut, "timed_out"),
+            (E::InvalidLimits, "invalid_limits"),
+        ] {
+            let error = gif_error(error);
+            assert_eq!(error.code(), "asset.render_failed");
+            assert_eq!(
+                error.to_string(),
+                "Couldn't prepare this GIF. Choose another GIF."
+            );
+            assert_eq!(error.details(), Some(serde_json::json!({"reason":reason})));
         }
     }
 }

@@ -91,7 +91,17 @@ pub enum GifError {
 
 impl fmt::Display for GifError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "GIF normalization: {self:?}")
+        f.write_str(match self {
+            Self::NotGif => "not a GIF",
+            Self::Corrupt => "corrupt GIF",
+            Self::SourceTooLarge { .. } => "GIF source over a limit",
+            Self::TooLong { .. } => "too many frames",
+            Self::TooLarge { .. } => "too many bytes",
+            Self::PixelLimit { .. } => "too many pixels",
+            Self::TooShort { .. } => "loop too short",
+            Self::InvalidLimits => "invalid limits",
+            Self::TimedOut => "timed out",
+        })
     }
 }
 impl std::error::Error for GifError {}

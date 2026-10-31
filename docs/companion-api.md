@@ -922,7 +922,7 @@ Features add codes as they land. This list is the starting set.
 | `firmware.rolled_back` | Job error | The Device rolled back to its previous Firmware |
 | `firmware.confirm_timeout` | Job error | The new Firmware didn't confirm in time |
 | `asset.not_found` | 404 | No Asset with that id |
-| `asset.render_failed` | Job error | The image or icon couldn't be rendered |
+| `asset.render_failed` | Job error | The image or icon couldn't be rendered. GIF failures carry `details.reason` (Animated GIF Assets) |
 | `upload.not_found` | 404 | The upload expired or never existed |
 | `job.not_found` | 404 | No Job with that id |
 | `job.not_cancellable` | 409 | The Job's current phase can't be cancelled |
@@ -1194,7 +1194,9 @@ Firmware independently enforces the same budgets and validates complete Assets.
 
 | Error code | Meaning | `details` |
 | --- | --- | --- |
-| `asset.too_large` | Source or fitted GIF exceeds a bound | `{limit, actual, unit, field}` with numeric limit/actual and field naming the source or capability limit |
+| `asset.too_large` | Source or fitted GIF exceeds a bound | `{limit, actual, unit, field}` with numeric limit/actual and field naming the source or capability limit. The message follows `field`: `gif_frames` and `source_frames` get the copy guide's Too long row, `decoded_rgba` its Decoded source too large row, and every other field its Too large row |
+| `asset.too_short` | A multi-frame loop plays for less than `anim.min_delay_ms` in total | `{field: "duration_ms", limit, actual, unit: "ms"}`; `limit` is `min_delay_ms` and `actual` the loop's length |
+| `asset.render_failed` | The GIF can't be prepared | `{reason}`: `not_gif`, `corrupt`, `timed_out` (the 30-second deadline), `invalid_limits` (the Device's `anim` caps can't be met) or `invalid` (the prepared file failed store admission). The message is always the copy guide's Preparation failed row |
 | `asset.unsupported` | GIF unavailable or encoding unsupported | `{limit, actual, field, reason}`; limit/actual identify the required and observed format or capability, reason retains the wire reason when present |
 | `layout.animation_limit` | A Page exceeds animation count or area | `{page, field, limit, actual}`; field is `page_tiles` or `page_pixels` |
 
@@ -1214,8 +1216,9 @@ failures must not be reported as generic link text. Raw reasons go under Details
 The source variant requires an upload owned by this session, a connected Device
 and its negotiated GIF capabilities. `target` names the actual Tile canvas in
 pixels and its RGB background. `fit` defaults to `contain`; `cover` crops the
-centre. Width and height are positive 16-bit integers. The normalizer caps them
-at the Device's animation canvas. The background fills pixels that turn
+centre. Width and height are from 1 to 4096. Anything else gives 400
+`request.invalid` with `details.part` `body` before a Job starts. The normalizer
+caps them at the Device's animation canvas. The background fills pixels that turn
 transparent between frames, preventing trails with disposal 1.
 
 The Job consumes the upload once and returns the existing `AssetRef` shape with
@@ -1224,7 +1227,8 @@ file is served as `image/gif`. Cancellation before storage leaves no Asset.
 There are at most two concurrent render Jobs. Source input is capped at 16 MiB,
 300 frames, 4096 pixels per side and 64 MiB cumulative full-canvas decoded RGBA.
 The normalizer checks a 30-second cooperative deadline between bounded stages
-and source frames; an expired deadline fails with `asset.render_failed`.
+and source frames; an expired deadline fails with `asset.render_failed` and
+`details.reason` `timed_out`.
 The decoded cap includes every full source canvas, even for small frame patches:
 a 300-frame 1024-square GIF exceeds it. Fitted RGBA is separately capped at
 64 MiB. Only fully decoded normalized GIFs enter the Asset store.

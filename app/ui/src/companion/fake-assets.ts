@@ -193,7 +193,7 @@ export function createFakeAssets(options: FakeAssetsOptions) {
     if (typeof source === 'object' && source !== null && 'kind' in source && source.kind === 'gif') {
       if (!('upload' in source) || typeof source.upload !== 'string' || !('device' in source) || typeof source.device !== 'string' || !('target' in source)) return false;
       const target = source.target;
-      return typeof target === 'object' && target !== null && 'width' in target && typeof target.width === 'number' && Number.isInteger(target.width) && target.width > 0 && target.width <= 65535 && 'height' in target && typeof target.height === 'number' && Number.isInteger(target.height) && target.height > 0 && target.height <= 65535 && 'background' in target && Array.isArray(target.background) && target.background.length === 3 && target.background.every((v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 255);
+      return typeof target === 'object' && target !== null && 'width' in target && typeof target.width === 'number' && Number.isInteger(target.width) && target.width > 0 && target.width <= 4096 && 'height' in target && typeof target.height === 'number' && Number.isInteger(target.height) && target.height > 0 && target.height <= 4096 && 'background' in target && Array.isArray(target.background) && target.background.length === 3 && target.background.every((v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 255);
     }
     return typeof source === 'object'  && source !== null && 'kind' in source && ['app', 'catalog', 'upload'].includes(String(source.kind));
   }
