@@ -244,3 +244,18 @@ fn failures_are_safe_and_clear_live_values() {
         );
     }
 }
+#[test]
+fn a_pin_change_forgets_the_token_but_an_interval_change_keeps_it() {
+    let (mut registry, _) = configured(Ok(RESPONSE.into()));
+    let integration = registry.get("proxmox").unwrap();
+    let url = "https://example.invalid:8006";
+    integration
+        .configure(json!({"enabled":true,"url":url,"interval_s":10,"tls_pin":""}))
+        .unwrap();
+    assert!(integration.view().unwrap().secrets.values().all(|s| s.set));
+    let pin = "ab".repeat(32);
+    let view = integration
+        .configure(json!({"enabled":true,"url":url,"interval_s":10,"tls_pin":pin}))
+        .unwrap();
+    assert!(view.secrets.values().all(|s| !s.set));
+}

@@ -392,7 +392,9 @@ impl Integration for Proxmox {
             .map_err(|_| Error::ConfigInvalid)?
             .validate()?;
         if settings != self.settings {
-            if secrets::origin(&settings.url) != secrets::origin(&self.settings.url) {
+            if secrets::origin(&settings.url) != secrets::origin(&self.settings.url)
+                || settings.tls_pin != self.settings.tls_pin
+            {
                 for field in FIELDS {
                     self.secrets
                         .delete("proxmox", field)

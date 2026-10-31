@@ -635,7 +635,8 @@ Write-only vault fields `token_id` and `token_secret` form
 Proxmox form `<user>@<realm>!<tokenid>`; both fields are secrets. Create a
 privilege-separated token with the read-only `PVEAuditor` role, granting the
 required audit permissions to both the user and token. Counts cover only resources
-visible to that token. An origin change deletes both secrets. No upstream response
+visible to that token. An origin change or a `tls_pin` change deletes both secrets,
+so a new pin can never receive a token entered under the old one. No upstream response
 body, credential or raw transport error is included in status.
 
 `tls_pin` is the server leaf certificate's SHA-256 fingerprint: 64 hex digits, or
