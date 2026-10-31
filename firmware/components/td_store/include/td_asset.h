@@ -19,18 +19,22 @@ extern "C" {
  * paths and takes the store's lock itself. Every function runs on one task at a time: the link task.
  */
 
+#ifndef TD_ASSET_DIR
 #define TD_ASSET_DIR "/storage/assets"
+#endif
 #define TD_ASSET_ID_LEN 64
 /* A listing page holds at most this many Assets. */
 #define TD_ASSET_PAGE 4
 /* Room the volume keeps for Layouts, settings and LittleFS metadata. An upload that would cut into it is `full`. */
 #define TD_ASSET_HEADROOM_BYTES 65536
-/* The largest Asset this Firmware takes: one tdi1 icon, the only format it validates. */
+/* The default advertised Asset limit while GIF capabilities are disabled. */
 #define TD_ASSET_MAX_BYTES 12300
 
 typedef enum {
     TD_ASSET_OK,
     TD_ASSET_FULL,
+    TD_ASSET_SIZE,
+    TD_ASSET_MEMORY,
     TD_ASSET_STORAGE,
     TD_ASSET_HASH,
     TD_ASSET_FORMAT,
@@ -41,6 +45,7 @@ typedef enum {
 typedef enum {
     TD_ASSET_FMT_NONE,
     TD_ASSET_FMT_TDI1,
+    TD_ASSET_FMT_GIF,
 } td_asset_format_t;
 
 typedef struct {
@@ -59,10 +64,10 @@ typedef struct {
 /* 64 lowercase hex digits. */
 bool td_asset_id_valid(const char *id);
 
-/* The wire name of a result, as `reason` carries it: "full", "storage", "hash", "format", "state", "incomplete". */
+/* The wire name of a result, as `reason` carries it: "full", "storage", "hash", "format", "state", "incomplete", "size", "memory". */
 const char *td_asset_result_reason(td_asset_result_t result);
 
-/* "tdi1" and TD_ASSET_FMT_TDI1 both ways. Any other name is TD_ASSET_FMT_NONE, and NONE has no name (NULL). */
+/* Wire format names; an unknown name maps to NONE, whose name is NULL. */
 td_asset_format_t td_asset_format_parse(const char *name);
 const char *td_asset_format_name(td_asset_format_t format);
 

@@ -661,3 +661,32 @@ monotonic time. Until the first set after boot the clock reads `--:--`, dimmed.
 `power state` adds `photo_idle` (the photo frame is on), `idle_face` (the face
 is up), `photo_timeout_s`, `face_count` (times the face came up since boot), and
 `face_wakes` (contacts eaten to take it down).
+
+### GIF validation host tests
+
+From the repository root, install Pillow (`python -m pip install Pillow`) and run
+`python firmware/tools/test_gif.py` and `python firmware/tools/test_asset.py`.
+Linux uses `CC` (default `cc`); Windows uses an x64 Visual Studio developer
+terminal. Set `TD_TEST_OUT` to an existing local evidence directory to keep
+compiled test libraries there. These tests compile the production validator and
+Asset store. The store harness substitutes the scheduler and storage accounting;
+Windows directory enumeration is not exercised by this harness.
+
+The GIF validator reads the temporary file as a stream, validates every LZW code,
+counts the exact expanded pixels and checks every palette index. It stores each
+LZW dictionary entry's length, first index and largest index, so validation needs
+no canvas buffers. Its fixed workspace is about 16 KiB. It yields one scheduler
+tick after at most 256 input-byte or LZW-code operations, including while checking
+already committed Assets. Only a fully validated file reaches the atomic rename.
+Size limits return `size`, malformed encoding returns `format` and allocation
+failure returns `memory`. An interrupted commit leaves only the temporary file,
+which normal mount cleanup removes.
+
+The store recognizes normalized GIF89a up to 262144 encoded bytes, 128 by 128
+pixels and 60 frames, with at least 100 ms per frame. GIF Layout references must
+name GIF Assets; static references must name tdi1 Assets. Delete protection parses
+both stored orientations, including escaped JSON Asset references. An unreadable
+or invalid stored Layout prevents deletion. Production still advertises and
+accepts only tdi1 on the link until `CONFIG_TD_GIF_CAPS` is enabled after playback
+and the combined board proof. The C Layout parser already accepts the GIF schema
+introduced by the contract step; this step tests its render kind and empty streams.
