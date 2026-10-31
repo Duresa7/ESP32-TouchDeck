@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { createActionsStore, type ActionsStore } from './actions.ts';
 import type { ApprovalRequest, Job } from './api.ts';
 import { createDevicesStore, type DevicesStore } from './devices.ts';
-import { CLOSE_TOO_SLOW, openEvents, type Events, type EventSocket } from './events.ts';
+import { CLOSE_TOO_SLOW, openEvents, PROBE_MS, type Events, type EventSocket } from './events.ts';
 import { createFakeCompanion, type FakeCompanion } from './fake.ts';
 import { newBoard } from './fake-new-boards.ts';
 import { demoLayout, sampleDevice } from './samples.ts';
@@ -16,6 +16,17 @@ const names = (store: DevicesStore) => store.getState().devices.map((d) => d.nam
 // made during a tick to the next millisecond, so this steps a few milliseconds.
 async function settle() {
   for (let step = 0; step < 5; step++) await vi.advanceTimersByTimeAsync(1);
+}
+
+function refusedSocket(): EventSocket {
+  const socket: EventSocket = { onmessage: null, onclose: null, send: () => {}, close: () => {} };
+  setTimeout(() => socket.onclose?.({ code: 1006 }), 0);
+  return socket;
+}
+
+function staleBrowserSession() {
+  const stored = new Map([['touchdeck.session', 'tds_stale']]);
+  return browserSession({ getItem: (key) => stored.get(key) ?? null, removeItem: (key) => void stored.delete(key) });
 }
 
 describe('the devices store', () => {
@@ -185,20 +196,24 @@ describe('the event stream', () => {
   });
 
   test('a browser whose upgrade is refused checks its session and says it has to pair', async () => {
-    const stored = new Map([['touchdeck.session', 'tds_stale']]);
-    const session = browserSession({ getItem: (key) => stored.get(key) ?? null, removeItem: (key) => void stored.delete(key) });
-    const refused = (): EventSocket => {
-      const socket: EventSocket = { onmessage: null, onclose: null, send: () => {}, close: () => {} };
-      setTimeout(() => socket.onclose?.({ code: 1006 }), 0);
-      return socket;
-    };
-    const open = vi.fn(refused);
+    const session = staleBrowserSession();
+    const open = vi.fn(refusedSocket);
     const probe = vi.fn(() => session.renew('tds_stale'));
     events = openEvents({ url: URL, session, store, open, probe, retryMs: [0] });
     await settle();
     expect(probe).toHaveBeenCalledOnce();
     expect(open).toHaveBeenCalledOnce();
     expect(store.getState().status).toBe('unpaired');
+  });
+
+  test('a session check that never answers does not stop reconnecting', async () => {
+    const open = vi.fn(refusedSocket);
+    const probe = vi.fn(() => new Promise<never>(() => {}));
+    events = openEvents({ url: URL, session: staleBrowserSession(), store, open, probe, retryMs: [0] });
+    await settle();
+    expect(open).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(PROBE_MS);
+    expect(open).toHaveBeenCalledTimes(2);
   });
 
   test('a socket that drops after its hello reconnects without a session check', async () => {
