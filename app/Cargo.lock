@@ -3096,6 +3096,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "td-core",
+ "tempfile",
  "time",
  "ts-rs",
  "ureq",

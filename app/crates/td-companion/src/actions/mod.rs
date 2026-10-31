@@ -147,6 +147,7 @@ struct Pending {
 }
 #[derive(Default)]
 struct State {
+    custom_answers: std::collections::BTreeMap<String, (Answer, Instant)>,
     pending: VecDeque<Pending>,
     allowed: Vec<AllowedAction>,
     log: VecDeque<ActionLog>,
@@ -534,11 +535,19 @@ impl Actions {
         };
         let mut state = self.0.state.lock();
         state.pending.pop_front();
+        if request.spec.kind == "custom" {
+            state
+                .custom_answers
+                .insert(request.hash.clone(), (answer, deadline));
+        }
         self.0.events.publish(&ApprovalResolved {
             id: request.id.clone(),
             answer,
         });
         drop(state);
+        if request.spec.kind == "custom" {
+            return;
+        }
         match answer {
             Answer::Once | Answer::Always => self.execute(request),
             Answer::Deny => self.logged(&request, "denied", detail, None, None),
@@ -573,3 +582,174 @@ impl Actions {
     }
 }
 pub use prompt::ScriptAnswer;
+
+impl td_host::integrations::CommandApproval for Actions {
+    fn approved(&self, program: &str, args: &[String]) -> bool {
+        let spec = ActionSpec {
+            kind: "custom".into(),
+            program: program.into(),
+            args: args.to_vec(),
+            cwd: String::new(),
+            shell: false,
+        };
+        let hash = spec.hash();
+        let mut state = self.0.state.lock();
+        if state.allowed.iter().any(|a| a.hash == hash) {
+            return true;
+        }
+        match state.custom_answers.get(&hash).copied() {
+            Some((answer @ (Answer::Once | Answer::Always), deadline)) => {
+                state.custom_answers.remove(&hash);
+                if answer == Answer::Once && self.0.clock.now() < deadline {
+                    return true;
+                }
+            }
+            Some(_) => return false,
+            None => {}
+        }
+        if state.pending.iter().any(|p| p.request.hash == hash) || state.pending.len() >= 16 {
+            return false;
+        }
+        while state.custom_answers.len() >= 256 {
+            let oldest = state
+                .custom_answers
+                .iter()
+                .min_by_key(|(_, (_, deadline))| *deadline)
+                .map(|(hash, _)| hash.clone());
+            if let Some(oldest) = oldest {
+                state.custom_answers.remove(&oldest);
+            }
+        }
+        state.serial += 1;
+        let request = ApprovalRequest {
+            id: format!("p{}", state.serial),
+            device: DeviceId::parse("custom").expect("valid Integration context"),
+            page: String::new(),
+            tile: "custom".into(),
+            hash,
+            spec,
+            created_ms: crate::now_ms(),
+        };
+        let text = prompt::dialog_text(
+            &prompt::Context {
+                device: "Custom Integration".into(),
+                page: String::new(),
+                tile: "Repeated command".into(),
+            },
+            &request.spec,
+        );
+        self.0.events.publish(&request);
+        state.pending.push_back(Pending {
+            request,
+            deadline: self.0.clock.now() + Duration::from_secs(300),
+            shown: None,
+            text,
+        });
+        false
+    }
+}
+
+#[cfg(test)]
+mod custom_tests {
+    use super::*;
+    use td_host::integrations::CommandApproval;
+    #[derive(Default)]
+    struct Grants(Mutex<Vec<AllowedAction>>);
+    impl GrantStore for Grants {
+        fn load(&self) -> std::io::Result<Vec<AllowedAction>> {
+            Ok(self.0.lock().clone())
+        }
+        fn save(&self, allowed: &[AllowedAction]) -> std::io::Result<()> {
+            *self.0.lock() = allowed.to_vec();
+            Ok(())
+        }
+    }
+    fn service() -> Actions {
+        let events = Events::default();
+        let devices = DeviceManager::new(events.clone());
+        Actions::new(
+            events,
+            Clock::default(),
+            devices.clone(),
+            Links::new(devices),
+            Arc::new(Grants::default()),
+            true,
+        )
+    }
+    fn resolved(actions: &Actions) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !actions.pending().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(actions.pending().is_empty());
+    }
+    #[test]
+    fn custom_approval_binds_arguments_denies_and_expires() {
+        let actions = service();
+        actions.script(vec![ScriptAnswer::Deny]);
+        assert!(!actions.approved("example.exe", &["original".into()]));
+        resolved(&actions);
+        assert!(!actions.approved("example.exe", &["original".into()]));
+        actions.script(vec![ScriptAnswer::Once]);
+        assert!(!actions.approved("example.exe", &["changed".into()]));
+        resolved(&actions);
+        assert!(actions.approved("example.exe", &["changed".into()]));
+        actions.script(vec![ScriptAnswer::Never]);
+        assert!(!actions.approved("example.exe", &["changed".into()]));
+        actions.0.clock.advance(Duration::from_secs(301));
+        resolved(&actions);
+        assert!(!actions.approved("example.exe", &["changed".into()]));
+        assert!(actions.log(None).is_empty());
+    }
+    #[test]
+    fn custom_always_grant_is_exact_and_revocable() {
+        let actions = service();
+        actions.script(vec![ScriptAnswer::Always]);
+        assert!(!actions.approved("example.exe", &[]));
+        resolved(&actions);
+        assert!(actions.approved("example.exe", &[]));
+        assert!(actions.approved("example.exe", &[]));
+        let hash = actions.allowed()[0].hash.clone();
+        actions.remove(&hash).unwrap();
+        actions.script(vec![ScriptAnswer::Deny]);
+        assert!(!actions.approved("example.exe", &[]));
+        resolved(&actions);
+        assert!(!actions.approved("example.exe", &[]));
+        assert!(actions.pending().is_empty());
+        assert!(actions.log(None).is_empty());
+    }
+    #[test]
+    fn custom_run_once_unused_past_its_deadline_asks_again() {
+        let actions = service();
+        actions.script(vec![ScriptAnswer::Once]);
+        assert!(!actions.approved("example.exe", &[]));
+        resolved(&actions);
+        actions.0.clock.advance(Duration::from_secs(301));
+        actions.script(vec![ScriptAnswer::Never]);
+        assert!(!actions.approved("example.exe", &[]));
+        assert_eq!(actions.pending().len(), 1);
+    }
+    #[test]
+    fn a_full_answer_list_drops_its_oldest_entry_so_new_commands_still_ask() {
+        let actions = service();
+        actions.script(vec![ScriptAnswer::Deny]);
+        assert!(!actions.approved("example.exe", &["0".into()]));
+        resolved(&actions);
+        for i in 1..256 {
+            actions.0.clock.advance(Duration::from_secs(1));
+            actions.0.state.lock().custom_answers.insert(
+                format!("synthetic-{i}"),
+                (
+                    Answer::Deny,
+                    actions.0.clock.now() + Duration::from_secs(300),
+                ),
+            );
+        }
+        actions.script(vec![ScriptAnswer::Never]);
+        assert!(!actions.approved("example.exe", &["new".into()]));
+        assert_eq!(actions.pending().len(), 1);
+        assert!(!actions.approved("example.exe", &["0".into()]));
+        assert_eq!(actions.pending().len(), 2);
+        assert!(actions.0.state.lock().custom_answers.len() <= 256);
+    }
+}

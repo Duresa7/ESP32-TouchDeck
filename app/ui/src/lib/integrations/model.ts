@@ -15,6 +15,7 @@ interface IntegrationCopy {
 }
 
 const COPY: Partial<Record<string, IntegrationCopy>> = {
+  custom: { line: 'Read values from HTTP or a command approved on this PC.', fields: { enabled: { label: 'Turn on Custom' }, sources: { label: 'Custom sources (JSON)', placeholder: '[]' } } },
   cliproxyapi: {
     line: "Shows how much of each AI account's limit is used, read from your CLIProxyAPI hub.",
     fields: {
@@ -33,7 +34,7 @@ const humanize = (name: string) => sentence(name.replaceAll('_', ' ').trim());
 /** The one line under an Integration's name. */
 export const lineOf = (integration: string) => COPY[integration]?.line ?? '';
 
-export type FieldKind = 'boolean' | 'integer' | 'number' | 'string';
+export type FieldKind = 'boolean' | 'integer' | 'number' | 'string' | 'json';
 
 export interface FormField {
   name: string;
@@ -43,7 +44,7 @@ export interface FormField {
   unit?: string;
 }
 
-const KINDS: readonly string[] = ['boolean', 'integer', 'number', 'string'];
+const KINDS: readonly string[] = ['boolean', 'integer', 'number', 'string', 'json'];
 const isFieldKind = (kind: string): kind is FieldKind => KINDS.includes(kind);
 
 /** The form an Integration's schema builds: its settings, then its write-only secret fields. */
@@ -67,6 +68,7 @@ export function valuesOf(fields: readonly FormField[], config: JsonValue): FormV
   for (const field of fields) {
     const value = source[field.name];
     if (field.kind === 'boolean') values[field.name] = value === true;
+    else if (field.kind === 'json') values[field.name] = JSON.stringify(value ?? [], null, 2);
     else if (typeof value === 'number' || typeof value === 'string') values[field.name] = String(value);
     else values[field.name] = '';
   }
@@ -83,6 +85,9 @@ export function validate(fields: readonly FormField[], values: FormValues): Part
   const errors: Partial<Record<string, string>> = {};
   for (const field of fields) {
     const value = text(values, field.name);
+    if (field.kind === 'json') {
+      try { JSON.parse(value); } catch { errors[field.name] = 'Enter valid JSON.'; }
+    }
     if (field.kind === 'integer' && !/^\d+$/.test(value)) errors[field.name] = 'Enter a whole number.';
     if (field.kind === 'number' && (value === '' || !Number.isFinite(Number(value)))) errors[field.name] = 'Enter a number.';
   }
@@ -94,6 +99,10 @@ export function serialize(fields: readonly FormField[], values: FormValues): Rec
   const config: Record<string, JsonValue> = {};
   for (const field of fields) {
     if (field.kind === 'boolean') config[field.name] = values[field.name] === true;
+    else if (field.kind === 'json') {
+      const parsed: JsonValue = JSON.parse(text(values, field.name));
+      config[field.name] = parsed;
+    }
     else if (field.kind === 'integer' || field.kind === 'number') config[field.name] = Number(text(values, field.name));
     else {
       const value = values[field.name];
