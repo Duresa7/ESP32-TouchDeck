@@ -7,6 +7,7 @@
 #include "power.h"
 #include "td_frame.h"
 #include "td_asset.h"
+#include "td_gif.h"
 #include "td_idle.h"
 #include "td_layout.h"
 #include "td_store.h"
@@ -327,7 +328,19 @@ static void finish_put(cJSON *reply)
     for (uint8_t p = 0; p < parsed->page_count; p++) {
         for (uint8_t t = 0; t < parsed->pages[p].tile_count; t++) {
             const char *icon = parsed->pages[p].tiles[t].icon;
-            if (icon && strncmp(icon, "sha256:", 7) == 0 && !td_asset_present(icon + 7, NULL, NULL)) {
+            td_asset_format_t format = TD_ASSET_FMT_NONE;
+            const bool gif = parsed->pages[p].tiles[t].render == UI_RENDER_GIF;
+#if !CONFIG_TD_GIF_CAPS
+            if (gif) {
+                td_store_unlock();
+                td_layout_free(parsed);
+                td_link_fail(reply, "GIF Tiles require animation capabilities");
+                return;
+            }
+#endif
+            if (icon && strncmp(icon, "sha256:", 7) == 0 &&
+                (!td_asset_present(icon + 7, NULL, &format) ||
+                 format != (gif ? TD_ASSET_FMT_GIF : TD_ASSET_FMT_TDI1))) {
                 td_store_unlock();
                 td_layout_free(parsed);
                 td_link_fail(reply, "Layout references an absent or incompatible Asset");
@@ -748,7 +761,13 @@ void td_link_asset_put(const cJSON *request, cJSON *reply)
         td_link_v2_fail(reply, "format", "Unsupported Asset format");
         return;
     }
-    if (bytes > TD_ASSET_MAX_BYTES) {
+#if !CONFIG_TD_GIF_CAPS
+    if (format == TD_ASSET_FMT_GIF) {
+        td_link_v2_fail(reply, "format", "Unsupported Asset format");
+        return;
+    }
+#endif
+    if (bytes > (format == TD_ASSET_FMT_GIF ? TD_GIF_MAX_BYTES : TD_ASSET_MAX_BYTES)) {
         td_link_v2_fail(reply, "size", "Asset too large");
         return;
     }
@@ -846,7 +865,18 @@ static const char *asset_in_use(const char *id)
             reason = "storage";
         } else {
             buf[len] = '\0';
-            reason = strstr(buf, needle) ? "in-use" : NULL;
+            td_layout_t *layout = NULL;
+            if (!td_layout_parse(buf, len, &layout, NULL)) {
+                reason = "storage";
+            } else {
+                for (uint8_t p = 0; p < layout->page_count; p++) {
+                    for (uint8_t t = 0; t < layout->pages[p].tile_count; t++) {
+                        const char *asset = layout->pages[p].tiles[t].icon;
+                        if (asset && strcmp(asset, needle) == 0) reason = "in-use";
+                    }
+                }
+                td_layout_free(layout);
+            }
         }
     }
     heap_caps_free(buf);
