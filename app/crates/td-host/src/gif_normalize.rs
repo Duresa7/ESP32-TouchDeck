@@ -204,7 +204,6 @@ fn decode(bytes: &[u8], deadline: std::time::Instant) -> Result<Vec<Composed>, G
     }
     let mut options = DecodeOptions::new();
     options.set_color_output(ColorOutput::RGBA);
-    options.check_lzw_end_code(true);
     let mut decoder = options.read_info(bytes).map_err(|_| GifError::Corrupt)?;
     let (w, h) = (usize::from(decoder.width()), usize::from(decoder.height()));
     bound(SourceLimit::Width, w, SOURCE_SIDE)?;
@@ -499,9 +498,9 @@ pub fn inspect_normalized(bytes: &[u8]) -> Result<GifInfo, GifError> {
     if !bytes.starts_with(b"GIF89a") {
         return Err(GifError::NotGif);
     }
-    let mut options = DecodeOptions::new();
-    options.check_lzw_end_code(true);
-    let mut decoder = options.read_info(bytes).map_err(|_| GifError::Corrupt)?;
+    let mut decoder = DecodeOptions::new()
+        .read_info(bytes)
+        .map_err(|_| GifError::Corrupt)?;
     let (width, height) = (decoder.width(), decoder.height());
     bound(SourceLimit::Width, width.into(), SOURCE_SIDE)?;
     bound(SourceLimit::Height, height.into(), SOURCE_SIDE)?;
