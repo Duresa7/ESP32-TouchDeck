@@ -1180,6 +1180,7 @@ tile. A stale graph keeps its last line at 60% opacity, as on the Device.
 | Response size | The UniFi reply is too large. Check the controller version. |
 | Connection | Couldn't connect to UniFi. Check the controller address. |
 | Invalid reply | UniFi sent a reply Open TouchDeck can't read. Check the controller version. |
+| Pin over HTTP | A certificate pin needs an https:// address. Change the address or clear the pin. |
 | Vault | Credential store unavailable |
 
 ### Proxmox

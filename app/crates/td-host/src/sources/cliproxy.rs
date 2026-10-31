@@ -387,11 +387,11 @@ pub fn readings(accounts: &[Account], updated: u64, stale: bool) -> Vec<Reading>
 
 /// Management requests only. Implementations must not log headers or request bodies.
 pub trait Fetch: Send + Sync {
-    fn session_request(
+    fn send(
         &self,
-        _request: super::session_http::Request,
-    ) -> Result<super::session_http::Response, super::session_http::Failure> {
-        Err(super::session_http::Failure::Connection)
+        _: super::network::Request,
+    ) -> Result<super::network::Response, super::network::FetchError> {
+        Err(super::network::FetchError::Transport)
     }
     fn request(
         &self,
@@ -475,11 +475,11 @@ fn response_body(mut response: ureq::http::Response<ureq::Body>) -> Result<Strin
 }
 
 impl Fetch for HttpFetch {
-    fn session_request(
+    fn send(
         &self,
-        request: super::session_http::Request,
-    ) -> Result<super::session_http::Response, super::session_http::Failure> {
-        super::session_http::send(request)
+        request: super::network::Request,
+    ) -> Result<super::network::Response, super::network::FetchError> {
+        super::network::send(request)
     }
     fn request(
         &self,

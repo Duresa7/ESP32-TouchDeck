@@ -735,13 +735,15 @@ without a path, credentials, query or fragment. Site ids use `[a-z0-9_-]+`, up t
 Config is saved beside sources.json as `unifi.json`.
 
 `username` and `password` are write-only, origin-bound vault secrets. Use an
-account restricted to read-only access to the chosen site. Changing origins
-forgets both credentials; changing credentials or config logs out the old
-session first. Disabling also logs out and clears readings. Logout is best-effort
-when a controller cannot be reached; the local session is always discarded.
-Session cookies and CSRF tokens exist only in memory. Requests require HTTPS,
-except explicit loopback HTTP for local testing. This is stricter than the shared
-private-address HTTP exception.
+account restricted to read-only access to the chosen site. Changing the origin or
+the `tls_pin` forgets both credentials, so a new pin never receives credentials
+entered under the old one. Disabling, any other config change and any credential
+change drop the session at once and clear readings. The logout request is then
+sent in the background with its own 2-second deadline, to the old origin with the
+old pin, so the change never waits on the controller. Logout is best-effort when a
+controller cannot be reached. Session cookies and CSRF tokens exist only in memory.
+Requests require HTTPS, except explicit loopback HTTP for local testing. This is
+stricter than the shared private-address HTTP exception.
 
 Classic controllers use `POST /api/login` and `POST /logout`. UniFi OS uses
 `POST /api/auth/login` and `POST /api/auth/logout`, with the returned cookie and
@@ -749,19 +751,32 @@ Classic controllers use `POST /api/login` and `POST /logout`. UniFi OS uses
 controllers need. The sole data request is `GET /api/s/{site}/stat/health`, prefixed
 with `/proxy/network` on UniFi OS. A 401 retries login once and repeats the GET;
 a second 401 or any 403 reports refused access. No network configuration is
-written. Each request times out after 10 seconds, accepts at most 1 MiB,
-follows no redirects and ignores proxy environment variables. Polls are synchronous, with one in flight. Manual refresh,
-config changes and secret changes preserve the polling deadline. Errors double
-the interval, capped at 3600 seconds; success restores the configured interval.
+written. A poll has one deadline, 10 seconds after it starts. It covers every
+request the poll makes (login, the GET, and the re-login and GET after a 401),
+including connect, TLS, headers and the whole body, so a controller that trickles
+a reply fails with the timeout error at that deadline. Replies are capped at
+1 MiB while they stream. `Set-Cookie` and `X-CSRF-Token` reply headers are capped
+at 8 KiB each and must contain no control characters. Requests follow no
+redirects and ignore proxy environment variables. Polls are synchronous, with one
+in flight. Manual refresh, config changes and secret changes preserve the polling
+deadline. Errors double the interval, capped at 3600 seconds; success restores the
+configured interval.
 
 For a self-signed controller, enter the leaf certificate's SHA-256 fingerprint
 as 64 hexadecimal characters in `tls_pin`, verified independently on the
-controller. Normal system trust is checked first. If it rejects the certificate,
-only that exact fingerprint permits the connection; TLS handshake signatures
-are still verified. An empty or wrong pin cannot accept an untrusted certificate.
-A pin does not restrict certificates already accepted by system trust. The
-shared `Fetch::session_request` seam carries headers, response status and TLS
-pin; existing bearer-based fetch operations keep their behavior.
+controller. A pin needs an `https://` URL; a pin with an `http://` URL is rejected
+with `integration.config_invalid` and an issue on the `tls_pin` path. With no pin,
+the system trust store must accept the certificate. With a pin, the pinned leaf is
+the only certificate accepted, as for Proxmox; TLS handshake signatures are still
+verified. A wrong pin fails even for a publicly trusted certificate. After the
+controller's certificate is renewed, the old pin no longer matches and the status
+reports the certificate error until the pin is updated.
+
+UniFi uses the same transport as Proxmox, `sources/network.rs`, through the
+shared `Fetch::send(Request)` seam: a GET, or a POST with a JSON body, with every
+header marked sensitive, a certificate pin and a deadline. It returns the status,
+every `Set-Cookie` value and the `X-CSRF-Token`. `Fetch::request(GetRequest)` is a
+GET wrapper over the same function.
 
 All streams are `numeric`. `account` is the configured site id. Client counts
 include users and guests; total is the sum of the client counts the site
@@ -784,7 +799,9 @@ duplicate subsystems, wrongly typed, negative or nonfinite numbers, numbers
 above 1e9, or a reply with no stream at all reject the whole reading. Errors stop fresh live samples and mark legacy readings
 stale. Status uses `not_configured`, `ok` and `error`; bodies and credentials are
 never included. Errors distinguish authentication, timeout, certificate failure,
-response size and unreadable responses. Device delivery status remains separate.
+response size, connection failure and unreadable replies. A body that isn't
+UTF-8, malformed JSON or a malformed session header is an unreadable reply, not a
+connection failure. Device delivery status remains separate.
 
 Tests use hand-authored, synthetic responses through `Fetch`
 (`tests/fixtures/unifi-health*.json`, scrubbed to documentation addresses);
