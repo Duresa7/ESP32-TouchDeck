@@ -621,6 +621,85 @@ The Companion's live router (`td_companion::live`) reads each connected v2 Devic
 
 Each Integration's `status.delivery` counts the values each Device accepted and carries the last refusal.
 
+#### Proxmox
+
+`proxmox` reads only `GET /api2/json/cluster/resources`. Config is
+`{enabled: boolean, url: string, interval_s: integer, tls_pin: string}`;
+`tls_pin` may be omitted or empty. Defaults: disabled, `https://example.invalid:8006`,
+15 seconds, no pin. The URL must be an origin with no path, query, credentials or
+fragment. Intervals clamp to 5–3600 seconds. Unknown fields are rejected. Config
+is saved beside sources.json as proxmox.json.
+
+Write-only vault fields `token_id` and `token_secret` form
+`Authorization: PVEAPIToken=<token_id>=<token_secret>`. The token id has the
+Proxmox form `<user>@<realm>!<tokenid>`; both fields are secrets. Create a
+privilege-separated token with the read-only `PVEAuditor` role, granting the
+required audit permissions to both the user and token. Counts cover only resources
+visible to that token. An origin change or a `tls_pin` change deletes both secrets,
+so a new pin can never receive a token entered under the old one. No upstream response
+body, credential or raw transport error is included in status.
+
+`tls_pin` is the server leaf certificate's SHA-256 fingerprint: 64 hex digits, or
+the colon-separated form the Proxmox GUI shows (`AB:CD:…`). It is stored as 64
+lowercase hex digits without colons. A pin needs an `https://` URL; a pin with an
+`http://` URL is rejected with `integration.config_invalid` and an issue on the
+`tls_pin` path. Obtain it through a trusted channel. With no pin, the system trust
+store must accept the certificate. With a pin, the leaf must match exactly; its
+TLS handshake signature must still verify. A matching pin explicitly authorizes
+a self-signed certificate, including its name and validity period. A wrong pin
+fails even for a publicly trusted certificate. Renewing the certificate requires
+updating the pin. Certificate checking is never disabled globally.
+
+The shared `Fetch::request(GetRequest)` seam supplies a GET-only request with an
+arbitrary authorization header and optional certificate pin. Production uses a
+per-request reqwest/rustls client because ureq's supported configuration does not
+expose a custom verifier. Redirects and ambient proxies are disabled. Each
+request carries one deadline, 10 seconds after the poll starts, covering connect,
+TLS, headers and the whole body; a server that trickles the body still fails with
+the timeout error at that deadline. The response is capped at 1 MiB while it streams.
+Polling is synchronous, with at most one request in flight. Errors double the
+interval up to 3600 seconds; refresh, config changes and secret writes cannot
+bypass an existing deadline. Failed polls clear live values and legacy readings;
+the Device expires previous live values by their TTL.
+
+All streams are `numeric`:
+
+| Stream | Unit | Account |
+|---|---|---|
+| `cpu_pct` | `%` | `node/<node>`, `qemu/<vmid>` or `lxc/<vmid>` |
+| `ram_pct` | `%` | Same resource ids |
+| `running` | `boolean` | Guest id; 1 running, 0 stopped |
+| `running_guests` | `guests` | `cluster` |
+| `total_guests` | `guests` | `cluster` |
+
+CPU is the API fraction × 100 (already normalized by Proxmox); RAM is
+`mem / maxmem × 100`. CPU is clamped to 0–1 before scaling and `mem` to at most
+`maxmem`. Offline nodes, stopped guests and resources with status `unknown` count
+as not running and omit CPU/RAM rather than inventing samples. Each node and guest
+is parsed on its own. One with a wrong-typed field, a bad or duplicate id, another
+status value, or missing metrics while running is skipped; the rest of the poll
+still updates, the state stays `ok`, and `status.message` gives the skipped count.
+A body that isn't JSON or has no `data` array fails the poll. Unrelated resource
+types are ignored. Successful polls increase the
+sample counter even when values are unchanged. TTL is three polling intervals,
+clamped to 1000–60000 ms. Values remain within the Device's numeric bounds.
+
+Presets are generated after discovery: nodes sorted by resource id, each offering
+**Node CPU graph**, **Node CPU**, **Node RAM graph**, **Node RAM**; then guests
+sorted by resource id, each offering **Guest status**; finally **Running guests**.
+The action contains the concrete resource account. Graph Presets use `render: graph`;
+value Presets use the existing plain Live tile. No new renderer is needed.
+Guest CPU/RAM and total guest count can also be bound by editing the Tile action.
+
+Errors distinguish token rejection (401/403), timeout, oversized response,
+certificate verification, malformed data and transport failure. The schema-driven
+Integrations form renders the pin as a string and both credentials as secret fields.
+Tests use a handwritten fixture based on the vendor's
+[cluster resources schema](https://github.com/proxmox/pve-manager/blob/master/PVE/API2/Cluster.pm)
+and [API documentation](https://pve.proxmox.com/pve-docs/api-viewer/#/cluster/resources),
+with synthetic values only. Real-server permission and certificate testing remains
+part of post-release validation.
+
 #### This PC
 
 `this_pc` has config `{enabled: boolean}` (default `true`), no secrets and the `refresh` action. Unknown fields are rejected. Disabling clears readings and stops collection; re-enabling resets the rate baseline. The configuration is saved beside sources.json as this-pc.json.
