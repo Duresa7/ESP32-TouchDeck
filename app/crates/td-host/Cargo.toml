@@ -43,3 +43,4 @@ libc = "0.2"
 
 [dev-dependencies]
 rcgen = "0.14"
+log = "0.4"

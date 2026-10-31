@@ -1165,6 +1165,24 @@ when reduced motion is requested.
 The stream picker groups streams by Integration and names each by its Preset
 tile. A stale graph keeps its last line at 60% opacity, as on the Device.
 
+### UniFi Integration
+
+| Element | String |
+|---|---|
+| Integration | UniFi |
+| Config fields (schema labels) | Enabled, Url, Site, Unifi os, Interval s, Tls pin |
+| Secret fields | Username, Password |
+| Preset tiles, in order | Connected clients, WAN receive, WAN send |
+| Authentication | UniFi refused access. Check the read-only local account. |
+| Transport | UniFi credentials require HTTPS. Check the controller address. |
+| Timeout | UniFi didn't answer within 10 s. Check the controller, then retry. |
+| Certificate | Couldn't verify the UniFi certificate. Check its SHA-256 fingerprint. |
+| Response size | The UniFi reply is too large. Check the controller version. |
+| Connection | Couldn't connect to UniFi. Check the controller address. |
+| Invalid reply | UniFi sent a reply Open TouchDeck can't read. Check the controller version. |
+| Pin over HTTP | A certificate pin needs an https:// address. Change the address or clear the pin. |
+| Vault | Credential store unavailable |
+
 ### Proxmox
 
 | Element | String |

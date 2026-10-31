@@ -3,6 +3,7 @@ mod cliproxy;
 mod proxmox;
 pub mod secrets;
 pub mod this_pc;
+mod unifi;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};

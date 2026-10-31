@@ -3086,6 +3086,7 @@ dependencies = [
  "inventory",
  "keyring",
  "libc",
+ "log",
  "open",
  "rcgen",
  "reqwest",

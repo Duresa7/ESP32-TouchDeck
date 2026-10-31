@@ -279,6 +279,7 @@ impl Proxmox {
             FetchError::TooLarge => LARGE,
             FetchError::Tls => "Couldn't verify the Proxmox certificate. Check the SHA-256 pin or system trust store.",
             FetchError::Transport => "Couldn't reach Proxmox. Check the address and connection, then retry.",
+            FetchError::InvalidReply => INVALID,
         })?;
         parse(&body).map(Some)
     }

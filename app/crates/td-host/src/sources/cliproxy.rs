@@ -387,6 +387,12 @@ pub fn readings(accounts: &[Account], updated: u64, stale: bool) -> Vec<Reading>
 
 /// Management requests only. Implementations must not log headers or request bodies.
 pub trait Fetch: Send + Sync {
+    fn send(
+        &self,
+        _: super::network::Request,
+    ) -> Result<super::network::Response, super::network::FetchError> {
+        Err(super::network::FetchError::Transport)
+    }
     fn request(
         &self,
         _: &super::network::GetRequest<'_>,
@@ -469,6 +475,12 @@ fn response_body(mut response: ureq::http::Response<ureq::Body>) -> Result<Strin
 }
 
 impl Fetch for HttpFetch {
+    fn send(
+        &self,
+        request: super::network::Request,
+    ) -> Result<super::network::Response, super::network::FetchError> {
+        super::network::send(request)
+    }
     fn request(
         &self,
         request: &super::network::GetRequest<'_>,
