@@ -482,6 +482,13 @@ td_asset_result_t td_asset_upload_finish(void)
     } else if (s_up.format == TD_ASSET_FMT_NONE || detect(s_up.head, s_up.bytes) != s_up.format) {
         result = TD_ASSET_FORMAT;
     }
+    if (result == TD_ASSET_OK) {
+        td_store_lock();
+        int rc = fsync(s_up.fd);
+        int saved = errno;
+        td_store_unlock();
+        if (rc != 0) result = saved == ENOSPC ? TD_ASSET_FULL : TD_ASSET_STORAGE;
+    }
     if (result == TD_ASSET_OK && s_up.format == TD_ASSET_FMT_GIF) {
         result = validate_gif(UPLOAD_TMP, s_up.bytes);
     }
@@ -496,9 +503,8 @@ td_asset_result_t td_asset_upload_finish(void)
     td_store_lock();
     struct stat previous;
     int64_t previous_cost = stat(path, &previous) == 0 ? td_asset_cost((uint32_t)previous.st_size) : 0;
-    bool ok = fsync(s_up.fd) == 0;
+    bool ok = close(s_up.fd) == 0;
     int saved = ok ? 0 : errno;
-    ok = close(s_up.fd) == 0 && ok;
     s_up.fd = -1;
     int made = ok ? mkdir(shard, 0777) : -1;
     if (made == 0) td_store_budget_adjust(8192);

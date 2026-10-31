@@ -668,7 +668,12 @@ From the repository root, install Pillow (`python -m pip install Pillow`) and ru
 `python firmware/tools/test_gif.py` and `python firmware/tools/test_asset.py`.
 Linux uses `CC` (default `cc`); Windows uses an x64 Visual Studio developer
 terminal. Set `TD_TEST_OUT` to an existing local evidence directory to keep
-compiled test libraries there. These tests compile the production validator and
+compiled test libraries there. Resolve the locked dependencies first with
+`idf.py -C firmware reconfigure` (a Firmware build also does this). The Asset
+runner additionally uses the pinned LittleFS sources over a RAM block device to
+check commit visibility, typed sync/close failures and handle cleanup. CI runs
+these tests after the Firmware build resolves its dependencies.
+These tests compile the production validator and
 Asset store. The store harness substitutes the scheduler and storage accounting;
 Windows directory enumeration is not exercised by this harness.
 

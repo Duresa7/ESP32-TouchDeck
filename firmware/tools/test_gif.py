@@ -72,6 +72,7 @@ class GifTest(unittest.TestCase):
             return not cancel
         result = self.lib.td_gif_validate(read, pause, None, len(data))
         self.assertEqual(errors, [])
+        self.bytes_read = at
         return result, yields
 
     def test_valid(self):
@@ -115,6 +116,7 @@ class GifTest(unittest.TestCase):
 
     def test_lzw_bomb(self):
         self.assertEqual(self.validate(gif(codes=[4, 0] * 1000 + [5]))[0], 1)
+        self.assertLess(self.bytes_read, 100)
         self.assertEqual(self.validate(gif(codes=[4, 0, 6, 5]))[0], 1)
 
     def test_invalid_lzw(self):
