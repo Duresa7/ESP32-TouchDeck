@@ -348,6 +348,8 @@ TEST_CASE("graph Layout fixture keeps each Tile's render and value stream", "[td
 TEST_CASE("GIF Layout fixture parses with its Asset reference", "[td_layout]")
 {
     td_layout_t *layout = parse_ok(gif_start, (size_t)(gif_end - gif_start) - 1);
+    TEST_ASSERT_EQUAL(UI_RENDER_GIF, tile(layout, "gif")->render);
+    TEST_ASSERT_EQUAL_UINT8(0, tile(layout, "gif")->stream_count);
     TEST_ASSERT_EQUAL_STRING("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", tile(layout, "gif")->icon);
     td_layout_free(layout);
 }

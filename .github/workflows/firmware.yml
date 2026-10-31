@@ -43,6 +43,21 @@ jobs:
           set -euo pipefail
           idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" build
 
+      - name: Test GIF validation and atomic Asset commits on the host
+        # After the build: the LittleFS test compiles the pinned managed component it fetched.
+        # The IDF virtualenv has pip; the system Python in this image does not.
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          set -euo pipefail
+          if ! command -v cc > /dev/null; then
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends gcc libc6-dev > /dev/null
+          fi
+          python -m pip install -q Pillow==13.0.0
+          python -B firmware/tools/test_gif.py
+          python -B firmware/tools/test_asset.py
+
       - name: Check the firmware is esp32s3 and radio-free
         shell: bash
         run: |

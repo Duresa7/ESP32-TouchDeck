@@ -1,0 +1,71 @@
+{
+  "data": [
+    {
+      "type": "node",
+      "id": "node/example.invalid",
+      "node": "example.invalid",
+      "status": "online",
+      "cpu": 0.25,
+      "maxcpu": 8,
+      "mem": 1024,
+      "maxmem": 4096
+    },
+    {
+      "type": "node",
+      "id": "node/lost.example.invalid",
+      "node": "lost.example.invalid",
+      "status": "unknown"
+    },
+    {
+      "type": "qemu",
+      "id": "qemu/100",
+      "vmid": 100,
+      "node": "example.invalid",
+      "status": "running",
+      "cpu": 1.02,
+      "maxcpu": 2,
+      "mem": 2048,
+      "maxmem": 1024
+    },
+    {
+      "type": "lxc",
+      "id": "lxc/101",
+      "vmid": 101,
+      "node": "example.invalid",
+      "status": "stopped"
+    },
+    {
+      "type": "qemu",
+      "id": "qemu/102",
+      "vmid": 102,
+      "node": "example.invalid",
+      "status": "running",
+      "cpu": "busy",
+      "mem": 512,
+      "maxmem": 1024
+    },
+    {
+      "type": "lxc",
+      "id": "lxc/103",
+      "vmid": 103,
+      "node": "lost.example.invalid",
+      "status": "unknown"
+    },
+    {
+      "type": "qemu",
+      "id": "qemu/104",
+      "vmid": 104,
+      "node": "example.invalid",
+      "status": "running",
+      "cpu": 0.1,
+      "mem": 1,
+      "maxmem": 0
+    },
+    {
+      "type": "storage",
+      "id": "storage/example.invalid/local",
+      "node": "example.invalid",
+      "status": "available"
+    }
+  ]
+}

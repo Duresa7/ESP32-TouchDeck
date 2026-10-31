@@ -1,0 +1,32 @@
+{
+  "data": [
+    {
+      "type": "node",
+      "id": "node/example.invalid",
+      "node": "example.invalid",
+      "status": "online",
+      "cpu": 0.25,
+      "maxcpu": 8,
+      "mem": 1024,
+      "maxmem": 4096
+    },
+    {
+      "type": "qemu",
+      "id": "qemu/100",
+      "vmid": 100,
+      "node": "example.invalid",
+      "status": "running",
+      "cpu": 0.5,
+      "maxcpu": 2,
+      "mem": 512,
+      "maxmem": 1024
+    },
+    {
+      "type": "lxc",
+      "id": "lxc/101",
+      "vmid": 101,
+      "node": "example.invalid",
+      "status": "stopped"
+    }
+  ]
+}
