@@ -195,3 +195,11 @@ describe('Preset tiles', () => {
     expect(parseAction('widget')).toBeNull();
   });
 });
+
+it('round-trips a JSON config field and rejects malformed JSON', () => {
+  const { fields } = formOf('custom', [{ name: 'sources', kind: 'json', secret: false }]);
+  const sources = [{ id: 'temperature', interval_s: 1 }];
+  const values = valuesOf(fields, { sources });
+  expect(serialize(fields, values)).toEqual({ sources });
+  expect(validate(fields, { sources: '[broken' })).toEqual({ sources: 'Enter valid JSON.' });
+});
