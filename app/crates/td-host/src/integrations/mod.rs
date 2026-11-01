@@ -1,6 +1,5 @@
 //! Integration descriptors and runtime contract. Modules register their factory once.
 mod cliproxy;
-mod proxmox;
 pub mod secrets;
 pub mod this_pc;
 use serde::{Deserialize, Serialize};

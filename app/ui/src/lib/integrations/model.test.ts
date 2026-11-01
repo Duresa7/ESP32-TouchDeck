@@ -44,7 +44,7 @@ describe('the form a schema builds', () => {
   });
 
   it('names the fields of an Integration the copy guide lacks from the schema, and reads an unknown kind as text', () => {
-    const { fields, secrets } = formOf('proxmox', [
+    const { fields, secrets } = formOf('this_pc', [
       { name: 'node_name', kind: 'string', secret: false },
       { name: 'poll_every', kind: 'duration', secret: false },
       { name: 'api_token', kind: 'string', secret: true },
