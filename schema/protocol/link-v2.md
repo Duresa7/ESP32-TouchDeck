@@ -229,8 +229,13 @@ action; omission means read-only, and explicit false is invalid.
 Unknown streams and wrong types are invalid. Static and gif Tiles declare no
 streams. A graph number appends one sample up to `caps.series`; a series replaces
 history. A bar value outside 0..1 returns `args`. Now-playing hides controls at
-state 0. Renderer geometry and hit regions are in
-[shared vectors](../live/now-playing-vectors.json).
+state 0. With nothing playing, publish all four streams: `state` 0, `title` "",
+`artist` "" and `cover` null. The Device and preview draw "Nothing playing"
+from copy.md and ignore title and artist while idle; no stream stays unset.
+GSMTC Changing keeps the last state value. The golden frames include this idle
+publish. Renderer geometry and hit regions are in the
+[now-playing vectors](../live/now-playing-vectors.json) and
+[bar vectors](../live/bar-vectors.json).
 
 Every Page is built at activation: count image-bearing Tiles across the entire
 Layout, including inactive Pages. Exceeding `caps.live_images` returns `size`
@@ -414,9 +419,14 @@ remain implementation measurements; arithmetic does not prove UI responsiveness.
 | Schema 2 in `layout.put` | Transfer can open; validation at `xfer.end` rejects schema 2 | Never sends; keeps compatible schema 1 Layout |
 | Chunks and acks | Existing transfer engine may consume them | Never sends v2 data unless a negotiated put succeeded |
 | `v2.input`, `press.part` | Never emitted | Never inferred from v1 presses |
-| Media renderers on older v2 Firmware | Missing caps/kinds | Needs Firmware; retain compatible Layout |
-| New Device with old Companion | `part` is an unknown optional field; `v2.input` is an unknown event | Old Companion ignores the extension |
 | Existing messages and events | Unchanged | Same names, framing, retries, and errors |
+
+### Media extension compatibility
+
+| Pairing | Device side | Companion side |
+|---|---|---|
+| Older v2 Device with new Companion | Does not advertise media caps/kinds or emit media input | Shows Needs Firmware; retains a compatible Layout |
+| Media-capable Device with old Companion | Emits optional `press.part` and v2-only `v2.input` on a selected v2 session | Ignores the unknown field and event; does not route controls |
 
 ## Golden frames and verification
 

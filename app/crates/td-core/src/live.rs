@@ -1,6 +1,7 @@
 //! The value of one live stream, as `v2.live.set` carries it and as an Integration reports it.
 
 use serde::{Serialize, Serializer};
+use unicode_normalization::UnicodeNormalization;
 
 use crate::layout::StreamType;
 
@@ -56,7 +57,7 @@ const LATIN_EXTENDED_A: [&str; 128] = [
 /// (Fonts on the Device), by the rules and vectors in `schema/live/text-vectors.json`.
 pub fn fit_text(text: &str, max_bytes: usize) -> String {
     let mut folded = String::with_capacity(text.len());
-    for c in text.chars() {
+    for c in text.nfc() {
         match c {
             '\u{0}'..='\u{1f}' | '\u{7f}'..='\u{9f}' | '\u{2028}' | '\u{2029}' => folded.push(' '),
             '\u{200b}'..='\u{200d}'

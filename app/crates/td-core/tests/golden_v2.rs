@@ -255,3 +255,23 @@ fn live_text_keeps_its_escapes_and_multibyte_characters_within_text_bytes() {
         "jpeg"
     );
 }
+
+#[test]
+fn idle_media_publishes_all_four_streams() {
+    let fixtures = fixtures();
+    for (stream, kind, value) in [
+        ("state", "number", serde_json::json!(0)),
+        ("title", "text", serde_json::json!("")),
+        ("artist", "text", serde_json::json!("")),
+        ("cover", "image", serde_json::Value::Null),
+    ] {
+        let name = format!("v2.live.set-idle-{stream}-request");
+        let message = &frame(&fixtures, &name)["message"];
+        assert_eq!(message["m"], "v2.live.set");
+        assert_eq!(message["stream"], stream);
+        assert_eq!(message["type"], kind);
+        assert_eq!(message["value"], value);
+        assert_eq!(message["page"], "media");
+        assert_eq!(message["tile"], "np");
+    }
+}

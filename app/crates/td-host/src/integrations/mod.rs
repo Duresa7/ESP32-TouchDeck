@@ -115,9 +115,11 @@ pub trait Control: Send + Sync {
     fn live(&self) -> Vec<LiveSample>;
     /// Called once. The Integration calls `wake` when a sample changes, so delivery doesn't wait for a round.
     fn subscribe(&self, wake: Arc<dyn Fn() + Send + Sync>);
-    /// Runs the action a Tile part names, blocking at most `timeout`.
+    /// Receives the press `part` unchanged as `action`, blocking at most `timeout`.
     fn act(&self, account: &str, action: &str, timeout: Duration) -> Result<(), ControlError>;
-    /// Sets a settable stream from a Device's drag. Queues it and returns without blocking.
+    /// Sets the Integration stream id bound by the Tile stream: for `value`, the widget
+    /// `field` (`level` for Volume); other streams bind the same id. `settable` is checked
+    /// on that Integration stream. Queues a Device's drag and returns without blocking.
     fn set(&self, account: &str, stream: &str, value: f64) -> Result<(), ControlError>;
     /// The source picture an `image` sample of this Control names.
     fn picture(&self, _id: &str) -> Option<Arc<[u8]>> {

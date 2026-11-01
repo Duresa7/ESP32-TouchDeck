@@ -1818,6 +1818,12 @@ impl MockDeck {
         {
             return refused("args");
         }
+        if found.render == Some(td_core::layout::TileRender::Bar)
+            && stream == "value"
+            && numbers.iter().any(|v| !(0.0..=1.0).contains(v))
+        {
+            return refused("args");
+        }
         let sent = json!([ttl, kind, value]);
         let mut state = self.state();
         let elapsed = state.live.session.elapsed().as_millis() as u64;

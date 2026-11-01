@@ -1196,6 +1196,7 @@ tile. A stale graph keeps its last line at 60% opacity, as on the Device.
 | Non-Windows Media status | Media needs Windows. |
 | Failed media action, idle | Nothing is playing. |
 | Failed media action, timeout or false | The player didn't respond. |
+| ControlError UnknownAccount, UnknownAction, NotSettable or OutOfRange | This Tile's control isn't available. |
 | Successful mute action | Mute changed. |
 | Successful volume gesture | Volume changed. |
 | Successful previous action | Previous track. |

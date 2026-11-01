@@ -1,11 +1,11 @@
 {
-  "about": "Shared text vectors for live text values. td_core::live::fit_text and the app preview must turn each input into its output: controls, DEL and line or paragraph separators become spaces; zero-width characters, the BOM, variation selectors and combining marks go; Latin Extended-A and the Romanian comma-below letters fold to their base letters; lookalike dashes, thin spaces and single angle quotes fold into the Device glyph set (docs/design.md, Fonts on the Device); every run of White_Space becomes one space and the ends trim; then the text is cut to max_bytes at a character boundary and a trailing space trims again. Other characters pass through, and the Device draws the ones it lacks as placeholder boxes.",
+  "about": "Shared text vectors for live text values. td_core::live::fit_text and the app preview must turn each input into its output: compose to NFC first; controls, DEL and line or paragraph separators become spaces; zero-width characters, the BOM, variation selectors and marks still uncomposed after NFC go; Latin Extended-A and the Romanian comma-below letters fold to their base letters; lookalike dashes, thin spaces and single angle quotes fold into the Device glyph set (docs/design.md, Fonts on the Device); every run of White_Space becomes one space and the ends trim; then the text is cut to max_bytes at a character boundary and a trailing space trims again. Other characters pass through, and the Device draws the ones it lacks as placeholder boxes.",
   "cases": [
     {
       "kind": "clean",
       "name": "tab and newline become spaces",
       "max_bytes": 128,
-      "input": "Song\u0009Title\u000aLive",
+      "input": "Song\tTitle\nLive",
       "output": "Song Title Live"
     },
     {
@@ -40,7 +40,7 @@
       "kind": "clean",
       "name": "whitespace runs collapse and the ends trim",
       "max_bytes": 128,
-      "input": "  Many   spaces \u00a0 here\u0009 ",
+      "input": "  Many   spaces \u00a0 here\t ",
       "output": "Many spaces here"
     },
     {
@@ -115,10 +115,10 @@
     },
     {
       "kind": "fold",
-      "name": "combining marks are dropped",
+      "name": "NFC preserves supported accents",
       "max_bytes": 128,
       "input": "Cafe\u0301 Noe\u0308l",
-      "output": "Cafe Noel"
+      "output": "Café Noël"
     },
     {
       "kind": "fold",
@@ -199,10 +199,31 @@
     },
     {
       "kind": "cut",
-      "name": "a long multibyte title",
+      "name": "a multibyte title within the byte limit",
       "max_bytes": 128,
       "input": "Bohemian Rhapsody – Remastered 2011 · Łódź Live at Wembley ’86 — Queen • A Night at the Opera (Deluxe) 東京",
       "output": "Bohemian Rhapsody – Remastered 2011 · Lódz Live at Wembley ’86 — Queen • A Night at the Opera (Deluxe) 東京"
+    },
+    {
+      "name": "precomposed Polish title",
+      "kind": "fold",
+      "input": "Łódź",
+      "output": "Lódz",
+      "max_bytes": 128
+    },
+    {
+      "name": "decomposed Polish title",
+      "kind": "fold",
+      "input": "Ło\u0301dz\u0301",
+      "output": "Lódz",
+      "max_bytes": 128
+    },
+    {
+      "name": "uncomposed mark",
+      "kind": "fold",
+      "input": "q\u0301",
+      "output": "q",
+      "max_bytes": 128
     }
   ]
 }

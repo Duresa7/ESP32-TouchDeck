@@ -613,7 +613,7 @@ A schema 2 Tile with `streams` binds them through its `widget` action. `source` 
 The Companion's live router (`td_companion::live`) reads each connected v2 Device's active Layout over the link: `layout state`, then the stored bytes, whose SHA-256 is the `layout` of every `v2.live.set`. It reads only the Integration streams that some Device's Layout binds. Integrations report typed samples through `Integration::live`. Each sample carries a counter that rises with every new sample, even one equal to the last, because a graph advances on each, and a `ttl_ms`.
 
 - **Changes only.** The router sends a Tile stream when its Integration has a newer sample than the Device holds. It keeps only the newest sample per stream, so samples that arrive between rounds coalesce and nothing queues.
-- **Pace.** Polling streams wait at least 900 ms between values; Control streams use `max(500 ms, 1000 / live_hz)`. The Device's requests in any one second stay within `live_total_hz`, counting each request as one more for every 256 bytes past the first 256.
+- **Pace.** Polling streams wait `max(900 ms, 1000 / live_hz)` between values; Control streams use `max(500 ms, 1000 / live_hz)`. The Device's requests in any one second stay within `live_total_hz`, counting each request as one more for every 256 bytes past the first 256.
 - **`rate`.** The router waits `retry_ms` before it sends the Device anything else, and doubles the wait for each further `rate` in a row, up to 8 seconds.
 - **Sequence.** `n` rises for every new value sent to a Device. A send whose reply never came goes again with the same `n` and value, so a value the Device already took isn't added twice.
 - **Resend.** A new link session, a Layout push or an orientation change sends every bound value again. A `layout`, `page`, `tile`, `stream` or `type` refusal makes the router read the Device's Layout again.
@@ -637,9 +637,41 @@ Only Device touch events (or test-hook MockDeck events) reach them. Process
 launching Integrations continue through ADR 0006 approval. Resolve the Tile's
 source/account from the cached active Layout; require input and a settable
 stream for sets, drop non-finite values, clamp to 0..1, and coalesce moves.
+A tap passes the press `part` unchanged as `Control::act`'s `action`.
+A drag passes the Integration stream id bound by the Tile's `value` stream
+(the widget `field`, `level` for Volume) to `Control::set`, not `value`.
+Other Tile streams bind the same-named Integration stream. Check `settable`
+on that Integration stream.
 Limit actions to ten per Device per second and a two-second timeout. The action
 log gains `kind:"integration"`, status `ok` or `failed`, and copy.md detail.
 A completed gesture logs once, never per move. No new API endpoint is added.
+
+The Companion computes a Tile's pixel rect from the active Layout's grid,
+position/span and `fullScreen`, and the Device's screen size in the active
+orientation. Step B implements the pure function `td_core::live::tile_rect`
+in `app/crates/td-core/src/live.rs` with this signature:
+
+```rust
+pub fn tile_rect(layout: &Layout, page_id: &str, tile_id: &str, screen: ScreenSize) -> Option<PixelRect>;
+```
+
+`ScreenSize { w: u16, h: u16 }` and `PixelRect { x: i32, y: i32, w: u16,
+h: u16 }` live in `td_core::live`. Missing/non-grid Pages, missing Tiles,
+invalid grids/spans or zero screen dimensions return None. The caller supplies
+the screen dimensions after applying the active orientation, not the panel's
+unrotated dimensions. It mirrors `ui_geometry` in
+`firmware/components/td_ui_core/ui_geometry.c` and `ui_tile_rect` in
+`firmware/components/td_ui_core/ui_pages.c`, with the app mirror in
+`app/ui/src/lib/deck/geometry.ts`. Its width and height feed the art-box rules
+in `schema/live/now-playing-vectors.json`.
+
+`schema/live/tile-geometry-vectors.json` records both current implementations.
+They disagree for non-full-screen Layouts: Firmware reserves a 36 px pager
+strip at the 600 px design scale; the app reserves 40 px. For a full-grid
+1024×600 Tile their rects are respectively `(28,76,968,468)` and
+`(28,76,968,464)`. Full-screen rects agree. Step B must resolve this difference
+with the Firmware and app owners before claiming one shared result; step A
+records both and chooses neither.
 
 Image samples name source pictures owned by Control, never arbitrary URLs.
 On a track change publish cover null at once with new metadata. Discard stale
@@ -656,7 +688,8 @@ except the current ones and retry once; then report the out-of-space error.
 
 Before push, exceeding live_images across all Pages returns HTTP 422
 `layout.live_image_limit`, details `{limit,actual}`. Firmware independently
-refuses with size. Caps absence means zero images. Covers never cross the UI API.
+refuses with size. Step B owns this pre-push check in `features/layouts.rs`.
+Caps absence means zero images. Covers never cross the UI API.
 
 #### Volume
 
@@ -686,8 +719,11 @@ streams. Field is unused because there is no value stream.
 A separate MTA worker owns WinRT objects and event subscriptions; callbacks
 only mark dirty/wake it. Session changes revoke old handlers. Bound async waits
 and discard late generations. False command results are failures. Do not fetch
-track-supplied URLs. No session is idle, not an error: "Nothing playing", empty
-artist, null cover, hidden controls. Paused retains metadata. Recheck thumbnail
+track-supplied URLs. No session is idle, not an error. With nothing playing,
+Media publishes all four streams: `state` 0, `title` "", `artist` "" and
+`cover` null. The Device and preview draw "Nothing playing" from copy.md,
+ignore title and artist while idle, and hide controls. No stream is left unset.
+Paused retains metadata; GSMTC Changing keeps the last state value. Recheck thumbnail
 at 300 ms, 1 s and 3 s after title changes; never publish an old generation.
 Heartbeat every 10 s with ttl_ms 30000. Non-Windows reports "Media needs Windows."
 
@@ -983,6 +1019,7 @@ Features add codes as they land. This list is the starting set.
 | `device.needs_firmware` | 409 | The feature needs newer Firmware. `details.field` names the setting; `details.version` is the version that adds it, or `null` while no released Firmware has it (brightness today) |
 | `new_board.not_found` | 404 | No New board with that id |
 | `layout.invalid` | 422 | The Layout fails validation. `details.issues` |
+| `layout.live_image_limit` | 422 | The Layout declares more image-stream Tiles than the Device's `live_images`. `details {limit, actual}` |
 | `layout.orientation_mismatch` | 422 | The path and body orientations differ |
 | `layout.changed` | 412 | The Device's Layout changed since it was loaded |
 | `layout.stored_invalid` | 502 | The Layout stored on the Device fails validation |

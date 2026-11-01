@@ -317,3 +317,54 @@ fn a_tap_in_a_part_names_it_only_on_a_v2_session() {
     assert_eq!(press["seq"], next);
     assert!(press.get("part").is_none());
 }
+
+#[test]
+fn bar_values_refuse_out_of_range_without_consuming_sequence() {
+    for value in [-0.01, 1.01] {
+        let (_device, session, _events, layout) = media_deck();
+        assert_eq!(
+            refused(set(
+                &session,
+                &layout,
+                "volume",
+                "value",
+                1,
+                &LiveValue::Number(value)
+            )),
+            LiveReason::Args
+        );
+        assert_eq!(
+            set(
+                &session,
+                &layout,
+                "volume",
+                "value",
+                1,
+                &LiveValue::Number(0.0)
+            ),
+            Ok(1)
+        );
+        assert_eq!(
+            set(
+                &session,
+                &layout,
+                "volume",
+                "value",
+                2,
+                &LiveValue::Number(1.0)
+            ),
+            Ok(2)
+        );
+        assert_eq!(
+            set(
+                &session,
+                &layout,
+                "volume",
+                "muted",
+                1,
+                &LiveValue::Number(2.0)
+            ),
+            Ok(1)
+        );
+    }
+}

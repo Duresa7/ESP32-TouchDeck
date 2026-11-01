@@ -32,7 +32,10 @@
       "parts": [
         "mute"
       ],
-      "input": true
+      "input": true,
+      "parts_when": {
+        "mute": "muted declared"
+      }
     },
     "now-playing": {
       "streams": {

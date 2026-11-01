@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 dirs = "6"
+unicode-normalization = "0.1"
 serde.workspace = true
 serde_json.workspace = true
 ts-rs = { version = "11", optional = true, features = ["serde-json-impl"] }
