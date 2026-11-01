@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 use td_core::frame::CHUNK_DATA_MAX;
-use td_core::layout::{Page, StreamType, UPLOAD_MAX};
+use td_core::layout::{Page, StreamType, TileRender, UPLOAD_MAX};
 use td_core::{
     Body, Event, Frame, Hello, ICON_PAGE, Item, Layout, Orientation, Role, Settings, StreamDecoder,
 };
@@ -27,6 +27,8 @@ pub const MOCK_ELF_SHA256: &str =
 const DASHBOARD_ROWS: usize = 8;
 const ONLINE_FOR: Duration = Duration::from_secs(5);
 const HEARTBEAT: Duration = Duration::from_secs(2);
+const MOCK_PAGE_TILES: u64 = 4;
+const MOCK_PAGE_PIXELS: u64 = 65536;
 const BUILTIN: &[u8] = include_bytes!("../../../../schema/examples/builtin.json");
 /// The space a mock Device has for Assets until a test sets another.
 pub const ASSET_CAPACITY: u64 = 4 * 1024 * 1024;
@@ -927,8 +929,12 @@ impl MockDeck {
                 ]));
             }
         };
-        if let Err(errors) = Layout::parse(&data) {
-            return Err(format!("invalid layout: {}", errors[0]));
+        let layout = match Layout::parse(&data) {
+            Ok(layout) => layout,
+            Err(errors) => return Err(format!("invalid layout: {}", errors[0])),
+        };
+        if state.gif_capabilities && over_page_budget(&state, &layout) {
+            return Ok(refusal("size", "Page over its animation budget"));
         }
         state.layouts.insert(orientation, data);
         if orientation == state.shown {
@@ -1160,7 +1166,7 @@ impl MockDeck {
                             "photo_bytes":PHOTO_BYTES_MAX,"live_hz":MOCK_LIVE_HZ,"live_total_hz":MOCK_LIVE_TOTAL_HZ,"series":MOCK_SERIES,"text_bytes":0,"streams":1}));
                         if state.gif_capabilities {
                             let caps = reply.get_mut("caps").unwrap();
-                            caps["anim"] = json!({"image":[128,128],"min_delay_ms":100,"page_tiles":4,"page_pixels":65536});
+                            caps["anim"] = json!({"image":[128,128],"min_delay_ms":100,"page_tiles":MOCK_PAGE_TILES,"page_pixels":MOCK_PAGE_PIXELS});
                             caps["formats"] = json!(["tdi1", "gif"]);
                             caps["tile_kinds"] =
                                 json!(["static", "graph", "gif", "photo-frame", "clock"]);
@@ -1333,6 +1339,28 @@ impl MockDeck {
             _ => Err("unknown message".into()),
         }
     }
+}
+
+/// The Firmware's per-Page budget: animated Tiles on a Page, and the sum of their canvas areas
+/// with repeated references counted again.
+fn over_page_budget(state: &State, layout: &Layout) -> bool {
+    layout.pages.iter().any(|page| {
+        let Page::Grid { tiles, .. } = page else {
+            return false;
+        };
+        let animated: Vec<_> = tiles
+            .iter()
+            .filter(|tile| tile.render == Some(TileRender::Gif))
+            .collect();
+        let pixels: u64 = animated
+            .iter()
+            .filter_map(|tile| tile.asset.as_deref()?.strip_prefix("sha256:"))
+            .filter_map(|id| state.assets.get(id))
+            .filter_map(|gif| td_host::gif_normalize::inspect_normalized(gif).ok())
+            .map(|info| u64::from(info.width) * u64::from(info.height))
+            .sum();
+        animated.len() as u64 > MOCK_PAGE_TILES || pixels > MOCK_PAGE_PIXELS
+    })
 }
 
 fn asset_space(state: &State) -> (u64, u64, u64, u64) {
