@@ -759,7 +759,6 @@ fn gif_error(error: td_host::gif_normalize::GifError) -> AssetError {
     }
 }
 
-/// Waits, queued and cancellable, until no other GIF is being prepared.
 fn gif_turn<'a>(
     ctx: &'a Ctx,
     job: &JobHandle<RenderJob>,

@@ -1341,8 +1341,6 @@ impl MockDeck {
     }
 }
 
-/// The Firmware's per-Page budget: animated Tiles on a Page, and the sum of their canvas areas
-/// with repeated references counted again.
 fn over_page_budget(state: &State, layout: &Layout) -> bool {
     layout.pages.iter().any(|page| {
         let Page::Grid { tiles, .. } = page else {

@@ -27,7 +27,7 @@ it('rejects a GIF target outside 1 to 4096 before starting a Job', async () => {
   for (const size of [{ width: 0, height: 128 }, { width: 128, height: 4097 }]) {
     const response = await fake.handle(request('/assets', { source: { ...source, target: { ...source.target, ...size } } }), '/assets');
     expect(response?.status).toBe(400);
-    expect((await response?.json()).error.code).toBe('request.invalid');
+    expect(await response?.json()).toMatchObject({ error: { code: 'request.invalid' } });
   }
   expect(fake.jobs()).toHaveLength(0);
 });

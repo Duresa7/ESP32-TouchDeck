@@ -69,11 +69,9 @@ pub fn name(orientation: Orientation) -> &'static str {
     }
 }
 
-/// Bytes the Asset store may hold on this PC: 1024 GIFs at the proposed 256 KiB
-/// `asset_bytes`, or 32 768 icons. A fixed size keeps the bound the same on every disk.
+/// Bytes the Asset store may hold.
 pub const ASSET_STORE_BYTES: u64 = 256 << 20;
-/// How long an Asset stays after it was last stored or read, so the Layout being edited keeps
-/// the Assets it was given even before it is sent.
+/// How long an Asset stays after it was last stored or read.
 pub const ASSET_RECENT: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Debug)]
@@ -110,7 +108,6 @@ struct Entry {
     bytes: u64,
     used: Used,
 }
-/// Files found on disk are older than anything used since the Companion started.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Used {
     Before(SystemTime),
@@ -269,7 +266,6 @@ impl AssetStore {
             }
         })
     }
-    /// Records the use on disk too, so the order survives a restart.
     fn touch(&self, id: &str) {
         if let Ok(file) = std::fs::File::options().write(true).open(self.path(id)) {
             let _ = file.set_modified(SystemTime::now());
