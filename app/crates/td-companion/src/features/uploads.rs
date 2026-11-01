@@ -116,7 +116,9 @@ impl Endpoint for Upload {
             .to_vec();
         let len = bytes.len();
         let bytes = tokio::task::spawn_blocking(move || {
-            decode(&bytes)?;
+            if !bytes.starts_with(b"GIF87a") && !bytes.starts_with(b"GIF89a") {
+                decode(&bytes)?;
+            }
             Ok::<_, CommonError>(bytes)
         })
         .await

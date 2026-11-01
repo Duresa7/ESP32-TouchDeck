@@ -81,6 +81,15 @@ pub struct FirmwareInfo {
 /// What a v2 `hello` says the Device can show and store.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct Capabilities {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub anim: Option<AnimationCapabilities>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub gif_frames: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub gif_pixels: Option<u32>,
     pub screen: [u32; 2],
     pub grid: [u32; 2],
     pub pages: u32,
@@ -103,6 +112,14 @@ pub struct Capabilities {
 impl From<&td_link::Capabilities> for Capabilities {
     fn from(c: &td_link::Capabilities) -> Self {
         Self {
+            anim: c.anim.as_ref().map(|a| AnimationCapabilities {
+                image: a.image,
+                min_delay_ms: a.min_delay_ms,
+                page_tiles: a.page_tiles,
+                page_pixels: a.page_pixels,
+            }),
+            gif_frames: Some(c.gif_frames),
+            gif_pixels: Some(c.gif_pixels),
             screen: c.screen,
             grid: c.grid,
             pages: c.pages,
@@ -823,4 +840,12 @@ impl Drop for FirmwareHold {
         drop(reg);
         self.manager.rescan();
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct AnimationCapabilities {
+    pub image: [u32; 2],
+    pub min_delay_ms: u32,
+    pub page_tiles: u32,
+    pub page_pixels: u32,
 }

@@ -1141,12 +1141,16 @@ A script lists the string literals and text nodes in every non-test `.svelte` an
 | Fitted | Fitted to {device}: {width} × {height}, {fps} fps. |
 | Too long | This GIF is too long for {device}. Choose a shorter GIF. |
 | Too large | This GIF is too large for {device}. Choose a smaller GIF. |
+| Too short | This GIF is too short for {device}. Choose a GIF that plays for at least {limit} ms. |
 | Page budget | This Page has too many animations for {device}. Remove an animated Tile. |
 | Storage full | {device} is out of space. Remove unused Assets, then retry. |
+| Asset store full | This PC's Asset store is full. Retry in an hour, or remove Tiles you don't use and send the Layout. |
+| Decoded source too large | This GIF needs more than 64 MiB to decode all its frames. Choose a smaller or shorter GIF. |
 | Preparation failed | Couldn't prepare this GIF. Choose another GIF. |
 | Unsupported | Needs Firmware {x.y} |
 
-Put decoder and wire reasons under Details. App previews show a paused poster
+The Companion API returns these rows without `for {device}`, because an error
+body has no Device name; the app adds it. Put decoder and wire reasons under Details. App previews show a paused poster
 when reduced motion is requested.
 
 ## Graph Tiles

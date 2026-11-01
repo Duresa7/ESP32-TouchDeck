@@ -426,6 +426,10 @@ impl<K: JobKind> JobHandle<K> {
     pub fn running(&self) {
         self.update(|j| j.state = JobState::Running);
     }
+    /// Back to waiting, for work that waits for a turn after it started.
+    pub fn queued(&self) {
+        self.update(|j| j.state = JobState::Queued);
+    }
     pub fn id(&self) -> &str {
         &self.id
     }

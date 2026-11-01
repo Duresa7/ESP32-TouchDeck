@@ -41,6 +41,7 @@ pub struct Ctx {
     pub assets: crate::store::AssetStore,
     pub catalog: Arc<td_host::catalog::Catalog>,
     pub(crate) uploads: crate::features::uploads::Uploads,
+    pub(crate) gif_turn: Arc<Mutex<()>>,
     auth: Arc<Mutex<Auth>>,
     pub(crate) clock: Clock,
     pub(crate) shutdown: tokio::sync::watch::Sender<bool>,
@@ -64,6 +65,7 @@ impl Ctx {
     ) -> Self {
         let events = Events::default();
         let clock = Clock::default();
+        let layouts = crate::store::LayoutStore::new(data.join("layouts"));
         let devices = crate::devices::DeviceManager::new(events.clone());
         let links = crate::link::Links::new(devices.clone());
         let actions = crate::actions::Actions::new(
@@ -97,13 +99,19 @@ impl Ctx {
                 links.clone(),
             ),
             links,
-            layouts: crate::store::LayoutStore::new(data.join("layouts")),
-            assets: crate::store::AssetStore::new(data.join("assets")),
+            assets: crate::store::AssetStore::new(
+                data.join("assets"),
+                layouts.clone(),
+                clock.clone(),
+                limits.asset_store_bytes,
+            ),
+            layouts,
             catalog: Arc::new(td_host::catalog::Catalog::new(
                 data.join("cache/catalog"),
                 Box::new(td_host::catalog::HttpFetcher),
             )),
             uploads: Default::default(),
+            gif_turn: Arc::default(),
             devices,
             events,
             auth,

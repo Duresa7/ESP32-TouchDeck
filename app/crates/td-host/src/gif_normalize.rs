@@ -18,7 +18,6 @@ const SOURCE_FRAMES: usize = 300;
 const SOURCE_RGBA: usize = 64 << 20;
 const MAX_DELAY_CS: u32 = u16::MAX as u32;
 const MIN_SIDE: u16 = 32;
-const MATTE: [u8; 3] = [0, 0, 0];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fit {
@@ -87,11 +86,24 @@ pub enum GifError {
         duration_ms: u32,
     },
     InvalidLimits,
+    TimedOut,
+    Cancelled,
 }
 
 impl fmt::Display for GifError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "GIF normalization: {self:?}")
+        f.write_str(match self {
+            Self::NotGif => "not a GIF",
+            Self::Corrupt => "corrupt GIF",
+            Self::SourceTooLarge { .. } => "GIF source over a limit",
+            Self::TooLong { .. } => "too many frames",
+            Self::TooLarge { .. } => "too many bytes",
+            Self::PixelLimit { .. } => "too many pixels",
+            Self::TooShort { .. } => "loop too short",
+            Self::InvalidLimits => "invalid limits",
+            Self::TimedOut => "timed out",
+            Self::Cancelled => "cancelled",
+        })
     }
 }
 impl std::error::Error for GifError {}
@@ -107,7 +119,7 @@ struct Composed {
 /// thresholded at 128 for GIF's binary transparency. Background disposal clears
 /// to transparent, as in browser image playback. Output frames keep the previous
 /// frame (disposal 1), so only pixels clear in every frame stay transparent; a
-/// pixel clear in some frames is drawn black there. A multi-frame loop shorter
+/// pixel clear in some frames is drawn with the background colour there. A multi-frame loop shorter
 /// than the minimum delay is refused rather than lengthened; a single frame just
 /// gets the minimum delay. The canvas shrinks by 7/8 steps while its longer side
 /// stays at least 32 px. All returned delays are exact 10 ms units.
@@ -116,6 +128,32 @@ pub fn normalize_gif(
     target: Target,
     limits: &AnimLimits,
 ) -> Result<NormalizedGif, GifError> {
+    normalize_gif_with_background(bytes, target, limits, [0, 0, 0])
+}
+
+pub fn normalize_gif_with_background(
+    bytes: &[u8],
+    target: Target,
+    limits: &AnimLimits,
+    background: [u8; 3],
+) -> Result<NormalizedGif, GifError> {
+    normalize_gif_until(bytes, target, limits, background, &|| false)
+}
+
+/// [`normalize_gif_with_background`] that stops with [`GifError::Cancelled`] once `cancelled`
+/// returns true. It is asked between source frames, fitted frames, encoded frames and size
+/// attempts, the same points as the 30-second deadline.
+pub fn normalize_gif_until(
+    bytes: &[u8],
+    target: Target,
+    limits: &AnimLimits,
+    background: [u8; 3],
+    cancelled: &dyn Fn() -> bool,
+) -> Result<NormalizedGif, GifError> {
+    let stop = Stop {
+        deadline: std::time::Instant::now() + std::time::Duration::from_secs(30),
+        cancelled,
+    };
     if target.width == 0
         || target.height == 0
         || limits.image.0 == 0
@@ -125,19 +163,24 @@ pub fn normalize_gif(
     {
         return Err(GifError::InvalidLimits);
     }
-    let source = decode(bytes)?;
+    let source = decode(bytes, &stop)?;
     let timeline = resample(&source, limits)?;
     let mut width = target.width.min(limits.image.0).min(SOURCE_SIDE as u16);
     let mut height = target.height.min(limits.image.1).min(SOURCE_SIDE as u16);
     let mut smallest = usize::MAX;
     loop {
+        stop.check()?;
         let pixels = usize::from(width) * usize::from(height) * timeline.len();
         if pixels <= limits.max_frame_pixels_total && pixels <= SOURCE_RGBA / 4 {
-            let fitted: Vec<_> = timeline
+            let fitted = timeline
                 .iter()
-                .map(|&(i, _)| fit(&source[i].pixels, width, height, target.fit))
-                .collect();
-            let bytes = encode(&fitted, &timeline, width, height)?;
+                .map(|&(i, _)| {
+                    stop.check()?;
+                    Ok(fit(&source[i].pixels, width, height, target.fit))
+                })
+                .collect::<Result<Vec<_>, GifError>>()?;
+            let bytes = encode(&fitted, &timeline, width, height, background, &stop)?;
+            stop.check()?;
             smallest = smallest.min(bytes.len());
             if bytes.len() <= limits.max_bytes {
                 let delays_ms: Vec<_> = timeline.iter().map(|&(_, cs)| cs * 10).collect();
@@ -185,14 +228,13 @@ fn bound(kind: SourceLimit, actual: usize, limit: usize) -> Result<(), GifError>
     }
 }
 
-fn decode(bytes: &[u8]) -> Result<Vec<Composed>, GifError> {
+fn decode(bytes: &[u8], stop: &Stop) -> Result<Vec<Composed>, GifError> {
     bound(SourceLimit::Bytes, bytes.len(), SOURCE_BYTES)?;
     if !bytes.starts_with(b"GIF87a") && !bytes.starts_with(b"GIF89a") {
         return Err(GifError::NotGif);
     }
     let mut options = DecodeOptions::new();
     options.set_color_output(ColorOutput::RGBA);
-    options.check_lzw_end_code(true);
     let mut decoder = options.read_info(bytes).map_err(|_| GifError::Corrupt)?;
     let (w, h) = (usize::from(decoder.width()), usize::from(decoder.height()));
     bound(SourceLimit::Width, w, SOURCE_SIDE)?;
@@ -203,6 +245,7 @@ fn decode(bytes: &[u8]) -> Result<Vec<Composed>, GifError> {
     let mut canvas = RgbaImage::new(w as u32, h as u32);
     let mut frames = Vec::new();
     while let Some(info) = decoder.next_frame_info().map_err(|_| GifError::Corrupt)? {
+        stop.check()?;
         bound(SourceLimit::Frames, frames.len() + 1, SOURCE_FRAMES)?;
         bound(SourceLimit::Width, usize::from(info.width), SOURCE_SIDE)?;
         bound(SourceLimit::Height, usize::from(info.height), SOURCE_SIDE)?;
@@ -335,6 +378,8 @@ fn encode(
     timeline: &[(usize, u32)],
     w: u16,
     h: u16,
+    background: [u8; 3],
+    stop: &Stop,
 ) -> Result<Vec<u8>, GifError> {
     let mut clear = vec![true; usize::from(w) * usize::from(h)];
     for image in images {
@@ -343,7 +388,12 @@ fn encode(
         }
     }
     let transparent = clear.contains(&true);
-    let opaque = || images.iter().flat_map(|i| shown(i, &clear)).flatten();
+    let opaque = || {
+        images
+            .iter()
+            .flat_map(|i| shown(i, &clear, background))
+            .flatten()
+    };
     let mut unique = BTreeSet::new();
     let coarse = opaque().any(|rgb| {
         unique.insert(rgb);
@@ -428,7 +478,8 @@ fn encode(
             .set_repeat(Repeat::Infinite)
             .map_err(|_| GifError::Corrupt)?;
         for (image, &(_, delay)) in images.iter().zip(timeline) {
-            let buffer: Vec<_> = shown(image, &clear)
+            stop.check()?;
+            let buffer: Vec<_> = shown(image, &clear, background)
                 .map(|rgb| rgb.map_or(0, |rgb| indices[&key(rgb)]))
                 .collect();
             encoder
@@ -450,10 +501,102 @@ fn encode(
 fn shown<'a>(
     image: &'a RgbaImage,
     clear: &'a [bool],
+    background: [u8; 3],
 ) -> impl Iterator<Item = Option<[u8; 3]>> + 'a {
-    image.pixels().zip(clear).map(|(p, &clear)| match () {
+    image.pixels().zip(clear).map(move |(p, &clear)| match () {
         _ if clear => None,
-        _ if p[3] < 128 => Some(MATTE),
+        _ if p[3] < 128 => Some(background),
         _ => Some([p[0], p[1], p[2]]),
     })
+}
+
+struct Stop<'a> {
+    deadline: std::time::Instant,
+    cancelled: &'a dyn Fn() -> bool,
+}
+impl Stop<'_> {
+    fn check(&self) -> Result<(), GifError> {
+        if (self.cancelled)() {
+            Err(GifError::Cancelled)
+        } else if std::time::Instant::now() >= self.deadline {
+            Err(GifError::TimedOut)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct GifInfo {
+    pub width: u16,
+    pub height: u16,
+    pub frames: usize,
+    pub min_delay_ms: u32,
+}
+
+pub fn inspect_normalized(bytes: &[u8]) -> Result<GifInfo, GifError> {
+    bound(SourceLimit::Bytes, bytes.len(), 1 << 20)?;
+    if !bytes.starts_with(b"GIF89a") {
+        return Err(GifError::NotGif);
+    }
+    let mut decoder = DecodeOptions::new()
+        .read_info(bytes)
+        .map_err(|_| GifError::Corrupt)?;
+    let (width, height) = (decoder.width(), decoder.height());
+    bound(SourceLimit::Width, width.into(), SOURCE_SIDE)?;
+    bound(SourceLimit::Height, height.into(), SOURCE_SIDE)?;
+    if width == 0 || height == 0 || decoder.global_palette().is_none() {
+        return Err(GifError::Corrupt);
+    }
+    let palette_colors = decoder.global_palette().map_or(0, |p| p.len() / 3);
+    let mut transparent = None;
+    let mut info = GifInfo {
+        width,
+        height,
+        frames: 0,
+        min_delay_ms: u32::MAX,
+    };
+    while let Some(frame) = decoder.next_frame_info().map_err(|_| GifError::Corrupt)? {
+        info.frames += 1;
+        bound(SourceLimit::Frames, info.frames, SOURCE_FRAMES)?;
+        bound(
+            SourceLimit::DecodedRgba,
+            info.frames * usize::from(width) * usize::from(height) * 4,
+            SOURCE_RGBA,
+        )?;
+        if frame.left != 0
+            || frame.top != 0
+            || frame.width != width
+            || frame.height != height
+            || frame.interlaced
+            || frame.palette.is_some()
+            || frame.delay == 0
+            || !matches!(frame.dispose, DisposalMethod::Any | DisposalMethod::Keep)
+        {
+            return Err(GifError::Corrupt);
+        }
+        if let Some(index) = frame.transparent {
+            if usize::from(index) >= palette_colors
+                || transparent.is_some_and(|previous| previous != index)
+            {
+                return Err(GifError::Corrupt);
+            }
+            transparent = Some(index);
+        }
+        info.min_delay_ms = info.min_delay_ms.min(u32::from(frame.delay) * 10);
+        let mut pixels = vec![0; decoder.buffer_size()];
+        decoder
+            .read_into_buffer(&mut pixels)
+            .map_err(|_| GifError::Corrupt)?;
+        if pixels
+            .iter()
+            .any(|index| usize::from(*index) >= palette_colors)
+        {
+            return Err(GifError::Corrupt);
+        }
+    }
+    if info.frames == 0 || decoder.repeat() != Repeat::Infinite {
+        return Err(GifError::Corrupt);
+    }
+    Ok(info)
 }

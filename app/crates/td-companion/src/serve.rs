@@ -12,7 +12,7 @@ use tokio::{
     task::JoinSet,
 };
 
-/// Connection and time limits. Tests shrink them; the Companion uses the defaults.
+/// Connection, time and storage limits. Tests shrink them; the Companion uses the defaults.
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
     /// Open connections. The accept loop waits for a free slot.
@@ -25,6 +25,8 @@ pub struct Limits {
     pub request: Duration,
     /// How long shutdown waits for open requests before dropping their connections.
     pub drain: Duration,
+    /// Bytes of prepared Assets the Companion keeps on disk.
+    pub asset_store_bytes: u64,
 }
 impl Default for Limits {
     fn default() -> Self {
@@ -34,6 +36,7 @@ impl Default for Limits {
             body_read: Duration::from_secs(10),
             request: Duration::from_secs(30),
             drain: Duration::from_secs(5),
+            asset_store_bytes: crate::store::ASSET_STORE_BYTES,
         }
     }
 }

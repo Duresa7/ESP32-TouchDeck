@@ -309,3 +309,72 @@ fn an_empty_or_oversize_file_never_leaves_the_computer() {
     assert_eq!(error.reason(), Some(&AssetReason::Size));
     assert_eq!(device.chunk_bytes(), 0);
 }
+
+#[test]
+fn gif_declaration_must_match_committed_bytes() {
+    let deck = MockDeck::v2();
+    deck.set_gif_capabilities(true);
+    let session = open(&deck);
+    let error = put_asset(&session, &icon(7), AssetFormat::Gif).unwrap_err();
+    assert_eq!(error.reason(), Some(&AssetReason::Format));
+    assert!(list_assets(&session).unwrap().is_empty());
+}
+
+const ONE_PIXEL_GIF: &[u8] = &[
+    0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, 0xff, 0xff, 0xff,
+    0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44,
+    0x01, 0x00, 0x3b,
+];
+
+fn animated_layout(id: &str, tiles: usize) -> td_core::Layout {
+    let tiles: Vec<Value> = (0..tiles)
+        .map(|i| {
+            serde_json::json!({"id":format!("t{i}"),"label":"Gif","row":0,"col":i,"rowSpan":1,"colSpan":1,
+                "icon":null,"asset":format!("sha256:{id}"),"render":"gif","action":{"type":"none"}})
+        })
+        .collect();
+    td_core::Layout::parse(
+        serde_json::json!({"schema":2,"name":"Animated","orientation":"landscape",
+            "pages":[{"kind":"grid","id":"main","title":"Main","rows":1,"cols":8,"tiles":tiles}]})
+        .to_string()
+        .as_bytes(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_page_over_the_animation_budget_is_refused_and_the_stored_layout_stays() {
+    use td_host::gif_normalize::{AnimLimits, Fit, Target, normalize_gif};
+    let deck = MockDeck::v2();
+    deck.set_gif_capabilities(true);
+    let session = open(&deck);
+    let gif = normalize_gif(
+        ONE_PIXEL_GIF,
+        Target {
+            width: 64,
+            height: 64,
+            fit: Fit::Contain,
+        },
+        &AnimLimits {
+            image: (128, 128),
+            min_delay_ms: 100,
+            max_frames: 60,
+            max_frame_pixels_total: 983_040,
+            max_bytes: 262_144,
+        },
+    )
+    .unwrap()
+    .bytes;
+    let id = put_asset(&session, &gif, AssetFormat::Gif).unwrap().id;
+    let fits = animated_layout(&id, 4);
+    td_link::xfer::put_layout(&session, td_core::Orientation::Landscape, &fits).unwrap();
+    let error = td_link::xfer::put_layout(
+        &session,
+        td_core::Orientation::Landscape,
+        &animated_layout(&id, 5),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("animation budget"), "{error}");
+    let stored = td_link::xfer::get_layout(&session, td_core::Orientation::Landscape).unwrap();
+    assert_eq!(stored.data, fits.to_canonical_json());
+}

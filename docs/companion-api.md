@@ -547,7 +547,7 @@ Feature module `assets`. Assets reach a Device only through `layouts.push`, whic
 
 As built in #75:
 
-- `assets.create` takes `app`, `upload` and `catalog` sources. Uploads accept PNG and JPEG images. An expired, consumed or foreign upload returns `upload.not_found`. Catalog picks accept `variant` (`base`, `light`, `dark`), pixel `padding`, RGBA `background` and RGB `tint`. `fit` is `"contain"` (the default: the whole image inside the Tile) or `"cover"` (cropped to a centered square first). The result's `kind` is `tdi1`, 64 by 64, identified by the full SHA-256 of its encoded bytes. A third render while two run gets 429 `limits.exceeded`.
+- `assets.create` takes `app`, `upload` and `catalog` sources. Uploads accept PNG, JPEG and GIF images. GIF headers are admitted without decoding; full GIF validation runs in the preparation Job. An expired, consumed or foreign upload returns `upload.not_found`. Catalog picks accept `variant` (`base`, `light`, `dark`), pixel `padding`, RGBA `background` and RGB `tint`. `fit` is `"contain"` (the default: the whole image inside the Tile) or `"cover"` (cropped to a centered square first). The result's `kind` is `tdi1`, 64 by 64, identified by the full SHA-256 of its encoded bytes. A third render while two run gets 429 `limits.exceeded`.
 - `assets.prune` keeps the Assets that `also_keep` names, that the Companion's stored Layouts for the Device use, and that the Device's own stored Layouts use, as today's `remove_unused_icons` does.
 - `assets.file` reads built-in icons and the Companion's Asset files, kept as `assets/<id>.bin` under its data folder. The generated client returns a `Blob` for it.
 
@@ -1036,7 +1036,8 @@ Features add codes as they land. This list is the starting set.
 | `firmware.rolled_back` | Job error | The Device rolled back to its previous Firmware |
 | `firmware.confirm_timeout` | Job error | The new Firmware didn't confirm in time |
 | `asset.not_found` | 404 | No Asset with that id |
-| `asset.render_failed` | Job error | The image or icon couldn't be rendered |
+| `asset.render_failed` | Job error | The image or icon couldn't be rendered. GIF failures carry `details.reason` (Animated GIF Assets) |
+| `asset.store_full` | 507, Job error | Storing a prepared Asset would pass the Asset store quota and nothing can be swept. `details: {limit, actual, unit: "bytes"}` (Asset store) |
 | `upload.not_found` | 404 | The upload expired or never existed |
 | `job.not_found` | 404 | No Job with that id |
 | `job.not_cancellable` | 409 | The Job's current phase can't be cancelled |
@@ -1278,7 +1279,7 @@ Mock runs capture native delivery in memory. Only test-hook builds register
 `test.pairing_delivery`, which requires a window session and consumes the captures;
 its types appear only in `api.test.gen.ts`.
 
-## Animated GIF contract (implementation follows in #94)
+## Animated GIF Assets
 
 An animated Asset has `kind:"gif"`, media type `image/gif` and an id equal to
 SHA-256 of its normalized encoded bytes. GIF uploads and `assets.render` use the
@@ -1308,7 +1309,9 @@ Firmware independently enforces the same budgets and validates complete Assets.
 
 | Error code | Meaning | `details` |
 | --- | --- | --- |
-| `asset.too_large` | Source or fitted GIF exceeds a bound | `{limit, actual, unit, field}` with numeric limit/actual and field naming the source or capability limit |
+| `asset.too_large` | Source or fitted GIF exceeds a bound | `{limit, actual, unit, field}` with numeric limit/actual and field naming the source or capability limit. The message follows `field`: `gif_frames` and `source_frames` get the copy guide's Too long row, `decoded_rgba` its Decoded source too large row, and every other field its Too large row |
+| `asset.too_short` | A multi-frame loop plays for less than `anim.min_delay_ms` in total | `{field: "duration_ms", limit, actual, unit: "ms"}`; `limit` is `min_delay_ms` and `actual` the loop's length |
+| `asset.render_failed` | The GIF can't be prepared | `{reason}`: `not_gif`, `corrupt`, `timed_out` (the 30-second deadline), `invalid_limits` (the Device's `anim` caps can't be met) or `invalid` (the prepared file failed store admission). The message is always the copy guide's Preparation failed row |
 | `asset.unsupported` | GIF unavailable or encoding unsupported | `{limit, actual, field, reason}`; limit/actual identify the required and observed format or capability, reason retains the wire reason when present |
 | `layout.animation_limit` | A Page exceeds animation count or area | `{page, field, limit, actual}`; field is `page_tiles` or `page_pixels` |
 
@@ -1316,3 +1319,75 @@ These are Job errors for preparation/push failures. Source upload admission
 continues to use the documented HTTP 413 `request.too_large`. Wire `size`,
 `format`, `memory` and `full` remain typed through the API; storage and allocation
 failures must not be reported as generic link text. Raw reasons go under Details.
+
+### GIF preparation and push
+
+`POST /assets` starts `assets.render` with:
+
+```json
+{"source":{"kind":"gif","upload":"<upload id>","device":"<Device id>","target":{"width":128,"height":128,"background":[20,30,40]}},"fit":"contain"}
+```
+
+The source variant requires an upload owned by this session, a connected Device
+and its negotiated GIF capabilities. `target` names the actual Tile canvas in
+pixels and its RGB background. `fit` defaults to `contain`; `cover` crops the
+centre. Width and height are from 1 to 4096. Anything else gives 400
+`request.invalid` with `details.part` `body` before a Job starts. The normalizer
+caps them at the Device's animation canvas. The background fills pixels that turn
+transparent between frames, preventing trails with disposal 1.
+
+The Job consumes the upload once and returns the existing `AssetRef` shape with
+`kind: "gif"` and the fitted width, height, byte count and SHA-256 id. The stored
+file is served as `image/gif`. Cancellation before storage leaves no Asset.
+There are at most two concurrent render Jobs, and only one of them prepares a GIF
+at a time, because one worst-case GIF peaks near 280 MiB of memory. A second GIF
+render Job goes back to `queued` until the first ends, and can be cancelled while
+it waits. A cancelled render stops at its next source frame, fitted frame,
+encoded frame or size attempt, so its slot frees at once. Source input is capped at 16 MiB,
+300 frames, 4096 pixels per side and 64 MiB cumulative full-canvas decoded RGBA.
+The normalizer checks a 30-second cooperative deadline between bounded stages
+and source frames; an expired deadline fails with `asset.render_failed` and
+`details.reason` `timed_out`.
+The decoded cap includes every full source canvas, even for small frame patches:
+a 300-frame 1024-square GIF exceeds it. Fitted RGBA is separately capped at
+64 MiB. Only fully decoded normalized GIFs enter the Asset store.
+
+Device summaries expose optional `anim`, `gif_frames` and `gif_pixels`.
+Absence disables GIF preparation. Before a push sends any Asset, the Companion
+validates each animated Asset's encoding, dimensions, bytes, frame count and
+delay against that Device, then checks each Page's count and canvas area.
+Reusing the same Asset in several Tiles counts once per Tile. A static Tile
+cannot reference a GIF and a GIF Tile cannot reference tdi1. Unsupported Devices
+fail with `asset.unsupported`. A push never silently converts GIFs to static
+images. The link declares the detected Asset format.
+
+`asset.refused` retains Device refusals such as `memory`, `full`, `storage` and
+`busy` in `details.reason`. `format` maps to `asset.unsupported` and `size` to
+`asset.too_large`. A wire size refusal cannot report the missing measurement:
+its `limit` and `actual` are null, `field` is `device_limit` and `reason` is `size`.
+Locally measured limits retain numeric values as specified above. Link timeouts
+remain `device.timeout`. All these failures are visible on the Job.
+
+### Asset store
+
+The Companion keeps every prepared Asset, tdi1 or GIF, as `assets/<id>.bin` in
+its data folder. Together they may use at most 256 MiB: 1024 GIFs at the
+proposed 256 KiB `asset_bytes`, or about 32 000 icons. A fixed quota gives the
+same bound on every disk, and a few Devices' Layouts need far less. When a new
+Asset would pass the quota, the Companion first removes the least recently used
+Assets that nothing needs. It never removes an Asset that:
+
+- a Layout the Companion stores for any Device names,
+- a running Layout push is sending,
+- was stored or read in the last hour. This covers the Asset a render Job just
+  returned and the Assets of a Layout being edited but not yet sent.
+
+Assets left behind by a refit or a removed Tile are swept first, oldest use
+first. Files from an earlier run count as older than anything used since the
+Companion started. If the sweep can't free enough room, the render Job fails
+with `asset.store_full` and the Asset is not stored. Pending uploads are not
+Assets; they have their own limit (Request limits).
+
+The UI fake accepts GIF uploads and produces a fixed normalized 1-by-1 GIF
+placeholder. It does not implement the Rust normalizer or Device admission;
+integration tests run those paths against the Companion and mock Device.
