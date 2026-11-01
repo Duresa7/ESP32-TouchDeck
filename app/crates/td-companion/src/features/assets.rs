@@ -52,6 +52,10 @@ pub enum AssetError {
     RenderFailed(String),
     #[error("Couldn't prepare this GIF. Choose another GIF.")]
     GifFailed { reason: &'static str },
+    #[error(
+        "This PC's Asset store is full. Retry in an hour, or remove Tiles you don't use and send the Layout."
+    )]
+    StoreFull { limit: u64, actual: u64 },
     #[error(transparent)]
     Device(#[from] DeviceLinkError),
     #[error(transparent)]
@@ -68,6 +72,7 @@ impl ApiError for AssetError {
         "asset.not_found",
         "upload.not_found",
         "asset.render_failed",
+        "asset.store_full",
         "device.not_found",
         "device.not_connected",
         "device.timeout",
@@ -82,6 +87,7 @@ impl ApiError for AssetError {
             | Self::Refused { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             Self::NotFound | Self::UploadNotFound => StatusCode::NOT_FOUND,
             Self::RenderFailed(_) | Self::GifFailed { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::StoreFull { .. } => StatusCode::INSUFFICIENT_STORAGE,
             Self::Device(e) => e.status(),
             Self::Job(e) => e.status(),
             Self::Common(e) => e.status(),
@@ -96,6 +102,7 @@ impl ApiError for AssetError {
             Self::NotFound => "asset.not_found",
             Self::UploadNotFound => "upload.not_found",
             Self::RenderFailed(_) | Self::GifFailed { .. } => "asset.render_failed",
+            Self::StoreFull { .. } => "asset.store_full",
             Self::Device(e) => e.code(),
             Self::Job(e) => e.code(),
             Self::Common(e) => e.code(),
@@ -109,6 +116,9 @@ impl ApiError for AssetError {
             ),
             Self::Refused { reason } => Some(serde_json::json!({"reason":reason})),
             Self::GifFailed { reason } => Some(serde_json::json!({"reason":reason})),
+            Self::StoreFull { limit, actual } => {
+                Some(serde_json::json!({"limit":limit,"actual":actual,"unit":"bytes"}))
+            }
             Self::Device(e) => e.details(),
             Self::Job(e) => e.details(),
             Self::Common(e) => e.details(),
@@ -359,10 +369,7 @@ fn render(
             )
             .map_err(gif_error)?;
             job.check()?;
-            let id = ctx
-                .assets
-                .put(&output.bytes)
-                .map_err(|_| AssetError::GifFailed { reason: "invalid" })?;
+            let id = ctx.assets.put(&output.bytes).map_err(stored)?;
             job.progress(&RenderProgress {
                 frames_done: output.frames as u32,
                 frames_total: output.frames as u32,
@@ -423,7 +430,7 @@ fn render(
     };
     let file = icon_pack::pack_any(&image);
     job.check()?;
-    let id = ctx.assets.put(&file).map_err(|_| CommonError::Internal)?;
+    let id = ctx.assets.put(&file).map_err(stored)?;
     job.progress(&progress(1));
     Ok(AssetRef {
         id,
@@ -743,6 +750,15 @@ fn gif_error(error: td_host::gif_normalize::GifError) -> AssetError {
         E::TimedOut => AssetError::GifFailed {
             reason: "timed_out",
         },
+    }
+}
+
+fn stored(error: crate::store::PutError) -> AssetError {
+    use crate::store::PutError as E;
+    match error {
+        E::Invalid => AssetError::GifFailed { reason: "invalid" },
+        E::Full { limit, actual } => AssetError::StoreFull { limit, actual },
+        E::Io(_) => CommonError::Internal.into(),
     }
 }
 

@@ -329,6 +329,7 @@ fn push(
     job: &JobHandle<PushJob>,
 ) -> Result<PushReport, Stop> {
     let link = |e: XferError| Stop::from(DeviceLinkError::from_xfer(e));
+    let _pin = ctx.assets.pin(td_host::icons::asset_ids(layout));
     let report = ctx.links.with(device, |session| {
         // The Device may have changed between the request's check and this Job.
         if let Some(expected) = &expected {

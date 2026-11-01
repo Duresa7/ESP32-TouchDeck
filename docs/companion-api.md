@@ -923,6 +923,7 @@ Features add codes as they land. This list is the starting set.
 | `firmware.confirm_timeout` | Job error | The new Firmware didn't confirm in time |
 | `asset.not_found` | 404 | No Asset with that id |
 | `asset.render_failed` | Job error | The image or icon couldn't be rendered. GIF failures carry `details.reason` (Animated GIF Assets) |
+| `asset.store_full` | 507, Job error | Storing a prepared Asset would pass the Asset store quota and nothing can be swept. `details: {limit, actual, unit: "bytes"}` (Asset store) |
 | `upload.not_found` | 404 | The upload expired or never existed |
 | `job.not_found` | 404 | No Job with that id |
 | `job.not_cancellable` | 409 | The Job's current phase can't be cancelled |
@@ -1248,6 +1249,26 @@ images. The link declares the detected Asset format.
 its `limit` and `actual` are null, `field` is `device_limit` and `reason` is `size`.
 Locally measured limits retain numeric values as specified above. Link timeouts
 remain `device.timeout`. All these failures are visible on the Job.
+
+### Asset store
+
+The Companion keeps every prepared Asset, tdi1 or GIF, as `assets/<id>.bin` in
+its data folder. Together they may use at most 256 MiB: 1024 GIFs at the
+proposed 256 KiB `asset_bytes`, or about 32 000 icons. A fixed quota gives the
+same bound on every disk, and a few Devices' Layouts need far less. When a new
+Asset would pass the quota, the Companion first removes the least recently used
+Assets that nothing needs. It never removes an Asset that:
+
+- a Layout the Companion stores for any Device names,
+- a running Layout push is sending,
+- was stored or read in the last hour. This covers the Asset a render Job just
+  returned and the Assets of a Layout being edited but not yet sent.
+
+Assets left behind by a refit or a removed Tile are swept first, oldest use
+first. Files from an earlier run count as older than anything used since the
+Companion started. If the sweep can't free enough room, the render Job fails
+with `asset.store_full` and the Asset is not stored. Pending uploads are not
+Assets; they have their own limit (Request limits).
 
 The UI fake accepts GIF uploads and produces a fixed normalized 1-by-1 GIF
 placeholder. It does not implement the Rust normalizer or Device admission;

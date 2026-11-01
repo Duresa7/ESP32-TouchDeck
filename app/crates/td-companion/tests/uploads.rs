@@ -398,3 +398,40 @@ async fn gif_target_must_be_a_real_canvas() {
         assert_eq!(body["details"]["part"], "body");
     }
 }
+
+#[tokio::test]
+async fn a_full_asset_store_refuses_with_a_typed_error() {
+    let td = TestCompanion::start_with(td_companion::Limits {
+        asset_store_bytes: td_host::icon_pack::FILE_BYTES as u64,
+        ..Default::default()
+    })
+    .await;
+    let first = upload(&td).await;
+    let done = render(&td, first["id"].as_str().unwrap(), "contain").await;
+    assert_eq!(done.state, JobState::Succeeded, "{done:?}");
+    let image = image::RgbaImage::from_pixel(64, 64, image::Rgba([0, 0, 255, 255]));
+    let mut png = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut png, image::ImageFormat::Png).unwrap();
+    let second: Value = td
+        .raw()
+        .post("/api/v1/uploads")
+        .bearer_auth(&td.token)
+        .header("content-type", "image/png")
+        .body(png.into_inner())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let error = render(&td, second["id"].as_str().unwrap(), "contain")
+        .await
+        .error
+        .unwrap();
+    assert_eq!(error.code, "asset.store_full");
+    let bytes = td_host::icon_pack::FILE_BYTES;
+    assert_eq!(
+        error.details,
+        Some(json!({"limit":bytes,"actual":2 * bytes,"unit":"bytes"}))
+    );
+}
