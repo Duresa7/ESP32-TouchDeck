@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       ref:
-        description: Commit or tag to check (empty means the triggering ref)
+        description: Commit or tag on main to check (empty means the triggering ref)
         type: string
         default: ""
       os:
@@ -40,6 +40,17 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify an explicit ref is on main
+        if: inputs.ref != ''
+        shell: pwsh
+        run: |
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          git merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE) { throw 'An explicit app ref must be a commit on origin/main.' }
 
       # Windows builds Rust on a Dev Drive: ReFS, with Defender scanning it asynchronously.
       # It mounts beside the checkout so the drive's protected System Volume Information folder stays out of the Rust cache.
@@ -79,7 +90,6 @@ jobs:
         with:
           # On Windows, cache the Dev Drive folder itself, not the app/target junction that points at it.
           workspaces: ${{ runner.os == 'Windows' && 'app -> ../../dev-drive/target' || 'app' }}
-          # Only a push to main saves. Pull requests would evict main's cache, and a release dry run may check out any ref.
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
