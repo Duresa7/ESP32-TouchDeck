@@ -83,18 +83,21 @@ static icon_t *load(const char *id)
     } else {
         snprintf(path, sizeof path, "/storage/icons/%s.bin", id);
     }
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) return NULL;
     struct stat st;
-    if (stat(path, &st) != 0) {
+    if (fstat(fileno(f), &st) != 0) {
+        fclose(f);
         return NULL;
     }
     if (st.st_size != ICON_FILE) {
         ESP_LOGW(TAG, "icon %s is %ld bytes, not %d", id, (long)st.st_size, ICON_FILE);
+        fclose(f);
         return NULL;
     }
     icon_t *entry = heap_caps_calloc(1, sizeof *entry, MALLOC_CAP_SPIRAM);
-    FILE *f = entry != NULL ? fopen(path, "rb") : NULL;
-    if (f == NULL) {
-        heap_caps_free(entry);
+    if (entry == NULL) {
+        fclose(f);
         return NULL;
     }
     uint8_t header[ICON_HEADER];
