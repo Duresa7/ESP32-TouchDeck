@@ -2,7 +2,6 @@
 mod cliproxy;
 mod custom;
 pub use custom::CommandApproval;
-mod proxmox;
 pub mod secrets;
 pub mod this_pc;
 use serde::{Deserialize, Serialize};
