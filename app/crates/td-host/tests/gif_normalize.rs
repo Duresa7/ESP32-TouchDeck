@@ -731,3 +731,21 @@ fn store_admission_accepts_every_normalizer_output() {
     }
     assert_eq!(refused, Vec::<usize>::new());
 }
+
+#[test]
+fn stops_at_the_next_frame_once_cancelled() {
+    let input = source(16, 16, &vec![frame(16, 16, 1, 10); 20]);
+    let asked = std::cell::Cell::new(0);
+    let result = td_host::gif_normalize::normalize_gif_until(
+        &input,
+        target(),
+        &limits(),
+        [0, 0, 0],
+        &|| {
+            asked.set(asked.get() + 1);
+            asked.get() > 2
+        },
+    );
+    assert_eq!(result.unwrap_err(), GifError::Cancelled);
+    assert_eq!(asked.get(), 3);
+}

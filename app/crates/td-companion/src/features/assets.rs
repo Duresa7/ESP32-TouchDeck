@@ -354,7 +354,8 @@ fn render(
                 .uploads
                 .take(owner, &upload, ctx.clock.now())
                 .ok_or(AssetError::UploadNotFound)?;
-            let output = td_host::gif_normalize::normalize_gif_with_background(
+            let _turn = gif_turn(ctx, job)?;
+            let output = td_host::gif_normalize::normalize_gif_until(
                 &bytes,
                 td_host::gif_normalize::Target {
                     width: target.width,
@@ -366,8 +367,12 @@ fn render(
                 },
                 &limits,
                 target.background,
+                &|| job.check().is_err(),
             )
-            .map_err(gif_error)?;
+            .map_err(|error| match error {
+                td_host::gif_normalize::GifError::Cancelled => Stop::Cancelled,
+                other => gif_error(other).into(),
+            })?;
             job.check()?;
             let id = ctx.assets.put(&output.bytes).map_err(stored)?;
             job.progress(&RenderProgress {
@@ -750,6 +755,28 @@ fn gif_error(error: td_host::gif_normalize::GifError) -> AssetError {
         E::TimedOut => AssetError::GifFailed {
             reason: "timed_out",
         },
+        E::Cancelled => JobError::Cancelled.into(),
+    }
+}
+
+/// Waits, queued and cancellable, until no other GIF is being prepared.
+fn gif_turn<'a>(
+    ctx: &'a Ctx,
+    job: &JobHandle<RenderJob>,
+) -> Result<parking_lot::MutexGuard<'a, ()>, Stop> {
+    if let Some(turn) = ctx.gif_turn.try_lock() {
+        return Ok(turn);
+    }
+    job.queued();
+    loop {
+        job.check()?;
+        if let Some(turn) = ctx
+            .gif_turn
+            .try_lock_for(std::time::Duration::from_millis(50))
+        {
+            job.running();
+            return Ok(turn);
+        }
     }
 }
 

@@ -1225,7 +1225,11 @@ transparent between frames, preventing trails with disposal 1.
 The Job consumes the upload once and returns the existing `AssetRef` shape with
 `kind: "gif"` and the fitted width, height, byte count and SHA-256 id. The stored
 file is served as `image/gif`. Cancellation before storage leaves no Asset.
-There are at most two concurrent render Jobs. Source input is capped at 16 MiB,
+There are at most two concurrent render Jobs, and only one of them prepares a GIF
+at a time, because one worst-case GIF peaks near 280 MiB of memory. A second GIF
+render Job goes back to `queued` until the first ends, and can be cancelled while
+it waits. A cancelled render stops at its next source frame, fitted frame,
+encoded frame or size attempt, so its slot frees at once. Source input is capped at 16 MiB,
 300 frames, 4096 pixels per side and 64 MiB cumulative full-canvas decoded RGBA.
 The normalizer checks a 30-second cooperative deadline between bounded stages
 and source frames; an expired deadline fails with `asset.render_failed` and

@@ -41,6 +41,8 @@ pub struct Ctx {
     pub assets: crate::store::AssetStore,
     pub catalog: Arc<td_host::catalog::Catalog>,
     pub(crate) uploads: crate::features::uploads::Uploads,
+    /// Held while a GIF is prepared. One worst-case GIF peaks near 280 MiB.
+    pub(crate) gif_turn: Arc<Mutex<()>>,
     auth: Arc<Mutex<Auth>>,
     pub(crate) clock: Clock,
     pub(crate) shutdown: tokio::sync::watch::Sender<bool>,
@@ -109,6 +111,7 @@ impl Ctx {
                 Box::new(td_host::catalog::HttpFetcher),
             )),
             uploads: Default::default(),
+            gif_turn: Arc::default(),
             devices,
             events,
             auth,

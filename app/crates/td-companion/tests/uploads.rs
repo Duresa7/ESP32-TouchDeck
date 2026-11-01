@@ -4,6 +4,7 @@ use td_companion::{
     features::{
         assets::{AssetPath, Create, CreateAsset, File, OnDevice},
         devices::DevicePath,
+        jobs::{Cancel, JobPath},
         layouts::{LayoutBody, LayoutPath, Push},
     },
     jobs::JobState,
@@ -434,4 +435,160 @@ async fn a_full_asset_store_refuses_with_a_typed_error() {
         error.details,
         Some(json!({"limit":bytes,"actual":2 * bytes,"unit":"bytes"}))
     );
+}
+
+fn slow_gif() -> Vec<u8> {
+    let side = 400u16;
+    let mut seed = 0x2545_f491_u32;
+    let mut bytes = Vec::new();
+    {
+        let palette = [0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255];
+        let mut encoder = gif::Encoder::new(&mut bytes, side, side, &palette).unwrap();
+        encoder.set_repeat(gif::Repeat::Infinite).unwrap();
+        for _ in 0..100 {
+            let buffer = (0..usize::from(side) * usize::from(side))
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    (seed >> 30) as u8
+                })
+                .collect();
+            encoder
+                .write_frame(&gif::Frame {
+                    width: side,
+                    height: side,
+                    delay: 6,
+                    buffer: std::borrow::Cow::Owned(buffer),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+    }
+    bytes
+}
+
+#[tokio::test]
+async fn a_cancelled_gif_render_frees_its_slot_at_once() {
+    let td = TestCompanion::start().await;
+    let device = gif_device(&td).await;
+    let source = slow_gif();
+    let mut running = Vec::new();
+    for _ in 0..2 {
+        let upload = gif_upload(&td, source.clone()).await;
+        let job: td_companion::jobs::Job =
+            serde_json::from_value(prepare_request(&td, &upload, &device).await).unwrap();
+        running.push(job);
+    }
+    let third = gif_upload(&td, source).await;
+    let refused = td
+        .raw()
+        .post("/api/v1/assets")
+        .bearer_auth(&td.token)
+        .json(&gif_request(&third, &device, 128, 128))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 429);
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let cancelled_at = std::time::Instant::now();
+    for job in &running {
+        td.call::<Cancel>(
+            JobPath {
+                job: job.id.clone(),
+            },
+            NoQuery,
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    for job in &running {
+        assert_eq!(td.wait(job).await.state, JobState::Cancelled);
+    }
+    let freed = cancelled_at.elapsed();
+    assert!(
+        freed < std::time::Duration::from_secs(2),
+        "slots freed after {freed:?}"
+    );
+    let accepted: td_companion::jobs::Job =
+        serde_json::from_value(prepare_request(&td, &third, &device).await).unwrap();
+    td.call::<Cancel>(
+        JobPath {
+            job: accepted.id.clone(),
+        },
+        NoQuery,
+        (),
+    )
+    .await
+    .unwrap();
+    assert_eq!(td.wait(&accepted).await.state, JobState::Cancelled);
+}
+
+async fn prepare_request(td: &TestCompanion, upload: &str, device: &str) -> Value {
+    let response = td
+        .raw()
+        .post("/api/v1/assets")
+        .bearer_auth(&td.token)
+        .json(&gif_request(upload, device, 128, 128))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 202);
+    response.json().await.unwrap()
+}
+async fn job_state(td: &TestCompanion, job: &td_companion::jobs::Job) -> JobState {
+    td.call::<td_companion::features::jobs::Get>(
+        JobPath {
+            job: job.id.clone(),
+        },
+        NoQuery,
+        (),
+    )
+    .await
+    .unwrap()
+    .state
+}
+
+#[tokio::test]
+async fn one_gif_prepares_at_a_time_and_the_next_waits_queued() {
+    let td = TestCompanion::start().await;
+    let device = gif_device(&td).await;
+    let source = slow_gif();
+    let mut jobs = Vec::new();
+    for _ in 0..2 {
+        let upload = gif_upload(&td, source.clone()).await;
+        let job: td_companion::jobs::Job =
+            serde_json::from_value(prepare_request(&td, &upload, &device).await).unwrap();
+        jobs.push(job);
+    }
+    let (first, second) = (&jobs[0], &jobs[1]);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while job_state(&td, second).await != JobState::Queued {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the second GIF waits while the first prepares");
+    assert_eq!(job_state(&td, first).await, JobState::Running);
+    let cancel = |job: &td_companion::jobs::Job| {
+        td.call::<Cancel>(
+            JobPath {
+                job: job.id.clone(),
+            },
+            NoQuery,
+            (),
+        )
+    };
+    cancel(first).await.unwrap();
+    assert_eq!(td.wait(first).await.state, JobState::Cancelled);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while job_state(&td, second).await != JobState::Running {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the second GIF starts once the first ends");
+    cancel(second).await.unwrap();
+    assert_eq!(td.wait(second).await.state, JobState::Cancelled);
 }

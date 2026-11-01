@@ -87,6 +87,7 @@ pub enum GifError {
     },
     InvalidLimits,
     TimedOut,
+    Cancelled,
 }
 
 impl fmt::Display for GifError {
@@ -101,6 +102,7 @@ impl fmt::Display for GifError {
             Self::TooShort { .. } => "loop too short",
             Self::InvalidLimits => "invalid limits",
             Self::TimedOut => "timed out",
+            Self::Cancelled => "cancelled",
         })
     }
 }
@@ -135,7 +137,23 @@ pub fn normalize_gif_with_background(
     limits: &AnimLimits,
     background: [u8; 3],
 ) -> Result<NormalizedGif, GifError> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    normalize_gif_until(bytes, target, limits, background, &|| false)
+}
+
+/// [`normalize_gif_with_background`] that stops with [`GifError::Cancelled`] once `cancelled`
+/// returns true. It is asked between source frames, fitted frames, encoded frames and size
+/// attempts, the same points as the 30-second deadline.
+pub fn normalize_gif_until(
+    bytes: &[u8],
+    target: Target,
+    limits: &AnimLimits,
+    background: [u8; 3],
+    cancelled: &dyn Fn() -> bool,
+) -> Result<NormalizedGif, GifError> {
+    let stop = Stop {
+        deadline: std::time::Instant::now() + std::time::Duration::from_secs(30),
+        cancelled,
+    };
     if target.width == 0
         || target.height == 0
         || limits.image.0 == 0
@@ -145,21 +163,24 @@ pub fn normalize_gif_with_background(
     {
         return Err(GifError::InvalidLimits);
     }
-    let source = decode(bytes, deadline)?;
+    let source = decode(bytes, &stop)?;
     let timeline = resample(&source, limits)?;
     let mut width = target.width.min(limits.image.0).min(SOURCE_SIDE as u16);
     let mut height = target.height.min(limits.image.1).min(SOURCE_SIDE as u16);
     let mut smallest = usize::MAX;
     loop {
-        check_deadline(deadline)?;
+        stop.check()?;
         let pixels = usize::from(width) * usize::from(height) * timeline.len();
         if pixels <= limits.max_frame_pixels_total && pixels <= SOURCE_RGBA / 4 {
-            let fitted: Vec<_> = timeline
+            let fitted = timeline
                 .iter()
-                .map(|&(i, _)| fit(&source[i].pixels, width, height, target.fit))
-                .collect();
-            let bytes = encode(&fitted, &timeline, width, height, background)?;
-            check_deadline(deadline)?;
+                .map(|&(i, _)| {
+                    stop.check()?;
+                    Ok(fit(&source[i].pixels, width, height, target.fit))
+                })
+                .collect::<Result<Vec<_>, GifError>>()?;
+            let bytes = encode(&fitted, &timeline, width, height, background, &stop)?;
+            stop.check()?;
             smallest = smallest.min(bytes.len());
             if bytes.len() <= limits.max_bytes {
                 let delays_ms: Vec<_> = timeline.iter().map(|&(_, cs)| cs * 10).collect();
@@ -207,7 +228,7 @@ fn bound(kind: SourceLimit, actual: usize, limit: usize) -> Result<(), GifError>
     }
 }
 
-fn decode(bytes: &[u8], deadline: std::time::Instant) -> Result<Vec<Composed>, GifError> {
+fn decode(bytes: &[u8], stop: &Stop) -> Result<Vec<Composed>, GifError> {
     bound(SourceLimit::Bytes, bytes.len(), SOURCE_BYTES)?;
     if !bytes.starts_with(b"GIF87a") && !bytes.starts_with(b"GIF89a") {
         return Err(GifError::NotGif);
@@ -224,7 +245,7 @@ fn decode(bytes: &[u8], deadline: std::time::Instant) -> Result<Vec<Composed>, G
     let mut canvas = RgbaImage::new(w as u32, h as u32);
     let mut frames = Vec::new();
     while let Some(info) = decoder.next_frame_info().map_err(|_| GifError::Corrupt)? {
-        check_deadline(deadline)?;
+        stop.check()?;
         bound(SourceLimit::Frames, frames.len() + 1, SOURCE_FRAMES)?;
         bound(SourceLimit::Width, usize::from(info.width), SOURCE_SIDE)?;
         bound(SourceLimit::Height, usize::from(info.height), SOURCE_SIDE)?;
@@ -358,6 +379,7 @@ fn encode(
     w: u16,
     h: u16,
     background: [u8; 3],
+    stop: &Stop,
 ) -> Result<Vec<u8>, GifError> {
     let mut clear = vec![true; usize::from(w) * usize::from(h)];
     for image in images {
@@ -456,6 +478,7 @@ fn encode(
             .set_repeat(Repeat::Infinite)
             .map_err(|_| GifError::Corrupt)?;
         for (image, &(_, delay)) in images.iter().zip(timeline) {
+            stop.check()?;
             let buffer: Vec<_> = shown(image, &clear, background)
                 .map(|rgb| rgb.map_or(0, |rgb| indices[&key(rgb)]))
                 .collect();
@@ -487,11 +510,19 @@ fn shown<'a>(
     })
 }
 
-fn check_deadline(deadline: std::time::Instant) -> Result<(), GifError> {
-    if std::time::Instant::now() >= deadline {
-        Err(GifError::TimedOut)
-    } else {
-        Ok(())
+struct Stop<'a> {
+    deadline: std::time::Instant,
+    cancelled: &'a dyn Fn() -> bool,
+}
+impl Stop<'_> {
+    fn check(&self) -> Result<(), GifError> {
+        if (self.cancelled)() {
+            Err(GifError::Cancelled)
+        } else if std::time::Instant::now() >= self.deadline {
+            Err(GifError::TimedOut)
+        } else {
+            Ok(())
+        }
     }
 }
 
