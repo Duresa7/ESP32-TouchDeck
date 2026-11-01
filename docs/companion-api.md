@@ -621,6 +621,117 @@ The Companion's live router (`td_companion::live`) reads each connected v2 Devic
 
 Each Integration's `status.delivery` counts the values each Device accepted and carries the last refusal.
 
+#### Custom HTTP and command
+
+`custom` starts with `{enabled: false, sources: []}` and persists non-secret
+settings in `custom.json`, beside `sources.json`. The Integrations form exposes
+`sources` as a JSON editor. Unknown fields are rejected. Each of at most 16
+sources has `{id, name, interval_s, kind, input}`:
+
+- `id`: a unique `[a-z0-9_-]+` stream id, at most 48 bytes.
+- `name`: a nonempty display name, at most 128 bytes.
+- `interval_s`: an integer from 1 to 3600.
+- `kind`: `number` or `text`. Streams report `numeric` or `text`, with no unit.
+- `input`: one of the shapes below. `account` is always the empty string.
+
+HTTP example (GET is the only method; there is no configurable method field):
+
+```json
+{
+  "enabled": true,
+  "sources": [{
+    "id": "temperature",
+    "name": "Temperature",
+    "interval_s": 5,
+    "kind": "number",
+    "input": {
+      "type": "http",
+      "url": "https://example.invalid/metrics",
+      "value_path": "$.readings[0].value",
+      "headers": {"Authorization": "temperature_auth"},
+      "tls_pin": null
+    }
+  }]
+}
+```
+
+`headers` maps HTTP header names to unique vault field ids, **never header
+values**. Saving settings creates the corresponding write-only secret controls.
+Write each value through `integrations.secret_put`. Values are bound to the
+configured URL's origin and the source's `tls_pin`. They are deleted when the
+field is removed, the origin changes, or the pin is added, changed or cleared, so
+a new pin never receives a secret entered under the old trust. Same-origin
+path changes retain them. Because of that, a `text` source pointed at a
+same-origin endpoint that echoes request headers can read its own secret back as a
+live value. This is accepted: the user configures both the endpoint and the
+secret. Credentials use the existing `credential_transport`
+policy: HTTPS, or an explicitly typed loopback/private-address HTTP exception.
+URLs cannot contain user information, query strings or fragments; put credentials
+in secret headers. Host, Content-Length, Transfer-Encoding and Connection cannot
+be overridden. Header values cannot contain control characters.
+
+HTTP sources use the shared `Fetch::request` transport described under Proxmox:
+one 10-second deadline covering connect, TLS, headers and the whole body, a 1 MiB
+body limit, and no redirects. Without a pin, TLS uses the platform verifier.
+`tls_pin`, when set, is exactly 64 hexadecimal digits representing the server leaf
+certificate's SHA-256 fingerprint, and needs an `https://` URL; a pin with an
+`http://` URL is rejected with `integration.config_invalid` and an issue on the
+`sources` path. With a pin, that leaf certificate is the only one accepted,
+including a self-signed one; a different certificate is rejected even if the
+system trusts it. TLS handshake signatures are still verified. No global
+verification setting is changed. Certificate rotation requires updating the pin.
+
+The value path grammar is `$` followed by `.key` or `[index]` segments, with at
+most 32 segments. Keys use ASCII letters, digits and underscores and cannot start
+with a digit; indexes are unsigned decimal integers. For example,
+`$.a.b[0].c`. Wildcards, recursive descent, filters, slices and quoted keys are
+unsupported. Missing keys, wrong container types and out-of-range indexes are
+errors. Number values must be JSON numbers, finite and within ±1e9; strings such
+as `"42"` are not coerced. Text values must be JSON strings of at most 4096 bytes.
+
+Command input is `{type: "command", program: <absolute path>, args: [<string>],
+value_path: <path or null>}`. Windows accepts executable `.exe` and `.com` paths,
+not batch files. Arguments are passed directly, without a shell. There is no
+stdin, stderr is discarded, stdout must be UTF-8 and is capped at 64 KiB. The
+command runs in its own Windows Job object (on Unix, its own process group). When
+the run ends, on success, timeout (10 s) or oversized output, every process in it
+is stopped, including background processes the command started, and the command
+is reaped. Output is complete when stdout closes, so a background process that
+keeps stdout open makes the run time out at 10 s. A value path
+parses stdout as JSON using the same rules. With `value_path: null`, trimmed
+stdout is parsed as a number or used as text. Programs inherit the Companion's
+working folder and environment; do not put credentials in command arguments.
+
+Commands reuse the native approval service and `approvals.list`, with kind
+`custom` and a synthetic `custom` context in the Device field. No API session,
+including the Electron window, can grant approval. The hash covers the exact
+program, arguments, action kind, working folder and shell setting. Run once
+permits one collection before the pending request's five-minute deadline; an
+unused Run once past that deadline asks again. Always allow persists through the
+existing grant store and can be revoked with `actions.allowed_remove`, after
+which the next collection asks again. Argument changes require approval. Denied or expired
+requests never run; their decisions remain blocked for the Companion session.
+Restart the Companion to request the same denied command again. The Companion keeps
+at most 256 of these answers. When the list is full, a new command drops the oldest
+answer, so it can still ask; a command whose answer was dropped asks again.
+While a source waits for approval it isn't failing: it rechecks every second
+without backing off, so a Run once answer is used well before its deadline.
+
+Polling is serial within the Integration. Manual refresh and configuration
+changes preserve a one-second request floor. Each failed source backs off
+exponentially, capped at one hour. Waiting for approval doesn't count as a failure. The last good value remains until its Device
+TTL expires. Successful samples have rising sequence numbers and a TTL of three
+times the configured interval, clamped to 1000–60000 ms. Disabling clears live
+output. Presets follow source order: `{name} value`, then `{name} graph` for each
+number source. Text has no Presets because current Firmware advertises
+`text_bytes: 0`; text Tiles remain a follow-up.
+
+Errors use fixed messages for access refusal, timeout, oversized response,
+certificate failure, redirects, invalid values and command failure. Upstream
+bodies, transport diagnostics and stdout/stderr are never included in status,
+logs or API responses. Values are delivered internally through `readings()` and
+`live()`.
+
 #### Proxmox
 
 `proxmox` reads only `GET /api2/json/cluster/resources`. Config is
@@ -650,8 +761,11 @@ a self-signed certificate, including its name and validity period. A wrong pin
 fails even for a publicly trusted certificate. Renewing the certificate requires
 updating the pin. Certificate checking is never disabled globally.
 
-The shared `Fetch::request(GetRequest)` seam supplies a GET-only request with an
-arbitrary authorization header and optional certificate pin. Production uses a
+The shared `Fetch::request(GetRequest)` seam supplies a GET-only request with
+secret headers (Proxmox sends `Authorization`; Custom sends its configured headers)
+and an optional certificate pin. Header values are marked sensitive. A request
+with headers must pass `credential_transport`. A 3xx reply is a redirect error and
+isn't followed. Production uses a
 per-request reqwest/rustls client because ureq's supported configuration does not
 expose a custom verifier. Redirects and ambient proxies are disabled. Each
 request carries one deadline, 10 seconds after the poll starts, covering connect,

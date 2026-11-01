@@ -368,6 +368,29 @@ async fn local_stub_accounts_revision_and_wire_outputs_are_safe() {
     server.abort();
     let _ = server.await;
 }
+
+#[tokio::test]
+async fn custom_list_and_get_publish_schema_and_number_presets() {
+    let td = TestCompanion::start().await;
+    assert!(
+        td.call::<List>((), NoQuery, ())
+            .await
+            .unwrap()
+            .iter()
+            .any(|s| s.id == "custom")
+    );
+    let path = || IntegrationPath {
+        integration: "custom".into(),
+    };
+    assert_eq!(
+        td.call::<Get>(path(), NoQuery, ()).await.unwrap().config,
+        json!({"enabled":false,"sources":[]})
+    );
+    let view = td.call::<ConfigPut>(path(), NoQuery, json!({"enabled":false,"sources":[{"id":"temperature","name":"Temperature","kind":"number","interval_s":1,"input":{"type":"http","url":"https://example.invalid/metrics","value_path":"$.value"}}]})).await.unwrap();
+    assert_eq!(view.summary.presets.len(), 2);
+    assert_eq!(view.summary.streams[0].id, "temperature");
+}
+
 #[tokio::test]
 async fn proxmox_is_listed_and_has_a_safe_config_view() {
     let td = TestCompanion::start().await;

@@ -11,7 +11,7 @@ pub const MAX_BODY: usize = 1024 * 1024;
 pub const TIMEOUT: Duration = Duration::from_secs(10);
 pub struct GetRequest<'a> {
     pub url: &'a str,
-    pub authorization: &'a str,
+    pub headers: &'a [(String, String)],
     pub tls_pin: Option<[u8; 32]>,
     pub deadline: Instant,
 }
@@ -21,6 +21,7 @@ pub enum FetchError {
     Timeout,
     TooLarge,
     Tls,
+    Redirect,
     Transport,
 }
 
@@ -92,8 +93,10 @@ fn is_tls_error(error: &(dyn std::error::Error + 'static)) -> bool {
     error.source().is_some_and(is_tls_error)
 }
 pub fn get(request: &GetRequest<'_>) -> Result<String, FetchError> {
-    crate::integrations::secrets::credential_transport(request.url)
-        .map_err(|_| FetchError::Transport)?;
+    if !request.headers.is_empty() {
+        crate::integrations::secrets::credential_transport(request.url)
+            .map_err(|_| FetchError::Transport)?;
+    }
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let verifier = PinnedVerifier {
         platform: rustls_platform_verifier::Verifier::new(provider.clone())
@@ -118,26 +121,32 @@ pub fn get(request: &GetRequest<'_>) -> Result<String, FetchError> {
         .no_proxy()
         .build()
         .map_err(|_| FetchError::Transport)?;
-    let mut authorization = reqwest::header::HeaderValue::from_str(request.authorization)
-        .map_err(|_| FetchError::Transport)?;
-    authorization.set_sensitive(true);
-    let response = client
+    let mut builder = client
         .get(request.url)
         .timeout(remaining)
-        .header(reqwest::header::AUTHORIZATION, authorization)
-        .header(reqwest::header::ACCEPT, "application/json")
-        .send()
-        .map_err(|e| {
-            if e.is_timeout() {
-                FetchError::Timeout
-            } else if is_tls_error(&e) {
-                FetchError::Tls
-            } else {
-                FetchError::Transport
-            }
-        })?;
+        .header(reqwest::header::ACCEPT, "application/json");
+    for (name, value) in request.headers {
+        let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+            .map_err(|_| FetchError::Transport)?;
+        let mut value =
+            reqwest::header::HeaderValue::from_str(value).map_err(|_| FetchError::Transport)?;
+        value.set_sensitive(true);
+        builder = builder.header(name, value);
+    }
+    let response = builder.send().map_err(|e| {
+        if e.is_timeout() {
+            FetchError::Timeout
+        } else if is_tls_error(&e) {
+            FetchError::Tls
+        } else {
+            FetchError::Transport
+        }
+    })?;
     if matches!(response.status().as_u16(), 401 | 403) {
         return Err(FetchError::Unauthorized);
+    }
+    if response.status().is_redirection() {
+        return Err(FetchError::Redirect);
     }
     if !response.status().is_success() {
         return Err(FetchError::Transport);
@@ -218,7 +227,7 @@ mod tests {
                     "https://localhost:{}/api2/json/cluster/resources",
                     address.port()
                 ),
-                authorization: "fixture-private-value",
+                headers: &[("Authorization".into(), "fixture-private-value".into())],
                 tls_pin: match mode {
                     0 => None,
                     1 => Some([0; 32]),
@@ -245,7 +254,7 @@ mod tests {
         assert_eq!(
             get(&GetRequest {
                 url: &format!("https://{address}"),
-                authorization: "fixture-private-value",
+                headers: &[("Authorization".into(), "fixture-private-value".into())],
                 tls_pin: None,
                 deadline: Instant::now() + TIMEOUT,
             }),
@@ -271,7 +280,7 @@ mod tests {
     fn fetch(url: &str, timeout: Duration) -> Result<String, FetchError> {
         get(&GetRequest {
             url,
-            authorization: "fixture-private-value",
+            headers: &[("Authorization".into(), "fixture-private-value".into())],
             tls_pin: None,
             deadline: Instant::now() + timeout,
         })
@@ -357,7 +366,7 @@ mod tests {
         let result = fetch(&url, Duration::from_secs(5));
         done.store(true, Ordering::SeqCst);
         assert!(!hit.join().unwrap());
-        assert_eq!(result, Err(FetchError::Transport));
+        assert_eq!(result, Err(FetchError::Redirect));
     }
 
     #[test]

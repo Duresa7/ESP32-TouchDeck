@@ -1165,6 +1165,37 @@ when reduced motion is requested.
 The stream picker groups streams by Integration and names each by its Preset
 tile. A stale graph keeps its last line at 60% opacity, as on the Device.
 
+## Custom Integration
+
+| Element | String |
+|---|---|
+| Integration | Custom |
+| Description | Read values from HTTP or a command approved on this PC. |
+| Enabled | Turn on Custom |
+| Config | Custom sources (JSON) |
+| Refresh floor | Checks are at least 1 s apart. |
+| Invalid JSON | Enter valid JSON. |
+| Number Presets, in source order | {name} value, {name} graph |
+| Approval | Waiting for approval on this PC. |
+| Missing headers | Enter the secret headers. |
+| Vault failure | Credential store unavailable. |
+| Transport | Use HTTPS for secret headers. |
+| Invalid address | Check the HTTP address. |
+| Access refused | The server refused access. Check the secret headers. |
+| Timeout | The server didn't answer within 10 s. |
+| HTTP size | The HTTP reply is over 1 MiB. |
+| TLS | Can't verify the server certificate. Check the TLS fingerprint. |
+| Redirect | The server redirected. Use its final address. |
+| Request failed | Couldn't fetch the value. Check the HTTP address. |
+| Invalid value | Couldn't read the value. Check the value path and kind. |
+| Start failure | Couldn't start the command. |
+| Output failure | Couldn't read command output. |
+| Wait failure | Couldn't finish the command. |
+| Exit failure | The command failed. Check the program and arguments. |
+| Encoding | Command output must be UTF-8. |
+| Command size | Command output is over 64 KiB. |
+| Command timeout | The command exceeded 10 s and was stopped. |
+
 ### Proxmox
 
 | Element | String |

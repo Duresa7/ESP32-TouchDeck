@@ -45,7 +45,9 @@ impl Fetch for Fixture {
             request.url,
             "https://example.invalid:8006/api2/json/cluster/resources"
         );
-        assert!(request.authorization.starts_with("PVEAPIToken="));
+        assert!(
+            matches!(request.headers, [(name, value)] if name == "Authorization" && value.starts_with("PVEAPIToken="))
+        );
         self.calls.lock().unwrap().push(request.url.into());
         self.reply.clone()
     }

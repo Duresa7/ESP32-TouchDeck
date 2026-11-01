@@ -273,12 +273,12 @@ impl Proxmox {
         let (Some(id), Some(secret)) = (id, secret) else {
             return Ok(None);
         };
-        let body = self.fetch.request(&GetRequest { url:&format!("{}/api2/json/cluster/resources",self.settings.url), authorization:&format!("PVEAPIToken={id}={secret}"), tls_pin:parse_pin(&self.settings.tls_pin), deadline: Instant::now() + TIMEOUT }).map_err(|e| match e {
+        let body = self.fetch.request(&GetRequest { url:&format!("{}/api2/json/cluster/resources",self.settings.url), headers:&[("Authorization".into(), format!("PVEAPIToken={id}={secret}"))], tls_pin:parse_pin(&self.settings.tls_pin), deadline: Instant::now() + TIMEOUT }).map_err(|e| match e {
             FetchError::Unauthorized => "Proxmox rejected the token. Check its read-only permissions.",
             FetchError::Timeout => "Proxmox didn't answer within 10 s. Check the connection, then retry.",
             FetchError::TooLarge => LARGE,
             FetchError::Tls => "Couldn't verify the Proxmox certificate. Check the SHA-256 pin or system trust store.",
-            FetchError::Transport => "Couldn't reach Proxmox. Check the address and connection, then retry.",
+            FetchError::Redirect | FetchError::Transport => "Couldn't reach Proxmox. Check the address and connection, then retry.",
         })?;
         parse(&body).map(Some)
     }
