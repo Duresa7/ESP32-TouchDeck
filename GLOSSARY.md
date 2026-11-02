@@ -52,5 +52,5 @@ _Avoid_: resource, media file
 ### Integrations
 
 **Integration**:
-A connection to something outside the app that supplies data or accepts commands, such as a CLIProxyAPI hub, the PC, media playback, Proxmox or UniFi.
+A connection to something outside the app that supplies data or accepts commands, such as a CLIProxyAPI hub, the PC or media playback.
 _Avoid_: source, plugin

@@ -594,3 +594,158 @@ fn many_fitted_colors_use_a_deterministic_bounded_palette() {
     assert_eq!(decoded.len(), 20);
     assert!(decoded.iter().flat_map(|f| f.pixels()).all(|p| p[3] == 255));
 }
+
+#[test]
+fn admission_rejects_truncated_and_non_normalized_gifs() {
+    use td_host::gif_normalize::inspect_normalized;
+    let normalized =
+        normalize_gif(&source(4, 4, &[frame(4, 4, 1, 10)]), target(), &limits()).unwrap();
+    assert!(inspect_normalized(&normalized.bytes).is_ok());
+    assert!(inspect_normalized(&normalized.bytes[..normalized.bytes.len() - 1]).is_err());
+    assert!(inspect_normalized(&source(4, 4, &[frame(4, 4, 1, 10)])).is_err());
+}
+
+#[test]
+fn uses_tile_background_for_pixels_that_turn_transparent() {
+    use td_host::gif_normalize::normalize_gif_with_background;
+    let mut clear = frame(4, 4, 0, 10);
+    clear.transparent = Some(0);
+    let mut sprite = frame(1, 1, 1, 10);
+    sprite.dispose = gif::DisposalMethod::Background;
+    let input = source(4, 4, &[clear.clone(), sprite, clear]);
+    let output = normalize_gif_with_background(&input, target(), &limits(), [20, 30, 40]).unwrap();
+    assert_eq!(
+        played(&output.bytes)[2].get_pixel(0, 0).0,
+        [20, 30, 40, 255]
+    );
+}
+
+#[test]
+fn admission_rejects_changing_transparent_indices() {
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = gif::Encoder::new(&mut bytes, 4, 4, &[0, 0, 0, 255, 0, 0]).unwrap();
+        encoder.set_repeat(gif::Repeat::Infinite).unwrap();
+        for index in [0, 1] {
+            let mut f = frame(4, 4, 0, 10);
+            f.transparent = Some(index);
+            encoder.write_frame(&f).unwrap();
+        }
+    }
+    assert!(td_host::gif_normalize::inspect_normalized(&bytes).is_err());
+}
+
+fn noise(len: usize, seed: u32, colors: u8) -> Vec<u8> {
+    let mut x = seed.wrapping_mul(2654435761).max(1);
+    (0..len)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            (x % u32::from(colors)) as u8
+        })
+        .collect()
+}
+
+fn noise_gif(side: u16, colors: u8, seeds: &[u32]) -> Vec<u8> {
+    let palette: Vec<u8> = (0..usize::from(colors))
+        .flat_map(|i| [(i * 37) as u8, (i * 91) as u8, (i * 151) as u8])
+        .collect();
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = gif::Encoder::new(&mut bytes, side, side, &palette).unwrap();
+        encoder.set_repeat(gif::Repeat::Infinite).unwrap();
+        for &seed in seeds {
+            let len = usize::from(side) * usize::from(side);
+            let mut f = frame(side, side, 0, 10);
+            f.buffer = Cow::Owned(noise(len, seed, colors));
+            encoder.write_frame(&f).unwrap();
+        }
+    }
+    bytes
+}
+
+#[test]
+fn a_valid_gif_is_not_refused_by_its_lzw_stream_ending() {
+    let input = noise_gif(64, 4, &[7]);
+    let decoded = pixels(&input);
+    assert_eq!(decoded.len(), 1);
+    assert_eq!(decoded[0].dimensions(), (64, 64));
+    let output = normalize_gif(
+        &input,
+        Target {
+            width: 64,
+            height: 64,
+            fit: Fit::Contain,
+        },
+        &limits(),
+    )
+    .unwrap();
+    assert_eq!((output.width, output.height, output.frames), (64, 64, 1));
+}
+
+#[test]
+fn store_admission_accepts_every_normalizer_output() {
+    use td_host::gif_normalize::inspect_normalized;
+    let mut cases: Vec<(Vec<u8>, Target)> = Vec::new();
+    for size in 0..24u16 {
+        let side = 128 - size;
+        cases.push((
+            noise_gif(128, 255, &[u32::from(size) + 1]),
+            Target {
+                width: side,
+                height: side,
+                fit: Fit::Contain,
+            },
+        ));
+    }
+    for seed in 1..=200u32 {
+        let colors = [2u8, 3, 4, 5, 8, 16, 32, 64][(seed % 8) as usize];
+        let side = 16 + (seed % 7) as u16 * 8;
+        let fit = if seed % 2 == 0 {
+            Fit::Contain
+        } else {
+            Fit::Cover
+        };
+        cases.push((
+            noise_gif(side, colors, &[seed * 10, seed * 10 + 1, seed * 10 + 2]),
+            Target {
+                width: side,
+                height: side,
+                fit,
+            },
+        ));
+    }
+    let shapes = (0..40)
+        .map(|i| frame(4, 4, 1 + i % 3, 3))
+        .collect::<Vec<_>>();
+    cases.push((source(4, 4, &shapes), target()));
+    cases.push((source(4, 4, &[frame(4, 4, 1, 10)]), target()));
+    let mut refused = Vec::new();
+    for (index, (input, target)) in cases.iter().enumerate() {
+        let output = normalize_gif(input, *target, &limits())
+            .unwrap_or_else(|e| panic!("case {index}: {e:?}"));
+        if inspect_normalized(&output.bytes).is_err() {
+            refused.push(index);
+        }
+    }
+    assert_eq!(refused, Vec::<usize>::new());
+}
+
+#[test]
+fn stops_at_the_next_frame_once_cancelled() {
+    let input = source(16, 16, &vec![frame(16, 16, 1, 10); 20]);
+    let asked = std::cell::Cell::new(0);
+    let result = td_host::gif_normalize::normalize_gif_until(
+        &input,
+        target(),
+        &limits(),
+        [0, 0, 0],
+        &|| {
+            asked.set(asked.get() + 1);
+            asked.get() > 2
+        },
+    );
+    assert_eq!(result.unwrap_err(), GifError::Cancelled);
+    assert_eq!(asked.get(), 3);
+}

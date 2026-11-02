@@ -5,7 +5,7 @@ import { useStore } from 'zustand';
 import type { IntegrationSummary, PresetTile } from '../../companion/api.ts';
 import { useCompanion } from '../../companion/connection.ts';
 import { useDevices } from '../../companion/devices.ts';
-import { createDetailStore, FLOOR_TEXT, type DetailStore } from '../../lib/integrations/detail.ts';
+import { createDetailStore, refreshFloorText, type DetailStore } from '../../lib/integrations/detail.ts';
 import { lineOf, statusOf, usageLine } from '../../lib/integrations/model.ts';
 import { button } from '../../shell/button.ts';
 import { ConfigForm } from './ConfigForm.tsx';
@@ -74,7 +74,7 @@ function Refresh({ store, summary }: { store: DetailStore; summary: IntegrationS
       >
         {busy === 'refresh' ? 'Checking…' : 'Check now'}
       </button>
-      <span className="form-state">{FLOOR_TEXT}</span>
+      <span className="form-state">{refreshFloorText(summary.id)}</span>
     </div>
   );
 }

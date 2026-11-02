@@ -43,7 +43,7 @@ jobs:
           set -euo pipefail
           idf.py -C firmware -B "$GITHUB_WORKSPACE/$FIRMWARE_BUILD" build
 
-      - name: Test GIF validation and atomic Asset commits on the host
+      - name: Test Firmware file loaders, key events and Assets on the host
         # After the build: the LittleFS test compiles the pinned managed component it fetched.
         # The IDF virtualenv has pip; the system Python in this image does not.
         shell: bash
@@ -57,6 +57,8 @@ jobs:
           python -m pip install -q Pillow==13.0.0
           python -B firmware/tools/test_gif.py
           python -B firmware/tools/test_asset.py
+          python -B firmware/tools/test_key_sink.py
+          python -B firmware/tools/test_file_loaders.py
 
       - name: Check the firmware is esp32s3 and radio-free
         shell: bash

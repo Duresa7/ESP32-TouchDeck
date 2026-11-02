@@ -7,6 +7,8 @@ import { formOf, parseUsage, sameValues, serialize, validate, valuesOf, type For
 /** Refresh asks the hub at most this often, the same floor the Companion keeps. */
 export const REFRESH_FLOOR_MS = 15_000;
 
+export const refreshFloorText = (id: string) => id === 'custom' ? 'Checks are at least 1 s apart.' : FLOOR_TEXT;
+
 export const FLOOR_TEXT = 'Checks are at least 15 s apart, because each one queries your AI services.';
 
 export interface Notice {
@@ -59,6 +61,8 @@ function issuesOf(details: unknown): Issue[] {
 
 export function createDetailStore(id: string, deps: DetailDeps) {
   const now = deps.now ?? Date.now;
+  const floorMs = id === 'custom' ? 1000 : REFRESH_FLOOR_MS;
+  const floorText = refreshFloorText(id);
   const store = createStore<DetailState>()(() => ({
     id,
     view: null,
@@ -186,10 +190,10 @@ export function createDetailStore(id: string, deps: DetailDeps) {
     async refresh(): Promise<void> {
       if (state().busy) return;
       if (now() < state().refreshAfter) {
-        set({ notice: { kind: 'info', text: FLOOR_TEXT, event: 'refresh-floor' } });
+        set({ notice: { kind: 'info', text: floorText, event: 'refresh-floor' } });
         return;
       }
-      set({ busy: 'refresh', notice: null, refreshAfter: now() + REFRESH_FLOOR_MS });
+      set({ busy: 'refresh', notice: null, refreshAfter: now() + floorMs });
       try {
         await call.refresh({ integration: id });
         take(await call.get({ integration: id }), { typed: 'keep' });
@@ -199,7 +203,7 @@ export function createDetailStore(id: string, deps: DetailDeps) {
         set({
           notice:
             error.code === 'limits.exceeded'
-              ? { kind: 'info', text: FLOOR_TEXT, detail: error.message, event: 'refresh-floor' }
+              ? { kind: 'info', text: floorText, detail: error.message, event: 'refresh-floor' }
               : { kind: 'error', text: `Couldn't check. ${RESTART}`, detail: error.message, event: 'refresh-failed' },
         });
       } finally {

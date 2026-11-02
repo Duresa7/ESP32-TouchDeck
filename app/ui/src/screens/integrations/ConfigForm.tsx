@@ -12,7 +12,9 @@ function Field({ store, field, warnKey }: { store: DetailStore; field: FormField
   const text = typeof value === 'string' ? value : '';
   const warning = warnKey && field.kind === 'string' ? transportWarning(text) : null;
   const numeric = field.kind === 'integer' || field.kind === 'number';
-  const input = (
+  const input = field.kind === 'json' ? (
+    <textarea id={id} className="input" rows={12} value={text} spellCheck={false} autoComplete="off" aria-invalid={error ? true : undefined} aria-describedby={error ? `${id}-error` : undefined} onChange={(event) => store.setValue(field.name, event.target.value)} data-testid="config-field" data-field={field.name} />
+  ) : (
     <input
       id={id}
       className="input tabular"

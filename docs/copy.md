@@ -1141,12 +1141,16 @@ A script lists the string literals and text nodes in every non-test `.svelte` an
 | Fitted | Fitted to {device}: {width} × {height}, {fps} fps. |
 | Too long | This GIF is too long for {device}. Choose a shorter GIF. |
 | Too large | This GIF is too large for {device}. Choose a smaller GIF. |
+| Too short | This GIF is too short for {device}. Choose a GIF that plays for at least {limit} ms. |
 | Page budget | This Page has too many animations for {device}. Remove an animated Tile. |
 | Storage full | {device} is out of space. Remove unused Assets, then retry. |
+| Asset store full | This PC's Asset store is full. Retry in an hour, or remove Tiles you don't use and send the Layout. |
+| Decoded source too large | This GIF needs more than 64 MiB to decode all its frames. Choose a smaller or shorter GIF. |
 | Preparation failed | Couldn't prepare this GIF. Choose another GIF. |
 | Unsupported | Needs Firmware {x.y} |
 
-Put decoder and wire reasons under Details. App previews show a paused poster
+The Companion API returns these rows without `for {device}`, because an error
+body has no Device name; the app adds it. Put decoder and wire reasons under Details. App previews show a paused poster
 when reduced motion is requested.
 
 ## Graph Tiles
@@ -1165,23 +1169,36 @@ when reduced motion is requested.
 The stream picker groups streams by Integration and names each by its Preset
 tile. A stale graph keeps its last line at 60% opacity, as on the Device.
 
-### Proxmox
+## Custom Integration
 
 | Element | String |
 |---|---|
-| Integration | Proxmox |
-| Presets, per node | Node CPU graph, Node CPU, Node RAM graph, Node RAM |
-| Preset, per guest | Guest status |
-| Preset, cluster | Running guests |
-| Token rejected | Proxmox rejected the token. Check its read-only permissions. |
-| Timeout | Proxmox didn't answer within 10 s. Check the connection, then retry. |
-| Response limit | Proxmox sent more than 1 MiB. Check the server. |
-| Certificate | Couldn't verify the Proxmox certificate. Check the SHA-256 pin or system trust store. |
-| Malformed data | Couldn't read the Proxmox response. Check the server. |
-| Skipped resources | Unreadable Proxmox resources skipped: {count}. |
-| Pin over HTTP | A certificate pin needs an https:// address. Change the address or clear the pin. |
-| Connection | Couldn't reach Proxmox. Check the address and connection, then retry. |
-| Vault | Credential store unavailable. Retry after unlocking it. |
+| Integration | Custom |
+| Description | Read values from HTTP or a command approved on this PC. |
+| Enabled | Turn on Custom |
+| Config | Custom sources (JSON) |
+| Refresh floor | Checks are at least 1 s apart. |
+| Invalid JSON | Enter valid JSON. |
+| Number Presets, in source order | {name} value, {name} graph |
+| Approval | Waiting for approval on this PC. |
+| Missing headers | Enter the secret headers. |
+| Vault failure | Credential store unavailable. |
+| Transport | Use HTTPS for secret headers. |
+| Invalid address | Check the HTTP address. |
+| Access refused | The server refused access. Check the secret headers. |
+| Timeout | The server didn't answer within 10 s. |
+| HTTP size | The HTTP reply is over 1 MiB. |
+| TLS | Can't verify the server certificate. Check the TLS fingerprint. |
+| Redirect | The server redirected. Use its final address. |
+| Request failed | Couldn't fetch the value. Check the HTTP address. |
+| Invalid value | Couldn't read the value. Check the value path and kind. |
+| Start failure | Couldn't start the command. |
+| Output failure | Couldn't read command output. |
+| Wait failure | Couldn't finish the command. |
+| Exit failure | The command failed. Check the program and arguments. |
+| Encoding | Command output must be UTF-8. |
+| Command size | Command output is over 64 KiB. |
+| Command timeout | The command exceeded 10 s and was stopped. |
 
 ## Volume and Media
 

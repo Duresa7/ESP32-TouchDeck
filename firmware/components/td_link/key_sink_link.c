@@ -1,5 +1,6 @@
 #include "key_sink_link.h"
 #include <stdbool.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include "esp_timer.h"
@@ -53,17 +54,28 @@ key_sink_t key_sink_link_sink(void)
     return (key_sink_t){ .report = report, .ctx = NULL };
 }
 
+static size_t append_format(char *buf, size_t cap, size_t len, const char *format, ...)
+{
+    if (len >= cap) return cap;
+    va_list args;
+    va_start(args, format);
+    const int n = vsnprintf(buf + len, cap - len, format, args);
+    va_end(args);
+    if (n < 0 || (size_t)n >= cap - len) return cap;
+    return len + (size_t)n;
+}
+
 static size_t append_keys(char *buf, size_t cap, size_t len, const uint8_t *keys)
 {
-    len += snprintf(buf + len, cap - len, "\"keys\":[");
+    len = append_format(buf, cap, len, "\"keys\":[");
     bool first = true;
     for (unsigned i = 0; i < KEY_REPORT_KEYS; i++) {
         if (keys[i] != 0) {
-            len += snprintf(buf + len, cap - len, first ? "%u" : ",%u", (unsigned)keys[i]);
+            len = append_format(buf, cap, len, first ? "%u" : ",%u", (unsigned)keys[i]);
             first = false;
         }
     }
-    return len + snprintf(buf + len, cap - len, "]");
+    return append_format(buf, cap, len, "]");
 }
 
 size_t key_sink_link_next(char *buf, size_t cap)
@@ -98,7 +110,7 @@ size_t key_sink_link_next(char *buf, size_t cap)
         len = snprintf(buf, cap, "{\"m\":\"key.resync\",\"seq\":%u,\"t\":%u,\"mods\":%u,", (unsigned)entry.seq,
                        (unsigned)entry.t, (unsigned)mods);
         len = append_keys(buf, cap, len, keys);
-        len += snprintf(buf + len, cap - len, ",\"usage\":%u}", (unsigned)usage);
+        len = append_format(buf, cap, len, ",\"usage\":%u}", (unsigned)usage);
     } else if (entry.report.type == KEY_REPORT_CON) {
         len = snprintf(buf, cap, "{\"m\":\"key.report\",\"seq\":%u,\"t\":%u,\"type\":\"con\",\"usage\":%u}",
                        (unsigned)entry.seq, (unsigned)entry.t, (unsigned)entry.report.con.usage);
@@ -106,7 +118,7 @@ size_t key_sink_link_next(char *buf, size_t cap)
         len = snprintf(buf, cap, "{\"m\":\"key.report\",\"seq\":%u,\"t\":%u,\"type\":\"kbd\",\"mods\":%u,",
                        (unsigned)entry.seq, (unsigned)entry.t, (unsigned)entry.report.kbd.mods);
         len = append_keys(buf, cap, len, entry.report.kbd.keys);
-        len += snprintf(buf + len, cap - len, "}");
+        len = append_format(buf, cap, len, "}");
     }
     return len < cap ? len : 0;
 }

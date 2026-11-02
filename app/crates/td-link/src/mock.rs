@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 use td_core::frame::CHUNK_DATA_MAX;
-use td_core::layout::{Page, StreamType, UPLOAD_MAX};
+use td_core::layout::{Page, StreamType, TileRender, UPLOAD_MAX};
 use td_core::{
     Body, Event, Frame, Hello, ICON_PAGE, InputPhase, Item, Layout, Orientation, Role, Settings,
     StreamDecoder,
@@ -28,6 +28,8 @@ pub const MOCK_ELF_SHA256: &str =
 const DASHBOARD_ROWS: usize = 8;
 const ONLINE_FOR: Duration = Duration::from_secs(5);
 const HEARTBEAT: Duration = Duration::from_secs(2);
+const MOCK_PAGE_TILES: u64 = 4;
+const MOCK_PAGE_PIXELS: u64 = 65536;
 const BUILTIN: &[u8] = include_bytes!("../../../../schema/examples/builtin.json");
 /// The space a mock Device has for Assets until a test sets another.
 pub const ASSET_CAPACITY: u64 = 4 * 1024 * 1024;
@@ -46,7 +48,7 @@ pub const MOCK_SERIES: usize = 32;
 enum Target {
     Layout(Orientation),
     Icon(String),
-    Asset(String),
+    Asset(String, AssetFormat),
     Photo(String),
     Update,
 }
@@ -173,7 +175,6 @@ struct State {
     assets: BTreeMap<String, Vec<u8>>,
     asset_capacity: u64,
     chunk_bytes: usize,
-    asset_format: Option<AssetFormat>,
     /// The xfer of the last Asset transfer that closed and what `v2.asset.end` answered for it.
     asset_end: Option<(u8, Map<String, Value>)>,
     live: Live,
@@ -204,8 +205,7 @@ impl State {
             "asset_bytes":ICON_BYTES,"formats":["tdi1"],"image":[64,64],"gif_frames":0,"gif_pixels":0,
             "photo_bytes":PHOTO_BYTES_MAX,"live_hz":MOCK_LIVE_HZ,"live_total_hz":MOCK_LIVE_TOTAL_HZ,"series":MOCK_SERIES,"text_bytes":0,"streams":1});
         if self.gif_capabilities {
-            caps["anim"] =
-                json!({"image":[128,128],"min_delay_ms":100,"page_tiles":4,"page_pixels":65536});
+            caps["anim"] = json!({"image":[128,128],"min_delay_ms":100,"page_tiles":MOCK_PAGE_TILES,"page_pixels":MOCK_PAGE_PIXELS});
             caps["formats"] = json!(["tdi1", "gif"]);
             caps["tile_kinds"] = json!(["static", "graph", "gif", "photo-frame", "clock"]);
             caps["asset_bytes"] = json!(GIF_ASSET_BYTES);
@@ -326,7 +326,6 @@ impl MockDeck {
                 assets: BTreeMap::new(),
                 asset_capacity: ASSET_CAPACITY,
                 chunk_bytes: 0,
-                asset_format: None,
                 asset_end: None,
                 live: Live::new(),
                 live_sets: Vec::new(),
@@ -995,7 +994,7 @@ impl MockDeck {
             return Ok(Map::new());
         }
         if let Some(Inbound {
-            target: Target::Asset(_) | Target::Photo(_),
+            target: Target::Asset(..) | Target::Photo(_),
             xfer: open,
             ..
         }) = &state.inbound
@@ -1030,7 +1029,7 @@ impl MockDeck {
         let orientation = match inbound.target {
             Target::Layout(orientation) => orientation,
             Target::Update => return Err("firmware uses update.end".into()),
-            Target::Asset(_) | Target::Photo(_) => unreachable!("a v2 put returned above"),
+            Target::Asset(..) | Target::Photo(_) => unreachable!("a v2 put returned above"),
             Target::Icon(id) => {
                 if !data.starts_with(b"TDI1") {
                     return Err("not a TDI1 icon".into());
@@ -1068,6 +1067,9 @@ impl MockDeck {
             return Err(format!(
                 "size: {covers} Tiles declare an image stream; this Device draws {limit}"
             ));
+        }
+        if state.gif_capabilities && over_page_budget(&state, &layout) {
+            return Ok(refusal("size", "Page over its animation budget"));
         }
         state.layouts.insert(orientation, data);
         if orientation == state.shown {
@@ -1282,7 +1284,7 @@ impl MockDeck {
                     if matches!(
                         &state.inbound,
                         Some(Inbound {
-                            target: Target::Asset(_) | Target::Photo(_),
+                            target: Target::Asset(..) | Target::Photo(_),
                             ..
                         })
                     ) {
@@ -1497,11 +1499,31 @@ fn jpeg_size(data: &[u8]) -> Option<(u16, u16)> {
     }
 }
 
+fn over_page_budget(state: &State, layout: &Layout) -> bool {
+    layout.pages.iter().any(|page| {
+        let Page::Grid { tiles, .. } = page else {
+            return false;
+        };
+        let animated: Vec<_> = tiles
+            .iter()
+            .filter(|tile| tile.render == Some(TileRender::Gif))
+            .collect();
+        let pixels: u64 = animated
+            .iter()
+            .filter_map(|tile| tile.asset.as_deref()?.strip_prefix("sha256:"))
+            .filter_map(|id| state.assets.get(id))
+            .filter_map(|gif| td_host::gif_normalize::inspect_normalized(gif).ok())
+            .map(|info| u64::from(info.width) * u64::from(info.height))
+            .sum();
+        animated.len() as u64 > MOCK_PAGE_TILES || pixels > MOCK_PAGE_PIXELS
+    })
+}
+
 fn asset_space(state: &State) -> (u64, u64, u64, u64) {
     let used: u64 = state.assets.values().map(|data| data.len() as u64).sum();
     let reserved = match &state.inbound {
         Some(Inbound {
-            target: Target::Asset(_),
+            target: Target::Asset(..),
             bytes,
             ..
         }) => *bytes as u64,
@@ -1562,10 +1584,7 @@ impl MockDeck {
                 let items: Vec<Value> = rest
                     .by_ref()
                     .take(ASSET_PAGE)
-                    .map(|(id, data)| {
-                        let format = AssetFormat::sniff(data).map_or("tdi1", AssetFormat::name);
-                        json!({"id": id, "bytes": data.len(), "format": format})
-                    })
+                    .map(|(id, data)| json!({"id": id, "bytes": data.len(), "format": AssetFormat::sniff(data).map(AssetFormat::name)}))
                     .collect();
                 let next = match rest.next() {
                     Some(_) => items.last().map(|item| item["id"].clone()),
@@ -1592,6 +1611,7 @@ impl MockDeck {
                 }
                 let format = match AssetFormat::parse(format) {
                     Some(AssetFormat::Tdi1) => AssetFormat::Tdi1,
+                    Some(AssetFormat::Gif) if state.gif_capabilities => AssetFormat::Gif,
                     Some(AssetFormat::Jpeg) if state.media_capabilities => AssetFormat::Jpeg,
                     _ => return refused("format"),
                 };
@@ -1599,7 +1619,7 @@ impl MockDeck {
                     return refused("size");
                 }
                 if let Some(stored) = state.assets.get(&id) {
-                    if stored.len() as u64 != bytes {
+                    if stored.len() as u64 != bytes || AssetFormat::sniff(stored) != Some(format) {
                         return refused("format");
                     }
                     return Map::from_iter([
@@ -1615,10 +1635,9 @@ impl MockDeck {
                 }
                 let xfer = MockDeck::next_xfer(state);
                 state.asset_end = None;
-                state.asset_format = Some(format);
                 state.inbound = Some(Inbound {
                     xfer,
-                    target: Target::Asset(id),
+                    target: Target::Asset(id, format),
                     bytes: bytes as usize,
                     crc32: 0,
                     data: Vec::with_capacity(bytes as usize),
@@ -1639,7 +1658,7 @@ impl MockDeck {
                     return refused("args");
                 };
                 let open = matches!(&state.inbound,
-                    Some(Inbound { target: Target::Asset(_), xfer: open, .. }) if u64::from(*open) == xfer);
+                    Some(Inbound { target: Target::Asset(..), xfer: open, .. }) if u64::from(*open) == xfer);
                 if !open {
                     return match &state.asset_end {
                         Some((done, reply)) if u64::from(*done) == xfer => reply.clone(),
@@ -1651,19 +1670,33 @@ impl MockDeck {
                     state.inbound = Some(inbound);
                     return refused("incomplete");
                 }
-                let Target::Asset(id) = inbound.target else {
+                let Target::Asset(id, format) = inbound.target else {
                     unreachable!("matched an Asset put")
                 };
-                let declared = state.asset_format.take();
                 let checked = match AssetFormat::sniff(&inbound.data) {
-                    _ if declared.is_none() => Err("format"),
-                    found if found != declared => Err("format"),
+                    found if found != Some(format) => Err("format"),
                     Some(AssetFormat::Tdi1) if inbound.data.len() == ICON_BYTES => Ok(()),
                     Some(AssetFormat::Jpeg) => match jpeg_size(&inbound.data) {
                         Some((w, h)) if w > MEDIA_IMAGE || h > MEDIA_IMAGE => Err("size"),
                         Some(_) => Ok(()),
                         None => Err("format"),
                     },
+                    Some(AssetFormat::Gif) if state.gif_capabilities => {
+                        td_host::gif_normalize::inspect_normalized(&inbound.data)
+                            .ok()
+                            .filter(|info| {
+                                info.width <= 128
+                                    && info.height <= 128
+                                    && info.frames <= 60
+                                    && info.min_delay_ms >= 100
+                                    && usize::from(info.width)
+                                        * usize::from(info.height)
+                                        * info.frames
+                                        <= 983040
+                            })
+                            .map(|_| ())
+                            .ok_or("format")
+                    }
                     _ => Err("format"),
                 };
                 let reply = if asset_id(&inbound.data) != id {
@@ -1686,7 +1719,7 @@ impl MockDeck {
                     return refused("args");
                 };
                 if matches!(&state.inbound,
-                    Some(Inbound { target: Target::Asset(open), .. }) if *open == id)
+                    Some(Inbound { target: Target::Asset(open, _), .. }) if *open == id)
                 {
                     return refused("busy");
                 }
@@ -1702,9 +1735,6 @@ impl MockDeck {
 }
 
 impl MockDeck {
-    /// Answers `v2.live.set` with the Firmware's checks in the Firmware's order: fields, Layout, Page, Tile,
-    /// stream, type, value, sequence, then rate. It draws numbers and series, and with the media caps text and
-    /// images too.
     fn live_set(&self, request: &Map<String, Value>) -> Map<String, Value> {
         const FIELDS: [&str; 9] = [
             "m", "layout", "page", "tile", "stream", "n", "ttl_ms", "type", "value",

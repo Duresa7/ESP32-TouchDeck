@@ -59,19 +59,21 @@ bool td_layout_load_file(const char *path, td_layout_t **out, size_t *file_bytes
     *out = NULL;
     *file_bytes = 0;
 
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) {
+        return refuse(err, "file.missing", "no %s", path);
+    }
     struct stat st;
-    if (stat(path, &st) != 0) {
+    if (fstat(fileno(f), &st) != 0) {
+        fclose(f);
         return refuse(err, "file.missing", "no %s", path);
     }
     if (st.st_size > TD_LAYOUT_MAX_BYTES) {
+        fclose(f);
         char size[16];
         snprintf(size, sizeof size, "%ld", (long)st.st_size);
         *file_bytes = (size_t)st.st_size;
         return refuse(err, "layout.too-large", "the file is %s bytes; maximum is 32768 bytes", size);
-    }
-    FILE *f = fopen(path, "rb");
-    if (f == NULL) {
-        return refuse(err, "file.read", "cannot open %s", path);
     }
     char *buf = heap_caps_malloc_prefer((size_t)st.st_size + 1, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, MALLOC_CAP_8BIT);
     if (buf == NULL) {

@@ -547,7 +547,7 @@ Feature module `assets`. Assets reach a Device through `layouts.push` and the in
 
 As built in #75:
 
-- `assets.create` takes `app`, `upload` and `catalog` sources. Uploads accept PNG and JPEG images. An expired, consumed or foreign upload returns `upload.not_found`. Catalog picks accept `variant` (`base`, `light`, `dark`), pixel `padding`, RGBA `background` and RGB `tint`. `fit` is `"contain"` (the default: the whole image inside the Tile) or `"cover"` (cropped to a centered square first). The result's `kind` is `tdi1`, 64 by 64, identified by the full SHA-256 of its encoded bytes. A third render while two run gets 429 `limits.exceeded`.
+- `assets.create` takes `app`, `upload` and `catalog` sources. Uploads accept PNG, JPEG and GIF images. GIF headers are admitted without decoding; full GIF validation runs in the preparation Job. An expired, consumed or foreign upload returns `upload.not_found`. Catalog picks accept `variant` (`base`, `light`, `dark`), pixel `padding`, RGBA `background` and RGB `tint`. `fit` is `"contain"` (the default: the whole image inside the Tile) or `"cover"` (cropped to a centered square first). The result's `kind` is `tdi1`, 64 by 64, identified by the full SHA-256 of its encoded bytes. A third render while two run gets 429 `limits.exceeded`.
 - `assets.prune` keeps the Assets that `also_keep` names, that the Companion's stored Layouts for the Device use, and that the Device's own stored Layouts use, as today's `remove_unused_icons` does.
 - `assets.file` reads built-in icons and the Companion's Asset files, kept as `assets/<id>.bin` under its data folder. The generated client returns a `Blob` for it.
 
@@ -729,84 +729,116 @@ Heartbeat every 10 s with ttl_ms 30000. Non-Windows reports "Media needs Windows
 
 These sections define steps B through I; step A adds contracts and mocks only.
 
-#### Proxmox
+#### Custom HTTP and command
 
-`proxmox` reads only `GET /api2/json/cluster/resources`. Config is
-`{enabled: boolean, url: string, interval_s: integer, tls_pin: string}`;
-`tls_pin` may be omitted or empty. Defaults: disabled, `https://example.invalid:8006`,
-15 seconds, no pin. The URL must be an origin with no path, query, credentials or
-fragment. Intervals clamp to 5–3600 seconds. Unknown fields are rejected. Config
-is saved beside sources.json as proxmox.json.
+`custom` starts with `{enabled: false, sources: []}` and persists non-secret
+settings in `custom.json`, beside `sources.json`. The Integrations form exposes
+`sources` as a JSON editor. Unknown fields are rejected. Each of at most 16
+sources has `{id, name, interval_s, kind, input}`:
 
-Write-only vault fields `token_id` and `token_secret` form
-`Authorization: PVEAPIToken=<token_id>=<token_secret>`. The token id has the
-Proxmox form `<user>@<realm>!<tokenid>`; both fields are secrets. Create a
-privilege-separated token with the read-only `PVEAuditor` role, granting the
-required audit permissions to both the user and token. Counts cover only resources
-visible to that token. An origin change or a `tls_pin` change deletes both secrets,
-so a new pin can never receive a token entered under the old one. No upstream response
-body, credential or raw transport error is included in status.
+- `id`: a unique `[a-z0-9_-]+` stream id, at most 48 bytes.
+- `name`: a nonempty display name, at most 128 bytes.
+- `interval_s`: an integer from 1 to 3600.
+- `kind`: `number` or `text`. Streams report `numeric` or `text`, with no unit.
+- `input`: one of the shapes below. `account` is always the empty string.
 
-`tls_pin` is the server leaf certificate's SHA-256 fingerprint: 64 hex digits, or
-the colon-separated form the Proxmox GUI shows (`AB:CD:…`). It is stored as 64
-lowercase hex digits without colons. A pin needs an `https://` URL; a pin with an
+HTTP example (GET is the only method; there is no configurable method field):
+
+```json
+{
+  "enabled": true,
+  "sources": [{
+    "id": "temperature",
+    "name": "Temperature",
+    "interval_s": 5,
+    "kind": "number",
+    "input": {
+      "type": "http",
+      "url": "https://example.invalid/metrics",
+      "value_path": "$.readings[0].value",
+      "headers": {"Authorization": "temperature_auth"},
+      "tls_pin": null
+    }
+  }]
+}
+```
+
+`headers` maps HTTP header names to unique vault field ids, **never header
+values**. Saving settings creates the corresponding write-only secret controls.
+Write each value through `integrations.secret_put`. Values are bound to the
+configured URL's origin and the source's `tls_pin`. They are deleted when the
+field is removed, the origin changes, or the pin is added, changed or cleared, so
+a new pin never receives a secret entered under the old trust. Same-origin
+path changes retain them. Because of that, a `text` source pointed at a
+same-origin endpoint that echoes request headers can read its own secret back as a
+live value. This is accepted: the user configures both the endpoint and the
+secret. Credentials use the existing `credential_transport`
+policy: HTTPS, or an explicitly typed loopback/private-address HTTP exception.
+URLs cannot contain user information, query strings or fragments; put credentials
+in secret headers. Host, Content-Length, Transfer-Encoding and Connection cannot
+be overridden. Header values cannot contain control characters.
+
+HTTP sources use the shared `Fetch::request` transport:
+one 10-second deadline covering connect, TLS, headers and the whole body, a 1 MiB
+body limit, and no redirects. Without a pin, TLS uses the platform verifier.
+`tls_pin`, when set, is exactly 64 hexadecimal digits representing the server leaf
+certificate's SHA-256 fingerprint, and needs an `https://` URL; a pin with an
 `http://` URL is rejected with `integration.config_invalid` and an issue on the
-`tls_pin` path. Obtain it through a trusted channel. With no pin, the system trust
-store must accept the certificate. With a pin, the leaf must match exactly; its
-TLS handshake signature must still verify. A matching pin explicitly authorizes
-a self-signed certificate, including its name and validity period. A wrong pin
-fails even for a publicly trusted certificate. Renewing the certificate requires
-updating the pin. Certificate checking is never disabled globally.
+`sources` path. With a pin, that leaf certificate is the only one accepted,
+including a self-signed one; a different certificate is rejected even if the
+system trusts it. TLS handshake signatures are still verified. No global
+verification setting is changed. Certificate rotation requires updating the pin.
 
-The shared `Fetch::request(GetRequest)` seam supplies a GET-only request with an
-arbitrary authorization header and optional certificate pin. Production uses a
-per-request reqwest/rustls client because ureq's supported configuration does not
-expose a custom verifier. Redirects and ambient proxies are disabled. Each
-request carries one deadline, 10 seconds after the poll starts, covering connect,
-TLS, headers and the whole body; a server that trickles the body still fails with
-the timeout error at that deadline. The response is capped at 1 MiB while it streams.
-Polling is synchronous, with at most one request in flight. Errors double the
-interval up to 3600 seconds; refresh, config changes and secret writes cannot
-bypass an existing deadline. Failed polls clear live values and legacy readings;
-the Device expires previous live values by their TTL.
+The value path grammar is `$` followed by `.key` or `[index]` segments, with at
+most 32 segments. Keys use ASCII letters, digits and underscores and cannot start
+with a digit; indexes are unsigned decimal integers. For example,
+`$.a.b[0].c`. Wildcards, recursive descent, filters, slices and quoted keys are
+unsupported. Missing keys, wrong container types and out-of-range indexes are
+errors. Number values must be JSON numbers, finite and within ±1e9; strings such
+as `"42"` are not coerced. Text values must be JSON strings of at most 4096 bytes.
 
-All streams are `numeric`:
+Command input is `{type: "command", program: <absolute path>, args: [<string>],
+value_path: <path or null>}`. Windows accepts executable `.exe` and `.com` paths,
+not batch files. Arguments are passed directly, without a shell. There is no
+stdin, stderr is discarded, stdout must be UTF-8 and is capped at 64 KiB. The
+command runs in its own Windows Job object (on Unix, its own process group). When
+the run ends, on success, timeout (10 s) or oversized output, every process in it
+is stopped, including background processes the command started, and the command
+is reaped. Output is complete when stdout closes, so a background process that
+keeps stdout open makes the run time out at 10 s. A value path
+parses stdout as JSON using the same rules. With `value_path: null`, trimmed
+stdout is parsed as a number or used as text. Programs inherit the Companion's
+working folder and environment; do not put credentials in command arguments.
 
-| Stream | Unit | Account |
-|---|---|---|
-| `cpu_pct` | `%` | `node/<node>`, `qemu/<vmid>` or `lxc/<vmid>` |
-| `ram_pct` | `%` | Same resource ids |
-| `running` | `boolean` | Guest id; 1 running, 0 stopped |
-| `running_guests` | `guests` | `cluster` |
-| `total_guests` | `guests` | `cluster` |
+Commands reuse the native approval service and `approvals.list`, with kind
+`custom` and a synthetic `custom` context in the Device field. No API session,
+including the Electron window, can grant approval. The hash covers the exact
+program, arguments, action kind, working folder and shell setting. Run once
+permits one collection before the pending request's five-minute deadline; an
+unused Run once past that deadline asks again. Always allow persists through the
+existing grant store and can be revoked with `actions.allowed_remove`, after
+which the next collection asks again. Argument changes require approval. Denied or expired
+requests never run; their decisions remain blocked for the Companion session.
+Restart the Companion to request the same denied command again. The Companion keeps
+at most 256 of these answers. When the list is full, a new command drops the oldest
+answer, so it can still ask; a command whose answer was dropped asks again.
+While a source waits for approval it isn't failing: it rechecks every second
+without backing off, so a Run once answer is used well before its deadline.
 
-CPU is the API fraction × 100 (already normalized by Proxmox); RAM is
-`mem / maxmem × 100`. CPU is clamped to 0–1 before scaling and `mem` to at most
-`maxmem`. Offline nodes, stopped guests and resources with status `unknown` count
-as not running and omit CPU/RAM rather than inventing samples. Each node and guest
-is parsed on its own. One with a wrong-typed field, a bad or duplicate id, another
-status value, or missing metrics while running is skipped; the rest of the poll
-still updates, the state stays `ok`, and `status.message` gives the skipped count.
-A body that isn't JSON or has no `data` array fails the poll. Unrelated resource
-types are ignored. Successful polls increase the
-sample counter even when values are unchanged. TTL is three polling intervals,
-clamped to 1000–60000 ms. Values remain within the Device's numeric bounds.
+Polling is serial within the Integration. Manual refresh and configuration
+changes preserve a one-second request floor. Each failed source backs off
+exponentially, capped at one hour. Waiting for approval doesn't count as a failure. The last good value remains until its Device
+TTL expires. Successful samples have rising sequence numbers and a TTL of three
+times the configured interval, clamped to 1000–60000 ms. Disabling clears live
+output. Presets follow source order: `{name} value`, then `{name} graph` for each
+number source. Text has no Presets because current Firmware advertises
+`text_bytes: 0`; text Tiles remain a follow-up.
 
-Presets are generated after discovery: nodes sorted by resource id, each offering
-**Node CPU graph**, **Node CPU**, **Node RAM graph**, **Node RAM**; then guests
-sorted by resource id, each offering **Guest status**; finally **Running guests**.
-The action contains the concrete resource account. Graph Presets use `render: graph`;
-value Presets use the existing plain Live tile. No new renderer is needed.
-Guest CPU/RAM and total guest count can also be bound by editing the Tile action.
-
-Errors distinguish token rejection (401/403), timeout, oversized response,
-certificate verification, malformed data and transport failure. The schema-driven
-Integrations form renders the pin as a string and both credentials as secret fields.
-Tests use a handwritten fixture based on the vendor's
-[cluster resources schema](https://github.com/proxmox/pve-manager/blob/master/PVE/API2/Cluster.pm)
-and [API documentation](https://pve.proxmox.com/pve-docs/api-viewer/#/cluster/resources),
-with synthetic values only. Real-server permission and certificate testing remains
-part of post-release validation.
+Errors use fixed messages for access refusal, timeout, oversized response,
+certificate failure, redirects, invalid values and command failure. Upstream
+bodies, transport diagnostics and stdout/stderr are never included in status,
+logs or API responses. Values are delivered internally through `readings()` and
+`live()`.
 
 #### This PC
 
@@ -1031,7 +1063,8 @@ Features add codes as they land. This list is the starting set.
 | `firmware.rolled_back` | Job error | The Device rolled back to its previous Firmware |
 | `firmware.confirm_timeout` | Job error | The new Firmware didn't confirm in time |
 | `asset.not_found` | 404 | No Asset with that id |
-| `asset.render_failed` | Job error | The image or icon couldn't be rendered |
+| `asset.render_failed` | Job error | The image or icon couldn't be rendered. GIF failures carry `details.reason` (Animated GIF Assets) |
+| `asset.store_full` | 507, Job error | Storing a prepared Asset would pass the Asset store quota and nothing can be swept. `details: {limit, actual, unit: "bytes"}` (Asset store) |
 | `upload.not_found` | 404 | The upload expired or never existed |
 | `job.not_found` | 404 | No Job with that id |
 | `job.not_cancellable` | 409 | The Job's current phase can't be cancelled |
@@ -1273,7 +1306,7 @@ Mock runs capture native delivery in memory. Only test-hook builds register
 `test.pairing_delivery`, which requires a window session and consumes the captures;
 its types appear only in `api.test.gen.ts`.
 
-## Animated GIF contract (implementation follows in #94)
+## Animated GIF Assets
 
 An animated Asset has `kind:"gif"`, media type `image/gif` and an id equal to
 SHA-256 of its normalized encoded bytes. GIF uploads and `assets.render` use the
@@ -1303,7 +1336,9 @@ Firmware independently enforces the same budgets and validates complete Assets.
 
 | Error code | Meaning | `details` |
 | --- | --- | --- |
-| `asset.too_large` | Source or fitted GIF exceeds a bound | `{limit, actual, unit, field}` with numeric limit/actual and field naming the source or capability limit |
+| `asset.too_large` | Source or fitted GIF exceeds a bound | `{limit, actual, unit, field}` with numeric limit/actual and field naming the source or capability limit. The message follows `field`: `gif_frames` and `source_frames` get the copy guide's Too long row, `decoded_rgba` its Decoded source too large row, and every other field its Too large row |
+| `asset.too_short` | A multi-frame loop plays for less than `anim.min_delay_ms` in total | `{field: "duration_ms", limit, actual, unit: "ms"}`; `limit` is `min_delay_ms` and `actual` the loop's length |
+| `asset.render_failed` | The GIF can't be prepared | `{reason}`: `not_gif`, `corrupt`, `timed_out` (the 30-second deadline), `invalid_limits` (the Device's `anim` caps can't be met) or `invalid` (the prepared file failed store admission). The message is always the copy guide's Preparation failed row |
 | `asset.unsupported` | GIF unavailable or encoding unsupported | `{limit, actual, field, reason}`; limit/actual identify the required and observed format or capability, reason retains the wire reason when present |
 | `layout.animation_limit` | A Page exceeds animation count or area | `{page, field, limit, actual}`; field is `page_tiles` or `page_pixels` |
 
@@ -1311,3 +1346,75 @@ These are Job errors for preparation/push failures. Source upload admission
 continues to use the documented HTTP 413 `request.too_large`. Wire `size`,
 `format`, `memory` and `full` remain typed through the API; storage and allocation
 failures must not be reported as generic link text. Raw reasons go under Details.
+
+### GIF preparation and push
+
+`POST /assets` starts `assets.render` with:
+
+```json
+{"source":{"kind":"gif","upload":"<upload id>","device":"<Device id>","target":{"width":128,"height":128,"background":[20,30,40]}},"fit":"contain"}
+```
+
+The source variant requires an upload owned by this session, a connected Device
+and its negotiated GIF capabilities. `target` names the actual Tile canvas in
+pixels and its RGB background. `fit` defaults to `contain`; `cover` crops the
+centre. Width and height are from 1 to 4096. Anything else gives 400
+`request.invalid` with `details.part` `body` before a Job starts. The normalizer
+caps them at the Device's animation canvas. The background fills pixels that turn
+transparent between frames, preventing trails with disposal 1.
+
+The Job consumes the upload once and returns the existing `AssetRef` shape with
+`kind: "gif"` and the fitted width, height, byte count and SHA-256 id. The stored
+file is served as `image/gif`. Cancellation before storage leaves no Asset.
+There are at most two concurrent render Jobs, and only one of them prepares a GIF
+at a time, because one worst-case GIF peaks near 280 MiB of memory. A second GIF
+render Job goes back to `queued` until the first ends, and can be cancelled while
+it waits. A cancelled render stops at its next source frame, fitted frame,
+encoded frame or size attempt, so its slot frees at once. Source input is capped at 16 MiB,
+300 frames, 4096 pixels per side and 64 MiB cumulative full-canvas decoded RGBA.
+The normalizer checks a 30-second cooperative deadline between bounded stages
+and source frames; an expired deadline fails with `asset.render_failed` and
+`details.reason` `timed_out`.
+The decoded cap includes every full source canvas, even for small frame patches:
+a 300-frame 1024-square GIF exceeds it. Fitted RGBA is separately capped at
+64 MiB. Only fully decoded normalized GIFs enter the Asset store.
+
+Device summaries expose optional `anim`, `gif_frames` and `gif_pixels`.
+Absence disables GIF preparation. Before a push sends any Asset, the Companion
+validates each animated Asset's encoding, dimensions, bytes, frame count and
+delay against that Device, then checks each Page's count and canvas area.
+Reusing the same Asset in several Tiles counts once per Tile. A static Tile
+cannot reference a GIF and a GIF Tile cannot reference tdi1. Unsupported Devices
+fail with `asset.unsupported`. A push never silently converts GIFs to static
+images. The link declares the detected Asset format.
+
+`asset.refused` retains Device refusals such as `memory`, `full`, `storage` and
+`busy` in `details.reason`. `format` maps to `asset.unsupported` and `size` to
+`asset.too_large`. A wire size refusal cannot report the missing measurement:
+its `limit` and `actual` are null, `field` is `device_limit` and `reason` is `size`.
+Locally measured limits retain numeric values as specified above. Link timeouts
+remain `device.timeout`. All these failures are visible on the Job.
+
+### Asset store
+
+The Companion keeps every prepared Asset, tdi1 or GIF, as `assets/<id>.bin` in
+its data folder. Together they may use at most 256 MiB: 1024 GIFs at the
+proposed 256 KiB `asset_bytes`, or about 32 000 icons. A fixed quota gives the
+same bound on every disk, and a few Devices' Layouts need far less. When a new
+Asset would pass the quota, the Companion first removes the least recently used
+Assets that nothing needs. It never removes an Asset that:
+
+- a Layout the Companion stores for any Device names,
+- a running Layout push is sending,
+- was stored or read in the last hour. This covers the Asset a render Job just
+  returned and the Assets of a Layout being edited but not yet sent.
+
+Assets left behind by a refit or a removed Tile are swept first, oldest use
+first. Files from an earlier run count as older than anything used since the
+Companion started. If the sweep can't free enough room, the render Job fails
+with `asset.store_full` and the Asset is not stored. Pending uploads are not
+Assets; they have their own limit (Request limits).
+
+The UI fake accepts GIF uploads and produces a fixed normalized 1-by-1 GIF
+placeholder. It does not implement the Rust normalizer or Device admission;
+integration tests run those paths against the Companion and mock Device.

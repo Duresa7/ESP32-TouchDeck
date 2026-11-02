@@ -140,6 +140,10 @@ fn without_media_caps_text_is_a_type_the_device_cannot_draw() {
 #[test]
 fn a_cover_is_a_jpeg_asset_the_device_already_holds() {
     let (device, session, _events, layout) = media_deck();
+    device.set_gif_capabilities(true);
+    let caps = session.identity(TIMEOUT).unwrap().capabilities.unwrap();
+    assert!(caps.formats.iter().any(|format| format == "gif"));
+    assert!(caps.formats.iter().any(|format| format == "jpeg"));
     let cover = jpeg(174, 174, 0xC0, 4000);
     let put = put_asset(&session, &cover, AssetFormat::Jpeg).unwrap();
     assert!(put.sent);

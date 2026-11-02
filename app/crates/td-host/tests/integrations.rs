@@ -66,6 +66,64 @@ fn registry_schema_presets_config_and_summaries_never_contain_secret_values() {
     std::fs::remove_dir_all(root).unwrap();
 }
 #[test]
+fn saved_unknown_integration_config_and_credentials_do_not_block_registry_startup() {
+    let removed_id = "retired_integration";
+    let root = std::env::temp_dir().join(format!("td-unknown-integration-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let file = root.join("sources.json");
+    let saved = root.join(format!("{removed_id}.json"));
+    let store = Arc::new(MemorySecrets::default());
+    for field in ["token_id", "token_secret"] {
+        store
+            .put(
+                removed_id,
+                field,
+                Secret {
+                    origin: "https://retired.example".into(),
+                    value: "fixture-unused-secret".into(),
+                },
+            )
+            .unwrap();
+    }
+    let mut initial = registry(Recorder::default(), Some(file.clone()));
+    initial
+        .get("cliproxyapi")
+        .unwrap()
+        .configure(json!({"enabled":false,"url":"https://hub.example","interval_s":120}))
+        .unwrap();
+    for contents in [
+        json!({"enabled":true,"url":"https://retired.example","interval_s":15,"tls_pin":""})
+            .to_string(),
+        "not valid JSON".into(),
+    ] {
+        std::fs::write(&saved, &contents).unwrap();
+        let calls = Recorder::default();
+        let fetch = calls.clone();
+        let mut loaded = Registry::new(Environment {
+            secrets: store.clone(),
+            config_file: Some(file.clone()),
+            fetch: Arc::new(move || Box::new(fetch.clone())),
+        })
+        .unwrap();
+        assert!(matches!(
+            loaded.get(removed_id),
+            Err(td_host::integrations::Error::NotFound)
+        ));
+        assert!(loaded.get("this_pc").unwrap().view().is_ok());
+        let view = loaded.get("cliproxyapi").unwrap().view().unwrap();
+        assert_eq!(view.config["url"], "https://hub.example");
+        assert!(!view.secrets["management_key"].set);
+        loaded.tick();
+        assert!(calls.0.lock().unwrap().is_empty());
+        let summaries = serde_json::to_string(&loaded.list()).unwrap();
+        assert!(!summaries.contains(removed_id));
+        assert!(!summaries.contains("fixture-unused-secret"));
+        assert_eq!(std::fs::read_to_string(&saved).unwrap(), contents);
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn scheme_host_and_effective_port_clear_secrets_but_path_does_not() {
     for next in [
         "http://hub.example",

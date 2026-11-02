@@ -44,7 +44,7 @@ describe('the form a schema builds', () => {
   });
 
   it('names the fields of an Integration the copy guide lacks from the schema, and reads an unknown kind as text', () => {
-    const { fields, secrets } = formOf('proxmox', [
+    const { fields, secrets } = formOf('this_pc', [
       { name: 'node_name', kind: 'string', secret: false },
       { name: 'poll_every', kind: 'duration', secret: false },
       { name: 'api_token', kind: 'string', secret: true },
@@ -194,4 +194,12 @@ describe('Preset tiles', () => {
     expect(parseAction({ type: 'teleport' })).toBeNull();
     expect(parseAction('widget')).toBeNull();
   });
+});
+
+it('round-trips a JSON config field and rejects malformed JSON', () => {
+  const { fields } = formOf('custom', [{ name: 'sources', kind: 'json', secret: false }]);
+  const sources = [{ id: 'temperature', interval_s: 1 }];
+  const values = valuesOf(fields, { sources });
+  expect(serialize(fields, values)).toEqual({ sources });
+  expect(validate(fields, { sources: '[broken' })).toEqual({ sources: 'Enter valid JSON.' });
 });
