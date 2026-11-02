@@ -116,6 +116,16 @@ void ui_live_begin(const td_layout_t *layout);
 /* Draws a graph Tile's label, unavailable marker, plot area and line on `obj`, and ties them to its slot. */
 void ui_live_build(lv_obj_t *obj, const ui_tile_t *tile, ui_rect_t rect);
 
+void ui_gif_prepare(const td_layout_t *layout);
+void ui_gif_begin(void);
+bool ui_gif_build(lv_obj_t *obj, const ui_tile_t *tile, uint8_t page);
+void ui_gif_page(uint8_t page, bool sliding);
+void ui_gif_set_dimmed(bool dimmed);
+void ui_gif_resume(void);
+/* Called by the reload task without the LVGL lock. Detaches images, then waits
+ * outside that lock for the worker to release the outgoing Layout's buffers. */
+bool ui_gif_quiesce(void);
+
 /* Draws a widget tile's value, caption and bar on its tile object and registers the tile in the table. */
 void ui_widget_build(lv_obj_t *obj, const ui_tile_t *tile, ui_rect_t rect);
 

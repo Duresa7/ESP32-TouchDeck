@@ -142,6 +142,25 @@ static void asset_path(char out[ASSET_PATH_MAX], const char *id)
     snprintf(out, ASSET_PATH_MAX, TD_ASSET_DIR "/%c/%s" BIN_SUFFIX, id[0], id);
 }
 
+bool td_asset_gif_canvas(const char *id, uint16_t *width, uint16_t *height)
+{
+    if (!td_asset_id_valid(id) || !width || !height) return false;
+    char path[ASSET_PATH_MAX];
+    asset_path(path, id);
+    td_store_lock();
+    FILE *file = fopen(path, "rb");
+    uint8_t header[13];
+    bool ok = file && fread(header, 1, sizeof header, file) == sizeof header;
+    if (file) fclose(file);
+    td_store_unlock();
+    if (!ok || memcmp(header, "GIF89a", 6)) return false;
+    const uint16_t w = le16(header + 6), h = le16(header + 8);
+    if (!w || !h || w > TD_GIF_MAX_SIDE || h > TD_GIF_MAX_SIDE) return false;
+    *width = w;
+    *height = h;
+    return true;
+}
+
 static void hex(const uint8_t digest[TD_SHA256_BYTES], char out[TD_ASSET_ID_LEN + 1])
 {
     for (size_t i = 0; i < TD_SHA256_BYTES; i++) {

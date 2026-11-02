@@ -17,6 +17,8 @@ def load(path):
     lib.td_asset_upload_write.argtypes = [ctypes.c_char_p, ctypes.c_size_t]
     lib.td_asset_present.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_int)]
     lib.td_asset_present.restype = ctypes.c_bool
+    lib.td_asset_gif_canvas.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_uint16), ctypes.POINTER(ctypes.c_uint16)]
+    lib.td_asset_gif_canvas.restype = ctypes.c_bool
     lib.td_asset_result_reason.restype = ctypes.c_char_p
     return lib
 
@@ -66,7 +68,7 @@ class AssetTest(unittest.TestCase):
                     source = wrapper
                 sources.append(source)
         exports = ["td_asset_upload_begin", "td_asset_upload_write", "td_asset_upload_finish",
-                   "td_asset_upload_abort", "td_asset_present", "td_asset_delete", "td_asset_result_reason", "host_interrupt"]
+                   "td_asset_upload_abort", "td_asset_present", "td_asset_gif_canvas", "td_asset_delete", "td_asset_result_reason", "host_interrupt"]
         if cls.littlefs:
             exports += ["host_lfs_init", "host_lfs_done", "host_handles", "host_exists", "host_fail_sync", "host_fail_close"]
         if os.name == "nt":
@@ -110,6 +112,16 @@ class AssetTest(unittest.TestCase):
         size, fmt = ctypes.c_uint32(), ctypes.c_int()
         self.assertTrue(self.lib.td_asset_present(key, ctypes.byref(size), ctypes.byref(fmt)))
         self.assertEqual((size.value, fmt.value), (12300, 1))
+        width, height = ctypes.c_uint16(), ctypes.c_uint16()
+        self.assertFalse(self.lib.td_asset_gif_canvas(key, ctypes.byref(width), ctypes.byref(height)))
+
+    def test_gif_canvas_for_page_budget(self):
+        key, result = upload(self.lib, gif(width=3, codes=[4, 0, 6, 5]))
+        self.assertEqual(result, 0)
+        width, height = ctypes.c_uint16(), ctypes.c_uint16()
+        self.assertTrue(self.lib.td_asset_gif_canvas(key, ctypes.byref(width), ctypes.byref(height)))
+        self.assertEqual((width.value, height.value), (3, 1))
+        self.assertFalse(self.lib.td_asset_gif_canvas(b"../escape", ctypes.byref(width), ctypes.byref(height)))
 
     def test_hostile_commit_preserves_previous_assets(self):
         good, result = upload(self.lib, gif())
