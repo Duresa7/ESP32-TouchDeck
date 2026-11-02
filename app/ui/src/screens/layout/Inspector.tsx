@@ -4,13 +4,14 @@ import { Switch } from '@base-ui/react/switch';
 import { Film, Plus } from 'lucide-react';
 import { useIntegrations } from '../../companion/integrations.ts';
 import { missingGlyphs } from '../../lib/deck/scene.ts';
-import { presetGraph } from '../../lib/editor/graph.ts';
+import { placedLook } from '../../lib/editor/graph.ts';
 import { ADD_KINDS, tileProblems, type EditorStore, type Target } from '../../lib/editor/store.ts';
 import { plural } from '../../lib/editor/messages.ts';
 import type { GridPage, Layout, Page } from '../../lib/editor/validate.ts';
 import { offersPresets } from '../../lib/integrations/model.ts';
 import { button } from '../../shell/button.ts';
 import { useUi } from '../../state/ui.ts';
+import { usePresetNeeds } from '../integrations/addToLayout.ts';
 import { PresetButton } from '../integrations/PresetPreview.tsx';
 import { PendingApprovals } from './Approvals.tsx';
 import { useDeviceOffersGif, useDeviceShows, useEditorState, useGifTiles } from './editor.ts';
@@ -231,6 +232,7 @@ function PresetTiles({ store }: { store: EditorStore }) {
   const integrations = useIntegrations((s) => s.integrations);
   const go = useUi((s) => s.go);
   const graphs = useDeviceShows(store, 'graph');
+  const needs = usePresetNeeds();
   const offered = integrations.filter(offersPresets);
   return (
     <section className="inspector-section" aria-label="Preset tiles" data-testid="add-presets">
@@ -241,7 +243,7 @@ function PresetTiles({ store }: { store: EditorStore }) {
             <span className="add-presets-name">{integration.name}</span>
             <div className="preset-grid">
               {integration.presets.map((preset) => (
-                <PresetButton key={preset.id} preset={preset} streams={integration.streams} onAdd={(chosen) => store.placePreset(chosen, graphs ? presetGraph(chosen, integration) : null)} />
+                <PresetButton key={preset.id} preset={preset} streams={integration.streams} onAdd={(chosen) => store.placePreset(chosen, placedLook(chosen, integration, graphs))} needs={needs(preset)} />
               ))}
             </div>
           </div>
