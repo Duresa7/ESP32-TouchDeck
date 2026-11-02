@@ -33,16 +33,16 @@ class GifTest(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(dir=os.environ.get("TD_TEST_OUT"))
         dll = Path(cls.tmp.name) / ("gif.dll" if os.name == "nt" else "gif.so")
-        source = str(ROOT / "components/td_store/td_gif.c")
-        include = str(ROOT / "components/td_store/include")
+        sources = [str(ROOT / "components/td_store/td_gif.c"), str(ROOT / "tools/host/heap/heap_caps_host.c")]
+        includes = [str(ROOT / "components/td_store/include"), str(ROOT / "tools/host/heap")]
         if os.name == "nt":
-            command = ["cl", "/nologo", "/LD", "/W4", "/WX", "/I" + include, source,
-                       "/Fo" + str(Path(cls.tmp.name) / "gif.obj"), "/link", "/OUT:" + str(dll),
+            command = ["cl", "/nologo", "/LD", "/W4", "/WX"] + ["/I" + i for i in includes] + sources + [
+                       "/Fo" + cls.tmp.name + "\\", "/link", "/OUT:" + str(dll),
                        "/EXPORT:td_gif_validate", "/EXPORT:td_gif_open", "/EXPORT:td_gif_close",
                        "/EXPORT:td_gif_render", "/EXPORT:td_gif_info"]
         else:
             command = [os.environ.get("CC", "cc"), "-shared", "-fPIC", "-O2", "-Wall", "-Wextra",
-                       "-Werror", "-I" + include, source, "-o", str(dll)]
+                       "-Werror"] + ["-I" + i for i in includes] + sources + ["-o", str(dll)]
         subprocess.run(command, check=True, cwd=cls.tmp.name)
         cls.lib = ctypes.CDLL(str(dll))
         cls.lib.td_gif_validate.argtypes = [READ, YIELD, ctypes.c_void_p, ctypes.c_uint32]

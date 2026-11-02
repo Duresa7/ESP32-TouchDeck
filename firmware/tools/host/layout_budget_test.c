@@ -44,9 +44,10 @@ bool td_asset_present(const char *id, uint32_t *bytes, td_asset_format_t *format
 {
     (void)id; (void)bytes; *format = TD_ASSET_FMT_GIF; return true;
 }
+static uint16_t canvas_width = 128, canvas_height = 128;
 bool td_asset_gif_canvas(const char *id, uint16_t *width, uint16_t *height)
 {
-    (void)id; *width = 128; *height = 128; return true;
+    (void)id; *width = canvas_width; *height = canvas_height; return true;
 }
 static const char *ui_layout_slot(void) { return "portrait"; }
 static void close_xfer(void) {}
@@ -78,6 +79,19 @@ int main(void)
     reply = (cJSON){0};
     finish_put(&reply);
     assert(!reply.failed && committed == 2);
-    puts("Layout commit counts reused Assets per Tile, resets each Page, refuses size and retains stored Layout: OK");
+    candidate = 3;
+    pages[0].tile_count = pages[1].tile_count = 3;
+    canvas_width = canvas_height = 160;
+    reply = (cJSON){0};
+    finish_put(&reply);
+    assert(reply.failed && reply.reason && !strcmp(reply.reason, "size") && committed == 2);
+    candidate = 4;
+    pages[0].tile_count = pages[1].tile_count = 2;
+    canvas_width = 256;
+    canvas_height = 128;
+    reply = (cJSON){0};
+    finish_put(&reply);
+    assert(!reply.failed && committed == 4);
+    puts("Layout commit counts reused Assets per Tile, resets each Page, refuses size by Tiles or pixels and retains stored Layout: OK");
     return 0;
 }

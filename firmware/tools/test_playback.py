@@ -15,9 +15,9 @@ class PlaybackTest(unittest.TestCase):
             start = source.index("static void finish_put(")
             end = source.index("\nvoid td_link_xfer_end(", start)
             (out / "finish_put.c").write_text(source[start:end], newline="\n")
-            includes = [out] + [ROOT / "components" / c / "include"
-                               for c in ["td_layout", "td_store", "td_ui_core", "keys"]]
-            sources = [ROOT / "tools/host/layout_budget_test.c",
+            includes = [out, ROOT / "tools/host/heap"] + [ROOT / "components" / c / "include"
+                                                          for c in ["td_layout", "td_store", "td_ui_core", "keys"]]
+            sources = [ROOT / "tools/host/layout_budget_test.c", ROOT / "tools/host/heap/heap_caps_host.c",
                        ROOT / "components/td_ui_core/ui_gif_player.c", ROOT / "components/td_store/td_gif.c"]
             exe = out / ("budget.exe" if os.name == "nt" else "budget")
             if os.name == "nt":
@@ -32,9 +32,9 @@ class PlaybackTest(unittest.TestCase):
     def test_playback(self):
         with tempfile.TemporaryDirectory(dir=os.environ.get("TD_TEST_OUT")) as tmp:
             out = Path(tmp)
-            includes = [ROOT / "components" / component / "include"
-                        for component in ["td_store", "td_ui_core", "keys"]]
-            sources = [ROOT / "tools/host/playback_test.c",
+            includes = [ROOT / "tools/host/heap"] + [ROOT / "components" / component / "include"
+                                                     for component in ["td_store", "td_ui_core", "keys"]]
+            sources = [ROOT / "tools/host/playback_test.c", ROOT / "tools/host/heap/heap_caps_host.c",
                        ROOT / "components/td_ui_core/ui_gif_player.c",
                        ROOT / "components/td_store/td_gif.c"]
             exe = out / ("playback.exe" if os.name == "nt" else "playback")

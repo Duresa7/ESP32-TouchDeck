@@ -1,4 +1,5 @@
 #include "ui_gif_player.h"
+#include "esp_heap_caps.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -61,14 +62,15 @@ int main(int argc, char **argv)
     harness_t h = {0};
     uint8_t *poster = NULL;
     ui_gif_player_t *p = open_player(&h, &poster, data, sizeof data);
+    assert(ui_gif_player_due_ms(p) == 0);
     assert(ui_gif_player_tick(p, true) == TD_GIF_OK);
-    assert(h.front == poster && h.shown == 1);
+    assert(h.front == poster && h.shown == 1 && ui_gif_player_due_ms(p) == 100);
     h.now = 99;
     ui_gif_player_tick(p, true);
-    assert(h.shown == 1);
+    assert(h.shown == 1 && ui_gif_player_due_ms(p) == 100);
     h.now = 100;
     ui_gif_player_tick(p, true);
-    assert(h.front != poster && h.shown == 2);
+    assert(h.front != poster && h.shown == 2 && ui_gif_player_due_ms(p) == 200);
     h.now = 750;
     ui_gif_player_tick(p, true);
     assert(h.shown == 3);
@@ -89,7 +91,7 @@ int main(int argc, char **argv)
         if (reason == 4) visibility.off = true;
         assert(!ui_gif_should_play(visibility));
         ui_gif_player_tick(p, ui_gif_should_play(visibility));
-        assert(h.front == poster);
+        assert(h.front == poster && ui_gif_player_due_ms(p) == UINT64_MAX);
         assert(h.allocations - h.frees == 2);
         ui_gif_player_tick(p, true);
         h.now += 100;
@@ -105,15 +107,16 @@ int main(int argc, char **argv)
     h.front = NULL;
     assert(ui_gif_player_close(p));
     release(&h, poster);
-    assert(h.allocations == h.frees);
+    assert(h.allocations == h.frees && host_heap_live() == 0);
 
-    for (unsigned allocation = 1; allocation <= 2; allocation++) {
+    for (unsigned allocation = 0; allocation <= 2; allocation++) {
         harness_t failure = {.fail_at = allocation};
+        if (!allocation) host_heap_fail_next();
         ui_gif_ops_t ops = {allocate, release, now, yield, in_use, present};
         poster = NULL;
         p = NULL;
         assert(ui_gif_player_open(data, sizeof data, &poster, &ops, &failure, &p) == TD_GIF_MEMORY);
-        assert(!p && !poster && failure.allocations == failure.frees);
+        assert(!p && !poster && failure.allocations == failure.frees && host_heap_live() == 0);
     }
 
     unsigned count = 0;
@@ -149,7 +152,7 @@ int main(int argc, char **argv)
     h.front = NULL;
     assert(ui_gif_player_close(p));
     release(&h, poster);
-    assert(h.allocations == h.frees);
+    assert(h.allocations == h.frees && host_heap_live() == 0);
     puts("playback timing, skipping, pause, cancellation, ownership and Page budgets: OK");
     return 0;
 }

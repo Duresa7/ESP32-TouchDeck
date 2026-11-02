@@ -7,7 +7,7 @@ struct ui_gif_player {
     void *ctx;
     uint8_t *poster, *buffers[2];
     size_t bytes;
-    uint64_t epoch, attempted, skipped, deadline;
+    uint64_t epoch, attempted, skipped, deadline, due;
     bool started;
 };
 
@@ -35,6 +35,7 @@ td_gif_result_t ui_gif_player_open(const uint8_t *data, uint32_t bytes, uint8_t 
     memset(p, 0, sizeof *p);
     p->ops = *ops;
     p->ctx = ctx;
+    p->due = 0;
     td_gif_result_t result = td_gif_open(data, bytes, ops->yield, ctx, &p->gif);
     if (result == TD_GIF_OK) {
         const td_gif_info_t *info = td_gif_info(p->gif);
@@ -75,6 +76,7 @@ static bool frame_yield(void *ctx)
 td_gif_result_t ui_gif_player_tick(ui_gif_player_t *p, bool playing)
 {
     const td_gif_info_t *info = td_gif_info(p->gif);
+    p->due = UINT64_MAX;
     if (!playing) {
         p->started = false;
         p->ops.present(p->ctx, p->poster, info, 0);
@@ -87,6 +89,7 @@ td_gif_result_t ui_gif_player_tick(ui_gif_player_t *p, bool playing)
         p->epoch = now;
         p->attempted = 0;
         p->started = true;
+        p->due = now + info->delays_ms[0];
         return TD_GIF_OK;
     }
     const uint64_t elapsed = now - p->epoch;
@@ -96,12 +99,16 @@ td_gif_result_t ui_gif_player_tick(ui_gif_player_t *p, bool playing)
     uint32_t end = info->delays_ms[0];
     while (within >= end && frame + 1 < info->frames) end += info->delays_ms[++frame];
     const uint64_t cursor = cycle * info->frames + frame;
-    if (cursor == p->attempted) return TD_GIF_OK;
     const uint64_t deadline = p->epoch + cycle * info->duration_ms + end;
+    if (cursor == p->attempted) {
+        p->due = deadline;
+        return TD_GIF_OK;
+    }
     if (!frame) {
         if (p->ops.present(p->ctx, p->poster, info, deadline)) {
             if (cursor > p->attempted + 1) p->skipped += cursor - p->attempted - 1;
             p->attempted = cursor;
+            p->due = deadline;
         }
         return TD_GIF_OK;
     }
@@ -115,6 +122,7 @@ td_gif_result_t ui_gif_player_tick(ui_gif_player_t *p, bool playing)
     if (cursor > p->attempted + 1) p->skipped += cursor - p->attempted - 1;
     p->attempted = cursor;
     p->deadline = deadline;
+    p->due = deadline;
     td_gif_result_t result = frame_yield(p) ?
         td_gif_render(p->gif, frame, back, p->bytes, frame_yield, p) : TD_GIF_CANCELLED;
     if (result == TD_GIF_CANCELLED && p->ops.now_ms(p->ctx) >= deadline) {
@@ -137,4 +145,5 @@ bool ui_gif_player_close(ui_gif_player_t *p)
 }
 
 uint64_t ui_gif_player_skipped(const ui_gif_player_t *p) { return p->skipped; }
+uint64_t ui_gif_player_due_ms(const ui_gif_player_t *p) { return p->due; }
 const td_gif_info_t *ui_gif_player_info(const ui_gif_player_t *p) { return td_gif_info(p->gif); }

@@ -46,9 +46,10 @@ class AssetTest(unittest.TestCase):
         cls.dir = Path(cls.tmp.name).resolve()
         cls.dll = cls.dir / ("asset.dll" if os.name == "nt" else "asset.so")
         host = ROOT / "tools/host"
-        includes = [host / "include", ROOT / "components/td_store/include", ROOT / "components/td_update/include"]
+        includes = [host / "include", host / "heap", ROOT / "components/td_store/include",
+                    ROOT / "components/td_update/include"]
         sources = [ROOT / "components/td_store/td_asset.c", ROOT / "components/td_store/td_gif.c",
-                   ROOT / "components/td_update/td_update_state.c", host / "asset_host.c"]
+                   ROOT / "components/td_update/td_update_state.c", host / "asset_host.c", host / "heap/heap_caps_host.c"]
         if cls.littlefs:
             lfs = ROOT / "managed_components/joltwallet__littlefs/src/littlefs"
             if not (lfs / "lfs.c").exists():

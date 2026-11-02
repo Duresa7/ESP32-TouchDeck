@@ -1,9 +1,7 @@
 #include "td_gif.h"
+#include "esp_heap_caps.h"
 #include <stdlib.h>
 #include <string.h>
-#ifdef ESP_PLATFORM
-#include "esp_heap_caps.h"
-#endif
 
 typedef struct {
     td_gif_read_fn read;
@@ -339,11 +337,7 @@ td_gif_result_t td_gif_open(const uint8_t *data, uint32_t bytes, td_gif_yield_fn
     *out = NULL;
     if (bytes > TD_GIF_MAX_BYTES) return TD_GIF_SIZE;
     if (!data || !yield) return TD_GIF_FORMAT;
-#ifdef ESP_PLATFORM
     td_gif_t *d = heap_caps_calloc(1, sizeof *d, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#else
-    td_gif_t *d = calloc(1, sizeof *d);
-#endif
     if (!d) return TD_GIF_MEMORY;
     d->data = data;
     d->bytes = bytes;
@@ -393,4 +387,4 @@ td_gif_result_t td_gif_render(td_gif_t *d, uint32_t frame, uint8_t *pixels, size
     return TD_GIF_OK;
 }
 
-void td_gif_close(td_gif_t *gif) { free(gif); }
+void td_gif_close(td_gif_t *gif) { heap_caps_free(gif); }

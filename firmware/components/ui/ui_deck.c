@@ -657,11 +657,11 @@ static void build_objects(bool full_screen)
  */
 static void load_locked(const td_layout_t *layout, const ui_layout_info_t *info, int64_t started_us)
 {
+    ui_gif_begin();
     set_up_screen();
     tear_down();
     ui_tile_keys_start();
     ui_widget_begin();
-    ui_gif_begin();
 
     const uint8_t count = count_valid_pages(layout->pages, layout->page_count);
     layout_lock();
@@ -845,15 +845,9 @@ bool ui_layout_reload(bool use_builtin, td_layout_error_t *err)
 
     ui_layout_info_t info;
     fill_info(&info, next, stored != NULL, bytes, ui_icon_prepare(next, s.layout));
-    if (!ui_gif_quiesce()) {
-        td_layout_free(stored);
-        snprintf(err->key, sizeof err->key, "display.busy");
-        snprintf(err->message, sizeof err->message, "the display stayed busy for %d ms", LOCK_TIMEOUT_MS);
-        xSemaphoreGive(s.reload_lock);
-        return false;
-    }
     ui_gif_prepare(next);
     if (esp_lv_adapter_lock(LOCK_TIMEOUT_MS) != ESP_OK) {
+        ui_gif_discard();
         td_layout_free(stored);
         snprintf(err->key, sizeof err->key, "display.busy");
         snprintf(err->message, sizeof err->message, "the display stayed busy for %d ms", LOCK_TIMEOUT_MS);
