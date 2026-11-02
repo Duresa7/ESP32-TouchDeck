@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import clsx from 'clsx';
-import { Film, Lock, Plus } from 'lucide-react';
+import { Film, Lock, Pause, Play, Plus, SkipBack, SkipForward, Volume2, VolumeX } from 'lucide-react';
 import { cellAt, geometry, PANEL_H, PANEL_W, screenSize, tileFits, tileRect, type Geometry, type Rect, type Span } from '../../lib/deck/geometry.ts';
 import { easeOut, goTo, move, nearestPage, pager, press, release, restX, type Bounce } from '../../lib/deck/pager.ts';
-import { buildDots, buildPage, buildTitle, FONTS, sampleRows, sampleSeries, sampleWidget, type FontSize, type GraphView, type PageView, type SceneOptions, type TextView } from '../../lib/deck/scene.ts';
+import { buildDots, buildPage, buildTitle, FONTS, sampleRows, sampleSeries, sampleWidget, type ControlGlyph, type FontSize, type GraphView, type LevelView, type NowPlayingView, type PageView, type SceneOptions, type TextView } from '../../lib/deck/scene.ts';
 import type { Line } from '../../lib/deck/text.ts';
 import { THEME } from '../../lib/deck/theme.ts';
 import type { EditorStore, Target } from '../../lib/editor/store.ts';
@@ -62,6 +62,8 @@ function SceneText({ view, title }: { view: TextView; title?: boolean }) {
 }
 
 const SAMPLES = { widget: sampleWidget, rows: sampleRows, hasImage: () => true };
+const SAMPLE_LEVEL = { value: 0.64, muted: false };
+const SAMPLE_TRACK = { title: 'Night Drive', artist: 'Tidal Lines', state: 2 };
 
 function SceneGraph({ view }: { view: GraphView }) {
   return (
@@ -86,6 +88,90 @@ function SceneGraph({ view }: { view: GraphView }) {
           <polyline points={view.points.map((p) => `${p.x},${p.y}`).join(' ')} strokeWidth={THEME.graph.lineW} />
         </svg>
       )}
+    </span>
+  );
+}
+
+const at = (box: Rect): CSSProperties => ({ left: box.x, top: box.y, width: box.w, height: box.h });
+const staleOpacity = (stale: boolean) => (stale ? THEME.staleOpa / 255 : 1);
+
+function SceneLevel({ view }: { view: LevelView }) {
+  const Speaker = view.glyph.muted ? VolumeX : Volume2;
+  return (
+    <span
+      className={clsx('scene-live', view.muted && 'is-muted')}
+      style={{ opacity: staleOpacity(view.stale) }}
+      data-testid="tile-level"
+      data-value={view.value.text}
+      data-muted={view.muted}
+      data-input={view.input}
+      data-stale={view.stale}
+      aria-hidden
+    >
+      <span className="scene-live-glyph" style={at(view.glyph)}>
+        <Speaker size={view.glyph.w} strokeWidth={2.4} />
+      </span>
+      <span className="scene-level-label" style={at(view.label)}>
+        {view.label.text}
+      </span>
+      <span className="scene-level-value" style={at(view.value)}>
+        {view.value.text}
+      </span>
+      <span className="scene-level-track" style={{ ...at(view.track), borderRadius: view.track.radius }}>
+        {view.fill > 0 && <span className="scene-level-fill" style={{ width: view.fill }} />}
+      </span>
+    </span>
+  );
+}
+
+const CONTROL_SIZE = 32;
+
+function ControlIcon({ glyph }: { glyph: ControlGlyph }) {
+  const solid = { size: CONTROL_SIZE, strokeWidth: 0, fill: 'currentColor' };
+  switch (glyph) {
+    case 'prev':
+      return <SkipBack {...solid} />;
+    case 'play':
+      return <Play {...solid} />;
+    case 'pause':
+      return <Pause {...solid} />;
+    case 'next':
+      return <SkipForward {...solid} />;
+  }
+}
+
+function SceneNowPlaying({ view }: { view: NowPlayingView }) {
+  const named = view.artist !== null;
+  return (
+    <span
+      className="scene-live"
+      style={{ opacity: staleOpacity(view.stale) }}
+      data-testid="tile-now-playing"
+      data-idle={view.idle}
+      data-stale={view.stale}
+      data-controls={view.controls.map((c) => c.glyph).join(' ')}
+      aria-hidden
+    >
+      {view.art && (
+        <span
+          className={clsx('scene-np-art', named && 'is-stand-in')}
+          style={{ left: view.art.x, top: view.art.y, width: view.art.size, height: view.art.size, borderRadius: THEME.nowPlaying.artRadius }}
+          data-testid="tile-cover"
+        />
+      )}
+      <span className={clsx('scene-np-title', view.title.idle && 'is-idle')} style={at(view.title)}>
+        {view.title.text}
+      </span>
+      {view.artist && (
+        <span className="scene-np-artist" style={at(view.artist)}>
+          {view.artist.text}
+        </span>
+      )}
+      {view.controls.map((control) => (
+        <span key={control.part} className="scene-live-glyph" style={at(control)} data-part={control.part}>
+          <ControlIcon glyph={control.glyph} />
+        </span>
+      ))}
     </span>
   );
 }
@@ -157,7 +243,12 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
   const stale = live?.stale ?? false;
   const options: SceneOptions = useMemo(() => {
     const samples = sampleSeries(series);
-    return { ...SAMPLES, graph: () => ({ samples, cap: series, stale }) };
+    return {
+      ...SAMPLES,
+      graph: () => ({ samples, cap: series, stale }),
+      level: () => ({ ...SAMPLE_LEVEL, stale }),
+      nowPlaying: () => ({ ...SAMPLE_TRACK, stale }),
+    };
   }, [series, stale]);
   const views: PageView[] = useMemo(
     () => (editing ? [buildPage(current, g, options)] : layout.pages.map((p) => buildPage(p, g, options))),
@@ -579,6 +670,9 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
                 )}
                 {tv.bar && <span className="scene-bar" style={{ left: tv.bar.x, top: tv.bar.y, width: tv.bar.w, height: tv.bar.h, borderRadius: tv.bar.radius }} />}
                 {tv.graph && <SceneGraph view={tv.graph} />}
+                {badge === null && tv.level && <SceneLevel view={tv.level} />}
+                {badge === null && tv.nowPlaying && <SceneNowPlaying view={tv.nowPlaying} />}
+                {badge !== null && (tv.level || tv.nowPlaying) && <span className="tile-needs-label">{tile.label}</span>}
                 {mod === 'locked' && <Lock className="scene-lock" size={30} strokeWidth={3} aria-hidden />}
                 {badge !== null && (
                   <span className="tile-needs" data-testid="tile-needs">

@@ -14,7 +14,7 @@ import {
   counts,
   freeCell,
   freshId,
-  graphTile,
+  liveTile,
   moveTile,
   newGridPage,
   newLayout,
@@ -29,6 +29,8 @@ import {
   setFullScreen,
   setGif,
   setGraph,
+  setInput,
+  setLive,
   setGridSize,
   setIcon,
   setLabel,
@@ -38,10 +40,12 @@ import {
   type Action,
   type Edit,
   type GraphBinding,
+  type LiveLook,
   type GridPage,
   type Layout,
   type Orientation,
   type Tile,
+  type WidgetAction,
 } from './validate.ts';
 
 export interface Status {
@@ -331,7 +335,7 @@ export function createEditorStore(deps: EditorDeps) {
     return editField(tile, (l, page) => setAction(l, page, tile, action), (reason) => ({ action: { value: action, reason } }), 'action');
   }
 
-  function placeAtTarget(action: Action, label: string, graph: GraphBinding | null = null): { id: string; page: string; pages: string[] } | null {
+  function placeAtTarget(action: Action, label: string, look: LiveLook | null = null): { id: string; page: string; pages: string[] } | null {
     const draft = current();
     const where = state().adding;
     if (!draft || !where) return null;
@@ -353,8 +357,8 @@ export function createEditorStore(deps: EditorDeps) {
     if (!target) return null;
     const id = freshId(layout, 'tile');
     const plain: Tile = { id, label, row: cell.row, col: cell.col, rowSpan: 1, colSpan: 1, icon: null, action };
-    const tile = graph ? graphTile(plain, graph) : plain;
-    const base: Layout = graph ? { ...layout, schema: 2 } : layout;
+    const tile = look && action.type === 'widget' ? liveTile(plain, action, look) : plain;
+    const base: Layout = tile.render ? { ...layout, schema: 2 } : layout;
     if (apply(() => addTile(base, target, tile), { page: target, selected: id, adding: null }) !== null) return null;
     return { id, page: target, pages: base.pages.map((p) => p.id) };
   }
@@ -456,14 +460,14 @@ export function createEditorStore(deps: EditorDeps) {
       return null;
     },
 
-    /** Places a Preset tile where Add Tile points, as a graph of `graph` when given. */
-    placePreset(preset: PresetTile, graph: GraphBinding | null = null) {
+    /** Places a Preset tile where Add Tile points, drawn as `look` when given. */
+    placePreset(preset: PresetTile, look: LiveLook | null = null) {
       const action = parseAction(preset.action);
-      if (action) placeAtTarget(action, presetLabel(preset.name), graph);
+      if (action) placeAtTarget(action, presetLabel(preset.name), look);
       else say('error', friendlyRefusal('action.type'), { detail: JSON.stringify(preset.action), event: 'refused' });
     },
 
-    async addPreset(preset: PresetTile, graph: GraphBinding | null = null): Promise<Status | null> {
+    async addPreset(preset: PresetTile, look: LiveLook | null = null): Promise<Status | null> {
       if (!state().device) return null;
       if (state().busy) {
         say('error', `${name()} is busy. Wait a moment, then retry.`, { event: 'refused' });
@@ -486,8 +490,8 @@ export function createEditorStore(deps: EditorDeps) {
       }
       const id = freshId(draft.layout, 'tile');
       const plain: Tile = { id, label: presetLabel(preset.name), row: cell[0], col: cell[1], rowSpan: 1, colSpan: 1, icon: null, action };
-      const tile = graph ? graphTile(plain, graph) : plain;
-      if (apply((l) => addTile(graph ? { ...l, schema: 2 } : l, grid.id, tile), { page: grid.id, selected: id, adding: null }) === null) {
+      const tile = look && action.type === 'widget' ? liveTile(plain, action, look) : plain;
+      if (apply((l) => addTile(tile.render ? { ...l, schema: 2 } : l, grid.id, tile), { page: grid.id, selected: id, adding: null }) === null) {
         say('ok', `Added to ${name()}'s Layout`, { event: 'preset-added' });
       }
       return state().status;
@@ -503,6 +507,21 @@ export function createEditorStore(deps: EditorDeps) {
       const reason = apply((l) => setGraph(l, page, tile, binding));
       if (reason === null) mark(tile, { action: undefined });
       return reason;
+    },
+
+    /** Draws the Tile with a Live tile renderer bound through `action`, or with null as that action's plain value. */
+    setLive(tile: string, action: WidgetAction, look: LiveLook | null) {
+      const page = state().page;
+      if (!page) return 'no page';
+      const reason = apply((l) => setLive(l, page, tile, action, look));
+      if (reason === null) mark(tile, { action: undefined });
+      return reason;
+    },
+
+    /** Lets a drag on the bar Tile set its value, or makes the bar read only. */
+    setInput(tile: string, on: boolean) {
+      const page = state().page;
+      return page ? apply((l) => setInput(l, page, tile, on)) : 'no page';
     },
 
     moveTile(tile: string, row: number, col: number) {

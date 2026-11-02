@@ -255,10 +255,13 @@ test('Add Tile points to Integrations when none offers Preset tiles', async ({ p
   await page.goto('/?integrations=new');
   await expect(page.getByRole('list', { name: 'Devices' })).toBeVisible();
   await page.getByRole('button', { name: 'Integrations', exact: true }).click();
-  await page.locator('[data-testid="integration"][data-id="this_pc"]').getByTestId('integration-open').click();
-  await page.getByTestId('config-switch').click();
-  await page.getByTestId('config-save').click();
-  await expect(page.getByTestId('detail-status')).toHaveText('Off');
+  for (const id of ['this_pc', 'volume', 'media']) {
+    await page.locator(`[data-testid="integration"][data-id="${id}"]`).getByTestId('integration-open').click();
+    await page.getByTestId('config-switch').click();
+    await page.getByTestId('config-save').click();
+    await expect(page.getByTestId('detail-status')).toHaveText('Off');
+    await page.getByTestId('detail-back').click();
+  }
   await page.getByRole('button', { name: 'Layout', exact: true }).click();
   await page.getByTestId('start-starter').click();
   await page.getByTestId('page-tab').filter({ hasText: 'Shortcuts' }).click();
