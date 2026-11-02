@@ -115,6 +115,25 @@ test("full-screen F-keys tiles run from the screen's top-left corner to its bott
   assert.deepEqual(rect(port, 'win'), { x: 462, y: 780, w: 138, h: 244 });
 });
 
+test('every pixel of every cell maps back to that cell, on every grid in both orientations', () => {
+  for (const orientation of ['landscape', 'portrait'] as const) {
+    const g = geometryOf(orientation);
+    for (let rows = 1; rows <= 8; rows++) {
+      for (let cols = 1; cols <= 8; cols++) {
+        const page = { rows, cols };
+        for (let row = 0; row < rows; row++) {
+          for (let col = 0; col < cols; col++) {
+            const r = tileRect(page, { row, col, rowSpan: 1, colSpan: 1 }, g.grid, g.gap);
+            for (const [x, y] of [[r.x, r.y], [r.x + r.w - 1, r.y + r.h - 1], [r.x + r.w + g.gap - 1, r.y + r.h + g.gap - 1]]) {
+              assert.deepEqual(cellAt(page, g.grid, g.gap, x, y), [row, col]);
+            }
+          }
+        }
+      }
+    }
+  }
+});
+
 test('a point maps to the cell drawn under it, gaps included with the cell before them', () => {
   const g = geometryOf('landscape');
   const page = { rows: 3, cols: 4 };

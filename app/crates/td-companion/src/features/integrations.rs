@@ -477,7 +477,6 @@ mod control_tests {
         }
     }
 
-    /// A mock Device showing `layout`, and the live thread delivering a fake Control's samples to it.
     fn running(integration: &str, layout: serde_json::Value) -> Running {
         let events = Events::default();
         let devices = DeviceManager::new(events.clone());

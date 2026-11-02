@@ -17,7 +17,6 @@ const DECODED_BYTES_MAX: u64 = 64 * 1024 * 1024;
 const COVER_BYTES_MAX: usize = 32 * 1024;
 pub(super) const COVER_SIDE_MIN: u16 = 48;
 const CACHED: usize = 16;
-/// Cover Assets a Device keeps: the current one and the last few, so going back a track needs no upload.
 const KEPT: usize = 4;
 /// `v2.asset.list` pages read by the session-start sweep, four Assets each.
 const SWEEP_PAGES: usize = 16;
@@ -28,7 +27,6 @@ pub(super) struct Cover {
     pub bytes: Arc<[u8]>,
 }
 
-/// The newest covers made, by the Control's source id and the side they were made for.
 #[derive(Default)]
 pub(super) struct CoverCache {
     entries: VecDeque<((String, u16), Arc<Cover>)>,
@@ -60,8 +58,6 @@ impl CoverCache {
     }
 }
 
-/// Decodes an untrusted picture within the cover limits, crops its center to a square, and encodes it at `side`
-/// pixels with the photo frame's quality ladder until it fits in 32 KiB.
 fn encode(source: &[u8], side: u16) -> Result<Cover, String> {
     if source.len() > SOURCE_BYTES_MAX {
         return Err("The cover picture is over 4 MiB.".into());
@@ -103,7 +99,6 @@ fn encode(source: &[u8], side: u16) -> Result<Cover, String> {
     Err("The cover doesn't fit in 32 KiB.".into())
 }
 
-/// The cover Assets the Companion put on one Device this session, oldest first.
 #[derive(Debug, Default)]
 pub(super) struct CoverStore {
     known: VecDeque<String>,
@@ -129,14 +124,12 @@ impl CoverStore {
             after = page.next;
         }
         for id in jpegs {
-            delete(session, &id)?;
+            delete_unless_shown(session, &id)?;
         }
         self.known.clear();
         Ok(())
     }
 
-    /// Makes sure the Device has `cover`, keeping at most four covers. A Device that is full gets every cover it
-    /// doesn't show deleted, then one more try.
     pub fn upload(&mut self, session: &Session, cover: &Cover) -> Result<(), AssetError> {
         if self.known.contains(&cover.id) {
             self.forget(&cover.id);
@@ -155,15 +148,13 @@ impl CoverStore {
         Ok(())
     }
 
-    /// The Device no longer has this cover, so the next use uploads it again.
     pub fn forget(&mut self, id: &str) {
         self.known.retain(|known| known != id);
     }
 
-    /// Deletes the oldest cover the Device doesn't show. False when every cover is still shown.
     fn evict_oldest(&mut self, session: &Session) -> Result<bool, AssetError> {
         for id in self.known.clone() {
-            if delete(session, &id)? {
+            if delete_unless_shown(session, &id)? {
                 self.forget(&id);
                 return Ok(true);
             }
@@ -172,8 +163,7 @@ impl CoverStore {
     }
 }
 
-/// Deletes one Asset. False when the Device still shows it.
-fn delete(session: &Session, id: &str) -> Result<bool, AssetError> {
+fn delete_unless_shown(session: &Session, id: &str) -> Result<bool, AssetError> {
     match asset::delete_asset(session, id) {
         Ok(_) => Ok(true),
         Err(error) if error.reason() == Some(&AssetReason::InUse) => Ok(false),

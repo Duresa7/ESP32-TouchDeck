@@ -647,35 +647,36 @@ log gains `kind:"integration"`, status `ok` or `failed`, and copy.md detail.
 A completed gesture logs once, never per move. No new API endpoint is added.
 
 The Companion computes a Tile's pixel rect from the active Layout's grid,
-position/span and `fullScreen`, and the Device's screen size in the active
-orientation. Step B implements the pure function `td_core::live::tile_rect`
-in `app/crates/td-core/src/live.rs` with this signature:
+position/span and `fullScreen`, and the Device's screen size in the Layout's
+orientation, with `td_core::live::tile_rect`:
 
 ```rust
 pub fn tile_rect(layout: &Layout, page_id: &str, tile_id: &str, screen: ScreenSize) -> Option<PixelRect>;
+pub fn cell_rect(screen: ScreenSize, full_screen: bool, grid: [u8; 2], cell: [u8; 4]) -> Option<PixelRect>;
+pub fn art_size(tile_w: u16, tile_h: u16) -> Option<u16>;
 ```
 
 `ScreenSize { w: u16, h: u16 }` and `PixelRect { x: i32, y: i32, w: u16,
 h: u16 }` live in `td_core::live`. Missing/non-grid Pages, missing Tiles,
 invalid grids/spans or zero screen dimensions return None. The caller supplies
 the screen dimensions after applying the active orientation, not the panel's
-unrotated dimensions. It mirrors `ui_geometry` in
-`firmware/components/td_ui_core/ui_geometry.c` and `ui_tile_rect` in
-`firmware/components/td_ui_core/ui_pages.c`, with the app mirror in
-`app/ui/src/lib/deck/geometry.ts`. Its width and height feed the art-box rules
-in `schema/live/now-playing-vectors.json`.
-
-`schema/live/tile-geometry-vectors.json` records both current implementations.
-They disagree for non-full-screen Layouts: Firmware reserves a 36 px pager
-strip at the 600 px design scale; the app reserves 40 px. For a full-grid
-1024×600 Tile their rects are respectively `(28,76,968,468)` and
-`(28,76,968,464)`. Full-screen rects agree. Step B must resolve this difference
-with the Firmware and app owners before claiming one shared result; step A
-records both and chooses neither.
+unrotated dimensions. The Firmware is the truth, because it draws the Tile:
+`ui_geometry` in `firmware/components/td_ui_core/ui_geometry.c` and
+`ui_tile_rect` in `ui_pages.c`, with a 36 px pager strip at the 600 px design
+scale, so a full-grid 1024×600 Tile is `(28,76,968,468)`.
+`schema/live/tile-geometry-vectors.json` holds the shared cases. `cell_rect`,
+the app's `app/ui/src/lib/deck/geometry.ts` and the Firmware host test
+`firmware/tools/test_tile_geometry.py` each reproduce all of them. `art_size`
+turns a Tile's size into its cover side by `schema/live/now-playing-vectors.json`;
+the router also caps it at `caps.image`, and a Tile with no art box gets
+`cover: null`.
 
 Image samples name source pictures owned by Control, never arbitrary URLs.
 On a track change publish cover null at once with new metadata. Discard stale
-metadata, thumbnail and encoding completions by session/track generation.
+metadata, thumbnail and encoding completions by session/track generation. The
+router enforces both on its side too: before it sends a Tile's new `title`, it
+clears a cover that Tile shows, and it sends a Control's sample, or a cover made
+from one, only while the Control still reports that sample.
 Decode at most 4 MiB source, 4096 by 4096 pixels and 64 MiB decoded memory;
 center-crop to the shared Tile art box and encode baseline JPEG at most 32 KiB
 using the photo quality ladder. Upload by SHA-256 with put_asset before sending
@@ -685,10 +686,15 @@ covers first, and sweep leftover JPEG covers at session start. A referenced
 Asset remains protected by the Device's in-use refusal. On asset refusal forget
 the known id and upload again; busy retries next round. On full, remove covers
 except the current ones and retry once; then report the out-of-space error.
+A sweep that fails is retried next round; until it succeeds no cover goes, and
+other values still do. A cover still being made leaves the art box on its
+placeholder (`cover: null`) and never holds up the Tile's text. Control
+streams wake a round at once; the cover thread encodes without any lock and
+wakes a round when a cover is ready.
 
 Before push, exceeding live_images across all Pages returns HTTP 422
 `layout.live_image_limit`, details `{limit,actual}`. Firmware independently
-refuses with size. Step B owns this pre-push check in `features/layouts.rs`.
+refuses with size. The check runs in `features/layouts.rs` before the push Job starts.
 Caps absence means zero images. Covers never cross the UI API.
 
 #### Volume

@@ -38,7 +38,6 @@ const LINK_WAIT: Duration = Duration::from_millis(50);
 
 #[derive(Default)]
 struct Shared {
-    /// Set when a round should run now rather than at the end of `ROUND`.
     wake: Mutex<bool>,
     woken: Condvar,
     router: Mutex<Router>,
@@ -46,7 +45,6 @@ struct Shared {
     changed: Mutex<BTreeSet<String>>,
     /// The newest polled samples, kept for rounds when the Integrations are busy.
     samples: Mutex<HashMap<StreamKey, LiveSample>>,
-    /// The covers the cover thread made for the newest image samples.
     covers: Mutex<Prepared>,
     /// Requests each Device accepted per Integration, for the Integration's delivery status.
     sent: Mutex<HashMap<(String, String), u64>>,
@@ -121,12 +119,10 @@ fn run(
             *wake = false;
         }
         let covers = round(&shared, &devices, &links, &integrations);
-        // A full queue means the cover thread is still busy; the next round sends the jobs again.
         let _ = jobs.try_send(covers);
     }
 }
 
-/// One delivery round. Returns the covers the Devices' Layouts need next.
 fn round(
     shared: &Shared,
     devices: &DeviceManager,
@@ -179,8 +175,6 @@ fn round(
     shared.router.lock().cover_jobs(&samples)
 }
 
-/// The cover thread: makes the covers the jobs name, then wakes a round when the set of ready covers changed. A job
-/// whose sample its Control has replaced, before or after encoding, is dropped, so an old picture never lands.
 fn make_covers(shared: Weak<Shared>, controls: Controls, queue: Receiver<Vec<CoverJob>>) {
     let mut cache = CoverCache::default();
     while let Ok(jobs) = queue.recv() {
@@ -192,15 +186,15 @@ fn make_covers(shared: Weak<Shared>, controls: Controls, queue: Receiver<Vec<Cov
             let LiveValue::Image(Some(source)) = &job.sample.value else {
                 continue;
             };
-            let current = || control.live().contains(&job.sample);
+            let still_reported = || control.live().contains(&job.sample);
             let cover = match cache.get(source, job.side) {
                 Some(cover) => Some(cover),
-                None if !current() => continue,
+                None if !still_reported() => continue,
                 None => control
                     .picture(source)
                     .and_then(|bytes| cache.prepare(source, &bytes, job.side).ok()),
             };
-            if current() {
+            if still_reported() {
                 made.insert((job.source, job.sample.sample, job.side), cover);
             }
         }

@@ -24,14 +24,12 @@ const LAYOUT_STATE_TIMEOUT: Duration = Duration::from_secs(2);
 /// The shortest gap between two values of one stream. A source that samples once a second lands just under a
 /// second apart, so the gap leaves it room.
 const STREAM_GAP: Duration = Duration::from_millis(900);
-/// The shortest gap for a Control's stream. A Control wakes delivery on each change, so the gap alone paces it.
 const CONTROL_GAP: Duration = Duration::from_millis(500);
 /// How long the router waits to read a Device's active Layout again after a failed read.
 const LAYOUT_RETRY: Duration = Duration::from_secs(5);
 /// The longest wait after repeated `rate` refusals.
 const BACKOFF_MAX: Duration = Duration::from_secs(8);
-/// The Tile stream whose change clears the Tile's cover at once, so a new title never shows the last album's art.
-const TITLE: &str = "title";
+const TITLE_STREAM: &str = "title";
 const OUT_OF_SPACE: &str =
     "The Device is out of space for cover art. Remove unused Assets, then retry.";
 const BUILTIN: &[u8] = include_bytes!("../../../../../schema/examples/builtin.json");
@@ -171,7 +169,6 @@ struct Active {
     layout: Layout,
 }
 
-/// A Tile: its Page id and Tile id.
 type TileKey = (String, String);
 
 #[derive(Debug, Default)]
@@ -186,11 +183,8 @@ struct DeviceState {
     blocked_until: Option<Instant>,
     rate_strikes: u32,
     covers: CoverStore,
-    /// Whether this session's leftover covers were deleted. Covers go only after that.
     swept: bool,
-    /// The title each Tile shows, so a new title clears the old cover first.
     titles: HashMap<TileKey, String>,
-    /// The Tiles that show a cover.
     covered: HashSet<TileKey>,
 }
 
@@ -201,7 +195,6 @@ pub struct Report {
     pub errors: HashMap<String, String>,
 }
 
-/// A cover to make: the Control's image sample and the side of the art box it fills.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct CoverJob {
     pub source: StreamKey,
@@ -209,7 +202,6 @@ pub(super) struct CoverJob {
     pub side: u16,
 }
 
-/// The covers made for image samples, by stream, sample and side. None when the picture couldn't be made.
 pub(super) type Prepared = HashMap<(StreamKey, u64, u16), Option<Arc<Cover>>>;
 
 #[derive(Default)]
@@ -223,12 +215,11 @@ enum Sent {
     Accepted,
     AssetRefused,
     Refused,
-    /// The round ends for this Device: the link failed, the Device asked to wait, or the budget ran out.
     Stop,
 }
 
 impl Router {
-    /// The Integrations whose samples come from a Control: they are paced faster and checked before each send.
+    /// The Controls behind some Integrations: their streams use the Control gap and are rechecked before each send.
     pub fn set_controls(&mut self, controls: Controls) {
         self.controls = controls;
     }
@@ -237,7 +228,6 @@ impl Router {
         self.covers = covers;
     }
 
-    /// The covers some Device's active Layout needs for these samples, each once.
     pub(super) fn cover_jobs(&self, samples: &HashMap<StreamKey, LiveSample>) -> Vec<CoverJob> {
         let mut jobs: Vec<CoverJob> = Vec::new();
         for state in self.devices.values() {
@@ -384,7 +374,7 @@ impl Router {
         });
         let mut cleared: HashSet<TileKey> = HashSet::new();
         for (binding, sample) in due {
-            if !current(&self.controls, binding, sample) {
+            if !still_reported(&self.controls, binding, sample) {
                 continue;
             }
             let integration = binding.source.integration.clone();
@@ -455,11 +445,11 @@ impl Router {
                 }
                 other => other,
             };
-            if !current(&self.controls, binding, sample) {
+            if !still_reported(&self.controls, binding, sample) {
                 continue;
             }
             let new_title = match &value {
-                LiveValue::Text(title) if binding.stream == TITLE => {
+                LiveValue::Text(title) if binding.stream == TITLE_STREAM => {
                     (state.titles.get(&tile) != Some(title)).then(|| title.clone())
                 }
                 _ => None,
@@ -473,15 +463,18 @@ impl Router {
                 let clear = LiveValue::Image(None);
                 let cover_sample = samples.get(&cover.source);
                 let cleared_sample = cover_sample.filter(|s| s.value == clear).map(|s| s.sample);
+                let out = Outgoing {
+                    binding: cover,
+                    sample: cover_sample.map_or(0, |s| s.sample),
+                    ttl_ms: sample.ttl_ms,
+                    value: &clear,
+                    delivered: cleared_sample,
+                };
                 match send(
                     state,
                     session,
                     &reference,
-                    cover,
-                    cover_sample.map_or(0, |s| s.sample),
-                    sample.ttl_ms,
-                    &clear,
-                    cleared_sample,
+                    out,
                     now,
                     &mut budget,
                     &mut report,
@@ -494,15 +487,18 @@ impl Router {
                     Sent::AssetRefused | Sent::Refused => continue,
                 }
             }
+            let out = Outgoing {
+                binding,
+                sample: sample.sample,
+                ttl_ms: sample.ttl_ms,
+                value: &value,
+                delivered,
+            };
             match send(
                 state,
                 session,
                 &reference,
-                binding,
-                sample.sample,
-                sample.ttl_ms,
-                &value,
-                delivered,
+                out,
                 now,
                 &mut budget,
                 &mut report,
@@ -536,21 +532,30 @@ impl Router {
     }
 }
 
-/// Sends one value to one Tile stream within the Device's budget, following the `n`, `rate` and refusal rules.
-#[allow(clippy::too_many_arguments)]
+struct Outgoing<'a> {
+    binding: &'a Binding,
+    sample: u64,
+    ttl_ms: u32,
+    value: &'a LiveValue,
+    delivered: Option<u64>,
+}
+
 fn send(
     state: &mut DeviceState,
     session: &Session,
     reference: &str,
-    binding: &Binding,
-    sample: u64,
-    ttl_ms: u32,
-    value: &LiveValue,
-    delivered: Option<u64>,
+    out: Outgoing,
     now: Instant,
     budget: &mut u32,
     report: &mut Report,
 ) -> Sent {
+    let Outgoing {
+        binding,
+        sample,
+        ttl_ms,
+        value,
+        delivered,
+    } = out;
     let integration = binding.source.integration.clone();
     let track = state.tracks.entry(key(binding)).or_default();
     let n = match &track.unanswered {
@@ -635,15 +640,12 @@ fn send(
     }
 }
 
-/// Whether a Control still reports this sample. A sample it has replaced since the round read it isn't sent, so a
-/// slow upload never lets an older title or cover land after a newer one.
-fn current(controls: &Controls, binding: &Binding, sample: &LiveSample) -> bool {
+fn still_reported(controls: &Controls, binding: &Binding, sample: &LiveSample) -> bool {
     controls
         .get(&binding.source.integration)
         .is_none_or(|control| control.live().contains(sample))
 }
 
-/// The side of the cover a Tile's art box takes on this Device, or None when the Tile has no art box.
 fn cover_side(layout: &Layout, binding: &Binding, caps: &LiveCaps) -> Option<u16> {
     let [long, short] = if caps.screen[0] >= caps.screen[1] {
         caps.screen
@@ -1174,7 +1176,6 @@ mod tests {
             .collect()
     }
 
-    /// Makes the covers the router asks for, as the cover thread does.
     fn make_covers(router: &mut Router, fake: &FakeControl, cache: &mut CoverCache) {
         let samples = read(fake);
         let covers = router

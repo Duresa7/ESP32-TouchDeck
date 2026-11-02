@@ -5,7 +5,6 @@ use std::time::Duration;
 use td_core::live::LiveValue;
 use td_host::integrations::{Control, ControlError, LiveSample};
 
-/// A Control whose samples and pictures a test sets.
 #[derive(Default)]
 pub(crate) struct FakeControl {
     samples: Mutex<Vec<LiveSample>>,
@@ -15,7 +14,6 @@ pub(crate) struct FakeControl {
 }
 
 impl FakeControl {
-    /// Replaces the given streams' samples with new ones, then wakes delivery.
     pub fn publish(&self, values: &[(&str, LiveValue)]) {
         {
             let mut samples = self.samples.lock();
