@@ -567,7 +567,7 @@ Feature module `actions`.
 
 Feature module `integrations`. CLIProxyAPI is the Integration with id `cliproxyapi`. Integration and config-field ids must match `[a-z0-9_-]+` at registration and secret-store boundaries. Duplicate Integration ids are rejected.
 
-Each stored secret records the origin (scheme, host and effective port) it was entered for. `integrations.secret_put` binds it to the current configured origin. When `integrations.config_put` changes that origin, the Companion deletes secrets bound to the old origin before making any request to the new one. `integrations.get` then reports `set: false`; the user must enter the secrets again. Changes to a path on the same origin keep them. A first-setup draft key becomes bound when the configuration file is successfully saved, even if vault promotion fails. Retrying the same origin may promote it; changing origin discards it and requires re-entry.
+Each stored secret records only the origin (scheme, host and effective port) it was entered for. `integrations.secret_put` binds it to the current configured origin. When `integrations.config_put` changes that origin (or adds, changes or clears a source's `tls_pin`), the Companion deletes the affected secrets before making any request under the new settings. `integrations.get` then reports `set: false`; the user must enter the secrets again. Changes to a path on the same origin keep them. A first-setup draft key becomes bound when the configuration file is successfully saved, even if vault promotion fails. Retrying the same origin may promote it; changing origin discards it and requires re-entry.
 
 Requests carrying a credential never follow a redirect to another origin. They send no credential over plain `http` unless the host is a loopback or private-network address the user typed explicitly; a public hostname resolving to a private address is not this exception. This transport exception is a reversible policy choice. Configuration changes and in-flight requests must not forward an old origin's credential to a new origin.
 
@@ -732,7 +732,14 @@ These sections define steps B through I; step A adds contracts and mocks only.
 #### Custom HTTP and command
 
 `custom` starts with `{enabled: false, sources: []}` and persists non-secret
-settings in `custom.json`, beside `sources.json`. The Integrations form exposes
+settings in `custom.json`, beside `sources.json`. If `custom.json` is corrupt or
+fails validation at startup, the Companion moves it aside to
+`custom.corrupt.json`, starts `custom` empty (`{enabled: false, sources: []}`),
+and reports `error` status `"Couldn't read custom.json. Kept it as custom.corrupt.json and started empty."`
+without blocking other Integrations. If `custom.json` cannot be read or renamed,
+it leaves the file in place, starts empty, and reports `"Couldn't read custom.json. Started empty."`.
+Saving valid settings writes a new `custom.json` and clears that startup error.
+The Integrations form exposes
 `sources` as a JSON editor. Unknown fields are rejected. Each of at most 16
 sources has `{id, name, interval_s, kind, input}`:
 
@@ -765,10 +772,10 @@ HTTP example (GET is the only method; there is no configurable method field):
 
 `headers` maps HTTP header names to unique vault field ids, **never header
 values**. Saving settings creates the corresponding write-only secret controls.
-Write each value through `integrations.secret_put`. Values are bound to the
-configured URL's origin and the source's `tls_pin`. They are deleted when the
-field is removed, the origin changes, or the pin is added, changed or cleared, so
-a new pin never receives a secret entered under the old trust. Same-origin
+Write each value through `integrations.secret_put`. The vault stores only the
+configured URL's origin with each secret, not `tls_pin`; secrets are deleted when
+the field is removed, the origin changes, or `tls_pin` is added, changed or
+cleared, so a new pin never receives a secret entered under the old trust. Same-origin
 path changes retain them. Because of that, a `text` source pointed at a
 same-origin endpoint that echoes request headers can read its own secret back as a
 live value. This is accepted: the user configures both the endpoint and the
@@ -824,10 +831,15 @@ at most 256 of these answers. When the list is full, a new command drops the old
 answer, so it can still ask; a command whose answer was dropped asks again.
 While a source waits for approval it isn't failing: it rechecks every second
 without backing off, so a Run once answer is used well before its deadline.
+Denied and expired commands report `"Denied on this PC."` and `"Approval expired."`
+and back off like other failed polls instead of rechecking every second.
+`revision` increases when settings are saved or the Integration's status changes,
+so repeated polls with an unchanged status do not republish `integration.status`.
 
 Polling is serial within the Integration. Manual refresh and configuration
-changes preserve a one-second request floor. Each failed source backs off
-exponentially, capped at one hour. Waiting for approval doesn't count as a failure. The last good value remains until its Device
+changes reset due times while preserving a one-second request floor. Each failed
+source backs off exponentially, capped at one hour. Waiting for approval doesn't
+count as a failure. The last good value remains until its Device
 TTL expires. Successful samples have rising sequence numbers and a TTL of three
 times the configured interval, clamped to 1000–60000 ms. Disabling clears live
 output. Presets follow source order: `{name} value`, then `{name} graph` for each

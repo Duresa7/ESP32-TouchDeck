@@ -584,7 +584,8 @@ impl Actions {
 pub use prompt::ScriptAnswer;
 
 impl td_host::integrations::CommandApproval for Actions {
-    fn approved(&self, program: &str, args: &[String]) -> bool {
+    fn decision(&self, program: &str, args: &[String]) -> td_host::approval::CommandDecision {
+        use td_host::approval::CommandDecision;
         let spec = ActionSpec {
             kind: "custom".into(),
             program: program.into(),
@@ -595,20 +596,21 @@ impl td_host::integrations::CommandApproval for Actions {
         let hash = spec.hash();
         let mut state = self.0.state.lock();
         if state.allowed.iter().any(|a| a.hash == hash) {
-            return true;
+            return CommandDecision::Approved;
         }
         match state.custom_answers.get(&hash).copied() {
             Some((answer @ (Answer::Once | Answer::Always), deadline)) => {
                 state.custom_answers.remove(&hash);
                 if answer == Answer::Once && self.0.clock.now() < deadline {
-                    return true;
+                    return CommandDecision::Approved;
                 }
             }
-            Some(_) => return false,
+            Some((Answer::Deny, _)) => return CommandDecision::Denied,
+            Some((Answer::Expired, _)) => return CommandDecision::Expired,
             None => {}
         }
         if state.pending.iter().any(|p| p.request.hash == hash) || state.pending.len() >= 16 {
-            return false;
+            return CommandDecision::Waiting;
         }
         while state.custom_answers.len() >= 256 {
             let oldest = state
@@ -645,7 +647,7 @@ impl td_host::integrations::CommandApproval for Actions {
             shown: None,
             text,
         });
-        false
+        CommandDecision::Waiting
     }
 }
 
@@ -685,55 +687,101 @@ mod custom_tests {
     }
     #[test]
     fn custom_approval_binds_arguments_denies_and_expires() {
+        use td_host::approval::CommandDecision;
         let actions = service();
         actions.script(vec![ScriptAnswer::Deny]);
-        assert!(!actions.approved("example.exe", &["original".into()]));
+        assert_eq!(
+            actions.decision("example.exe", &["original".into()]),
+            CommandDecision::Waiting
+        );
         resolved(&actions);
-        assert!(!actions.approved("example.exe", &["original".into()]));
+        assert_eq!(
+            actions.decision("example.exe", &["original".into()]),
+            CommandDecision::Denied
+        );
         actions.script(vec![ScriptAnswer::Once]);
-        assert!(!actions.approved("example.exe", &["changed".into()]));
+        assert_eq!(
+            actions.decision("example.exe", &["changed".into()]),
+            CommandDecision::Waiting
+        );
         resolved(&actions);
-        assert!(actions.approved("example.exe", &["changed".into()]));
+        assert_eq!(
+            actions.decision("example.exe", &["changed".into()]),
+            CommandDecision::Approved
+        );
         actions.script(vec![ScriptAnswer::Never]);
-        assert!(!actions.approved("example.exe", &["changed".into()]));
+        assert_eq!(
+            actions.decision("example.exe", &["changed".into()]),
+            CommandDecision::Waiting
+        );
         actions.0.clock.advance(Duration::from_secs(301));
         resolved(&actions);
-        assert!(!actions.approved("example.exe", &["changed".into()]));
+        assert_eq!(
+            actions.decision("example.exe", &["changed".into()]),
+            CommandDecision::Expired
+        );
         assert!(actions.log(None).is_empty());
     }
     #[test]
     fn custom_always_grant_is_exact_and_revocable() {
+        use td_host::approval::CommandDecision;
         let actions = service();
         actions.script(vec![ScriptAnswer::Always]);
-        assert!(!actions.approved("example.exe", &[]));
+        assert_eq!(
+            actions.decision("example.exe", &[]),
+            CommandDecision::Waiting
+        );
         resolved(&actions);
-        assert!(actions.approved("example.exe", &[]));
-        assert!(actions.approved("example.exe", &[]));
+        assert_eq!(
+            actions.decision("example.exe", &[]),
+            CommandDecision::Approved
+        );
+        assert_eq!(
+            actions.decision("example.exe", &[]),
+            CommandDecision::Approved
+        );
         let hash = actions.allowed()[0].hash.clone();
         actions.remove(&hash).unwrap();
         actions.script(vec![ScriptAnswer::Deny]);
-        assert!(!actions.approved("example.exe", &[]));
+        assert_eq!(
+            actions.decision("example.exe", &[]),
+            CommandDecision::Waiting
+        );
         resolved(&actions);
-        assert!(!actions.approved("example.exe", &[]));
+        assert_eq!(
+            actions.decision("example.exe", &[]),
+            CommandDecision::Denied
+        );
         assert!(actions.pending().is_empty());
         assert!(actions.log(None).is_empty());
     }
     #[test]
     fn custom_run_once_unused_past_its_deadline_asks_again() {
+        use td_host::approval::CommandDecision;
         let actions = service();
         actions.script(vec![ScriptAnswer::Once]);
-        assert!(!actions.approved("example.exe", &[]));
+        assert_eq!(
+            actions.decision("example.exe", &[]),
+            CommandDecision::Waiting
+        );
         resolved(&actions);
         actions.0.clock.advance(Duration::from_secs(301));
         actions.script(vec![ScriptAnswer::Never]);
-        assert!(!actions.approved("example.exe", &[]));
+        assert_eq!(
+            actions.decision("example.exe", &[]),
+            CommandDecision::Waiting
+        );
         assert_eq!(actions.pending().len(), 1);
     }
     #[test]
     fn a_full_answer_list_drops_its_oldest_entry_so_new_commands_still_ask() {
+        use td_host::approval::CommandDecision;
         let actions = service();
         actions.script(vec![ScriptAnswer::Deny]);
-        assert!(!actions.approved("example.exe", &["0".into()]));
+        assert_eq!(
+            actions.decision("example.exe", &["0".into()]),
+            CommandDecision::Waiting
+        );
         resolved(&actions);
         for i in 1..256 {
             actions.0.clock.advance(Duration::from_secs(1));
@@ -746,9 +794,15 @@ mod custom_tests {
             );
         }
         actions.script(vec![ScriptAnswer::Never]);
-        assert!(!actions.approved("example.exe", &["new".into()]));
+        assert_eq!(
+            actions.decision("example.exe", &["new".into()]),
+            CommandDecision::Waiting
+        );
         assert_eq!(actions.pending().len(), 1);
-        assert!(!actions.approved("example.exe", &["0".into()]));
+        assert_eq!(
+            actions.decision("example.exe", &["0".into()]),
+            CommandDecision::Waiting
+        );
         assert_eq!(actions.pending().len(), 2);
         assert!(actions.0.state.lock().custom_answers.len() <= 256);
     }
