@@ -48,7 +48,7 @@ export function screenSize(orientation: Orientation): Size {
 export function geometry(screen: Size, fullScreen = false): Geometry {
   const s = Math.min(screen.w, screen.h);
   const titleStrip = scaled(56, s);
-  const dotStrip = scaled(40, s);
+  const dotStrip = scaled(36, s);
   const marginX = scaled(28, s);
   const marginY = scaled(20, s);
   const band: Rect = fullScreen

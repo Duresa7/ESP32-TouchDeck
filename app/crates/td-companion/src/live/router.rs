@@ -4,24 +4,36 @@
 //! `docs/companion-api.md` § "Live tile bindings". The router is plain state: the caller hands it the Device's
 //! session, its live caps and the newest Integration samples, so tests drive it with a mock Device.
 
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use td_core::layout::{Action, Page, StreamType};
+use td_core::live::{ScreenSize, art_size, tile_rect};
 use td_core::{Layout, Orientation};
 use td_host::integrations::LiveSample;
+use td_link::asset::{AssetError, AssetReason};
 use td_link::live::{self, LiveError, LiveReason, LiveSet, LiveValue};
 use td_link::{Session, xfer};
+
+use super::covers::{COVER_SIDE_MIN, Cover, CoverStore};
+use crate::features::integrations::Controls;
 
 /// How long a Device's `layout state` reply may take.
 const LAYOUT_STATE_TIMEOUT: Duration = Duration::from_secs(2);
 /// The shortest gap between two values of one stream. A source that samples once a second lands just under a
 /// second apart, so the gap leaves it room.
 const STREAM_GAP: Duration = Duration::from_millis(900);
+/// The shortest gap for a Control's stream. A Control wakes delivery on each change, so the gap alone paces it.
+const CONTROL_GAP: Duration = Duration::from_millis(500);
 /// How long the router waits to read a Device's active Layout again after a failed read.
 const LAYOUT_RETRY: Duration = Duration::from_secs(5);
 /// The longest wait after repeated `rate` refusals.
 const BACKOFF_MAX: Duration = Duration::from_secs(8);
+/// The Tile stream whose change clears the Tile's cover at once, so a new title never shows the last album's art.
+const TITLE: &str = "title";
+const OUT_OF_SPACE: &str =
+    "The Device is out of space for cover art. Remove unused Assets, then retry.";
 const BUILTIN: &[u8] = include_bytes!("../../../../../schema/examples/builtin.json");
 
 /// One Integration stream: the Integration's id, the account it reads (empty for one-account Integrations) and the
@@ -93,31 +105,37 @@ pub struct LiveCaps {
     pub live_total_hz: u32,
     pub series: u32,
     pub text_bytes: u32,
+    pub live_images: u32,
+    pub image: [u32; 2],
+    pub screen: [u32; 2],
 }
 
 impl LiveCaps {
-    /// The caps of a Device that draws graph Tiles, or None.
+    /// The caps of a Device that takes live values, or None.
     pub fn of(caps: &crate::devices::Capabilities) -> Option<LiveCaps> {
-        if !caps.tile_kinds.iter().any(|kind| kind == "graph") {
-            return None;
-        }
         let caps = LiveCaps {
             live_hz: caps.live_hz,
             live_total_hz: caps.live_total_hz,
             series: caps.series,
             text_bytes: caps.text_bytes,
+            live_images: caps.live_images,
+            image: caps.image,
+            screen: caps.screen,
         };
         (caps.live_hz > 0 && caps.live_total_hz > 0).then_some(caps)
     }
 
-    fn stream_gap(&self) -> Duration {
-        STREAM_GAP.max(Duration::from_millis(u64::from(
-            1000_u32.div_ceil(self.live_hz),
+    /// The shortest gap between two values of one stream: `max(500 ms, 1000 / live_hz)` for a Control's stream and
+    /// `max(900 ms, 1000 / live_hz)` for a polled one.
+    fn gap(&self, control: bool) -> Duration {
+        let floor = if control { CONTROL_GAP } else { STREAM_GAP };
+        floor.max(Duration::from_millis(u64::from(
+            1000_u32.div_ceil(self.live_hz.max(1)),
         )))
     }
 
-    /// The value as this Device can take it: a series cut to its newest `series` numbers and text cut to
-    /// `text_bytes` on a character boundary. None when nothing of it fits.
+    /// The value as this Device can take it: a series cut to its newest `series` numbers and text folded and cut by
+    /// `td_core::live::fit_text`. None when nothing of it fits.
     fn fit(&self, value: &LiveValue) -> Option<LiveValue> {
         let fitted = match value {
             LiveValue::Series(values) => {
@@ -125,11 +143,7 @@ impl LiveCaps {
                 LiveValue::Series(values[values.len() - keep..].to_vec())
             }
             LiveValue::Text(text) => {
-                let mut end = text.len().min(self.text_bytes as usize);
-                while !text.is_char_boundary(end) {
-                    end -= 1;
-                }
-                LiveValue::Text(text[..end].to_owned())
+                LiveValue::Text(td_core::live::fit_text(text, self.text_bytes as usize))
             }
             other => other.clone(),
         };
@@ -144,8 +158,8 @@ impl LiveCaps {
 struct Track {
     /// The sample the Device holds.
     delivered: Option<u64>,
-    /// A send whose reply never came: its `n` and sample, so the same sample goes again as an identical retry.
-    unanswered: Option<(u32, u64)>,
+    /// A send whose reply never came: its `n`, sample and value, so the same value goes again as an identical retry.
+    unanswered: Option<(u32, u64, LiveValue)>,
     last_sent: Option<Instant>,
 }
 
@@ -154,11 +168,16 @@ struct Track {
 struct Active {
     reference: String,
     bindings: Vec<Binding>,
+    layout: Layout,
 }
+
+/// A Tile: its Page id and Tile id.
+type TileKey = (String, String);
 
 #[derive(Debug, Default)]
 struct DeviceState {
     session: u64,
+    caps: Option<LiveCaps>,
     active: Option<Active>,
     tracks: HashMap<(String, String, String), Track>,
     next_n: u32,
@@ -166,6 +185,13 @@ struct DeviceState {
     spent: VecDeque<(Instant, u32)>,
     blocked_until: Option<Instant>,
     rate_strikes: u32,
+    covers: CoverStore,
+    /// Whether this session's leftover covers were deleted. Covers go only after that.
+    swept: bool,
+    /// The title each Tile shows, so a new title clears the old cover first.
+    titles: HashMap<TileKey, String>,
+    /// The Tiles that show a cover.
+    covered: HashSet<TileKey>,
 }
 
 /// What one delivery round did on one Device, per Integration.
@@ -175,12 +201,75 @@ pub struct Report {
     pub errors: HashMap<String, String>,
 }
 
-#[derive(Debug, Default)]
+/// A cover to make: the Control's image sample and the side of the art box it fills.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct CoverJob {
+    pub source: StreamKey,
+    pub sample: LiveSample,
+    pub side: u16,
+}
+
+/// The covers made for image samples, by stream, sample and side. None when the picture couldn't be made.
+pub(super) type Prepared = HashMap<(StreamKey, u64, u16), Option<Arc<Cover>>>;
+
+#[derive(Default)]
 pub struct Router {
     devices: HashMap<String, DeviceState>,
+    controls: Controls,
+    covers: Prepared,
+}
+
+enum Sent {
+    Accepted,
+    AssetRefused,
+    Refused,
+    /// The round ends for this Device: the link failed, the Device asked to wait, or the budget ran out.
+    Stop,
 }
 
 impl Router {
+    /// The Integrations whose samples come from a Control: they are paced faster and checked before each send.
+    pub fn set_controls(&mut self, controls: Controls) {
+        self.controls = controls;
+    }
+
+    pub(super) fn set_covers(&mut self, covers: Prepared) {
+        self.covers = covers;
+    }
+
+    /// The covers some Device's active Layout needs for these samples, each once.
+    pub(super) fn cover_jobs(&self, samples: &HashMap<StreamKey, LiveSample>) -> Vec<CoverJob> {
+        let mut jobs: Vec<CoverJob> = Vec::new();
+        for state in self.devices.values() {
+            let (Some(active), Some(caps)) = (&state.active, &state.caps) else {
+                continue;
+            };
+            for binding in active
+                .bindings
+                .iter()
+                .filter(|b| b.kind == StreamType::Image)
+            {
+                let Some(sample) = samples.get(&binding.source) else {
+                    continue;
+                };
+                let (LiveValue::Image(Some(_)), Some(side)) =
+                    (&sample.value, cover_side(&active.layout, binding, caps))
+                else {
+                    continue;
+                };
+                let job = CoverJob {
+                    source: binding.source.clone(),
+                    sample: sample.clone(),
+                    side,
+                };
+                if !jobs.contains(&job) {
+                    jobs.push(job);
+                }
+            }
+        }
+        jobs
+    }
+
     /// The Integration streams some Device's active Layout binds. Only these are read from the Integrations.
     pub fn wanted(&self) -> BTreeSet<StreamKey> {
         self.devices
@@ -221,14 +310,24 @@ impl Router {
                 ..DeviceState::default()
             };
         }
+        state.caps = Some(caps);
         let mut report = Report::default();
         if state.blocked_until.is_some_and(|until| until > now) {
             return report;
+        }
+        let mut sweep_error = None;
+        if caps.live_images > 0 && !state.swept {
+            match state.covers.sweep(session) {
+                Ok(()) => state.swept = true,
+                Err(error) => sweep_error = Some(error.to_string()),
+            }
         }
         if state.active.is_none() {
             match read_active(session) {
                 Ok(active) => {
                     state.tracks.clear();
+                    state.titles.clear();
+                    state.covered.clear();
                     state.active = Some(active);
                 }
                 Err(_) => {
@@ -247,28 +346,50 @@ impl Router {
         let mut budget = caps
             .live_total_hz
             .saturating_sub(state.spent.iter().map(|(_, cost)| cost).sum());
-        let gap = caps.stream_gap();
         let Some(active) = state.active.as_ref() else {
             return report;
         };
-        let mut due: Vec<(&Binding, &LiveSample)> = active
-            .bindings
+        let reference = active.reference.clone();
+        let bindings = active.bindings.clone();
+        let sides: HashMap<TileKey, Option<u16>> = bindings
+            .iter()
+            .filter(|b| b.kind == StreamType::Image)
+            .map(|b| (tile_key(b), cover_side(&active.layout, b, &caps)))
+            .collect();
+        if let Some(error) = sweep_error {
+            for binding in bindings.iter().filter(|b| b.kind == StreamType::Image) {
+                report
+                    .errors
+                    .insert(binding.source.integration.clone(), error.clone());
+            }
+        }
+        let mut due: Vec<(&Binding, &LiveSample)> = bindings
             .iter()
             .filter_map(|binding| {
                 let sample = samples.get(&binding.source)?;
                 let track = state.tracks.get(&key(binding));
                 let fresh = track.is_none_or(|t| t.delivered != Some(sample.sample));
+                let gap = caps.gap(self.controls.contains_key(&binding.source.integration));
                 let rested = track
                     .and_then(|t| t.last_sent)
                     .is_none_or(|at| now.duration_since(at) >= gap);
                 (fresh && rested).then_some((binding, sample))
             })
             .collect();
-        due.sort_by_key(|(binding, _)| state.tracks.get(&key(binding)).and_then(|t| t.last_sent));
-        let reference = active.reference.clone();
+        due.sort_by_key(|(binding, _)| {
+            (
+                binding.kind == StreamType::Image,
+                state.tracks.get(&key(binding)).and_then(|t| t.last_sent),
+            )
+        });
+        let mut cleared: HashSet<TileKey> = HashSet::new();
         for (binding, sample) in due {
+            if !current(&self.controls, binding, sample) {
+                continue;
+            }
             let integration = binding.source.integration.clone();
-            let Some(value) = caps
+            let tile = tile_key(binding);
+            let Some(fitted) = caps
                 .fit(&sample.value)
                 .filter(|value| value.kind() == binding.kind)
             else {
@@ -282,78 +403,269 @@ impl Router {
                 );
                 continue;
             };
-            let track = state.tracks.entry(key(binding)).or_default();
-            let n = match track.unanswered {
-                Some((n, unanswered)) if unanswered == sample.sample => n,
-                _ => {
-                    state.next_n = state.next_n.saturating_add(1);
-                    state.next_n
-                }
-            };
-            let set = LiveSet {
-                layout: &reference,
-                page: &binding.page,
-                tile: &binding.tile,
-                stream: &binding.stream,
-                n,
-                ttl_ms: sample.ttl_ms.clamp(live::TTL_MIN_MS, live::TTL_MAX_MS),
-                value: &value,
-            };
-            let cost = live::cost(set.to_payload().len());
-            if cost > budget && !state.spent.is_empty() {
-                break;
+            if binding.kind == StreamType::Image && cleared.contains(&tile) {
+                continue;
             }
-            budget = budget.saturating_sub(cost);
-            state.spent.push_back((now, cost));
-            track.last_sent = Some(now);
-            match live::set_live(session, &set) {
-                Ok(_) => {
-                    track.delivered = Some(sample.sample);
-                    track.unanswered = None;
-                    state.rate_strikes = 0;
-                    *report.sent.entry(integration).or_default() += 1;
+            let mut delivered = Some(sample.sample);
+            let value = match fitted {
+                LiveValue::Image(Some(_)) => {
+                    let side = sides.get(&tile).copied().flatten();
+                    let prepared = side.map(|side| {
+                        self.covers
+                            .get(&(binding.source.clone(), sample.sample, side))
+                            .cloned()
+                    });
+                    match prepared {
+                        Some(Some(Some(cover))) => {
+                            if !state.swept {
+                                continue;
+                            }
+                            match state.covers.upload(session, &cover) {
+                                Ok(()) => LiveValue::Image(Some(format!("sha256:{}", cover.id))),
+                                Err(error) if error.reason() == Some(&AssetReason::Full) => {
+                                    report
+                                        .errors
+                                        .insert(integration.clone(), OUT_OF_SPACE.into());
+                                    LiveValue::Image(None)
+                                }
+                                Err(error) => {
+                                    let link = matches!(error, AssetError::Link(_));
+                                    report.errors.insert(integration.clone(), error.to_string());
+                                    if link {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                        Some(None) => {
+                            let shows_nothing = !state.covered.contains(&tile)
+                                && state
+                                    .tracks
+                                    .get(&key(binding))
+                                    .is_some_and(|t| t.last_sent.is_some());
+                            if shows_nothing {
+                                continue;
+                            }
+                            delivered = None;
+                            LiveValue::Image(None)
+                        }
+                        None | Some(Some(None)) => LiveValue::Image(None),
+                    }
                 }
-                Err(LiveError::Refused {
-                    reason: LiveReason::Rate,
-                    retry_ms,
-                    ..
-                }) => {
-                    track.unanswered = None;
-                    state.rate_strikes += 1;
-                    let wait =
-                        Duration::from_millis(u64::from(retry_ms.unwrap_or(1000).clamp(1, 1000)))
-                            * 2_u32.pow(state.rate_strikes.min(4) - 1);
-                    state.blocked_until = Some(now + wait.min(BACKOFF_MAX));
-                    break;
+                other => other,
+            };
+            if !current(&self.controls, binding, sample) {
+                continue;
+            }
+            let new_title = match &value {
+                LiveValue::Text(title) if binding.stream == TITLE => {
+                    (state.titles.get(&tile) != Some(title)).then(|| title.clone())
                 }
-                Err(LiveError::Refused {
-                    reason:
-                        LiveReason::Layout
-                        | LiveReason::Page
-                        | LiveReason::Tile
-                        | LiveReason::Stream
-                        | LiveReason::Type,
-                    ..
-                }) => {
-                    state.active = None;
-                    break;
+                _ => None,
+            };
+            if new_title.is_some()
+                && state.covered.contains(&tile)
+                && let Some(cover) = bindings
+                    .iter()
+                    .find(|b| tile_key(b) == tile && b.kind == StreamType::Image)
+            {
+                let clear = LiveValue::Image(None);
+                let cover_sample = samples.get(&cover.source);
+                let cleared_sample = cover_sample.filter(|s| s.value == clear).map(|s| s.sample);
+                match send(
+                    state,
+                    session,
+                    &reference,
+                    cover,
+                    cover_sample.map_or(0, |s| s.sample),
+                    sample.ttl_ms,
+                    &clear,
+                    cleared_sample,
+                    now,
+                    &mut budget,
+                    &mut report,
+                ) {
+                    Sent::Accepted => {
+                        state.covered.remove(&tile);
+                        cleared.insert(tile.clone());
+                    }
+                    Sent::Stop => break,
+                    Sent::AssetRefused | Sent::Refused => continue,
                 }
-                Err(LiveError::Refused { reason, error, .. }) => {
-                    track.delivered = Some(sample.sample);
-                    track.unanswered = None;
-                    report
-                        .errors
-                        .insert(integration, format!("{error} ({})", reason.name()));
+            }
+            match send(
+                state,
+                session,
+                &reference,
+                binding,
+                sample.sample,
+                sample.ttl_ms,
+                &value,
+                delivered,
+                now,
+                &mut budget,
+                &mut report,
+            ) {
+                Sent::Accepted => {
+                    if let Some(title) = new_title {
+                        state.titles.insert(tile.clone(), title);
+                    }
+                    match &value {
+                        LiveValue::Image(Some(_)) => {
+                            state.covered.insert(tile);
+                        }
+                        LiveValue::Image(None) => {
+                            state.covered.remove(&tile);
+                        }
+                        _ => {}
+                    }
                 }
-                Err(LiveError::Link(error)) => {
-                    track.unanswered = Some((n, sample.sample));
-                    report.errors.insert(integration, error.to_string());
-                    break;
+                Sent::AssetRefused => {
+                    if let LiveValue::Image(Some(reference)) = &value {
+                        state
+                            .covers
+                            .forget(reference.strip_prefix("sha256:").unwrap_or(reference));
+                    }
                 }
+                Sent::Refused => {}
+                Sent::Stop => break,
             }
         }
         report
     }
+}
+
+/// Sends one value to one Tile stream within the Device's budget, following the `n`, `rate` and refusal rules.
+#[allow(clippy::too_many_arguments)]
+fn send(
+    state: &mut DeviceState,
+    session: &Session,
+    reference: &str,
+    binding: &Binding,
+    sample: u64,
+    ttl_ms: u32,
+    value: &LiveValue,
+    delivered: Option<u64>,
+    now: Instant,
+    budget: &mut u32,
+    report: &mut Report,
+) -> Sent {
+    let integration = binding.source.integration.clone();
+    let track = state.tracks.entry(key(binding)).or_default();
+    let n = match &track.unanswered {
+        Some((n, unanswered, retry)) if *unanswered == sample && retry == value => *n,
+        _ => {
+            state.next_n = state.next_n.saturating_add(1);
+            state.next_n
+        }
+    };
+    let set = LiveSet {
+        layout: reference,
+        page: &binding.page,
+        tile: &binding.tile,
+        stream: &binding.stream,
+        n,
+        ttl_ms: ttl_ms.clamp(live::TTL_MIN_MS, live::TTL_MAX_MS),
+        value,
+    };
+    let cost = live::cost(set.to_payload().len());
+    if cost > *budget && !state.spent.is_empty() {
+        return Sent::Stop;
+    }
+    *budget = budget.saturating_sub(cost);
+    state.spent.push_back((now, cost));
+    track.last_sent = Some(now);
+    match live::set_live(session, &set) {
+        Ok(_) => {
+            track.delivered = delivered;
+            track.unanswered = None;
+            state.rate_strikes = 0;
+            *report.sent.entry(integration).or_default() += 1;
+            Sent::Accepted
+        }
+        Err(LiveError::Refused {
+            reason: LiveReason::Rate,
+            retry_ms,
+            ..
+        }) => {
+            track.unanswered = None;
+            state.rate_strikes += 1;
+            let wait = Duration::from_millis(u64::from(retry_ms.unwrap_or(1000).clamp(1, 1000)))
+                * 2_u32.pow(state.rate_strikes.min(4) - 1);
+            state.blocked_until = Some(now + wait.min(BACKOFF_MAX));
+            Sent::Stop
+        }
+        Err(LiveError::Refused {
+            reason:
+                LiveReason::Layout
+                | LiveReason::Page
+                | LiveReason::Tile
+                | LiveReason::Stream
+                | LiveReason::Type,
+            ..
+        }) => {
+            state.active = None;
+            Sent::Stop
+        }
+        Err(LiveError::Refused {
+            reason: LiveReason::Asset,
+            error,
+            ..
+        }) => {
+            track.unanswered = None;
+            report
+                .errors
+                .insert(integration, format!("{error} (asset)"));
+            Sent::AssetRefused
+        }
+        Err(LiveError::Refused { reason, error, .. }) => {
+            track.delivered = delivered;
+            track.unanswered = None;
+            report
+                .errors
+                .insert(integration, format!("{error} ({})", reason.name()));
+            Sent::Refused
+        }
+        Err(LiveError::Link(error)) => {
+            track.unanswered = Some((n, sample, value.clone()));
+            report.errors.insert(integration, error.to_string());
+            Sent::Stop
+        }
+    }
+}
+
+/// Whether a Control still reports this sample. A sample it has replaced since the round read it isn't sent, so a
+/// slow upload never lets an older title or cover land after a newer one.
+fn current(controls: &Controls, binding: &Binding, sample: &LiveSample) -> bool {
+    controls
+        .get(&binding.source.integration)
+        .is_none_or(|control| control.live().contains(sample))
+}
+
+/// The side of the cover a Tile's art box takes on this Device, or None when the Tile has no art box.
+fn cover_side(layout: &Layout, binding: &Binding, caps: &LiveCaps) -> Option<u16> {
+    let [long, short] = if caps.screen[0] >= caps.screen[1] {
+        caps.screen
+    } else {
+        [caps.screen[1], caps.screen[0]]
+    };
+    let [w, h] = match layout.orientation {
+        Orientation::Landscape => [long, short],
+        Orientation::Portrait => [short, long],
+    };
+    let screen = ScreenSize {
+        w: u16::try_from(w).ok()?,
+        h: u16::try_from(h).ok()?,
+    };
+    let rect = tile_rect(layout, &binding.page, &binding.tile, screen)?;
+    let limit = u16::try_from(caps.image[0].min(caps.image[1])).unwrap_or(u16::MAX);
+    let side = art_size(rect.w, rect.h)?.min(limit);
+    (side >= COVER_SIDE_MIN).then_some(side)
+}
+
+fn tile_key(binding: &Binding) -> TileKey {
+    (binding.page.clone(), binding.tile.clone())
 }
 
 fn key(binding: &Binding) -> (String, String, String) {
@@ -380,6 +692,7 @@ fn read_active(session: &Session) -> Result<Active, String> {
     Ok(Active {
         reference,
         bindings: bindings(&layout),
+        layout,
     })
 }
 
@@ -392,6 +705,10 @@ mod tests {
     use td_link::{MockDeck, SessionConfig};
 
     use super::*;
+    use crate::live::covers::CoverCache;
+    use crate::live::fake::FakeControl;
+    use crate::photos::encode::tests::noise_png;
+    use td_host::integrations::Control;
 
     const GRAPH: &[u8] = include_bytes!("../../../../../schema/examples/graph.json");
     const CAPS: LiveCaps = LiveCaps {
@@ -399,6 +716,9 @@ mod tests {
         live_total_hz: 16,
         series: 32,
         text_bytes: 0,
+        live_images: 0,
+        image: [64, 64],
+        screen: [1024, 600],
     };
 
     fn open(device: &MockDeck) -> Session {
@@ -492,6 +812,18 @@ mod tests {
             .iter()
             .map(|set| set["n"].as_u64().unwrap())
             .collect()
+    }
+
+    #[test]
+    fn device_text_is_composed_folded_and_bounded() {
+        let caps = LiveCaps {
+            text_bytes: 6,
+            ..CAPS
+        };
+        assert_eq!(
+            caps.fit(&LiveValue::Text("  Ło\u{301}dź\nnext".into())),
+            Some(LiveValue::Text("Lódz".into()))
+        );
     }
 
     #[test]
@@ -784,5 +1116,348 @@ mod tests {
         .into();
         router.deliver("d", 1, &session, CAPS, &text, t0 + Duration::from_secs(1));
         assert!(device.live_sets().is_empty());
+    }
+    const MEDIA_CAPS: LiveCaps = LiveCaps {
+        text_bytes: 128,
+        live_images: 4,
+        image: [256, 256],
+        ..CAPS
+    };
+
+    fn control(id: &str, control: &Arc<FakeControl>) -> Controls {
+        Arc::new(BTreeMap::from([(
+            id.to_owned(),
+            control.clone() as Arc<dyn td_host::integrations::Control>,
+        )]))
+    }
+
+    fn media_layout(rows: u8, cols: u8) -> Layout {
+        let mut value = serde_json::json!({
+            "schema": 2, "name": "Media", "orientation": "landscape",
+            "pages": [{"kind": "grid", "id": "main", "title": "Media", "rows": rows, "cols": cols, "tiles": [{
+                "id": "player", "icon": null, "label": "Player", "row": 0, "col": 0, "rowSpan": 1, "colSpan": 1,
+                "render": "now-playing",
+                "streams": {"title": "text", "artist": "text", "cover": "image", "state": "number"},
+                "action": {"type": "widget", "source": "media", "account": "", "field": "title"}
+            }]}]
+        });
+        if rows > 1 {
+            value["pages"][0]["tiles"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!({
+                    "id": "other", "icon": null, "label": "Other", "row": 1, "col": 0, "rowSpan": 1, "colSpan": 1,
+                    "render": "now-playing",
+                    "streams": {"title": "text", "artist": "text", "cover": "image", "state": "number"},
+                    "action": {"type": "widget", "source": "media", "account": "", "field": "title"}
+                }));
+        }
+        Layout::parse(&serde_json::to_vec(&value).unwrap()).unwrap()
+    }
+
+    fn track(fake: &FakeControl, title: &str, cover: Option<&str>) {
+        fake.publish(&[
+            ("title", LiveValue::Text(title.into())),
+            ("artist", LiveValue::Text(String::new())),
+            (
+                "state",
+                LiveValue::Number(if title.is_empty() { 0.0 } else { 2.0 }),
+            ),
+            ("cover", LiveValue::Image(cover.map(str::to_owned))),
+        ]);
+    }
+
+    fn read(fake: &FakeControl) -> HashMap<StreamKey, LiveSample> {
+        fake.samples()
+            .into_iter()
+            .map(|s| (key("media", &s.stream), s))
+            .collect()
+    }
+
+    /// Makes the covers the router asks for, as the cover thread does.
+    fn make_covers(router: &mut Router, fake: &FakeControl, cache: &mut CoverCache) {
+        let samples = read(fake);
+        let covers = router
+            .cover_jobs(&samples)
+            .into_iter()
+            .map(|job| {
+                let LiveValue::Image(Some(source)) = &job.sample.value else {
+                    unreachable!("a job names an image")
+                };
+                let cover = fake
+                    .picture(source)
+                    .and_then(|bytes| cache.prepare(source, &bytes, job.side).ok());
+                ((job.source, job.sample.sample, job.side), cover)
+            })
+            .collect();
+        router.set_covers(covers);
+    }
+
+    struct Media {
+        deck: MockDeck,
+        session: Session,
+        fake: Arc<FakeControl>,
+        router: Router,
+        cache: CoverCache,
+        now: Instant,
+    }
+
+    impl Media {
+        fn new(rows: u8) -> Media {
+            let deck = MockDeck::v2();
+            deck.set_media_capabilities(true);
+            let session = open(&deck);
+            show(&session, &media_layout(rows, 1));
+            let fake = Arc::new(FakeControl::default());
+            for seed in 1..=6 {
+                fake.add_picture(&format!("sha256:art{seed}"), noise_png(300, 300, seed));
+            }
+            let mut router = Router::default();
+            router.set_controls(control("media", &fake));
+            Media {
+                deck,
+                session,
+                fake,
+                router,
+                cache: CoverCache::default(),
+                now: Instant::now(),
+            }
+        }
+
+        /// One round, then the covers it asked for, then a round half a second later that sends them. The mock
+        /// Device counts its per-stream rate in real one-second windows, so a real second passes before the next.
+        fn deliver(&mut self) -> HashMap<String, String> {
+            let mut errors = self.round().errors;
+            make_covers(&mut self.router, &self.fake, &mut self.cache);
+            self.now += CONTROL_GAP;
+            errors.extend(self.round().errors);
+            self.now += CONTROL_GAP;
+            std::thread::sleep(Duration::from_secs(1));
+            errors
+        }
+
+        fn round(&mut self) -> Report {
+            let samples = read(&self.fake);
+            self.router
+                .deliver("d", 1, &self.session, MEDIA_CAPS, &samples, self.now)
+        }
+
+        fn shown(&self, stream: &str) -> Value {
+            self.deck.live("main", "player", stream).unwrap().value
+        }
+
+        fn puts(&self) -> usize {
+            self.deck
+                .received()
+                .iter()
+                .filter(|r| r["m"] == "v2.asset.put")
+                .count()
+        }
+    }
+
+    #[test]
+    fn a_cover_fills_the_tiles_art_box_and_goes_up_once() {
+        let mut media = Media::new(1);
+        track(&media.fake, "First", Some("sha256:art1"));
+        media.deliver();
+        let Value::String(reference) = media.shown("cover") else {
+            panic!("the cover is set");
+        };
+        let id = reference.strip_prefix("sha256:").unwrap();
+        let jpeg = media.deck.assets()[id].clone();
+        let picture = image::load_from_memory(&jpeg).unwrap();
+        assert_eq!((picture.width(), picture.height()), (256, 256));
+        assert!(jpeg.len() <= 32 * 1024);
+        assert_eq!(media.puts(), 1);
+        track(&media.fake, "Second", Some("sha256:art2"));
+        media.deliver();
+        track(&media.fake, "First", Some("sha256:art1"));
+        media.deliver();
+        assert_eq!(media.shown("cover"), Value::String(reference));
+        assert_eq!(media.puts(), 2);
+    }
+
+    #[test]
+    fn a_smaller_tile_gets_a_smaller_cover() {
+        let mut media = Media::new(2);
+        track(&media.fake, "First", Some("sha256:art1"));
+        media.deliver();
+        let Value::String(reference) = media.shown("cover") else {
+            panic!("the cover is set");
+        };
+        let jpeg = media.deck.assets()[reference.strip_prefix("sha256:").unwrap()].clone();
+        let side = image::load_from_memory(&jpeg).unwrap().width();
+        let rect =
+            td_core::live::cell_rect(ScreenSize { w: 1024, h: 600 }, false, [2, 1], [0, 0, 1, 1])
+                .unwrap();
+        assert_eq!(Some(side as u16), art_size(rect.w, rect.h));
+        assert!(side < 256);
+        assert_eq!(
+            media.deck.live("main", "other", "cover").unwrap().value,
+            Value::String(reference)
+        );
+        assert_eq!(media.puts(), 1);
+    }
+
+    #[test]
+    fn a_new_title_clears_the_old_cover_before_it_shows() {
+        let mut media = Media::new(1);
+        track(&media.fake, "First", Some("sha256:art1"));
+        media.deliver();
+        assert!(media.shown("cover").is_string());
+        let start = media.deck.live_sets().len();
+        media
+            .fake
+            .publish(&[("title", LiveValue::Text("Second".into()))]);
+        media.round();
+        let sets = media.deck.live_sets()[start..].to_vec();
+        let clear = sets
+            .iter()
+            .position(|v| v["stream"] == "cover" && v["value"].is_null())
+            .expect("the old cover is cleared");
+        let title = sets
+            .iter()
+            .position(|v| v["stream"] == "title" && v["value"] == "Second")
+            .expect("the new title goes");
+        assert!(clear < title);
+    }
+
+    #[test]
+    fn idle_media_sends_all_four_streams() {
+        let mut media = Media::new(1);
+        track(&media.fake, "First", Some("sha256:art1"));
+        media.deliver();
+        track(&media.fake, "", None);
+        media.deliver();
+        assert_eq!(media.shown("state"), serde_json::json!(0));
+        assert_eq!(media.shown("title"), serde_json::json!(""));
+        assert_eq!(media.shown("artist"), serde_json::json!(""));
+        assert!(media.shown("cover").is_null());
+    }
+
+    #[test]
+    fn a_cover_the_device_lost_goes_up_again() {
+        let mut media = Media::new(1);
+        track(&media.fake, "First", Some("sha256:art1"));
+        media.deliver();
+        let Value::String(reference) = media.shown("cover") else {
+            panic!("the cover is set");
+        };
+        track(&media.fake, "Second", None);
+        media.deliver();
+        assert!(media.shown("cover").is_null());
+        let id = reference.strip_prefix("sha256:").unwrap();
+        td_link::asset::delete_asset(&media.session, id).unwrap();
+        track(&media.fake, "First", Some("sha256:art1"));
+        let report = media.round();
+        make_covers(&mut media.router, &media.fake, &mut media.cache);
+        media.now += CONTROL_GAP;
+        let report = [report, media.round()];
+        assert!(
+            report
+                .iter()
+                .any(|r| r.errors.get("media").is_some_and(|e| e.contains("asset")))
+        );
+        assert!(media.shown("cover").is_null());
+        media.now += CONTROL_GAP;
+        media.round();
+        assert_eq!(media.shown("cover"), Value::String(reference));
+        assert_eq!(media.puts(), 2);
+    }
+
+    #[test]
+    fn a_device_keeps_at_most_four_covers_and_says_when_it_is_full() {
+        let mut media = Media::new(1);
+        for seed in 1..=6 {
+            track(
+                &media.fake,
+                &format!("Track {seed}"),
+                Some(&format!("sha256:art{seed}")),
+            );
+            media.deliver();
+            assert!(media.shown("cover").is_string());
+            assert!(media.deck.assets().len() <= 4);
+        }
+        media.deck.set_asset_capacity(0);
+        track(&media.fake, "Full", Some("sha256:art1"));
+        let errors = media.deliver();
+        assert_eq!(errors.get("media").map(String::as_str), Some(OUT_OF_SPACE));
+        assert!(media.shown("cover").is_null());
+        assert!(media.deck.assets().is_empty());
+    }
+
+    #[test]
+    fn a_session_starts_by_sweeping_leftover_covers() {
+        let mut media = Media::new(1);
+        let mut cache = CoverCache::default();
+        let cover = cache.prepare("left", &noise_png(60, 60, 9), 64).unwrap();
+        td_link::asset::put_asset(
+            &media.session,
+            &cover.bytes,
+            td_link::asset::AssetFormat::Jpeg,
+        )
+        .unwrap();
+        media.round();
+        assert!(media.deck.assets().is_empty());
+    }
+
+    #[test]
+    fn a_sample_the_control_replaced_is_not_sent() {
+        let mut media = Media::new(1);
+        track(&media.fake, "First", None);
+        let stale = read(&media.fake);
+        track(&media.fake, "Second", None);
+        media
+            .router
+            .deliver("d", 1, &media.session, MEDIA_CAPS, &stale, media.now);
+        assert!(media.deck.live("main", "player", "title").is_none());
+        media.round();
+        assert_eq!(media.shown("title"), serde_json::json!("Second"));
+    }
+
+    #[test]
+    fn a_cover_made_for_an_older_sample_is_never_used() {
+        let mut media = Media::new(1);
+        track(&media.fake, "First", Some("sha256:art1"));
+        media.round();
+        make_covers(&mut media.router, &media.fake, &mut media.cache);
+        media
+            .fake
+            .publish(&[("cover", LiveValue::Image(Some("sha256:art2".into())))]);
+        media.now += CONTROL_GAP;
+        media.round();
+        assert!(media.shown("cover").is_null());
+        assert_eq!(media.puts(), 0);
+    }
+
+    #[test]
+    fn control_streams_are_paced_at_half_a_second() {
+        let deck = MockDeck::v2();
+        let session = open(&deck);
+        show(&session, &Layout::parse(GRAPH).unwrap());
+        let fake = Arc::new(FakeControl::default());
+        let mut router = Router::default();
+        router.set_controls(control("this_pc", &fake));
+        let now = Instant::now();
+        for ms in [0_u32, 499, 500] {
+            fake.publish(&[("cpu_pct", LiveValue::Number(f64::from(ms)))]);
+            let samples = fake
+                .samples()
+                .into_iter()
+                .map(|s| (key("this_pc", &s.stream), s))
+                .collect();
+            router.deliver(
+                "d",
+                1,
+                &session,
+                CAPS,
+                &samples,
+                now + Duration::from_millis(u64::from(ms)),
+            );
+        }
+        assert_eq!(
+            deck.live("page", "cpu", "value").unwrap().samples,
+            [0.0, 500.0]
+        );
     }
 }

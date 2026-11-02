@@ -15,8 +15,8 @@ const overlap = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y 
 test('landscape geometry reproduces the milestone 1 pixel values', () => {
   const g = geometryOf('landscape');
   assert.deepEqual(g.screen, { w: 1024, h: 600 });
-  assert.deepEqual(g.band, { x: 0, y: 56, w: 1024, h: 504 });
-  assert.deepEqual(g.grid, { x: 28, y: 76, w: 968, h: 464 });
+  assert.deepEqual(g.band, { x: 0, y: 56, w: 1024, h: 508 });
+  assert.deepEqual(g.grid, { x: 28, y: 76, w: 968, h: 468 });
   assert.equal(g.gap, 16);
   assert.equal(g.titleX, 36);
   assert.equal(g.titleY, 14);
@@ -36,8 +36,8 @@ test('landscape geometry reproduces the milestone 1 pixel values', () => {
 test('portrait geometry is 600 by 1024 with the band, grid and dots inside it', () => {
   const g = geometryOf('portrait');
   assert.deepEqual(g.screen, { w: 600, h: 1024 });
-  assert.deepEqual(g.band, { x: 0, y: 56, w: 600, h: 928 });
-  assert.deepEqual(g.grid, { x: 28, y: 76, w: 544, h: 888 });
+  assert.deepEqual(g.band, { x: 0, y: 56, w: 600, h: 932 });
+  assert.deepEqual(g.grid, { x: 28, y: 76, w: 544, h: 892 });
   assert.equal(g.dotY, 1004);
   assert.equal(g.gap, 16);
   assert.equal(g.swipe, 96);
@@ -93,7 +93,7 @@ test('portrait lays the F-keys grid out 4 wide and 4 tall, taller than wide', ()
   const find = (id: string) => page.tiles.find((tile) => tile.id === id)!;
   const f1 = tileRect(page, find('f1'), g.grid, g.gap);
   const win = tileRect(page, find('win'), g.grid, g.gap);
-  assert.deepEqual(f1, { x: 28, y: 76, w: 124, h: 210 });
+  assert.deepEqual(f1, { x: 28, y: 76, w: 124, h: 211 });
   assert.equal(win.x + win.w, g.grid.x + g.grid.w);
   assert.equal(win.y + win.h, g.grid.y + g.grid.h);
 });

@@ -2,7 +2,7 @@
 //! stream that sends it pictures while it is idle, as `schema/protocol/link-v2.md` § "Photo
 //! frame, idle, and clock" defines them.
 mod clock;
-mod encode;
+pub(crate) mod encode;
 pub(crate) mod folder;
 mod stream;
 

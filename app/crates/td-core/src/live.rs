@@ -121,3 +121,113 @@ impl Serialize for LiveValue {
         }
     }
 }
+
+/// A screen's size in pixels, in the orientation the Layout uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScreenSize {
+    pub w: u16,
+    pub h: u16,
+}
+
+/// A Tile's rect in screen pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PixelRect {
+    pub x: i32,
+    pub y: i32,
+    pub w: u16,
+    pub h: u16,
+}
+
+/// Where a Tile sits on a Device's screen, as the Firmware draws it (`ui_geometry` and `ui_tile_rect` in
+/// `firmware/components/td_ui_core`). None for a missing or non-grid Page, a missing Tile, an invalid grid or span,
+/// or an empty screen.
+pub fn tile_rect(
+    layout: &crate::Layout,
+    page_id: &str,
+    tile_id: &str,
+    screen: ScreenSize,
+) -> Option<PixelRect> {
+    layout.pages.iter().find_map(|page| match page {
+        crate::layout::Page::Grid {
+            id,
+            rows,
+            cols,
+            tiles,
+            ..
+        } if id == page_id => {
+            let tile = tiles.iter().find(|tile| tile.id == tile_id)?;
+            cell_rect(
+                screen,
+                layout.full_screen,
+                [*rows, *cols],
+                [tile.row, tile.col, tile.row_span, tile.col_span],
+            )
+        }
+        _ => None,
+    })
+}
+
+/// The rect of a cell span `[row, col, row_span, col_span]` on a `[rows, cols]` grid, by the rules and vectors in
+/// `schema/live/tile-geometry-vectors.json`.
+pub fn cell_rect(
+    screen: ScreenSize,
+    full_screen: bool,
+    grid: [u8; 2],
+    cell: [u8; 4],
+) -> Option<PixelRect> {
+    const GRID_MAX: u32 = 8;
+    let (w, h) = (u32::from(screen.w), u32::from(screen.h));
+    let [rows, cols] = grid.map(u32::from);
+    let [row, col, row_span, col_span] = cell.map(u32::from);
+    let fits = |n| (1..=GRID_MAX).contains(&n);
+    if w == 0
+        || h == 0
+        || !fits(rows)
+        || !fits(cols)
+        || row_span == 0
+        || col_span == 0
+        || row + row_span > rows
+        || col + col_span > cols
+    {
+        return None;
+    }
+    let scaled = |px: u32| px * w.min(h) / 600;
+    let (x, y, area_w, area_h) = if full_screen {
+        (0, 0, w, h)
+    } else {
+        let title = scaled(56);
+        let pager = scaled(36);
+        let margin_x = scaled(28);
+        let margin_y = scaled(20);
+        let band_h = h.checked_sub(title + pager)?;
+        (
+            margin_x,
+            title + margin_y,
+            w.checked_sub(2 * margin_x)?,
+            band_h.checked_sub(2 * margin_y)?,
+        )
+    };
+    let gap = scaled(16);
+    let edge = |length: u32, cells: u32, n: u32| n * (length + gap) / cells;
+    let x0 = edge(area_w, cols, col);
+    let x1 = edge(area_w, cols, col + col_span);
+    let y0 = edge(area_h, rows, row);
+    let y1 = edge(area_h, rows, row + row_span);
+    Some(PixelRect {
+        x: i32::try_from(x + x0).ok()?,
+        y: i32::try_from(y + y0).ok()?,
+        w: u16::try_from((x1 - x0).checked_sub(gap)?).ok()?,
+        h: u16::try_from((y1 - y0).checked_sub(gap)?).ok()?,
+    })
+}
+
+/// The side of the square cover a `now-playing` Tile of this size draws, or None when it has no art box, by the
+/// rules and vectors in `schema/live/now-playing-vectors.json`.
+pub fn art_size(tile_w: u16, tile_h: u16) -> Option<u16> {
+    const PAD: u16 = 20;
+    const ART_MIN: u16 = 48;
+    const ART_MAX: u16 = 256;
+    let by_width = (u32::from(tile_w.saturating_sub(2 * PAD)) * 2 / 5) as u16;
+    let size = tile_h.saturating_sub(2 * PAD).min(by_width).min(ART_MAX);
+    (size >= ART_MIN).then_some(size)
+}
