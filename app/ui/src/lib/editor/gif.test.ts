@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { GIF_CAPS } from '../../companion/samples.ts';
 import { ApiError } from '../../companion/errors.ts';
 import { fittedText, gifProblem, gifPushProblem, gifTarget, offersGif, readGif } from './gif.ts';
-import { starterLayout } from './validate.ts';
+import { parseLayout, setGif, starterLayout } from './validate.ts';
 
 const HEADER = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61];
 const LOOP = [0x21, 0xff, 0x0b, ...[...'NETSCAPE2.0'].map((c) => c.charCodeAt(0)), 0x03, 0x01, 0x00, 0x00, 0x00];
@@ -168,5 +170,18 @@ describe('every GIF refusal has its sentence', () => {
     expect(gifPushProblem(new ApiError('asset.refused', 'raw', { reason: 'busy' }), 'Desk')).toBeNull();
     expect(gifPushProblem(new ApiError('device.timeout', 'raw'), 'Desk')).toBeNull();
     expect(gifPushProblem(new ApiError('layout.animation_limit', 'raw', { page: 'media' }), 'Desk')?.text).toBe('This Page has too many animations for Desk. Remove an animated Tile.');
+  });
+});
+
+describe('turning a Live tile into a GIF Tile', () => {
+  test('drops what the Live tile bound, so the GIF Tile stays valid', () => {
+    const parsed = parseLayout(readFileSync(join(import.meta.dirname, '..', '..', '..', '..', '..', 'schema', 'examples', 'media.json'), 'utf8'));
+    if (!parsed.ok) throw new Error('media.json breaks the Layout rules');
+    const page = parsed.layout.pages[0].id;
+    const done = setGif(parsed.layout, page, 'volume', 'b'.repeat(64));
+    if (!done.ok) throw new Error(done.reason);
+    const grid = done.layout.pages[0];
+    expect(grid.kind === 'grid' && grid.tiles.find((t) => t.id === 'volume')).toEqual(expect.not.objectContaining({ input: expect.anything(), streams: expect.anything() }));
+    expect(grid.kind === 'grid' && grid.tiles.find((t) => t.id === 'volume')).toMatchObject({ render: 'gif', icon: null, asset: `sha256:${'b'.repeat(64)}` });
   });
 });

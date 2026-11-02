@@ -18,6 +18,7 @@ export const GIF_CAPS: Capabilities = {
   live_total_hz: 16,
   series: 32,
   text_bytes: 0,
+  live_images: 0,
   gif_frames: 60,
   gif_pixels: 983040,
   anim: { image: [128, 128], min_delay_ms: 100, page_tiles: 4, page_pixels: 65536 },

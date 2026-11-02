@@ -616,7 +616,7 @@ export function setAsset(layout: Layout, page: string, id: string, asset: string
 /** Plays the prepared GIF Asset on the Tile in place of its icon, or, with null, shows its label again. */
 export function setGif(layout: Layout, page: string, id: string, asset: string | null): Edit {
   return redrawTile(layout, page, id, (tile) => {
-    const { render: _render, streams: _streams, icon: _icon, asset: _asset, ...rest } = tile;
+    const { render: _render, streams: _streams, icon: _icon, asset: _asset, input: _input, ...rest } = tile;
     return asset === null ? { ...rest, icon: null } : { ...rest, icon: null, render: 'gif', asset: `sha256:${asset}` };
   });
 }
