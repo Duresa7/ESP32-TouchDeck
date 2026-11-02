@@ -1,4 +1,28 @@
-import type { DeviceSummary, Layout, LinkState, Page } from './api.ts';
+import type { Capabilities, DeviceSummary, Layout, LinkState, Page } from './api.ts';
+
+/** A Device that plays GIF Tiles, with the proposed GIF limits from docs/companion-api.md. */
+export const GIF_CAPS: Capabilities = {
+  screen: [1024, 600],
+  grid: [8, 8],
+  pages: 8,
+  tiles: 64,
+  layout_bytes: 32768,
+  layout_schemas: [1, 2],
+  storage_free: 1_000_000,
+  tile_kinds: ['static', 'graph', 'gif'],
+  asset_bytes: 262144,
+  formats: ['tdi1', 'gif'],
+  image: [64, 64],
+  photo_bytes: 0,
+  live_hz: 2,
+  live_total_hz: 16,
+  series: 32,
+  text_bytes: 0,
+  live_images: 0,
+  gif_frames: 60,
+  gif_pixels: 983040,
+  anim: { image: [128, 128], min_delay_ms: 100, page_tiles: 4, page_pixels: 65536 },
+};
 
 export function sampleDevice(id: string, name: string | null, link: LinkState = { state: 'offline' }): DeviceSummary {
   return {

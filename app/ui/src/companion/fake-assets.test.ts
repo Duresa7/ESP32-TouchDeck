@@ -13,7 +13,7 @@ it('returns a GIF Asset from the fake render Job', async () => {
   await expect.poll(() => fake.jobs()[0].state).toBe('succeeded');
   const job = fake.jobs()[0];
   expect(job.state).toBe('succeeded');
-  expect(job.result).toMatchObject({ kind: 'gif', width: 1, height: 1 });
+  expect(job.result).toMatchObject({ kind: 'gif', width: 128, height: 128 });
 });
 
 it('rejects an invalid GIF fit before starting a Job', async () => {

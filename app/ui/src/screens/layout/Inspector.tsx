@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import clsx from 'clsx';
 import { Switch } from '@base-ui/react/switch';
-import { Plus } from 'lucide-react';
+import { Film, Plus } from 'lucide-react';
 import { useIntegrations } from '../../companion/integrations.ts';
 import { missingGlyphs } from '../../lib/deck/scene.ts';
 import { presetGraph } from '../../lib/editor/graph.ts';
@@ -13,7 +13,8 @@ import { button } from '../../shell/button.ts';
 import { useUi } from '../../state/ui.ts';
 import { PresetButton } from '../integrations/PresetPreview.tsx';
 import { PendingApprovals } from './Approvals.tsx';
-import { useDeviceShows, useEditorState } from './editor.ts';
+import { useDeviceOffersGif, useDeviceShows, useEditorState, useGifTiles } from './editor.ts';
+import { GifInput } from './GifField.tsx';
 import { TileIcon } from './AssetImage.tsx';
 import { KINDS } from './glyphs.tsx';
 import { TileFields } from './TileFields.tsx';
@@ -204,7 +205,7 @@ function TileInspector({ store, page, tileId }: { store: EditorStore; page: Grid
             {tile.label}
           </h2>
           <p className="inspector-sub">
-            {KINDS[kind].noun} on the {page.title} Page
+            {tile.render === 'gif' && kind === 'none' ? 'GIF' : KINDS[kind].noun} on the {page.title} Page
           </p>
         </div>
       </div>
@@ -259,6 +260,30 @@ function PresetTiles({ store }: { store: EditorStore }) {
   );
 }
 
+function AddGif({ store }: { store: EditorStore }) {
+  const offered = useDeviceOffersGif(store);
+  const gifs = useGifTiles();
+  const file = useRef<HTMLInputElement>(null);
+  if (!offered) return null;
+  return (
+    <section className="inspector-section" aria-label="Animation" data-testid="add-gif-section">
+      <h3 className="add-heading">Animation</h3>
+      <div className="add-actions">
+        <button type="button" className="add-action" onClick={() => file.current?.click()} data-testid="add-gif">
+          <span className="add-action-glyph" aria-hidden>
+            <Film size={16} strokeWidth={1.9} />
+          </span>
+          <span className="add-action-text">
+            <span className="add-action-name">GIF</span>
+            <span className="add-action-line">Plays an animated GIF</span>
+          </span>
+        </button>
+      </div>
+      <GifInput inputRef={file} onFile={(chosen) => gifs.add(chosen)} testId="add-gif-file" />
+    </section>
+  );
+}
+
 function AddTile({ store, page, target }: { store: EditorStore; page: Page; target: Target }) {
   const first = useRef<HTMLButtonElement>(null);
   useEffect(() => first.current?.focus({ preventScroll: true }), []);
@@ -294,6 +319,7 @@ function AddTile({ store, page, target }: { store: EditorStore; page: Page; targ
           })}
         </div>
       </section>
+      <AddGif store={store} />
       <PresetTiles store={store} />
       <div className="inspector-foot">
         <button type="button" className={button()} onClick={() => store.closeAdd()} data-testid="add-cancel">

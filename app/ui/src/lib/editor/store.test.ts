@@ -572,3 +572,32 @@ describe('send and load', () => {
     expect(state(store).status).toMatchObject({ kind: 'ok', text: 'Removed 0 unused Assets from Desk' });
   });
 });
+
+describe('a push refused for its GIFs', () => {
+  const refusedBy = (code: string, details: unknown) => {
+    const store = editor({ wait: () => Promise.reject(new ApiError(code, 'raw message', details)) });
+    store.open(DESK);
+    store.startStarter();
+    return store;
+  };
+
+  test.each([
+    ['layout.animation_limit', { page: 'media', field: 'page_tiles', limit: 4, actual: 5 }, 'This Page has too many animations for Desk. Remove an animated Tile.'],
+    ['asset.too_large', { reason: 'size', field: 'device_limit', limit: null, actual: null, unit: 'unknown' }, 'This GIF is too large for Desk. Choose a smaller GIF.'],
+    ['asset.too_large', { field: 'gif_frames', limit: 60, actual: 61, unit: 'frames' }, 'This GIF is too long for Desk. Choose a shorter GIF.'],
+    ['asset.unsupported', { field: 'format', limit: 'supported encoding', actual: 'refused', reason: 'format' }, "Desk can't play this GIF. Update its Firmware, then retry."],
+    ['asset.refused', { reason: 'memory' }, 'This GIF is too large for Desk. Choose a smaller GIF.'],
+    ['asset.refused', { reason: 'full' }, 'Desk is out of space. Remove unused Assets, then retry.'],
+  ])('%s says what to change, with the raw reason under Details', async (code, details, text) => {
+    const store = refusedBy(code, details);
+    await store.push();
+    expect(state(store).status).toMatchObject({ kind: 'error', text, event: 'push-failed' });
+    expect(state(store).status?.detail).toContain(code);
+  });
+
+  test('a refusal that is not about a GIF keeps the plug-in sentence', async () => {
+    const store = refusedBy('asset.refused', { reason: 'storage' });
+    await store.push();
+    expect(state(store).status?.text).toBe("Couldn't send to Desk. Check that it's plugged in, then retry.");
+  });
+});

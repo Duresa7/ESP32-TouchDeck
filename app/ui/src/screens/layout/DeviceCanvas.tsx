@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import clsx from 'clsx';
-import { Lock, Plus } from 'lucide-react';
+import { Film, Lock, Plus } from 'lucide-react';
 import { cellAt, geometry, PANEL_H, PANEL_W, screenSize, tileFits, tileRect, type Geometry, type Rect, type Span } from '../../lib/deck/geometry.ts';
 import { easeOut, goTo, move, nearestPage, pager, press, release, restX, type Bounce } from '../../lib/deck/pager.ts';
 import { buildDots, buildPage, buildTitle, FONTS, sampleRows, sampleSeries, sampleWidget, type FontSize, type GraphView, type PageView, type SceneOptions, type TextView } from '../../lib/deck/scene.ts';
@@ -9,6 +9,7 @@ import { THEME } from '../../lib/deck/theme.ts';
 import type { EditorStore, Target } from '../../lib/editor/store.ts';
 import type { GridPage, Layout, Tile } from '../../lib/editor/validate.ts';
 import { AssetImage } from './AssetImage.tsx';
+import { GifImage } from './GifImage.tsx';
 import { BuiltinIcon } from './glyphs.tsx';
 
 const SIZE: Record<FontSize, string> = { 48: 'var(--screen-text-legend)', 28: 'var(--screen-text-label)', 14: 'var(--screen-text-sub)' };
@@ -569,6 +570,11 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
                 {tv.image && (
                   <span className="scene-image" style={{ left: tv.image.x, top: tv.image.y, width: tv.image.size, height: tv.image.size }}>
                     <AssetImage key={tv.image.id} id={tv.image.id} size={tv.image.size} />
+                  </span>
+                )}
+                {tv.gif && (
+                  <span className="scene-gif" style={{ width: tv.gif.w, height: tv.gif.h }} data-testid="tile-gif">
+                    <GifImage key={tv.gif.id} id={tv.gif.id} missing={<Film className="scene-gif-missing" size={52} strokeWidth={1.6} data-testid="gif-missing" aria-hidden />} />
                   </span>
                 )}
                 {tv.bar && <span className="scene-bar" style={{ left: tv.bar.x, top: tv.bar.y, width: tv.bar.w, height: tv.bar.h, borderRadius: tv.bar.radius }} />}

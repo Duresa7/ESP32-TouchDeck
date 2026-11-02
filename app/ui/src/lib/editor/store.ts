@@ -5,6 +5,7 @@ import { toApiError, type ApiError } from '../../companion/errors.ts';
 import { parseAction, presetLabel } from '../integrations/model.ts';
 import { isSent, readDraft, writeDraft, type Draft, type DraftStorage } from './drafts.ts';
 import { freshAction } from './actions.ts';
+import { gifPushProblem } from './gif.ts';
 import { describeLayout, friendlyFileError, friendlyRefusal, plural, PLUG_IN } from './messages.ts';
 import {
   addPage,
@@ -17,6 +18,7 @@ import {
   moveTile,
   newGridPage,
   newLayout,
+  pageOf,
   parseLayout,
   removePage,
   removeTile,
@@ -25,6 +27,7 @@ import {
   setAction,
   setAsset,
   setFullScreen,
+  setGif,
   setGraph,
   setGridSize,
   setIcon,
@@ -275,7 +278,10 @@ export function createEditorStore(deps: EditorDeps) {
 
   function sendFailed(error: ApiError, layout: Layout) {
     const device = name();
-    if (error.code === 'layout.invalid') {
+    const gif = gifPushProblem(error, device);
+    if (gif) {
+      say('error', gif.text, { detail: gif.detail, event: 'push-failed' });
+    } else if (error.code === 'layout.invalid') {
       const issues = refusals(error.details);
       const text = issues.length ? friendlyRefusal(issues[0], layout, device) : 'That change breaks a Layout rule. See Details.';
       say('error', text, { detail: issues.join('\n') || error.message, event: 'push-failed' });
@@ -431,6 +437,23 @@ export function createEditorStore(deps: EditorDeps) {
       const action = defaultAction(kind, draft.layout.pages.map((p) => p.id));
       const placed = placeAtTarget(action ?? { type: 'none' }, 'Tile');
       if (placed && action === null) editAction(placed.id, freshAction(kind, placed.pages, placed.page));
+    },
+
+    /** Places a Tile for a GIF where Add Tile points, and returns its id. It plays the GIF once `setGif` gives it one. */
+    placeGif(): string | null {
+      return placeAtTarget({ type: 'none' }, 'GIF')?.id ?? null;
+    },
+
+    /** Plays the GIF Asset on the Tile, or with null shows its label again, wherever the Tile sits in that orientation's Layout. */
+    setGif(tile: string, asset: string | null, orientation: Orientation = state().orientation): string | null {
+      const draft = state().drafts[orientation];
+      if (!draft) return 'no layout is open';
+      const page = pageOf(draft.layout, tile);
+      if (!page) return `no tile ${tile}`;
+      const result = setGif(draft.layout, page, tile, asset);
+      if (!result.ok) return result.reason;
+      keep(orientation, { ...draft, layout: result.layout });
+      return null;
     },
 
     /** Places a Preset tile where Add Tile points, as a graph of `graph` when given. */

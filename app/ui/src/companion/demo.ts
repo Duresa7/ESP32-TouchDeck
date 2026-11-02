@@ -1,4 +1,4 @@
-import type { AssetSource, Delivery, DeviceSummary } from './api.ts';
+import type { AssetSource, Delivery, DeviceSummary, ErrorBody, Fit } from './api.ts';
 import type { Environment } from './connection.ts';
 import { createFakeCompanion } from './fake.ts';
 import type { FakeSearch } from './fake-assets.ts';
@@ -21,6 +21,11 @@ const checks = {
 const DEMO_FOLDER = 'D:\\Pictures\\Desk frame';
 
 const isCheckName = (name: string | null): name is keyof typeof checks => name !== null && Object.hasOwn(checks, name);
+
+function renderMs(value: string | null): { renderMs?: number } {
+  const ms = Number(value);
+  return value !== null && Number.isInteger(ms) && ms >= 0 && ms <= 60_000 ? { renderMs: ms } : {};
+}
 
 const browsers = [
   { label: 'Edge on Windows', created_ms: Date.UTC(2026, 9, 26, 17, 5), last_used_ms: Date.UTC(2026, 9, 28, 20, 41) },
@@ -57,6 +62,9 @@ declare global {
         failRender(id: string): void;
         searches(): FakeSearch[];
         created(): AssetSource[];
+        fits(): Fit[];
+        holdGifs(on: boolean): void;
+        failGif(error: ErrorBody): void;
       };
     };
   }
@@ -75,7 +83,7 @@ export function demoEnvironment(target: Window): Environment {
     photoFrame: devices.filter((_, i) => i % 3 !== 2).map((d) => d.id),
     browsers: params.get('browsers') === '0' ? [] : browsers,
     integrations: { configured: params.get('integrations') !== 'new', delivery: devices.map((d) => ({ device: d.id, sent: 42, error: null })) },
-    assets: params.get('icons') === 'worst' ? { hits: worstCaseHits() } : {},
+    assets: { ...(params.get('icons') === 'worst' ? { hits: worstCaseHits() } : {}), ...renderMs(params.get('render-ms')) },
   });
   const update = params.get('update');
   const updates = createFakeUpdates({ check: isCheckName(update) ? checks[update] : checks.none });
@@ -110,6 +118,9 @@ export function demoEnvironment(target: Window): Environment {
       failRender: (id) => fake.assets.failRender(id),
       searches: () => fake.assets.searches.map((s) => ({ ...s })),
       created: () => structuredClone([...fake.assets.created]),
+      fits: () => [...fake.assets.fits],
+      holdGifs: (on) => fake.assets.holdGifs(on),
+      failGif: (error) => fake.assets.failGif(error),
     },
   };
   const network = target.fetch.bind(target);

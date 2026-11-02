@@ -198,3 +198,11 @@ test('colors widen from RGB565 the way a deck screenshot reads them', () => {
   assert.equal(THEME.color.bg, '#080810');
   assert.equal(panelColor(72, 160, 255), '#4aa2ff');
 });
+
+test('a GIF tile shows its GIF in the middle of the whole tile, with no label or icon', () => {
+  const page = buildPage(gridPage(load('gif.json').pages[0]), landscape);
+  const gif = page.tiles.find((tile) => tile.gif !== null)!;
+  assert.deepEqual(gif.texts, []);
+  assert.equal(gif.image, null);
+  assert.deepEqual(gif.gif, { id: 'a'.repeat(64), w: gif.rect.w, h: gif.rect.h });
+});

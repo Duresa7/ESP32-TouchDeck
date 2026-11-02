@@ -48,6 +48,8 @@ export interface TileView {
   image: { id: string; x: number; y: number; size: number } | null;
   bar: BarView | null;
   graph: GraphView | null;
+  /** A GIF Tile's Asset, drawn at its own size in the middle of a box this big. */
+  gif: { id: string; w: number; h: number } | null;
 }
 
 export interface RowView {
@@ -155,8 +157,14 @@ function buildTile(page: Page & { kind: 'grid' }, tile: Tile, g: Geometry, optio
     image: null,
     bar: null,
     graph: null,
+    gif: null,
   };
   const { color, media, widget } = THEME;
+  const gif = tile.render === 'gif' ? assetOf(tile) : null;
+  if (gif !== null) {
+    view.gif = { id: gif, w: rect.w, h: rect.h };
+    return view;
+  }
   if (tile.render === 'graph') {
     buildGraph(view, tile, options.graph?.(tile) ?? null);
     return view;

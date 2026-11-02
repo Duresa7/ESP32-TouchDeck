@@ -613,6 +613,19 @@ export function setAsset(layout: Layout, page: string, id: string, asset: string
   return iconEdit(layout, page, id, null, `sha256:${asset}`);
 }
 
+/** Plays the prepared GIF Asset on the Tile in place of its icon, or, with null, shows its label again. */
+export function setGif(layout: Layout, page: string, id: string, asset: string | null): Edit {
+  return redrawTile(layout, page, id, (tile) => {
+    const { render: _render, streams: _streams, icon: _icon, asset: _asset, input: _input, ...rest } = tile;
+    return asset === null ? { ...rest, icon: null } : { ...rest, icon: null, render: 'gif', asset: `sha256:${asset}` };
+  });
+}
+
+/** The grid Page that holds the Tile, or null when no Page does. */
+export function pageOf(layout: Layout, id: string): string | null {
+  return layout.pages.find((page) => page.kind === 'grid' && page.tiles.some((tile) => tile.id === id))?.id ?? null;
+}
+
 export function assetOf(tile: Pick<Tile, 'asset'>): string | null {
   return tile.asset?.startsWith('sha256:') ? tile.asset.slice('sha256:'.length) : null;
 }
