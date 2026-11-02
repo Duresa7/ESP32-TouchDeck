@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { Toggle } from '@base-ui/react/toggle';
 import { ToggleGroup } from '@base-ui/react/toggle-group';
 import { useDevices } from '../../companion/devices.ts';
@@ -8,6 +9,7 @@ import type { EditorStore } from '../../lib/editor/store.ts';
 import type { Tile } from '../../lib/editor/validate.ts';
 import { useOfferedFirmware } from './device.ts';
 import { useDeviceShows, useEditorState } from './editor.ts';
+import { GifInput } from './GifField.tsx';
 import { described, Field, Select, useFieldIds } from './fields.tsx';
 
 function groups(sources: readonly GraphSource[]): { name: string; sources: GraphSource[] }[] {
@@ -50,9 +52,17 @@ function StreamField({ store, tile, sources }: { store: EditorStore; tile: Tile;
   );
 }
 
-/** Whether the Tile shows its label or value, or draws a graph of a numeric Integration stream. */
-export function GraphField({ store, tile, device }: { store: EditorStore; tile: Tile; device: string }) {
+/** A GIF choice beside Label and Graph, for a Device that plays GIFs. */
+export interface ShowsGif {
+  on: boolean;
+  choose(file: File): void;
+  stop(): void;
+}
+
+/** Whether the Tile shows its label or value, draws a graph of a numeric Integration stream, or plays a GIF. */
+export function GraphField({ store, tile, device, gif }: { store: EditorStore; tile: Tile; device: string; gif?: ShowsGif }) {
   const ids = useFieldIds();
+  const gifFile = useRef<HTMLInputElement>(null);
   const integrations = useIntegrations((s) => s.integrations);
   const shows = useDeviceShows(store, 'graph');
   const id = useEditorState(store, (s) => s.device?.id);
@@ -60,11 +70,18 @@ export function GraphField({ store, tile, device }: { store: EditorStore; tile: 
   const offered = useOfferedFirmware({ firmware });
   const sources = graphSources(integrations);
   const graph = tile.render === 'graph';
+  const shown = gif?.on ? 'gif' : graph ? 'graph' : 'plain';
   const plain = tile.action.type === 'widget' ? 'Value' : 'Label';
-  const hint = !shows ? needsFirmwareField({ device, since: offered }) : sources.length === 0 ? 'Set up an Integration to draw a graph.' : null;
+  const graphHint = !shows ? needsFirmwareField({ device, since: offered }) : sources.length === 0 ? 'Set up an Integration to draw a graph.' : null;
+  const hint = gif?.on ? null : graphHint;
   const choose = (value: string) => {
+    if (value === 'gif') {
+      gifFile.current?.click();
+      return;
+    }
+    if (gif?.on) gif.stop();
     if (value === 'plain') {
-      store.setGraph(tile.id, null);
+      if (tile.render !== undefined) store.setGraph(tile.id, null);
       return;
     }
     const { action } = tile;
@@ -79,7 +96,7 @@ export function GraphField({ store, tile, device }: { store: EditorStore; tile: 
           Shows
         </span>
         <ToggleGroup
-          value={[graph ? 'graph' : 'plain']}
+          value={[shown]}
           onValueChange={(value) => {
             if (value[0]) choose(value[0]);
           }}
@@ -93,7 +110,13 @@ export function GraphField({ store, tile, device }: { store: EditorStore; tile: 
           <Toggle value="graph" className="segment" disabled={!graph && (!shows || sources.length === 0)} data-testid="tile-shows-graph">
             Graph
           </Toggle>
+          {gif && (
+            <Toggle value="gif" className="segment" data-testid="tile-shows-gif">
+              GIF
+            </Toggle>
+          )}
         </ToggleGroup>
+        {gif && <GifInput inputRef={gifFile} onFile={gif.choose} testId="tile-shows-gif-file" />}
         {hint && (
           <p className="field-hint" id={ids.hint} data-testid="tile-shows-hint">
             {hint}

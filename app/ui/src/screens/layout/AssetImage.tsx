@@ -4,6 +4,7 @@ import { useCompanion } from '../../companion/connection.ts';
 import { isApiError } from '../../companion/errors.ts';
 import { assetOf, type ActionType, type Tile } from '../../lib/editor/validate.ts';
 import { decodeTdi1, TDI1_SIDE } from '../../lib/icons/tdi1.ts';
+import { GifImage } from './GifImage.tsx';
 import { TileGlyph } from './glyphs.tsx';
 
 const pixels = new Map<string, Uint8ClampedArray | 'missing'>();
@@ -52,7 +53,8 @@ export function AssetImage({ id, size, onMissing }: { id: string; size: number; 
   return <canvas ref={canvas} className="asset-image" width={TDI1_SIDE} height={TDI1_SIDE} style={{ width: size, height: size }} data-ready={shown !== undefined && shown !== 'missing'} aria-hidden />;
 }
 
-export function TileIcon({ tile, kind, size }: { tile: Pick<Tile, 'icon' | 'asset'>; kind: ActionType; size: number }) {
+export function TileIcon({ tile, kind, size }: { tile: Pick<Tile, 'icon' | 'asset' | 'render'>; kind: ActionType; size: number }) {
   const id = assetOf(tile) ?? (tile.icon?.startsWith('file:') ? tile.icon.slice('file:'.length) : null);
+  if (id && tile.render === 'gif') return <GifImage key={id} id={id} size={Math.round(size * 1.5)} />;
   return id ? <AssetImage key={id} id={id} size={Math.round(size * 1.5)} /> : <TileGlyph icon={tile.icon} kind={kind} size={size} />;
 }

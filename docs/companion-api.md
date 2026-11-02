@@ -1306,6 +1306,8 @@ Companion started. If the sweep can't free enough room, the render Job fails
 with `asset.store_full` and the Asset is not stored. Pending uploads are not
 Assets; they have their own limit (Request limits).
 
-The UI fake accepts GIF uploads and produces a fixed normalized 1-by-1 GIF
-placeholder. It does not implement the Rust normalizer or Device admission;
-integration tests run those paths against the Companion and mock Device.
+The UI fake accepts GIF uploads and produces a small looping placeholder GIF:
+the target size capped at 128 by 128, eight frames at 10 fps, coloured by the
+upload, target and fit so a refit gets a new id. It does not implement the Rust
+normalizer or Device admission; integration tests run those paths against the
+Companion and mock Device.

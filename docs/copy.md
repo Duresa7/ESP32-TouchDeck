@@ -1135,10 +1135,22 @@ A script lists the string literals and text nodes in every non-test `.svelte` an
 
 | State | Copy |
 | --- | --- |
+| Add Tile section | Animation |
+| Add Tile choice | GIF |
+| Add Tile choice, second line | Plays an animated GIF |
+| Shows field, third option | GIF |
+| Field label | GIF |
+| Field, a GIF Tile without a GIF yet | No GIF |
+| Field, a GIF from before this session | GIF |
 | Choose | Choose GIF |
 | Replace | Change GIF |
+| Fit field | Fit |
+| Fit options, `contain` and `cover` | Whole GIF, Fill Tile |
+| Waiting for the GIF ahead of it | Waiting for another GIF… |
 | Preparing | Preparing GIF… |
+| Stop preparing | Cancel |
 | Fitted | Fitted to {device}: {width} × {height}, {fps} fps. |
+| Fitted, a GIF with one frame | Fitted to {device}: {width} × {height}. |
 | Too long | This GIF is too long for {device}. Choose a shorter GIF. |
 | Too large | This GIF is too large for {device}. Choose a smaller GIF. |
 | Too short | This GIF is too short for {device}. Choose a GIF that plays for at least {limit} ms. |
@@ -1147,11 +1159,24 @@ A script lists the string literals and text nodes in every non-test `.svelte` an
 | Asset store full | This PC's Asset store is full. Retry in an hour, or remove Tiles you don't use and send the Layout. |
 | Decoded source too large | This GIF needs more than 64 MiB to decode all its frames. Choose a smaller or shorter GIF. |
 | Preparation failed | Couldn't prepare this GIF. Choose another GIF. |
+| Can't play GIFs (`asset.unsupported`) | {device} can't play this GIF. Update its Firmware, then retry. |
+| Two render Jobs already run (`limits.exceeded`) | Other Assets are still being prepared. Wait a moment, then retry. |
+| Device not connected | Couldn't prepare this GIF. Check that {device} is plugged in, then retry. |
+| Refit with no file, a GIF from before this session | Choose this GIF again to refit it. |
+| Failure buttons | Retry, Details |
 | Unsupported | Needs Firmware {x.y} |
 
 The Companion API returns these rows without `for {device}`, because an error
 body has no Device name; the app adds it. Put decoder and wire reasons under Details. App previews show a paused poster
 when reduced motion is requested.
+
+`asset.too_large` picks its row by `details.field`: `gif_frames` and
+`source_frames` get Too long, `decoded_rgba` gets Decoded source too large, and
+every other field Too large. A link refusal reaches the app typed: `size` as
+`asset.too_large`, `format` as `asset.unsupported`, `memory` as Too large and
+`full` as Storage full. An upload over 16 MiB (`request.too_large`) gets Too large.
+Unsupported is the Tile badge on the canvas for a Device whose Firmware can't play
+GIF Tiles; Add Tile offers GIF only to a Device whose capabilities have `anim`.
 
 ## Graph Tiles
 

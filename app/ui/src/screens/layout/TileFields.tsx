@@ -4,13 +4,15 @@ import { ToggleGroup } from '@base-ui/react/toggle-group';
 import { missingGlyphs } from '../../lib/deck/scene.ts';
 import { needsApproval, processOf } from '../../lib/editor/actions.ts';
 import { friendlyRefusal } from '../../lib/editor/messages.ts';
+import { gifWork } from '../../lib/editor/gif-tiles.ts';
 import { tileProblems, type EditorStore } from '../../lib/editor/store.ts';
 import type { GridPage, Layout, Tile } from '../../lib/editor/validate.ts';
 import { ActionForm } from './ActionForm.tsx';
 import { ActionLogPanel } from './ActionLog.tsx';
 import { AllowedActions, ApprovalNote } from './Approvals.tsx';
-import { useEditorState } from './editor.ts';
+import { useDeviceOffersGif, useEditorState, useGifState, useGifTiles } from './editor.ts';
 import { described, Field, FieldError, useFieldIds } from './fields.tsx';
+import { GifField } from './GifField.tsx';
 import { GraphField } from './GraphField.tsx';
 import { IconField } from './IconField.tsx';
 import { KeyTest } from './KeyTest.tsx';
@@ -154,15 +156,22 @@ export function TileFields({ store, page, tile }: TileFieldsProps) {
   const device = useEditorState(store, (s) => s.device);
   const layout = useEditorState(store, (s) => s.drafts[s.orientation]?.layout);
   const refused = useEditorState(store, (s) => tileProblems(s, tile.id)?.action);
+  const orientation = useEditorState(store, (s) => s.orientation);
+  const gifs = useGifTiles();
+  const offersGif = useDeviceOffersGif(store);
+  const working = useGifState(gifs, (s) => gifWork(s, { device, orientation }, tile.id) !== undefined);
   if (!layout || !device) return null;
   const action = refused?.value ?? tile.action;
   const name = device.name;
   const graph = tile.render === 'graph';
+  const gif = tile.render === 'gif' || working;
+  const showsGif = offersGif || gif ? { on: gif, choose: (file: File) => gifs.choose(tile.id, file), stop: () => gifs.cancel(tile.id) } : undefined;
   return (
     <div className="tile-fields" data-testid="tile-fields" data-id={tile.id}>
       <LabelField key={`label-${tile.id}`} store={store} tile={tile} device={name} layout={layout} />
-      <GraphField store={store} tile={tile} device={name} />
-      {!graph && <IconField store={store} tile={tile} kind={action.type} />}
+      <GraphField store={store} tile={tile} device={name} gif={showsGif} />
+      {gif && <GifField store={store} gifs={gifs} tile={tile} device={name} />}
+      {!graph && !gif && <IconField store={store} tile={tile} kind={action.type} />}
       <SizeField store={store} tile={tile} layout={layout} device={name} />
       {!graph && <ActionForm key={`action-${tile.id}`} store={store} page={page} tile={tile} layout={layout} device={name} />}
       {needsApproval(action) && <ApprovalNote action={action} />}

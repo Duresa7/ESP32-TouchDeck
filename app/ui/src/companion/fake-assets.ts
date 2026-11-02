@@ -1,6 +1,7 @@
 import { encodeTdi1, TDI1_SIDE } from '../lib/icons/tdi1.ts';
-import type { AssetRef, AssetSource, Builtin, CatalogHit, CreateAsset, Job } from './api.ts';
+import type { AssetRef, AssetSource, Builtin, CatalogHit, CreateAsset, ErrorBody, Fit, Job } from './api.ts';
 import { RECORDED_BUILTINS, RECORDED_HITS } from './fake-catalog.data.ts';
+import { fakeGif } from './fake-gif.ts';
 
 type Frame = Record<string, unknown> & { type: string };
 
@@ -23,6 +24,7 @@ const json = (status: number, body: unknown) =>
 const failure = (status: number, code: string, message: string, details: unknown = null) => json(status, { error: { code, message, details } });
 
 const UPLOAD_MAX = 16 * 1024 * 1024;
+const GIF_SIDE = 128;
 const UPLOAD_TYPES: ReadonlySet<string> = new Set(['image/png', 'image/jpeg', 'image/gif']);
 
 function pause(ms: number | Promise<void>, signal: AbortSignal): Promise<void> {
@@ -94,6 +96,10 @@ export function createFakeAssets(options: FakeAssetsOptions) {
   const uploads = new Map<string, Uint8Array>();
   const jobs = new Map<string, Job>();
   const created: AssetSource[] = [];
+  const fits: Fit[] = [];
+  const gifFailures: ErrorBody[] = [];
+  const waitingGifs: (() => void)[] = [];
+  let gifsHeld = false;
   const searches: FakeSearch[] = [];
   const failing = new Set<string>();
   let offline = false;
@@ -120,7 +126,7 @@ export function createFakeAssets(options: FakeAssetsOptions) {
     return next;
   }
 
-  async function render(source: AssetSource): Promise<{ file: Uint8Array } | { problem: string }> {
+  async function render(source: AssetSource, fit: Fit): Promise<{ file: Uint8Array } | { problem: string }> {
     switch (source.kind) {
       case 'catalog': {
         const hit = hits.find((h) => h.source === source.catalog && h.id === source.id);
@@ -132,7 +138,10 @@ export function createFakeAssets(options: FakeAssetsOptions) {
         const bytes = uploads.get(source.upload);
         uploads.delete(source.upload);
         if (!bytes) return { problem: 'upload.not_found' };
-        return { file: new Uint8Array([71,73,70,56,57,97,1,0,1,0,128,0,0,0,0,0,255,255,255,33,255,11,78,69,84,83,67,65,80,69,50,46,48,3,1,0,0,0,33,249,4,4,10,0,0,0,44,0,0,0,0,1,0,1,0,0,2,2,68,1,0,59]) };
+        const { width, height } = source.target;
+        const scale = Math.min(1, GIF_SIDE / width, GIF_SIDE / height);
+        const seed = hashOf(`${await sha256(bytes)}:${width}x${height}:${fit}`);
+        return { file: fakeGif({ seed, width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) }) };
       }
       case 'upload': {
         const bytes = uploads.get(source.upload);
@@ -149,14 +158,38 @@ export function createFakeAssets(options: FakeAssetsOptions) {
     }
   }
 
+  async function finish(id: string, body: CreateAsset, refusal: ErrorBody | undefined) {
+    const outcome = await render(body.source, body.fit ?? 'contain');
+    const now = jobs.get(id);
+    if (!now || now.state !== 'running') return;
+    if (refusal) {
+      update(now, { state: 'failed', error: refusal, cancellable: false, finished_ms: Date.now() });
+      return;
+    }
+    if ('problem' in outcome) {
+      const code = outcome.problem === 'upload.not_found' ? 'upload.not_found' : 'asset.render_failed';
+      const message = code === 'upload.not_found' ? 'The upload expired or never existed.' : `The image or icon couldn't be rendered: ${outcome.problem}`;
+      update(now, { state: 'failed', error: { code, message, details: null }, cancellable: false, finished_ms: Date.now() });
+      return;
+    }
+    const fileId = await sha256(outcome.file);
+    files.set(fileId, outcome.file);
+    const gif = body.source.kind === 'gif';
+    const size = gif ? { width: outcome.file[6] | (outcome.file[7] << 8), height: outcome.file[8] | (outcome.file[9] << 8) } : { width: TDI1_SIDE, height: TDI1_SIDE };
+    const result: AssetRef = { id: fileId, kind: gif ? 'gif' : 'tdi1', ...size, bytes: outcome.file.length };
+    update(now, { state: 'succeeded', progress: { frames_done: 1, frames_total: 1 }, result, cancellable: false, finished_ms: Date.now() });
+  }
+
   function startRender(body: CreateAsset): Job {
     minted += 1;
     created.push(body.source);
+    fits.push(body.fit ?? 'contain');
+    const gif = body.source.kind === 'gif';
     const job: Job = {
       id: `job_asset${String(minted).padStart(11, '0')}`,
       kind: 'assets.render',
       scope: { kind: 'companion' },
-      state: 'running',
+      state: gif && gifsHeld ? 'queued' : 'running',
       progress: { frames_done: 0, frames_total: 1 },
       result: null,
       error: null,
@@ -167,22 +200,18 @@ export function createFakeAssets(options: FakeAssetsOptions) {
     };
     jobs.set(job.id, job);
     publish({ type: 'job.updated', data: job });
-    setTimeout(async () => {
-      const outcome = await render(body.source);
+    const refusal = gif ? gifFailures.shift() : undefined;
+    const run = () => setTimeout(() => void finish(job.id, body, refusal), renderMs);
+    if (job.state === 'running') {
+      run();
+      return job;
+    }
+    waitingGifs.push(() => {
       const now = jobs.get(job.id);
-      if (!now || now.state !== 'running') return;
-      if ('problem' in outcome) {
-        const code = outcome.problem === 'upload.not_found' ? 'upload.not_found' : 'asset.render_failed';
-        const message = code === 'upload.not_found' ? 'The upload expired or never existed.' : `The image or icon couldn't be rendered: ${outcome.problem}`;
-        update(now, { state: 'failed', error: { code, message, details: null }, cancellable: false, finished_ms: Date.now() });
-        return;
-      }
-      const id = await sha256(outcome.file);
-      files.set(id, outcome.file);
-      const gif = body.source.kind === 'gif';
-      const result: AssetRef = { id, kind: gif ? 'gif' : 'tdi1', width: gif ? 1 : TDI1_SIDE, height: gif ? 1 : TDI1_SIDE, bytes: outcome.file.length };
-      update(now, { state: 'succeeded', progress: { frames_done: 1, frames_total: 1 }, result, cancellable: false, finished_ms: Date.now() });
-    }, renderMs);
+      if (now?.state !== 'queued') return;
+      update(now, { state: 'running' });
+      run();
+    });
     return job;
   }
 
@@ -263,6 +292,19 @@ export function createFakeAssets(options: FakeAssetsOptions) {
     jobs: () => [...jobs.values()],
     get created(): readonly AssetSource[] {
       return created;
+    },
+    /** The fit each `assets.create` asked for, in order, `contain` when it named none. */
+    get fits(): readonly Fit[] {
+      return fits;
+    },
+    /** While on, a new GIF Job waits as `queued`, the way the Companion queues a second GIF. */
+    holdGifs(on: boolean) {
+      gifsHeld = on;
+      if (!on) for (const go of waitingGifs.splice(0)) go();
+    },
+    /** The next GIF Job fails with this error. */
+    failGif(error: ErrorBody) {
+      gifFailures.push(error);
     },
     get searches(): readonly FakeSearch[] {
       return searches;

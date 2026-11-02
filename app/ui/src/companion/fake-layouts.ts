@@ -1,5 +1,5 @@
 import { canonical, parseLayout, type Layout, type Orientation } from '../lib/editor/validate.ts';
-import type { DeviceSummary, Job, JobMap, JobScope, Layout as StoredLayout, LinkState, PushReport } from './api.ts';
+import type { DeviceSummary, ErrorBody, Job, JobMap, JobScope, Layout as StoredLayout, LinkState, PushReport } from './api.ts';
 
 type Frame = Record<string, unknown> & { type: string };
 
@@ -29,6 +29,20 @@ export function revisionOf(text: string): string {
 
 const ORIENTATIONS: readonly string[] = ['landscape', 'portrait'];
 
+function animationRefusal(layout: Layout, device: DeviceSummary): ErrorBody | null {
+  const anim = device.capabilities?.anim;
+  for (const page of layout.pages) {
+    if (page.kind !== 'grid') continue;
+    const gifs = page.tiles.filter((tile) => tile.render === 'gif').length;
+    if (gifs === 0) continue;
+    if (!anim) return { code: 'asset.unsupported', message: 'The Device does not play GIF Assets.', details: { field: 'anim', limit: 'enabled', actual: 'disabled', reason: 'unsupported' } };
+    if (gifs > anim.page_tiles) {
+      return { code: 'layout.animation_limit', message: 'This Page has too many animations.', details: { page: page.id, field: 'page_tiles', limit: anim.page_tiles, actual: gifs } };
+    }
+  }
+  return null;
+}
+
 export function createFakeLayouts(options: FakeLayoutsOptions) {
   const { devices, publish, delayMs = 150 } = options;
   const stored = new Map<string, string>();
@@ -51,7 +65,7 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
   const active = (device: string) =>
     [...jobs.values()].find((job) => job.scope.kind === 'device' && job.scope.id === device && !['succeeded', 'failed', 'cancelled'].includes(job.state));
 
-  function startJob<K extends keyof JobMap>(kind: K, device: string, progress: JobMap[K]['progress'], work: () => JobMap[K]['result']): Job {
+  function startJob<K extends keyof JobMap>(kind: K, device: string, progress: JobMap[K]['progress'], work: () => JobMap[K]['result'], refusal: ErrorBody | null = null): Job {
     minted += 1;
     const scope: JobScope = { kind: 'device', id: device };
     const job: Job = {
@@ -72,7 +86,8 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
     const finish = () => {
       const now = jobs.get(job.id)!;
       if (now.state === 'cancelled') return;
-      update(now, { state: 'succeeded', result: work(), cancellable: false, finished_ms: Date.now() });
+      if (refusal) update(now, { state: 'failed', error: refusal, cancellable: false, finished_ms: Date.now() });
+      else update(now, { state: 'succeeded', result: work(), cancellable: false, finished_ms: Date.now() });
     };
     if (held.delete(device)) releases.set(device, () => setTimeout(finish, 0));
     else setTimeout(finish, delayMs);
@@ -138,7 +153,7 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
         revision: revisionOf(text),
       };
       return report;
-    });
+    }, animationRefusal(layout, found));
     return json(202, job);
   }
 

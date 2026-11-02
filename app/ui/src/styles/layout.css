@@ -746,6 +746,29 @@
   overflow: hidden;
 }
 
+.scene-gif {
+  position: absolute;
+  inset: 0 auto auto 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.gif-image {
+  display: block;
+  flex: none;
+  object-fit: contain;
+}
+
+.scene-gif-missing {
+  color: var(--screen-ink-2);
+}
+
+.gif-image.is-empty {
+  border-radius: 7px;
+  background: var(--screen-track);
+}
+
 .scene-graph svg {
   display: block;
   overflow: hidden;
@@ -1151,6 +1174,21 @@
 
 .icon-name.is-empty {
   color: var(--ink-2);
+}
+
+.gif-chip {
+  overflow: hidden;
+}
+
+.gif-status:empty {
+  display: none;
+}
+
+.gif-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
 }
 
 .asset-image {
