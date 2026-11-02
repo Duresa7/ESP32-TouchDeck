@@ -7,6 +7,7 @@ import { createFakeDeviceSettings } from './fake-device-settings.ts';
 import { createFakeFirmware } from './fake-firmware.ts';
 import { createFakeIntegrations, type FakeIntegrationsOptions } from './fake-integrations.ts';
 import { createFakeLayouts } from './fake-layouts.ts';
+import { createFakeLive } from './fake-live.ts';
 import { createFakeNewBoards } from './fake-new-boards.ts';
 import { createFakeSessions, type FakeBrowser } from './fake-sessions.ts';
 import { createFakeStartup } from './fake-startup.ts';
@@ -113,6 +114,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   const firmware = createFakeFirmware({ devices, publish, bundled: options.bundled, stepMs: options.jobMs });
   const newBoards = createFakeNewBoards({ devices, publish, bundled: options.bundled ?? { version: '1.5.0', build: 'fake' }, boards: options.newBoards, stepMs: options.jobMs });
   const actions = createFakeActions({ devices, publish, stored: layouts.stored });
+  const live = createFakeLive({ devices, stored: layouts.stored });
   const sessions = createFakeSessions({ browsers: options.browsers, onRevoke: signOut });
   const startup = createFakeStartup(options.startAtSignIn);
   const consoles = createFakeConsole({ devices, publish });
@@ -152,12 +154,13 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     const get = request.method === 'GET';
 
     if (path === '/system/ping') return get ? json(200, { api: ['v1'] }) : failure(405, 'route.method_not_allowed', 'Use GET.');
-    if (path.startsWith('/test/integrations/')) return integrations.test(request, path);
+    if (path.startsWith('/test/integrations/')) return (await live.test(request, path)) ?? integrations.test(request, path);
     if (path.startsWith('/test/'))
       return (
         (await firmware.test(request, path)) ??
         (await newBoards.test(request, path)) ??
         (await actions.test(request, path)) ??
+        (await live.test(request, path)) ??
         settings.record(path, await layouts.test(request, path))
       );
 

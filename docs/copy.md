@@ -1246,8 +1246,24 @@ tile. A stale graph keeps its last line at 60% opacity, as on the Device.
 | Successful next action | Next track. |
 | Cover storage failure | {device} is out of space for cover art. Remove unused Assets, then retry. |
 | Too many cover Tiles (`layout.live_image_limit`) | This Layout has too many Now playing Tiles for {device}. Remove one, then send it again. |
+| Volume description | Shows and sets this PC's volume. |
+| Media description | Shows what's playing on this PC, with play, pause and skip. |
+| Enabled | Turn on Volume; Turn on Media |
+| Shows field, a Tile its Integration offers as a bar | Value, Graph, Bar |
+| Drag switch | Drag to change |
+| Drag switch hint | Slide a finger along the bar on {device} to set it. |
+| Shows field, a now-playing Tile | Now playing |
+| Shows hint, a now-playing Tile | The title, artist and cover from Media. Tap its buttons to play, pause or skip. |
+| Preset tile the Device can't draw yet, accessible name | Add {preset} to Layout. Needs Firmware {x.y} |
 
 The Companion's API error leaves ` for {device}` out of the Too many cover Tiles row, and its delivery status
 starts the cover storage row with "The Device"; the app puts in the Device's name. Integration action-log entries use kind integration and status ok or failed.
 A completed drag has one entry. An idle Media Integration is healthy; backend
 failures use error status. Wire/decoder details belong under Details.
+
+The app preview draws a bar Tile at 64 and a now-playing Tile with a sample
+track and a drawn stand-in cover, because covers never leave the Companion. The
+Drag switch shows only when the bar's stream is settable. Without the Firmware,
+Add Tile still offers the Volume bar and Now playing Presets with Needs Firmware
+{x.y} where their art goes, and places them; the Tile shows its label and the
+badge until the Device can draw it.

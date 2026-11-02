@@ -1,10 +1,11 @@
-import { useRef } from 'react';
+import { useId, useRef } from 'react';
+import { Switch } from '@base-ui/react/switch';
 import { Toggle } from '@base-ui/react/toggle';
 import { ToggleGroup } from '@base-ui/react/toggle-group';
 import { useDevices } from '../../companion/devices.ts';
 import { useIntegrations } from '../../companion/integrations.ts';
 import { needsFirmwareField } from '../../lib/device/needs-firmware.ts';
-import { graphBinding, graphSources, sourceKey, type GraphSource } from '../../lib/editor/graph.ts';
+import { barFor, graphBinding, graphSources, sourceKey, type GraphSource } from '../../lib/editor/graph.ts';
 import type { EditorStore } from '../../lib/editor/store.ts';
 import type { Tile } from '../../lib/editor/validate.ts';
 import { useOfferedFirmware } from './device.ts';
@@ -59,21 +60,67 @@ export interface ShowsGif {
   stop(): void;
 }
 
-/** Whether the Tile shows its label or value, draws a graph of a numeric Integration stream, or plays a GIF. */
+function InputField({ store, tile, device }: { store: EditorStore; tile: Tile; device: string }) {
+  const id = useId();
+  const integrations = useIntegrations((s) => s.integrations);
+  const { action } = tile;
+  const settable = action.type === 'widget' && integrations.find((i) => i.id === action.source)?.streams.find((s) => s.id === action.field)?.settable === true;
+  if (tile.render !== 'bar' || !settable) return null;
+  return (
+    <div className="field">
+      <div className="switch-row">
+        <span className="field-label" id={id}>
+          Drag to change
+        </span>
+        <Switch.Root className="switch" checked={tile.input === true} onCheckedChange={(on) => store.setInput(tile.id, on)} aria-labelledby={id} aria-describedby={`${id}-hint`} data-testid="tile-input">
+          <Switch.Thumb className="switch-thumb" />
+        </Switch.Root>
+      </div>
+      <p className="field-hint" id={`${id}-hint`}>
+        Slide a finger along the bar on {device} to set it.
+      </p>
+    </div>
+  );
+}
+
+function NowPlayingField({ store, device, since }: { store: EditorStore; device: string; since: string | null }) {
+  const id = useId();
+  const shows = useDeviceShows(store, 'now-playing');
+  const hint = shows ? 'The title, artist and cover from Media. Tap its buttons to play, pause or skip.' : needsFirmwareField({ device, since });
+  return (
+    <div className="field">
+      <span className="field-label" id={id}>
+        Shows
+      </span>
+      <p className="field-value" aria-labelledby={id} aria-describedby={`${id}-hint`} data-testid="tile-shows-now-playing">
+        Now playing
+      </p>
+      <p className="field-hint" id={`${id}-hint`} data-testid="tile-shows-hint">
+        {hint}
+      </p>
+    </div>
+  );
+}
+
+/** Whether the Tile shows its label or value, draws a graph of a numeric Integration stream or its stream's bar, or plays a GIF. */
 export function GraphField({ store, tile, device, gif }: { store: EditorStore; tile: Tile; device: string; gif?: ShowsGif }) {
   const ids = useFieldIds();
   const gifFile = useRef<HTMLInputElement>(null);
   const integrations = useIntegrations((s) => s.integrations);
   const shows = useDeviceShows(store, 'graph');
+  const showsBar = useDeviceShows(store, 'bar');
   const id = useEditorState(store, (s) => s.device?.id);
   const firmware = useDevices((s) => s.devices.find((d) => d.id === id)?.firmware ?? null);
   const offered = useOfferedFirmware({ firmware });
+  if (tile.render === 'now-playing') return <NowPlayingField store={store} device={device} since={offered} />;
   const sources = graphSources(integrations);
   const graph = tile.render === 'graph';
-  const shown = gif?.on ? 'gif' : graph ? 'graph' : 'plain';
-  const plain = tile.action.type === 'widget' ? 'Value' : 'Label';
-  const graphHint = !shows ? needsFirmwareField({ device, since: offered }) : sources.length === 0 ? 'Set up an Integration to draw a graph.' : null;
-  const hint = gif?.on ? null : graphHint;
+  const { action } = tile;
+  const bar = action.type === 'widget' ? barFor(integrations, action) : null;
+  const shown = gif?.on ? 'gif' : tile.render === 'bar' ? 'bar' : graph ? 'graph' : 'plain';
+  const plain = action.type === 'widget' ? 'Value' : 'Label';
+  const needs = needsFirmwareField({ device, since: offered });
+  const hint = gif?.on ? null : tile.render === 'bar' ? (showsBar ? null : needs) : !shows ? needs : sources.length === 0 ? 'Set up an Integration to draw a graph.' : null;
   const choose = (value: string) => {
     if (value === 'gif') {
       gifFile.current?.click();
@@ -84,7 +131,10 @@ export function GraphField({ store, tile, device, gif }: { store: EditorStore; t
       if (tile.render !== undefined) store.setGraph(tile.id, null);
       return;
     }
-    const { action } = tile;
+    if (value === 'bar') {
+      if (action.type === 'widget' && bar) store.setLive(tile.id, action, bar);
+      return;
+    }
     const current = action.type === 'widget' ? sources.find((s) => s.integration === action.source && s.stream === action.field) : undefined;
     const chosen = current ?? sources[0];
     if (chosen) store.setGraph(tile.id, chosen);
@@ -110,6 +160,11 @@ export function GraphField({ store, tile, device, gif }: { store: EditorStore; t
           <Toggle value="graph" className="segment" disabled={!graph && (!shows || sources.length === 0)} data-testid="tile-shows-graph">
             Graph
           </Toggle>
+          {(bar !== null || tile.render === 'bar') && (
+            <Toggle value="bar" className="segment" disabled={tile.render !== 'bar' && !showsBar} data-testid="tile-shows-bar">
+              Bar
+            </Toggle>
+          )}
           {gif && (
             <Toggle value="gif" className="segment" data-testid="tile-shows-gif">
               GIF
@@ -124,6 +179,7 @@ export function GraphField({ store, tile, device, gif }: { store: EditorStore; t
         )}
       </div>
       {graph && <StreamField store={store} tile={tile} sources={sources} />}
+      <InputField store={store} tile={tile} device={device} />
     </>
   );
 }

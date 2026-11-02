@@ -8,6 +8,7 @@ import {
   formOf,
   offersPresets,
   parseAction,
+  lineOf,
   parseUsage,
   presetLabel,
   presetLook,
@@ -180,6 +181,17 @@ describe('Preset tiles', () => {
     expect(presetLook(preset('success'), streams)).toBe('graph');
     expect(presetLook(preset('plan'), streams)).toBe('text');
     expect(presetLook(preset('unknown'), streams)).toBe('text');
+  });
+
+  it('draws a Preset by its renderer: a level for a bar, and the cover and controls for now playing', () => {
+    expect(presetLook({ ...preset('five_hour_pct'), render: 'bar' }, streams)).toBe('level');
+    expect(presetLook({ ...preset('plan'), render: 'now-playing' }, streams)).toBe('now-playing');
+    expect(presetLook({ ...preset('success'), render: 'graph' }, streams)).toBe('graph');
+  });
+
+  it('gives Volume and Media one line each', () => {
+    expect(lineOf('volume')).toBe("Shows and sets this PC's volume.");
+    expect(lineOf('media')).toBe("Shows what's playing on this PC, with play, pause and skip.");
   });
 
   it('labels a Tile in sentence case within 16 characters', () => {

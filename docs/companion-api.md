@@ -729,6 +729,19 @@ Heartbeat every 10 s with ttl_ms 30000. Non-Windows reports "Media needs Windows
 
 These sections define steps B through I; step A adds contracts and mocks only.
 
+The UI fake (`app/ui/src/companion/fake-live.ts`) stands in for steps B, C, E
+and F in demo mode. It lists Volume and Media with the Presets above, and keeps
+a Volume level (0.64, unmuted) and one track ("Night Drive" by "Tidal Lines",
+playing). A connected mock Device whose `tile_kinds` include a Tile's renderer
+holds that Tile's values: `GET /test/devices/{device}/sets` returns
+`{tile, stream, type, value}[]`, with text through the shared `fit_text` rules
+and `cover` always null. `POST /test/devices/{device}/input` takes a `v2.input`
+body (`page`, `tile`, `stream`, `phase`, `value`) for a bar Tile with `input`
+bound to Volume's `level`, clamps the value to 0..1, and sets the level, which
+unmutes above zero; other Tiles get 409 `input.unbound`. `GET
+/test/integrations/volume` returns `{level, muted}`. It doesn't pace, coalesce
+or log actions; the Companion's own tests cover those.
+
 #### Custom HTTP and command
 
 `custom` starts with `{enabled: false, sources: []}` and persists non-secret
