@@ -150,12 +150,25 @@ names are case-sensitive and the app derives each hash from file contents. A fil
 icon names a bitmap in deck storage. The validator checks the name, not file
 presence.
 
-Schema 2 tiles may add `asset`, `render` and `streams`, as
+Schema 2 tiles may add `asset`, `render`, `streams` and `input`, as
 [USB link v2](protocol/link-v2.md#layout-references-and-live-values) defines.
-`render: "gif"` needs a `sha256:` Asset and `icon: null`. `render: "graph"` is a
-Live tile that draws one number stream, so its `streams` is exactly
-`{"value": "number"}` or `{"value": "series"}`. A Tile without `render` declares
-no streams. Schema 1 rejects all three fields.
+`render: "gif"` needs a `sha256:` Asset and `icon: null`. The Live tile renderers
+and their streams are in [live/renderers.json](live/renderers.json), which every
+validator reads or matches:
+
+| `render` | Required streams | Optional streams |
+| --- | --- | --- |
+| `graph` | `value` as `number` or `series` | none |
+| `bar` | `value` as `number`, from 0 to 1 | `muted` as `number`; nonzero draws the muted look |
+| `now-playing` | `title` and `artist` as `text`, `cover` as `image`, `state` as `number` | none |
+
+A Tile declares every required stream of its renderer, may declare the optional
+ones, and declares no others. A Tile without `render` declares no streams. `bar`
+and `now-playing` take no Asset in this release: their `asset` is absent or
+`null`. `input: true` makes a `bar` Tile draggable, and needs `render: "bar"` and
+a `widget` action. Any other value, or `input` on another Tile, is invalid.
+Absent `input` means the Tile only shows its value. Schema 1 rejects all four
+fields.
 
 The six built-in icon names reproduce milestone 1's media icons.
 
@@ -227,6 +240,10 @@ uses `five_hour_pct` for the fixture account `claude:alice@example.com`. The
 `proxy` widget uses `cliproxyapi` field `status` with an empty account. The
 `accounts` dashboard uses source `cliproxyapi`, and `accounts_jump` opens it.
 
+[media.json](examples/media.json) is a schema 2 Page with a draggable Volume
+`bar` that also shows `muted`, a read-only `bar` with `value` alone, and a
+`now-playing` Tile.
+
 The [invalid examples](examples/invalid/) each break one rule and have one file per
 rule key. The first line of each file is plain text, not JSON:
 
@@ -279,8 +296,9 @@ keys. Rules whose key starts with `file.` or `json.` apply to the file's text, a
 | `tile.span` | `rowSpan` or `colSpan` is outside 1 to 8. |
 | `tile.bounds` | A tile extends past its page's rows or columns. |
 | `tile.overlap` | Two tiles on one page occupy the same cell. |
-| `tile.streams` | A schema 2 tile's `streams` do not match its `render`: a `graph` tile needs exactly `value` as `number` or `series`, and other tiles declare none. |
-| `icon.format` | `icon` is not `null`, a known `lv:` name, or `file:` and 16 lowercase hexadecimal digits. |
+| `tile.streams` | A schema 2 tile's `streams` do not match its `render`: a stream the renderer doesn't bind, a type it doesn't accept, or a required stream that is missing. Tiles without a Live tile renderer declare none. |
+| `tile.input` | A schema 2 tile's `input` is not `true`, or the tile is not a `bar` with a `widget` action. |
+| `icon.format` | `icon` is not `null`, a known `lv:` name, or `file:` and 16 lowercase hexadecimal digits. In schema 2 also an invalid `asset` or `render`, a `gif` without an Asset, or a `bar` or `now-playing` with one. |
 | `action.type` | An action `type` is missing, or is not one of the nine types. |
 | `action.page-missing` | A `page` action names a page that does not exist. |
 | `key.usage-range` | A `key` action `usage` is outside 1 to 255. |

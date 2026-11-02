@@ -19,6 +19,7 @@ const caps = (tile_kinds: string[]): Capabilities => ({
   live_total_hz: 0,
   series: 0,
   text_bytes: 0,
+  live_images: 0,
   photo_bytes: 0,
 });
 

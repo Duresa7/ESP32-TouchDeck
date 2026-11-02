@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { checkLayouts, pathKey, ruleKeys, schemaNodes, validateLayout, validateSource } from './check-layouts.mjs';
+import { checkLayouts, pathKey, renderers, ruleKeys, schemaNodes, validateLayout, validateSource } from './check-layouts.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const read = (path) => JSON.parse(readFileSync(join(directory, path), 'utf8'));
@@ -23,7 +23,7 @@ const splitExpectation = (bytes) => {
   return { expected: bytes.subarray(0, end).toString('utf8').replace(/\r$/, '').replace(/^expected: /, ''), body: bytes.subarray(end + 1) };
 };
 
-for (const name of ['builtin', 'dev', 'full-screen', 'gif']) {
+for (const name of ['builtin', 'dev', 'full-screen', 'gif', 'graph', 'media']) {
   test(`${name} is valid without mutating the layout`, () => {
     const layout = read(`examples/${name}.json`);
     const before = structuredClone(layout);
@@ -514,8 +514,8 @@ test('widget account is required and may be empty', () => {
 test('default checker reports each fixture and the exact acceptance summary', () => {
   const lines = [];
   assert.equal(checkLayouts([], (line) => lines.push(line)), 0);
-  assert.equal(lines.filter((line) => line.startsWith('ok ')).length, 5 + invalidFiles.length);
-  assert.equal(lines.at(-1), `5 valid, ${invalidFiles.length} invalid as expected, 0 problems`);
+  assert.equal(lines.filter((line) => line.startsWith('ok ')).length, 6 + invalidFiles.length);
+  assert.equal(lines.at(-1), `6 valid, ${invalidFiles.length} invalid as expected, 0 problems`);
 });
 
 test('compact UTF-8 JSON accepts exactly 32768 bytes and rejects 32769 bytes', () => {
@@ -546,7 +546,7 @@ test('CLI ignores formatting whitespace and counts whitespace inside strings', (
     writeFileSync(path, source);
     let result = run();
     assert.equal(result.status, 0, result.stdout + result.stderr);
-    assert.match(result.stdout, new RegExp(`6 valid, ${invalidFiles.length} invalid as expected, 0 problems`));
+    assert.match(result.stdout, new RegExp(`7 valid, ${invalidFiles.length} invalid as expected, 0 problems`));
     action.target += ' ';
     writeFileSync(path, JSON.stringify(layout));
     result = run();
@@ -565,7 +565,7 @@ test('CLI checks extra paths, rejects JSON and file errors, and runs from anothe
     writeFileSync(good, JSON.stringify(dev));
     let result = run(good);
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, new RegExp(`6 valid, ${invalidFiles.length} invalid as expected, 0 problems`));
+    assert.match(result.stdout, new RegExp(`7 valid, ${invalidFiles.length} invalid as expected, 0 problems`));
     assert.match(result.stdout, /wall time: \d+\.\d+ ms/);
     const bad = join(temporary, 'bad.json');
     writeFileSync(bad, splitExpectation(readFileSync(join(invalidDirectory, 'overlap.json'))).body);
@@ -606,7 +606,7 @@ test('CLI dedupes paths and finds invalid/ whatever the drive-letter and folder 
     { encoding: 'utf8' },
   );
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, new RegExp(`5 valid, ${invalidFiles.length} invalid as expected, 0 problems`));
+  assert.match(result.stdout, new RegExp(`6 valid, ${invalidFiles.length} invalid as expected, 0 problems`));
 });
 
 test('schema 2 accepts Asset references and forbids mixing icons', () => {
@@ -625,4 +625,37 @@ test('schema 2 accepts Asset references and forbids mixing icons', () => {
   assert.deepEqual(keys(layout), []);
   layout.schema = 1;
   assert.ok(keys(layout).includes('shape.unknown-field'));
+});
+
+test('bar and now-playing Tiles bind the streams the shared renderer table lists', () => {
+  const media = read('examples/media.json');
+  const [volume, level, playing] = media.pages[0].tiles;
+  assert.deepEqual(Object.keys(renderers), ['graph', 'bar', 'now-playing']);
+  assert.deepEqual(schemaNodes(read('layout.schema.json')).next().value[0].$defs.tile.properties.render.enum, ['gif', ...Object.keys(renderers)]);
+  assert.deepEqual(keys(media), []);
+  const required = (render) => Object.entries(renderers[render].streams).filter(([, stream]) => stream.required).map(([id]) => id);
+  assert.deepEqual(required('bar'), ['value']);
+  assert.deepEqual(required('now-playing'), ['title', 'artist', 'cover', 'state']);
+  assert.ok(!Object.hasOwn(level.streams, 'muted'));
+  for (const id of required('now-playing')) {
+    const streams = { ...playing.streams };
+    delete streams[id];
+    assert.deepEqual(keys({ ...media, pages: [{ ...media.pages[0], tiles: [volume, level, { ...playing, streams }] }] }), ['tile.streams'], id);
+  }
+  const extra = { ...media, pages: [{ ...media.pages[0], tiles: [{ ...volume, streams: { ...volume.streams, title: 'text' } }, level, playing] }] };
+  assert.deepEqual(keys(extra), ['tile.streams']);
+});
+
+test('input is true only on a bar Tile with a widget action, and schema 1 has no input', () => {
+  const media = read('examples/media.json');
+  const withVolume = (change) => ({ ...media, pages: [{ ...media.pages[0], tiles: [change(media.pages[0].tiles[0]), ...media.pages[0].tiles.slice(1)] }] });
+  assert.deepEqual(keys(withVolume((tile) => tile)), []);
+  assert.deepEqual(keys(withVolume(({ input: _input, ...tile }) => tile)), []);
+  assert.deepEqual(keys(withVolume((tile) => ({ ...tile, input: false }))), ['tile.input']);
+  assert.deepEqual(keys(withVolume((tile) => ({ ...tile, input: 1 }))), ['tile.input']);
+  assert.deepEqual(keys(withVolume((tile) => ({ ...tile, action: { type: 'none' } }))), ['tile.input']);
+  assert.deepEqual(keys(withVolume(({ render: _render, streams: _streams, ...tile }) => tile)), ['tile.input']);
+  assert.deepEqual(keys(withVolume((tile) => ({ ...tile, render: 'graph', streams: { value: 'number' } }))), ['tile.input']);
+  assert.deepEqual(keys(withVolume((tile) => ({ ...tile, asset: `sha256:${'a'.repeat(64)}` }))), ['icon.format']);
+  assert.deepEqual(keys(withVolume((tile) => ({ ...tile, asset: null }))), []);
 });

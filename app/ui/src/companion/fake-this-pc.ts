@@ -20,7 +20,7 @@ export function fakeThisPc(enabled = true): IntegrationView {
       revision: 0, id: 'this_pc', name: 'This PC', icon: 'monitor', enabled,
       status: { state: 'ok', message: null, delivery: [] },
       config_schema: [{ name: 'enabled', kind: 'boolean', secret: false }],
-      streams: streams.map(({ id, unit }) => ({ id, kind: 'numeric', unit })),
+      streams: streams.map(({ id, unit }) => ({ id, kind: 'numeric', unit, settable: false })),
       actions: ['refresh'],
       presets: streams.map(({ id, name }) => ({ id, name, action: { type: 'widget', source: 'this_pc', account: '', field: id }, render: 'graph' })),
     },

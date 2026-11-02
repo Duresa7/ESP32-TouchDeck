@@ -1,0 +1,315 @@
+{
+  "about": "Tile pixel rects from ui_geometry.c and ui_pages.c ui_tile_rect in firmware/components/td_ui_core, compared with app/ui/src/lib/deck/geometry.ts. Coordinates are screen pixels; screen is already oriented, grid is the Layout Page rows/cols, and tile is its cell position/span. C integer division truncates; each edge is n * (area_length + gap) / cells. An invalid grid/span returns the empty rect. fullScreen uses the whole screen. Otherwise scale dimensions by min(screen.w, screen.h)/600, truncating each dimension: title 56, margin x 28, margin y 20, gap 16. Firmware pager strip is 36; app pager strip is 40. Neither result is selected as canonical: step B must resolve the mismatch with Firmware/app owners before implementing td_core::live::tile_rect. The app test checks app_rect and records whether it matches firmware_rect.",
+  "cases": [
+    {
+      "name": "landscape full grid",
+      "screen": {
+        "w": 1024,
+        "h": 600
+      },
+      "fullScreen": false,
+      "grid": {
+        "rows": 3,
+        "cols": 4
+      },
+      "tile": {
+        "row": 0,
+        "col": 0,
+        "rowSpan": 3,
+        "colSpan": 4
+      },
+      "firmware_rect": {
+        "x": 28,
+        "y": 76,
+        "w": 968,
+        "h": 468
+      },
+      "app_rect": {
+        "x": 28,
+        "y": 76,
+        "w": 968,
+        "h": 464
+      },
+      "agree": false
+    },
+    {
+      "name": "landscape last cell",
+      "screen": {
+        "w": 1024,
+        "h": 600
+      },
+      "fullScreen": false,
+      "grid": {
+        "rows": 3,
+        "cols": 4
+      },
+      "tile": {
+        "row": 2,
+        "col": 3,
+        "rowSpan": 1,
+        "colSpan": 1
+      },
+      "firmware_rect": {
+        "x": 766,
+        "y": 398,
+        "w": 230,
+        "h": 146
+      },
+      "app_rect": {
+        "x": 766,
+        "y": 396,
+        "w": 230,
+        "h": 144
+      },
+      "agree": false
+    },
+    {
+      "name": "landscape spanning Tile",
+      "screen": {
+        "w": 1024,
+        "h": 600
+      },
+      "fullScreen": false,
+      "grid": {
+        "rows": 3,
+        "cols": 4
+      },
+      "tile": {
+        "row": 1,
+        "col": 1,
+        "rowSpan": 2,
+        "colSpan": 2
+      },
+      "firmware_rect": {
+        "x": 274,
+        "y": 237,
+        "w": 476,
+        "h": 307
+      },
+      "app_rect": {
+        "x": 274,
+        "y": 236,
+        "w": 476,
+        "h": 304
+      },
+      "agree": false
+    },
+    {
+      "name": "portrait first cell",
+      "screen": {
+        "w": 600,
+        "h": 1024
+      },
+      "fullScreen": false,
+      "grid": {
+        "rows": 4,
+        "cols": 3
+      },
+      "tile": {
+        "row": 0,
+        "col": 0,
+        "rowSpan": 1,
+        "colSpan": 1
+      },
+      "firmware_rect": {
+        "x": 28,
+        "y": 76,
+        "w": 170,
+        "h": 211
+      },
+      "app_rect": {
+        "x": 28,
+        "y": 76,
+        "w": 170,
+        "h": 210
+      },
+      "agree": false
+    },
+    {
+      "name": "portrait last span",
+      "screen": {
+        "w": 600,
+        "h": 1024
+      },
+      "fullScreen": false,
+      "grid": {
+        "rows": 4,
+        "cols": 3
+      },
+      "tile": {
+        "row": 2,
+        "col": 1,
+        "rowSpan": 2,
+        "colSpan": 2
+      },
+      "firmware_rect": {
+        "x": 214,
+        "y": 530,
+        "w": 358,
+        "h": 438
+      },
+      "app_rect": {
+        "x": 214,
+        "y": 528,
+        "w": 358,
+        "h": 436
+      },
+      "agree": false
+    },
+    {
+      "name": "full-screen landscape",
+      "screen": {
+        "w": 1024,
+        "h": 600
+      },
+      "fullScreen": true,
+      "grid": {
+        "rows": 3,
+        "cols": 4
+      },
+      "tile": {
+        "row": 1,
+        "col": 1,
+        "rowSpan": 2,
+        "colSpan": 3
+      },
+      "firmware_rect": {
+        "x": 260,
+        "y": 205,
+        "w": 764,
+        "h": 395
+      },
+      "app_rect": {
+        "x": 260,
+        "y": 205,
+        "w": 764,
+        "h": 395
+      },
+      "agree": true
+    },
+    {
+      "name": "full-screen portrait",
+      "screen": {
+        "w": 600,
+        "h": 1024
+      },
+      "fullScreen": true,
+      "grid": {
+        "rows": 4,
+        "cols": 3
+      },
+      "tile": {
+        "row": 1,
+        "col": 1,
+        "rowSpan": 3,
+        "colSpan": 2
+      },
+      "firmware_rect": {
+        "x": 205,
+        "y": 260,
+        "w": 395,
+        "h": 764
+      },
+      "app_rect": {
+        "x": 205,
+        "y": 260,
+        "w": 395,
+        "h": 764
+      },
+      "agree": true
+    },
+    {
+      "name": "scaled short side",
+      "screen": {
+        "w": 800,
+        "h": 480
+      },
+      "fullScreen": false,
+      "grid": {
+        "rows": 3,
+        "cols": 3
+      },
+      "tile": {
+        "row": 1,
+        "col": 1,
+        "rowSpan": 2,
+        "colSpan": 2
+      },
+      "firmware_rect": {
+        "x": 278,
+        "y": 189,
+        "w": 500,
+        "h": 247
+      },
+      "app_rect": {
+        "x": 278,
+        "y": 188,
+        "w": 500,
+        "h": 244
+      },
+      "agree": false
+    },
+    {
+      "name": "odd scaled dimensions",
+      "screen": {
+        "w": 641,
+        "h": 359
+      },
+      "fullScreen": false,
+      "grid": {
+        "rows": 7,
+        "cols": 5
+      },
+      "tile": {
+        "row": 6,
+        "col": 4,
+        "rowSpan": 1,
+        "colSpan": 1
+      },
+      "firmware_rect": {
+        "x": 510,
+        "y": 294,
+        "w": 115,
+        "h": 33
+      },
+      "app_rect": {
+        "x": 510,
+        "y": 292,
+        "w": 115,
+        "h": 33
+      },
+      "agree": false
+    },
+    {
+      "name": "invalid span",
+      "screen": {
+        "w": 1024,
+        "h": 600
+      },
+      "fullScreen": false,
+      "grid": {
+        "rows": 3,
+        "cols": 4
+      },
+      "tile": {
+        "row": 2,
+        "col": 3,
+        "rowSpan": 2,
+        "colSpan": 1
+      },
+      "firmware_rect": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      "app_rect": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      "agree": true
+    }
+  ]
+}

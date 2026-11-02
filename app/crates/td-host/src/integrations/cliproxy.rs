@@ -130,6 +130,7 @@ impl Integration for CliProxyIntegration {
             id: id.into(),
             kind: kind.into(),
             unit: unit.map(str::to_owned),
+            settable: false,
         })
         .collect::<Vec<_>>();
         let presets = [
@@ -149,6 +150,8 @@ impl Integration for CliProxyIntegration {
             name: name.into(),
             action: json!({"type":"widget","source":"cliproxyapi","field":id,"account":""}),
             render: None,
+            streams: None,
+            input: false,
         })
         .collect();
         IntegrationSummary {

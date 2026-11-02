@@ -22,6 +22,7 @@ const GRAPH_CAPS: Capabilities = {
   live_total_hz: 16,
   series: 32,
   text_bytes: 0,
+  live_images: 0,
 };
 
 async function drawsGraphs(page: Page, caps: Capabilities = GRAPH_CAPS) {
