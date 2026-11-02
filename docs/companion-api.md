@@ -1368,8 +1368,9 @@ The Job consumes the upload once and returns the existing `AssetRef` shape with
 file is served as `image/gif`. Cancellation before storage leaves no Asset.
 There are at most two concurrent render Jobs, and only one of them prepares a GIF
 at a time, because one worst-case GIF peaks near 280 MiB of memory. A second GIF
-render Job goes back to `queued` until the first ends, and can be cancelled while
-it waits. A cancelled render stops at its next source frame, fitted frame,
+render Job waits in `queued` without holding a render slot until the first ends,
+leaving the second slot open for icon renders, and can be cancelled while it
+waits without consuming its upload. A cancelled render stops at its next source frame, fitted frame,
 encoded frame or size attempt, so its slot frees at once. Source input is capped at 16 MiB,
 300 frames, 4096 pixels per side and 64 MiB cumulative full-canvas decoded RGBA.
 The normalizer checks a 30-second cooperative deadline between bounded stages
@@ -1398,7 +1399,8 @@ remain `device.timeout`. All these failures are visible on the Job.
 ### Asset store
 
 The Companion keeps every prepared Asset, tdi1 or GIF, as `assets/<id>.bin` in
-its data folder. Together they may use at most 256 MiB: 1024 GIFs at the
+its data folder, and sweeps leftover `.*.tmp` files from interrupted writes at
+startup. Together they may use at most 256 MiB: 1024 GIFs at the
 proposed 256 KiB `asset_bytes`, or about 32 000 icons. A fixed quota gives the
 same bound on every disk, and a few Devices' Layouts need far less. When a new
 Asset would pass the quota, the Companion first removes the least recently used
