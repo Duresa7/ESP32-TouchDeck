@@ -167,6 +167,55 @@
   text-overflow: ellipsis;
 }
 
+.preset[data-needs] {
+  background: var(--screen-bg);
+  box-shadow:
+    0 0 0 var(--preset-rim) var(--screen-bg),
+    inset 0 0 0 2px var(--screen-outline);
+}
+
+.preset-needs {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--screen-signal);
+  font-size: 10.5px;
+  font-weight: var(--screen-weight-medium);
+  line-height: 12px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.preset-level {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  color: var(--screen-ink);
+}
+
+.preset-level .preset-bar {
+  flex: 1;
+  height: 7px;
+  border-radius: 3px;
+}
+
+.preset-np {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--screen-ink);
+}
+
+.preset-np-art {
+  width: 18px;
+  height: 18px;
+  margin-right: 3px;
+  border-radius: 4px;
+  background:
+    radial-gradient(circle at 70% 30%, var(--screen-signal) 0 14%, transparent 15%),
+    linear-gradient(160deg, var(--tile-accent-coral) 0%, var(--tile-color-red) 48%, var(--tile-color-violet) 100%);
+}
+
 .preset-button {
   --preset-rim: 2px;
   padding: 0;
