@@ -333,9 +333,9 @@ impl Integration for Custom {
             revision: self.revision, id: "custom".into(), name: "Custom".into(), icon: "code".into(), enabled: self.settings.enabled,
             status: IntegrationStatus { state: if message.is_some() { "error" } else if self.settings.sources.is_empty() { "not_configured" } else { "ok" }.into(), message, delivery: self.delivery.values().cloned().collect() },
             config_schema,
-            streams: self.settings.sources.iter().map(|s| DataStream { id: s.id.clone(), kind: match s.kind { Kind::Number => "numeric", Kind::Text => "text" }.into(), unit: None }).collect(),
+            streams: self.settings.sources.iter().map(|s| DataStream { id: s.id.clone(), kind: match s.kind { Kind::Number => "numeric", Kind::Text => "text" }.into(), unit: None, settable: false }).collect(),
             actions: vec!["refresh".into()],
-            presets: self.settings.sources.iter().filter(|s| s.kind == Kind::Number).flat_map(|s| [("value", None), ("graph", Some(td_core::layout::TileRender::Graph))].into_iter().map(move |(kind, render)| PresetTile { id: format!("{}_{kind}", s.id), name: format!("{} {kind}", s.name), action: json!({"type":"widget","source":"custom","account":"","field":s.id}), render })).collect(),
+            presets: self.settings.sources.iter().filter(|s| s.kind == Kind::Number).flat_map(|s| [("value", None), ("graph", Some(td_core::layout::TileRender::Graph))].into_iter().map(move |(kind, render)| PresetTile { id: format!("{}_{kind}", s.id), name: format!("{} {kind}", s.name), action: json!({"type":"widget","source":"custom","account":"","field":s.id}), render, streams: None, input: false })).collect(),
         }
     }
     fn view(&self) -> Result<IntegrationView, Error> {

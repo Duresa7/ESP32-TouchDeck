@@ -1,0 +1,78 @@
+{
+  "schema": 2,
+  "name": "Media",
+  "orientation": "landscape",
+  "pages": [
+    {
+      "id": "media",
+      "title": "Media",
+      "kind": "grid",
+      "rows": 2,
+      "cols": 4,
+      "tiles": [
+        {
+          "id": "volume",
+          "label": "Volume",
+          "row": 0,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 2,
+          "icon": null,
+          "render": "bar",
+          "streams": {
+            "value": "number",
+            "muted": "number"
+          },
+          "input": true,
+          "action": {
+            "type": "widget",
+            "source": "volume",
+            "field": "level",
+            "account": ""
+          }
+        },
+        {
+          "id": "level",
+          "label": "Level",
+          "row": 1,
+          "col": 0,
+          "rowSpan": 1,
+          "colSpan": 2,
+          "icon": null,
+          "render": "bar",
+          "streams": {
+            "value": "number"
+          },
+          "action": {
+            "type": "widget",
+            "source": "volume",
+            "field": "level",
+            "account": ""
+          }
+        },
+        {
+          "id": "playing",
+          "label": "Now playing",
+          "row": 0,
+          "col": 2,
+          "rowSpan": 2,
+          "colSpan": 2,
+          "icon": null,
+          "render": "now-playing",
+          "streams": {
+            "title": "text",
+            "artist": "text",
+            "cover": "image",
+            "state": "number"
+          },
+          "action": {
+            "type": "widget",
+            "source": "media",
+            "field": "title",
+            "account": ""
+          }
+        }
+      ]
+    }
+  ]
+}

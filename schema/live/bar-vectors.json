@@ -1,0 +1,558 @@
+{
+  "about": "Bar geometry in Tile-local pixels, shared by Firmware and preview. For Tiles at least 2*pad + glyph_size wide and 2*pad + max(glyph_size, track_h) high: the glyph starts at (pad,pad); the track spans the padded width, track_h tall, pad above the bottom. Capture widens the track by capture_expand_y above/below and clips to the padded Tile. Rects include their top/left and exclude bottom/right edges. The mute zone exists only when muted is declared and wins if it overlaps capture on a short Tile. Hit zone value captures only with input true; mute is a normal tap, independent of input. Unset, stale or offline values disable both zones (fresh false). Smaller Tiles have no interactive zones. A track tap alone sends nothing; a captured drag must pass ui_geo()->slop. These are contract dimensions for steps H/I, not new renderer behavior in step A.",
+  "constants": {
+    "pad": 20,
+    "glyph_size": 32,
+    "track_h": 28,
+    "capture_expand_y": 24
+  },
+  "cases": [
+    {
+      "name": "large bar",
+      "w": 480,
+      "h": 200,
+      "muted_declared": true,
+      "track": {
+        "x": 20,
+        "y": 152,
+        "w": 440,
+        "h": 28
+      },
+      "capture": {
+        "x": 20,
+        "y": 128,
+        "w": 440,
+        "h": 52
+      },
+      "mute": {
+        "x": 20,
+        "y": 20,
+        "w": 32,
+        "h": 32
+      },
+      "hits": [
+        {
+          "x": 20,
+          "y": 20,
+          "fresh": true,
+          "input": true,
+          "zone": "mute"
+        },
+        {
+          "x": 20,
+          "y": 20,
+          "fresh": true,
+          "input": false,
+          "zone": "mute"
+        },
+        {
+          "x": 20,
+          "y": 20,
+          "fresh": false,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 51,
+          "y": 51,
+          "fresh": true,
+          "input": true,
+          "zone": "mute"
+        },
+        {
+          "x": 52,
+          "y": 20,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 19,
+          "y": 128,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 20,
+          "y": 127,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 20,
+          "y": 128,
+          "fresh": true,
+          "input": true,
+          "zone": "value"
+        },
+        {
+          "x": 459,
+          "y": 179,
+          "fresh": true,
+          "input": true,
+          "zone": "value"
+        },
+        {
+          "x": 460,
+          "y": 179,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 20,
+          "y": 180,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 240,
+          "y": 166,
+          "fresh": true,
+          "input": true,
+          "zone": "value"
+        },
+        {
+          "x": 240,
+          "y": 166,
+          "fresh": true,
+          "input": false,
+          "zone": null
+        },
+        {
+          "x": 240,
+          "y": 166,
+          "fresh": false,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": -1,
+          "y": -1,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 480,
+          "y": 200,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        }
+      ]
+    },
+    {
+      "name": "short bar",
+      "w": 240,
+      "h": 136,
+      "muted_declared": true,
+      "track": {
+        "x": 20,
+        "y": 88,
+        "w": 200,
+        "h": 28
+      },
+      "capture": {
+        "x": 20,
+        "y": 64,
+        "w": 200,
+        "h": 52
+      },
+      "mute": {
+        "x": 20,
+        "y": 20,
+        "w": 32,
+        "h": 32
+      },
+      "hits": [
+        {
+          "x": 20,
+          "y": 20,
+          "fresh": true,
+          "input": true,
+          "zone": "mute"
+        },
+        {
+          "x": 20,
+          "y": 20,
+          "fresh": true,
+          "input": false,
+          "zone": "mute"
+        },
+        {
+          "x": 20,
+          "y": 20,
+          "fresh": false,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 51,
+          "y": 51,
+          "fresh": true,
+          "input": true,
+          "zone": "mute"
+        },
+        {
+          "x": 52,
+          "y": 20,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 19,
+          "y": 64,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 20,
+          "y": 63,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 20,
+          "y": 64,
+          "fresh": true,
+          "input": true,
+          "zone": "value"
+        },
+        {
+          "x": 219,
+          "y": 115,
+          "fresh": true,
+          "input": true,
+          "zone": "value"
+        },
+        {
+          "x": 220,
+          "y": 115,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 20,
+          "y": 116,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 120,
+          "y": 102,
+          "fresh": true,
+          "input": true,
+          "zone": "value"
+        },
+        {
+          "x": 120,
+          "y": 102,
+          "fresh": true,
+          "input": false,
+          "zone": null
+        },
+        {
+          "x": 120,
+          "y": 102,
+          "fresh": false,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": -1,
+          "y": -1,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 240,
+          "y": 136,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        }
+      ]
+    },
+    {
+      "name": "no mute stream",
+      "w": 240,
+      "h": 136,
+      "muted_declared": false,
+      "track": {
+        "x": 20,
+        "y": 88,
+        "w": 200,
+        "h": 28
+      },
+      "capture": {
+        "x": 20,
+        "y": 64,
+        "w": 200,
+        "h": 52
+      },
+      "mute": null,
+      "hits": [
+        {
+          "x": 20,
+          "y": 20,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 20,
+          "y": 20,
+          "fresh": true,
+          "input": false,
+          "zone": null
+        },
+        {
+          "x": 20,
+          "y": 20,
+          "fresh": false,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 51,
+          "y": 51,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 52,
+          "y": 20,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 19,
+          "y": 64,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 20,
+          "y": 63,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 20,
+          "y": 64,
+          "fresh": true,
+          "input": true,
+          "zone": "value"
+        },
+        {
+          "x": 219,
+          "y": 115,
+          "fresh": true,
+          "input": true,
+          "zone": "value"
+        },
+        {
+          "x": 220,
+          "y": 115,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 20,
+          "y": 116,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 120,
+          "y": 102,
+          "fresh": true,
+          "input": true,
+          "zone": "value"
+        },
+        {
+          "x": 120,
+          "y": 102,
+          "fresh": true,
+          "input": false,
+          "zone": null
+        },
+        {
+          "x": 120,
+          "y": 102,
+          "fresh": false,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": -1,
+          "y": -1,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 240,
+          "y": 136,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        }
+      ]
+    },
+    {
+      "name": "compact bar with overlapping zones",
+      "w": 96,
+      "h": 96,
+      "muted_declared": true,
+      "track": {
+        "x": 20,
+        "y": 48,
+        "w": 56,
+        "h": 28
+      },
+      "capture": {
+        "x": 20,
+        "y": 24,
+        "w": 56,
+        "h": 52
+      },
+      "mute": {
+        "x": 20,
+        "y": 20,
+        "w": 32,
+        "h": 32
+      },
+      "hits": [
+        {
+          "x": 20,
+          "y": 20,
+          "fresh": true,
+          "input": true,
+          "zone": "mute"
+        },
+        {
+          "x": 20,
+          "y": 20,
+          "fresh": true,
+          "input": false,
+          "zone": "mute"
+        },
+        {
+          "x": 20,
+          "y": 20,
+          "fresh": false,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 51,
+          "y": 51,
+          "fresh": true,
+          "input": true,
+          "zone": "mute"
+        },
+        {
+          "x": 52,
+          "y": 20,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 19,
+          "y": 24,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 20,
+          "y": 23,
+          "fresh": true,
+          "input": true,
+          "zone": "mute"
+        },
+        {
+          "x": 20,
+          "y": 24,
+          "fresh": true,
+          "input": true,
+          "zone": "mute"
+        },
+        {
+          "x": 75,
+          "y": 75,
+          "fresh": true,
+          "input": true,
+          "zone": "value"
+        },
+        {
+          "x": 76,
+          "y": 75,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 20,
+          "y": 76,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 48,
+          "y": 62,
+          "fresh": true,
+          "input": true,
+          "zone": "value"
+        },
+        {
+          "x": 48,
+          "y": 62,
+          "fresh": true,
+          "input": false,
+          "zone": null
+        },
+        {
+          "x": 48,
+          "y": 62,
+          "fresh": false,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": -1,
+          "y": -1,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        },
+        {
+          "x": 96,
+          "y": 96,
+          "fresh": true,
+          "input": true,
+          "zone": null
+        }
+      ]
+    }
+  ]
+}

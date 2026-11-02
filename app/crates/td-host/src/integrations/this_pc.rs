@@ -165,6 +165,7 @@ impl Integration for ThisPc {
                     id: (*id).into(),
                     kind: "numeric".into(),
                     unit: Some((*unit).into()),
+                    settable: false,
                 })
                 .collect(),
             actions: vec!["refresh".into()],
@@ -175,6 +176,8 @@ impl Integration for ThisPc {
                     name: (*name).into(),
                     action: json!({"type":"widget","source":"this_pc","field":id,"account":""}),
                     render: Some(TileRender::Graph),
+                    streams: None,
+                    input: false,
                 })
                 .collect(),
         }
