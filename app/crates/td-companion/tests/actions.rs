@@ -338,7 +338,24 @@ async fn only_a_device_touch_reaches_an_integration_control_and_release_builds_h
         {"m": "v2.input", "page": "media", "tile": "volume", "stream": "value", "phase": "end", "value": 0.5},
     ]});
     let hooks = TestCompanion::start().await;
-    hooks.plug_device("mock0001").await;
+    hooks.plug_media_device("mock0001").await;
+    let media_layout =
+        Layout::parse(include_bytes!("../../../../schema/examples/media.json")).unwrap();
+    layout(&hooks, "mock0001", &media_layout).await;
+    let (hook_volume, hook_media) = hooks.control_fakes();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !hook_media.running() || hook_volume.active() == 0 {
+        assert!(std::time::Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let generation = hook_media.begin();
+    hook_media.metadata(
+        generation,
+        "Track",
+        "Artist",
+        td_host::integrations::media::Playback::Playing,
+    );
+    tokio::time::sleep(Duration::from_millis(400)).await;
     let emitted = hooks
         .raw()
         .post("/api/v1/test/devices/mock0001/emit")
@@ -348,11 +365,29 @@ async fn only_a_device_touch_reaches_an_integration_control_and_release_builds_h
         .await
         .unwrap();
     assert_eq!(emitted.status().as_u16(), 204);
-    let log = wait_count(&hooks, "actions/log", 1).await;
+    let log = wait_count(&hooks, "actions/log", 2).await;
     assert_eq!(log[0]["kind"], "integration");
+    assert!(hook_volume.sets() > 0);
+    assert_eq!(hook_media.commands(), ["next"]);
 
     let release = TestCompanion::start_release_router().await;
-    release.plug_device("mock0001").await;
+    release.plug_media_device("mock0001").await;
+    let media_layout =
+        Layout::parse(include_bytes!("../../../../schema/examples/media.json")).unwrap();
+    layout(&release, "mock0001", &media_layout).await;
+    let (volume, media) = release.control_fakes();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !media.running() || volume.active() == 0 {
+        assert!(std::time::Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let generation = media.begin();
+    media.metadata(
+        generation,
+        "Track",
+        "Artist",
+        td_host::integrations::media::Playback::Playing,
+    );
     for path in [
         "/test/devices/mock0001/emit",
         "/test/devices/mock0001/press",
@@ -381,6 +416,8 @@ async fn only_a_device_touch_reaches_an_integration_control_and_release_builds_h
     assert!(touch_routes.is_empty(), "{touch_routes:?}");
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(get(&release, "actions/log").await, json!([]));
+    assert_eq!(volume.sets(), 0);
+    assert!(media.commands().is_empty());
 }
 
 #[tokio::test]

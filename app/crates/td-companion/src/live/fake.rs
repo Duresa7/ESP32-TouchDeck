@@ -12,10 +12,10 @@ pub(crate) struct FakeControl {
     pictures: Mutex<HashMap<String, Arc<[u8]>>>,
     next: Mutex<u64>,
     pub picture_calls: Mutex<usize>,
-    /// Each `act` call: account, action and timeout.
     pub acts: Mutex<Vec<(String, String, Duration)>>,
-    /// Each `set` call: account, Integration stream and value.
+    pub set_times: Mutex<Vec<std::time::Instant>>,
     pub sets: Mutex<Vec<(String, String, f64)>>,
+    pub act_delay: Mutex<Duration>,
     pub act_result: Mutex<Option<ControlError>>,
     pub set_result: Mutex<Option<ControlError>>,
 }
@@ -67,9 +67,11 @@ impl Control for FakeControl {
         self.acts
             .lock()
             .push((account.to_owned(), action.to_owned(), timeout));
+        std::thread::sleep(*self.act_delay.lock());
         self.act_result.lock().clone().map_or(Ok(()), Err)
     }
     fn set(&self, account: &str, stream: &str, value: f64) -> Result<(), ControlError> {
+        self.set_times.lock().push(std::time::Instant::now());
         self.sets
             .lock()
             .push((account.to_owned(), stream.to_owned(), value));

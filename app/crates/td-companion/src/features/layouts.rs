@@ -392,6 +392,7 @@ fn push(
         }
         job.check()?;
         job.set_cancellable(false);
+        ctx.live.layout_changed(device);
         let put = xfer::put_layout(session, layout.orientation, layout).map_err(link)?;
         let state = serde_json::from_value(serde_json::to_value(&put.state).unwrap())
             .map_err(|_| CommonError::Internal)?;
@@ -408,6 +409,10 @@ fn push(
     ctx.live.layout_changed(device);
     let report = report??;
     let _ = ctx.layouts.put(device, layout);
+    ctx.layouts
+        .pushed()
+        .put(device, layout)
+        .map_err(|_| CommonError::Internal)?;
     Ok(report)
 }
 fn send_missing_assets(

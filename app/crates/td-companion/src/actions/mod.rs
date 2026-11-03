@@ -433,7 +433,7 @@ impl Actions {
             }
         };
         let approval = match plan {
-            Plan::Deck | Plan::Integration { .. } => return, // Key and media reports are already typed by the Device's mirror.
+            Plan::Deck | Plan::Integration { .. } => return,
             Plan::Launch { path, args, cwd } => {
                 request.spec = ActionSpec {
                     kind: "launch".into(),

@@ -635,7 +635,7 @@ requires any supported live kind, not specifically graph.
 Control MUST NOT start a process. No public API route reaches act or set.
 Only Device touch events (or test-hook MockDeck events) reach them. Process
 launching Integrations continue through ADR 0006 approval. Resolve the Tile's
-source/account from the cached active Layout; require input and a settable
+source/account from the Companion's pushed copy of the active Layout; require input and a settable
 stream for sets, drop non-finite values, clamp to 0..1, and coalesce moves.
 A tap passes the press `part` unchanged as `Control::act`'s `action`.
 A drag passes the Integration stream id bound by the Tile's `value` stream
@@ -652,14 +652,28 @@ As built in step C, per Device link session, before anything binds:
   must be Layout ids (`^[a-z0-9_]{1,15}$`), `part` must match `^[a-z_]{1,15}$`,
   `seq` must be a u32 that rises (taps and drags count separately), and a drag's
   `stream` must be `value`. Anything else is dropped without a log entry.
-- Taps with a `part` pass a gate of ten per second. Drags go through a bounded
-  queue of 64 events (a full queue drops the newest) into a hub that keeps the
-  newest snapshot of at most 64 Tile streams and runs a batch at most every
-  20 ms. Logged gestures are limited to ten per second.
-- A drag binds only a `bar` Tile with `input: true` that declares the stream as
-  a number, from the Layout the live router last read in this session. It never
-  reads the Layout over the link. A tap whose Tile the router hasn't read yet
-  (just after a push) reads it from the Device, as an approval press does.
+- Taps with a `part` pass a gate of ten per second at arrival. A separate
+  worker accepts one at a time; excess taps are dropped and counted, without
+  occupying the ordinary tap queue. The Companion enforces a two-second wait.
+  A timed-out call remains in flight until it returns; no second call starts
+  for that Device, including after reconnect.
+- Drags coalesce at arrival into a mailbox of at most 64 Tile streams plus
+  64 completed snapshots. An end survives later moves and is applied first.
+  Once completed capacity is exhausted, new gestures are rejected while
+  existing ends remain intact. A batch runs at most every 20 ms; completed
+  gestures log at most ten times per second. Layout changes clear pending
+  gestures and failures; a new link session starts a new hub.
+- Both touch paths use only the Companion's pushed Layout for that Device
+  and orientation, after the router's active copy matches its canonical bytes
+  (and therefore its canonical CRC revision). No touch fetches a Layout.
+  Device-read Layouts and old cache files do not authorize controls: the pushed
+  copies live separately in `layouts/pushed-v1`. Push an existing Layout once
+  to authorize its controls. Unmatched control taps fail with
+  "This Tile's control isn't available." A completed drag on an unmatched Layout
+  logs the same failure; an unknown Tile within a matching Layout does nothing.
+- A drag requires a `bar` Tile with `input: true`, a numeric stream and the
+  Integration's `settable` flag. Changes invalidate the cache before sending
+  a Layout or orientation; an older round cannot restore an invalidated entry.
 - A tap binds only a part its renderer draws: `previous`, `play_pause` or
   `next` on `now-playing`, `mute` on a `bar` that declares `muted`, on a
   `widget` action with a source. A part never runs any other action type.

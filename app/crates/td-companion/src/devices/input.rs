@@ -6,14 +6,11 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::{Duration, Instant};
 use td_core::{Event, InputPhase};
 
-/// The most Tile streams one batch holds. A Device has one finger, so a real batch holds one.
 pub(crate) const PENDING_MAX: usize = 64;
-/// Taps on renderer controls, and logged gestures, each allowed per Device per second.
 pub(crate) const PER_SECOND: usize = 10;
 
 type StreamOf = (String, String, String);
 
-/// One drag snapshot that passed the checks, its value clamped to 0..1.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Input {
     pub page: String,
@@ -86,10 +83,10 @@ impl Rate {
     }
 }
 
-/// One Device session's drags. It keeps the newest snapshot per Tile stream until the next batch, drops any
-/// event whose `seq` doesn't rise, and remembers whether a gesture's set failed so the gesture logs once.
 #[derive(Default)]
 pub(crate) struct InputHub {
+    generation: u64,
+    completed: Vec<Input>,
     last_seq: Option<u32>,
     pending: BTreeMap<StreamOf, Input>,
     failed: HashMap<StreamOf, String>,
@@ -97,8 +94,15 @@ pub(crate) struct InputHub {
 }
 
 impl InputHub {
-    /// Takes one `v2.input` event. A malformed one, a replayed or older `seq`, or a new Tile stream past
-    /// `PENDING_MAX` is dropped.
+    pub fn reset(&mut self, generation: u64) {
+        if self.generation != generation {
+            self.pending.clear();
+            self.completed.clear();
+            self.failed.clear();
+            self.generation = generation;
+        }
+    }
+
     pub fn push(&mut self, event: &Value) {
         let Some(input) = Input::parse(event) else {
             return;
@@ -111,16 +115,24 @@ impl InputHub {
         if self.pending.len() >= PENDING_MAX && !self.pending.contains_key(&key) {
             return;
         }
+        if let Some(previous) = self.pending.get(&key)
+            && previous.phase == InputPhase::End
+        {
+            if self.completed.len() >= PENDING_MAX {
+                return;
+            }
+            self.completed.push(previous.clone());
+        }
         self.pending.insert(key, input);
     }
 
-    /// The newest snapshot of each Tile stream since the last batch.
     pub fn take(&mut self) -> Vec<Input> {
-        std::mem::take(&mut self.pending).into_values().collect()
+        let mut batch = std::mem::take(&mut self.completed);
+        batch.extend(std::mem::take(&mut self.pending).into_values());
+        batch.sort_by_key(|input| input.seq);
+        batch
     }
 
-    /// Records how setting `input` went. At a gesture's `end` it returns the gesture's outcome, the first
-    /// failure if any set failed, unless this Device already logged `PER_SECOND` gestures in the last second.
     pub fn settled(
         &mut self,
         input: &Input,
@@ -141,7 +153,6 @@ impl InputHub {
     }
 }
 
-/// One Device session's taps on renderer controls: well formed, `seq` rising, at most `PER_SECOND` a second.
 #[derive(Default)]
 pub(crate) struct PressGate {
     last_seq: Option<u32>,
@@ -313,5 +324,29 @@ mod tests {
         bad_tile["tile"] = json!("x".repeat(64));
         assert!(!gate.accept(&bad_tile, later));
         assert!(gate.accept(&press(21, "play_pause"), later));
+    }
+    #[test]
+    fn an_end_precedes_the_next_gestures_move() {
+        let mut hub = InputHub::default();
+        hub.push(&end(1, 0.2));
+        hub.push(&input(2, 0.7));
+        let batch = hub.take();
+        assert_eq!(batch.len(), 2);
+        assert_eq!(batch[0].phase, InputPhase::End);
+        assert_eq!(batch[1].value, 0.7);
+    }
+
+    #[test]
+    fn unended_failure_storage_is_bounded() {
+        let mut hub = InputHub::default();
+        let now = Instant::now();
+        for seq in 1..=100 {
+            let mut event = input(seq, 0.5);
+            event["tile"] = json!(format!("t{seq}"));
+            hub.push(&event);
+            let moved = hub.take().remove(0);
+            hub.settled(&moved, Err("failed".into()), now);
+        }
+        assert!(hub.failed.len() <= PENDING_MAX);
     }
 }

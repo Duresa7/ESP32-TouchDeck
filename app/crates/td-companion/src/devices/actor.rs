@@ -19,8 +19,6 @@ use td_link::{Incoming, Session};
 
 pub type Work = Box<dyn FnOnce(&Session) + Send>;
 
-/// The shortest time between two batches of a Device's drags. The Firmware sends at most one move every 50 ms, so
-/// this only coalesces a Device that sends faster.
 const INPUT_PACE: Duration = Duration::from_millis(20);
 
 /// Dropping the handle ends the work thread, which closes the session and frees the port.
@@ -54,20 +52,28 @@ pub(super) fn spawn(
     let action_inner = inner.clone();
     let action_id = id.clone();
     thread::spawn(move || {
-        let mut parts = PressGate::default();
         for event in taps {
-            if event.get("part").is_some() && !parts.accept(&event, Instant::now()) {
-                continue;
-            }
             if let Some(handler) = action_inner.actions.get() {
                 handler(&action_id, &event);
             }
         }
     });
-    let (drags, inputs) = mpsc::sync_channel::<serde_json::Value>(super::input::PENDING_MAX);
+    let (parts, part_taps) = mpsc::sync_channel::<serde_json::Value>(0);
+    let part_inner = inner.clone();
+    let part_id = id.clone();
+    thread::spawn(move || {
+        for event in part_taps {
+            if let Some(handler) = part_inner.actions.get() {
+                handler(&part_id, &event);
+            }
+        }
+    });
+    let (drags, inputs) = mpsc::sync_channel::<()>(1);
+    let hub = Arc::new(parking_lot::Mutex::new(InputHub::default()));
+    let input_hub = hub.clone();
     let input_inner = inner.clone();
     let input_id = id.clone();
-    thread::spawn(move || run_inputs(&input_inner, &input_id, &inputs));
+    thread::spawn(move || run_inputs(&input_inner, &input_id, &inputs, &input_hub));
     thread::Builder::new()
         .name(format!("td-device-{id}"))
         .spawn(move || {
@@ -86,7 +92,12 @@ pub(super) fn spawn(
                 generation,
                 incoming,
                 mirror,
-                Touches { presses, drags },
+                Touches {
+                    presses,
+                    parts,
+                    drags,
+                    hub,
+                },
             )
         })
         .expect("the Device forwarder starts");
@@ -128,31 +139,50 @@ pub(super) fn mirror(
     }
 }
 
-fn run_inputs(inner: &Inner, id: &DeviceId, inputs: &Receiver<serde_json::Value>) {
-    let mut hub = InputHub::default();
-    while let Ok(first) = inputs.recv() {
-        hub.push(&first);
-        while let Ok(next) = inputs.try_recv() {
-            hub.push(&next);
-        }
-        let batch = hub.take();
+fn run_inputs(
+    inner: &Inner,
+    id: &DeviceId,
+    inputs: &Receiver<()>,
+    hub: &parking_lot::Mutex<InputHub>,
+) {
+    while inputs.recv().is_ok() {
+        thread::sleep(INPUT_PACE);
+        let _ = inputs.try_recv();
         if let Some(handler) = inner.inputs.get() {
+            let generation = handler.generation();
+            let batch = {
+                let mut hub = hub.lock();
+                hub.reset(generation);
+                hub.take()
+            };
             for input in batch {
+                if handler.generation() != generation {
+                    break;
+                }
                 let Some(result) = handler.set(id, &input) else {
                     continue;
                 };
-                if let Some(outcome) = hub.settled(&input, result, Instant::now()) {
+                let outcome = {
+                    let mut hub = hub.lock();
+                    hub.reset(handler.generation());
+                    if handler.generation() != generation {
+                        break;
+                    }
+                    hub.settled(&input, result, Instant::now())
+                };
+                if let Some(outcome) = outcome {
                     handler.gesture(id, &input, outcome);
                 }
             }
         }
-        thread::sleep(INPUT_PACE);
     }
 }
 
 struct Touches {
+    parts: mpsc::SyncSender<serde_json::Value>,
     presses: mpsc::SyncSender<serde_json::Value>,
-    drags: mpsc::SyncSender<serde_json::Value>,
+    drags: mpsc::SyncSender<()>,
+    hub: Arc<parking_lot::Mutex<InputHub>>,
 }
 
 fn forward(
@@ -163,6 +193,8 @@ fn forward(
     mut mirror: Option<Mirror>,
     touches: Touches,
 ) {
+    let mut gate = PressGate::default();
+    let mut dropped_parts = 0_u64;
     for item in incoming {
         match item {
             Incoming::Line(line) => inner.events.publish(&DeviceConsole {
@@ -171,9 +203,22 @@ fn forward(
             }),
             Incoming::Event(event) => {
                 if event["m"] == "press" {
-                    let _ = touches.presses.try_send(event.clone());
+                    if event.get("part").is_some() {
+                        if !gate.accept(&event, Instant::now())
+                            || touches.parts.try_send(event.clone()).is_err()
+                        {
+                            dropped_parts = dropped_parts.saturating_add(1);
+                        }
+                    } else {
+                        let _ = touches.presses.try_send(event.clone());
+                    }
                 } else if event["m"] == "v2.input" {
-                    let _ = touches.drags.try_send(event.clone());
+                    if let Some(handler) = inner.inputs.get() {
+                        let mut hub = touches.hub.lock();
+                        hub.reset(handler.generation());
+                        hub.push(&event);
+                    }
+                    let _ = touches.drags.try_send(());
                 }
                 if let Some(report) = Mirrored::parse(&event) {
                     key_report(inner, id, mirror.as_mut(), &report);
@@ -184,6 +229,12 @@ fn forward(
                 });
             }
             Incoming::Closed(reason) => {
+                if dropped_parts > 0 {
+                    inner.events.publish(&DeviceConsole {
+                        device: id.clone(),
+                        line: format!("Dropped control taps: {dropped_parts}"),
+                    });
+                }
                 if let Some(mirror) = mirror.as_mut() {
                     mirror.release_all();
                 }

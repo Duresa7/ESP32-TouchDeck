@@ -86,6 +86,7 @@ impl Ctx {
             live.clone(),
             integrations.controls.clone(),
             Arc::new(move |key| settable.settable(key)),
+            layouts.pushed(),
         );
         Self {
             actions,

@@ -1,46 +1,49 @@
 //! A Device's taps on renderer controls and its drags, run on the Integrations' Controls. They come only from a
 //! Device's touch (or a test-hooks MockDeck); no API route reaches them. A Control starts no process, so nothing
 //! here asks for approval. Every value comes from the Device and is checked before it binds anything.
-use super::{ActionSpec, Actions, ApprovalRequest, TAP_WAIT};
+use super::{ActionSpec, Actions, ApprovalRequest};
 use crate::devices::{DeviceId, Input, InputHandler, LinkState};
 use crate::features::integrations::Controls;
 use crate::live::{Live, StreamKey, stream_source};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
-use td_core::layout::{StreamType, Tile, TileRender};
+use td_core::layout::{StreamType, TileRender};
 use td_host::actions::Plan;
 use td_host::integrations::ControlError;
 
-/// How long a tap's action may take before the Control gives up.
 pub(crate) const ACT_TIMEOUT: Duration = Duration::from_secs(2);
 const UNAVAILABLE: &str = "This Tile's control isn't available.";
 const GESTURE_DONE: &str = "Volume changed.";
 
-/// Whether an Integration stream takes a Device's input, from the Integration's `settable` flag.
 pub(crate) type Settable = Arc<dyn Fn(&StreamKey) -> bool + Send + Sync>;
 
 pub(super) struct Wiring {
     live: Live,
     controls: Controls,
     settable: Settable,
+    active: Arc<parking_lot::Mutex<std::collections::BTreeSet<String>>>,
 }
 
 impl Actions {
-    /// Lets a Device's taps on renderer controls and its drags reach the Integrations' Controls. Until this is
-    /// called they do nothing.
-    pub(crate) fn attach(&self, live: Live, controls: Controls, settable: Settable) {
+    pub(crate) fn attach(
+        &self,
+        live: Live,
+        controls: Controls,
+        settable: Settable,
+        layouts: crate::store::LayoutStore,
+    ) {
+        live.trust(layouts);
         let _ = self.0.controls.set(Wiring {
             live,
             controls,
             settable,
+            active: Arc::default(),
         });
         self.0
             .devices
             .input_handler(Arc::new(Inputs(Arc::downgrade(&self.0))));
     }
 
-    /// The `since_ms` of the Device's link session, if it is connected over v2, the only protocol that sends
-    /// `part` and `v2.input`.
     fn v2_session(&self, device: &DeviceId) -> Option<u64> {
         match self.0.devices.get(device)?.link {
             LinkState::Connected {
@@ -52,8 +55,6 @@ impl Actions {
         }
     }
 
-    /// Runs a tap that lifted inside a renderer control. The actor's gate already checked its shape, its `seq`
-    /// and the rate.
     pub(super) fn part(&self, device: &DeviceId, event: &serde_json::Value) {
         let text = |name: &str| event[name].as_str().unwrap_or_default();
         let (page, tile, part) = (text("page"), text("tile"), text("part"));
@@ -61,14 +62,7 @@ impl Actions {
             return;
         };
         let request = integration_request(device, page, tile);
-        let found = match wiring.live.tile(device, session, page, tile) {
-            Some(found) => Ok(Some(found)),
-            None => self.read_tile(device, page, tile),
-        };
-        let found = match found {
-            Ok(found) => found,
-            Err(reason) => return self.logged(&request, "failed", reason, None, None),
-        };
+        let found = wiring.live.tile(device, session, page, tile);
         let Some(Plan::Integration {
             source,
             account,
@@ -80,33 +74,39 @@ impl Actions {
         let Some(control) = wiring.controls.get(&source) else {
             return self.logged(&request, "failed", UNAVAILABLE.into(), None, None);
         };
-        match control.act(&account, &action, ACT_TIMEOUT) {
+        if !wiring.active.lock().insert(device.to_string()) {
+            return self.logged(&request, "failed", UNAVAILABLE.into(), None, None);
+        }
+        let control = control.clone();
+        let active = wiring.active.clone();
+        let device = device.to_string();
+        let operation = action.clone();
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            let result = control.act(&account, &operation, ACT_TIMEOUT);
+            active.lock().remove(&device);
+            let _ = send.send(result);
+        });
+        match receive
+            .recv_timeout(ACT_TIMEOUT)
+            .unwrap_or(Err(ControlError::Unavailable(
+                "The player didn't respond.".into(),
+            ))) {
             Ok(()) => self.logged(&request, "ok", done(&action).into(), None, None),
             Err(error) => self.logged(&request, "failed", detail(error), None, None),
-        }
-    }
-
-    /// The Tile as the Device's own Layout has it, read over the link, for a tap the live router's Layout can't
-    /// answer yet.
-    fn read_tile(&self, device: &DeviceId, page: &str, tile: &str) -> Result<Option<Tile>, String> {
-        match self.0.links.within(device, TAP_WAIT, |session| {
-            self.resolve(device, session, page, tile)
-        }) {
-            Some(Ok(found)) => found.map(|found| found.map(|(tile, _)| tile)),
-            Some(Err(link)) => Err(link.to_string()),
-            None => Err(
-                "The Device stayed busy with a Layout or Asset transfer, so the tap was dropped."
-                    .into(),
-            ),
         }
     }
 
     fn set(&self, device: &DeviceId, input: &Input) -> Option<Result<(), String>> {
         let wiring = self.0.controls.get()?;
         let session = self.v2_session(device)?;
-        let tile = wiring
+        let tile = match wiring
             .live
-            .tile(device, session, &input.page, &input.tile)?;
+            .binding(device, session, &input.page, &input.tile)
+        {
+            Ok(tile) => tile?,
+            Err(()) => return Some(Err(UNAVAILABLE.into())),
+        };
         let takes_input = tile.input
             && tile.render == Some(TileRender::Bar)
             && tile
@@ -141,6 +141,12 @@ impl Actions {
 struct Inputs(Weak<super::Inner>);
 
 impl InputHandler for Inputs {
+    fn generation(&self) -> u64 {
+        self.0
+            .upgrade()
+            .and_then(|inner| inner.controls.get().map(|w| w.live.generation()))
+            .unwrap_or_default()
+    }
     fn set(&self, device: &DeviceId, input: &Input) -> Option<Result<(), String>> {
         Actions(self.0.upgrade()?).set(device, input)
     }
@@ -178,7 +184,6 @@ fn done(action: &str) -> &'static str {
     }
 }
 
-/// The action log's words for a Control's refusal: its own words when its backend failed, else `docs/copy.md`'s.
 fn detail(error: ControlError) -> String {
     match error {
         ControlError::Unavailable(words) if !words.is_empty() => words,
@@ -222,6 +227,7 @@ mod tests {
         live: Option<Live>,
         volume: Arc<FakeControl>,
         media: Arc<FakeControl>,
+        _data: tempfile::TempDir,
     }
 
     impl Drop for Running {
@@ -271,9 +277,6 @@ mod tests {
         serde_json::from_slice(MEDIA).unwrap()
     }
 
-    /// A connected mock Device showing `layout`, fake Volume and Media Controls, and Actions attached to a live
-    /// router. With `cached`, it waits until the router has read the Layout; without, the router never sees the
-    /// Device, so every lookup misses its cache.
     fn running(layout: Value, cached: bool) -> Running {
         let events = Events::default();
         let devices = DeviceManager::new(events.clone());
@@ -319,10 +322,16 @@ mod tests {
             Arc::new(NoGrants),
             true,
         );
+        let data = tempfile::tempdir().unwrap();
+        let layouts = crate::store::LayoutStore::new(data.path().join("layouts"));
+        if cached {
+            layouts.put(DEVICE, &layout).unwrap();
+        }
         actions.attach(
             live.clone(),
             controls,
             Arc::new(|key: &StreamKey| key.integration == "volume" && key.stream == "level"),
+            layouts,
         );
         if cached {
             wait("the router reads the Layout", || {
@@ -335,6 +344,7 @@ mod tests {
             deck,
             devices,
             live: Some(live),
+            _data: data,
             volume,
             media,
         }
@@ -374,6 +384,8 @@ mod tests {
         let td = running(layout, true);
         td.deck
             .emit_press_part("media", "playing", "widget", "next");
+        wait("first part completes", || td.log().len() == 1);
+        std::thread::sleep(Duration::from_millis(20));
         td.deck.emit_press_part("media", "volume", "widget", "mute");
         wait("both parts run", || td.log().len() == 2);
         assert_eq!(
@@ -451,6 +463,7 @@ mod tests {
                 json!({"m": "press", "page": "media", "tile": tile, "kind": "widget", "part": part,
                 "seq": 1_000_000 + seq, "t": 1}),
             );
+            std::thread::sleep(Duration::from_millis(30));
         }
         wait("the parts log", || td.log().len() == 5);
         std::thread::sleep(Duration::from_millis(200));
@@ -502,17 +515,144 @@ mod tests {
     }
 
     #[test]
-    fn before_the_router_reads_the_layout_a_tap_reads_it_from_the_device_and_a_drag_waits() {
+    fn before_the_router_reads_the_layout_touches_fail_closed() {
         let td = running(media(), false);
         td.drag("volume", &[0.4, 0.5]);
         td.deck
             .emit_press_part("media", "playing", "widget", "previous");
-        wait("the tap runs", || !td.log().is_empty());
+        wait("the tap fails", || td.log().len() == 2);
+        assert!(td.media.acts.lock().is_empty());
         assert_eq!(
-            *td.media.acts.lock(),
-            [(String::new(), "previous".to_owned(), ACT_TIMEOUT)]
+            td.log(),
+            [
+                entry("volume", "failed", UNAVAILABLE),
+                entry("playing", "failed", UNAVAILABLE)
+            ]
         );
-        assert_eq!(td.log(), [entry("playing", "ok", "Previous track.")]);
         assert!(td.volume.sets.lock().is_empty());
+    }
+    #[test]
+    fn an_unheld_layout_cannot_choose_a_control_account() {
+        let mut layout = media();
+        layout["pages"][0]["tiles"][2]["action"]["account"] = json!("forged");
+        let td = running(layout, false);
+        td.deck
+            .emit_press_part("media", "playing", "widget", "next");
+        wait("the refused tap logs", || !td.log().is_empty());
+        assert!(td.media.acts.lock().is_empty());
+        assert_eq!(td.log(), [entry("playing", "failed", UNAVAILABLE)]);
+    }
+
+    #[test]
+    fn a_non_settable_bar_never_reaches_set() {
+        let mut layout = media();
+        layout["pages"][0]["tiles"][0]["action"]["field"] = json!("readonly");
+        let td = running(layout, true);
+        td.drag("volume", &[0.4, 0.5]);
+        wait("the refusal logs", || !td.log().is_empty());
+        assert!(td.volume.sets.lock().is_empty());
+        assert_eq!(td.log(), [entry("volume", "failed", UNAVAILABLE)]);
+    }
+
+    #[test]
+    fn a_hung_control_and_part_flood_do_not_block_ordinary_taps() {
+        let td = running(media(), true);
+        *td.media.act_delay.lock() = Duration::from_secs(5);
+        td.deck
+            .emit_press_part("media", "playing", "widget", "next");
+        wait("the control starts", || !td.media.acts.lock().is_empty());
+        for _ in 0..50 {
+            td.deck
+                .emit_press_part("media", "playing", "widget", "next");
+        }
+        td.deck.emit_press("media", "nope", "none");
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !td.log().iter().any(|entry| entry.0 == "nope") {
+            assert!(
+                Instant::now() < deadline,
+                "ordinary tap was blocked or dropped"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(td.media.acts.lock().len(), 1);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !td
+            .log()
+            .iter()
+            .any(|entry| entry.3 == "The player didn't respond.")
+        {
+            assert!(
+                Instant::now() < deadline,
+                "Companion deadline was not enforced"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        td.deck
+            .emit_press_part("media", "playing", "widget", "next");
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(td.media.acts.lock().len(), 1);
+    }
+    #[test]
+    fn a_cached_forged_layout_cannot_replace_the_companions_binding() {
+        let td = running(media(), true);
+        let mut forged = media();
+        forged["pages"][0]["tiles"][2]["action"]["account"] = json!("forged");
+        let layout = td_core::Layout::parse(&serde_json::to_vec(&forged).unwrap()).unwrap();
+        let links = Links::new(td.devices.clone());
+        links
+            .with(DEVICE, |session| {
+                td_link::xfer::put_layout(session, layout.orientation, &layout)
+            })
+            .unwrap()
+            .unwrap();
+        td.live.as_ref().unwrap().layout_changed(DEVICE);
+        std::thread::sleep(Duration::from_millis(600));
+        td.deck
+            .emit_press_part("media", "playing", "widget", "next");
+        td.drag("volume", &[0.4, 0.5]);
+        wait("forged tap rejected", || td.log().len() == 2);
+        assert!(td.media.acts.lock().is_empty());
+        assert!(td.volume.sets.lock().is_empty());
+        assert_eq!(
+            td.log(),
+            [
+                entry("playing", "failed", UNAVAILABLE),
+                entry("volume", "failed", UNAVAILABLE)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_burst_keeps_its_final_end_and_paces_control_sets() {
+        let td = running(media(), true);
+        for _ in 0..500 {
+            td.deck
+                .emit_input("media", "volume", "value", InputPhase::Move, 0.2);
+        }
+        td.deck
+            .emit_input("media", "volume", "value", InputPhase::End, 0.9);
+        wait("final end reaches the control", || {
+            td.last_set() == Some(0.9)
+        });
+        wait("end logs", || td.log().len() == 1);
+        let times = td.volume.set_times.lock();
+        for pair in times.windows(2) {
+            assert!(pair[1].duration_since(pair[0]) >= Duration::from_millis(15));
+        }
+    }
+
+    #[test]
+    fn a_cancelled_gestures_error_does_not_reach_the_next_gesture() {
+        let td = running(media(), true);
+        *td.volume.set_result.lock() = Some(ControlError::Unavailable("old failure".into()));
+        td.deck
+            .emit_input("media", "volume", "value", InputPhase::Move, 0.2);
+        wait("first move fails", || td.last_set() == Some(0.2));
+        td.live.as_ref().unwrap().layout_changed(DEVICE);
+        std::thread::sleep(Duration::from_millis(400));
+        *td.volume.set_result.lock() = None;
+        td.drag("volume", &[0.6, 0.7]);
+        wait("new gesture completes", || !td.log().is_empty());
+        assert_eq!(td.log(), [entry("volume", "ok", GESTURE_DONE)]);
     }
 }

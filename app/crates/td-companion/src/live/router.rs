@@ -755,6 +755,9 @@ fn read_active(session: &Session) -> Result<Active, String> {
     let state = session
         .layout_state(LAYOUT_STATE_TIMEOUT)
         .map_err(|error| error.to_string())?;
+    if !matches!(state.source.as_str(), "builtin" | "storage") {
+        return Err("Unknown Layout source".into());
+    }
     let (reference, layout) = if state.source == "builtin" {
         (live::BUILTIN.to_owned(), Layout::parse(BUILTIN))
     } else {
@@ -763,6 +766,9 @@ fn read_active(session: &Session) -> Result<Active, String> {
         (live::layout_ref(&report.data), Layout::parse(&report.data))
     };
     let layout = layout.map_err(|errors| format!("{} Layout problems", errors.len()))?;
+    if layout.orientation != state.orientation {
+        return Err("Layout orientation mismatch".into());
+    }
     Ok(Active {
         reference,
         bindings: bindings(&layout),

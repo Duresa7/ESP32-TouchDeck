@@ -71,6 +71,10 @@ fn a_tile_comes_from_the_shown_layout_of_the_same_session_and_never_from_a_repla
     let live = Live(Arc::default());
     let layout =
         Layout::parse(include_bytes!("../../../../../schema/examples/media.json")).unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let store = crate::store::LayoutStore::new(data.path().to_owned());
+    store.put("d", &layout).unwrap();
+    live.trust(store);
     live.0
         .shown
         .lock()
@@ -86,4 +90,20 @@ fn a_tile_comes_from_the_shown_layout_of_the_same_session_and_never_from_a_repla
     live.layout_changed("d");
     assert_eq!(live.tile("d", 7, "media", "volume"), None);
     drop(busy);
+}
+
+#[test]
+fn a_round_cannot_restore_a_layout_invalidated_during_delivery() {
+    let live = Live(Arc::default());
+    let layout =
+        Layout::parse(include_bytes!("../../../../../schema/examples/media.json")).unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let store = crate::store::LayoutStore::new(data.path().to_owned());
+    store.put("d", &layout).unwrap();
+    live.trust(store);
+    let old_round = HashMap::from([("d".into(), (7, Arc::new(layout)))]);
+    live.layout_changed("d");
+    publish_shown(&live.0, old_round);
+    live.0.changed.lock().clear();
+    assert!(live.tile("d", 7, "media", "volume").is_none());
 }

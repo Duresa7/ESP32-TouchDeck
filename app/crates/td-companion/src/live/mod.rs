@@ -1,16 +1,5 @@
 //! Live values for Live tiles. The Companion reads the Integration streams that connected Devices' Layouts bind and
 //! sends each Device what changed over the link, never through the API ([ADR 0004](../../../../../docs/adr/0004-firmware-draws-live-tiles.md)).
-//!
-//! Three threads share this state. The live thread runs a delivery round every 250 ms, or at once when a Control
-//! wakes it or a Device shows a new Layout. The cover thread turns Control pictures into cover JPEGs without holding
-//! any lock, so encoding never delays the link. Controls call `wake` from their own threads.
-//!
-//! Lock order: a Device's link, then `router`. `wake`, `changed`, `shown`, `samples`, `covers`, `sent` and
-//! `injected` are each taken alone, never while waiting for another lock. Polled samples come from the registry with
-//! `try_lock` only, and Control samples without the registry at all.
-//!
-//! A Device's taps and drags find their Tile through `Live::tile`, which reads `changed` and then `shown`, each
-//! alone. It never takes `router` or a link, so a round that holds them for a cover upload never delays a drag.
 
 mod covers;
 mod router;
@@ -43,13 +32,13 @@ const LINK_WAIT: Duration = Duration::from_millis(50);
 
 #[derive(Default)]
 struct Shared {
+    generation: std::sync::atomic::AtomicU64,
+    trusted: std::sync::OnceLock<crate::store::LayoutStore>,
     wake: Mutex<bool>,
     woken: Condvar,
     router: Mutex<Router>,
     /// Devices that showed a new Layout since the last round.
     changed: Mutex<BTreeSet<String>>,
-    /// The Layout each Device showed when the router last read it, with the link session it was read in. A Device
-    /// in `changed` has none until a round reads its new Layout.
     shown: Mutex<HashMap<String, (u64, Arc<Layout>)>>,
     /// The newest polled samples, kept for rounds when the Integrations are busy.
     samples: Mutex<HashMap<StreamKey, LiveSample>>,
@@ -96,22 +85,55 @@ impl Live {
 
     /// The Device now shows another Layout, so its bindings are read again and every value goes again.
     pub fn layout_changed(&self, device: &str) {
-        self.0.changed.lock().insert(device.to_owned());
+        let mut changed = self.0.changed.lock();
+        changed.insert(device.to_owned());
+        self.0
+            .generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.0.shown.lock().remove(device);
+        drop(changed);
         self.0.wake();
     }
 
-    /// A Tile of the Layout the Device showed in link session `session` (its `since_ms`), as the router last read
-    /// it. None while the router hasn't read that Layout, such as just after a push. Never waits for a link.
+    pub(crate) fn generation(&self) -> u64 {
+        self.0.generation.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub(crate) fn trust(&self, layouts: crate::store::LayoutStore) {
+        let _ = self.0.trusted.set(layouts);
+    }
+
+    /// Returns a Tile from the Companion's pushed copy only when the active Layout matches in this session.
+    /// Returns None during replacement or before a matching Layout has been read. Never waits for a link.
     pub fn tile(&self, device: &str, session: u64, page: &str, tile: &str) -> Option<Tile> {
-        if self.0.changed.lock().contains(device) {
-            return None;
+        self.binding(device, session, page, tile).ok().flatten()
+    }
+
+    pub(crate) fn binding(
+        &self,
+        device: &str,
+        session: u64,
+        page: &str,
+        tile: &str,
+    ) -> Result<Option<Tile>, ()> {
+        let changed = self.0.changed.lock();
+        if changed.contains(device) {
+            return Err(());
         }
         let layout = match self.0.shown.lock().get(device) {
             Some((read_in, layout)) if *read_in == session => layout.clone(),
-            _ => return None,
+            _ => return Err(()),
         };
-        td_host::actions::find_tile(&layout, page, tile).cloned()
+        let trusted = self
+            .0
+            .trusted
+            .get()
+            .and_then(|store| store.get(device, layout.orientation))
+            .ok_or(())?;
+        if trusted.to_canonical_json() != layout.to_canonical_json() {
+            return Err(());
+        }
+        Ok(td_host::actions::find_tile(&trusted, page, tile).cloned())
     }
 
     /// Adds a sample as if an Integration reported it, for tests without real Integration values.
@@ -167,13 +189,14 @@ fn round(
         })
         .collect();
     let covers = shared.covers.lock().clone();
-    let changed = std::mem::take(&mut *shared.changed.lock());
-    {
+    let changed = {
+        let mut changed = shared.changed.lock();
         let mut shown = shared.shown.lock();
-        for device in &changed {
+        for device in changed.iter() {
             shown.remove(device);
         }
-    }
+        std::mem::take(&mut *changed)
+    };
     let wanted = {
         let mut router = shared.router.lock();
         router.set_covers(covers);
@@ -205,8 +228,14 @@ fn round(
         let router = shared.router.lock();
         (router.cover_jobs(&samples), router.shown())
     };
-    *shared.shown.lock() = shown;
+    publish_shown(shared, shown);
     jobs
+}
+
+fn publish_shown(shared: &Shared, mut shown: HashMap<String, (u64, Arc<Layout>)>) {
+    let changed = shared.changed.lock();
+    shown.retain(|device, _| !changed.contains(device));
+    *shared.shown.lock() = shown;
 }
 
 fn make_covers(shared: Weak<Shared>, controls: Controls, queue: Receiver<Vec<CoverJob>>) {
