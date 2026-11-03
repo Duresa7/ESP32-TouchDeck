@@ -324,7 +324,9 @@ function Stage({ setup, device }: { setup: SetupStore; device: DeviceSummary }) 
         <DevicePreview preview={shown?.pages.length ? { layout: shown, index: 0 } : null} live={status.live} orientation={orientation} />
       </div>
       <div className="onboarding-plate">
-        <span className={clsx('device-name', !typed && !device.name && 'is-unnamed')}>{name}</span>
+        <span className={clsx('device-name', !typed && !device.name && 'is-unnamed')} title={name}>
+          {name}
+        </span>
         <span className={clsx('status', status.live && 'is-live')}>
           <i className="led" />
           {status.words}

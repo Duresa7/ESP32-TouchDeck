@@ -5,7 +5,7 @@ import { dotX, truncDiv, tileRect, type Geometry, type Rect } from './geometry.t
 import { graphPoints, type GraphPoint } from './graph.ts';
 import { fitText, TEXT_BYTES } from './live-text.ts';
 import { barLayout, NOW_PLAYING, nowPlayingLayout, type Part } from './live-tiles.ts';
-import { font, layoutLabel, textSize, codepoints, type Align, type Font, type Label } from './text.ts';
+import { font, isMarker, layoutLabel, textSize, codepoints, type Align, type Font, type Label } from './text.ts';
 import { SYMBOLS, THEME } from './theme.ts';
 
 export type FontSize = 14 | 28 | 48;
@@ -366,8 +366,14 @@ export function buildDots(g: Geometry, count: number, current: number): DotView[
   });
 }
 
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+const drawn = (code: number) => isMarker(code) || FONTS[28].has(code);
+
+/** Each character the Device's font lacks, listed whole, so a family emoji is one entry and not its parts. */
 export function missingGlyphs(value: string): string[] {
-  return [...new Set(Array.from(value).filter((c) => !FONTS[28].has(c.codePointAt(0)!)))];
+  const missing = Array.from(GRAPHEMES.segment(value), (part) => part.segment).filter((part) => !codepoints(part).every(drawn));
+  return [...new Set(missing)];
 }
 
 const FIELD_SAMPLES: Record<string, Omit<WidgetSample, 'caption'>> = {

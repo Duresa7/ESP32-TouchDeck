@@ -5,6 +5,8 @@ import type { ConfigField, DataStream, IntegrationSummary } from '../../companio
 import {
   ago,
   badgeOf,
+  countsLine,
+  formatCount,
   formOf,
   offersPresets,
   parseAction,
@@ -164,7 +166,15 @@ describe('usage', () => {
     expect(resetLine({ pct: 1, reset_in: 'now' })).toBe('Resets now');
     expect(resetLine({ pct: 1, reset_in: '2h 10m' })).toBe('Resets in 2h 10m');
     expect(resetLine({ pct: 1, reset_in: null })).toBe('Reset time unknown');
-    expect(['active', 'disabled', 'unavailable', 'error', 'paused'].map(badgeOf)).toEqual(['Active', 'Disabled', 'Unavailable', 'Error', 'Paused']);
+    expect(['active', 'disabled', 'unavailable', 'error', 'paused', 'quota_exhausted'].map(badgeOf)).toEqual(['Active', 'Disabled', 'Unavailable', 'Error', 'Paused', 'Quota exhausted']);
+  });
+
+  it('groups the digits of huge counts and rounds a share', () => {
+    const grouped = new Intl.NumberFormat();
+    const account = { key: 'k', provider: 'p', status: 'active', plan: null, success: 1_284_567_890, failed: -1, recent_10m: 9_999_999, five_hour: null, seven_day: null, usage_error: null };
+    expect(countsLine(account)).toBe(`${grouped.format(1_284_567_890)} OK · ${grouped.format(-1)} failed · ${grouped.format(9_999_999)} in 10 min`);
+    expect(formatCount(999_999_999.4)).toBe(grouped.format(999_999_999));
+    expect(formatCount(-12.5)).toBe(grouped.format(-12));
   });
 });
 
@@ -198,6 +208,7 @@ describe('Preset tiles', () => {
     expect(presetLabel('five hour pct')).toBe('Five hour pct');
     expect(presetLabel('a very long preset tile name')).toBe('A very long pres');
     expect(presetLabel('   ')).toBe('Tile');
+    expect(presetLabel('Kitchen tv 👩‍👩‍👧‍👦')).toBe('Kitchen tv');
   });
 
   it('takes an action the Layout rules accept and refuses one they do not', () => {

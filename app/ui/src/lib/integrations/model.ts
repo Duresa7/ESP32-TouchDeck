@@ -254,21 +254,33 @@ export function usageLine(usage: Usage, now: number): string {
 
 const BADGES: Partial<Record<string, string>> = { active: 'Active', disabled: 'Disabled', unavailable: 'Unavailable', error: 'Error' };
 
-export const badgeOf = (status: string) => BADGES[status.toLowerCase()] ?? sentence(status);
+export const badgeOf = (status: string) => BADGES[status.toLowerCase()] ?? humanize(status);
 
 export function resetLine(window: UsageWindow): string {
   if (window.reset_in === 'now') return 'Resets now';
   return window.reset_in ? `Resets in ${window.reset_in}` : 'Reset time unknown';
 }
 
-export const countsLine = (account: UsageAccount) => `${account.success} OK · ${account.failed} failed · ${account.recent_10m} in 10 min`;
+const COUNT = new Intl.NumberFormat();
+
+/** A count or a rounded share with the reader's digit grouping: 1,284,567,890. */
+export const formatCount = (value: number) => COUNT.format(Math.round(value));
+
+export const countsLine = (account: UsageAccount) =>
+  `${formatCount(account.success)} OK · ${formatCount(account.failed)} failed · ${formatCount(account.recent_10m)} in 10 min`;
 
 const TILE_LABEL_MAX = 16;
 
-/** A Preset tile's name as a Tile label: sentence case and at most 16 characters. */
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+/** A Preset tile's name as a Tile label: sentence case and at most 16 characters, never cutting one in half. */
 export function presetLabel(name: string): string {
-  const label = [...sentence(name.trim())].slice(0, TILE_LABEL_MAX).join('').trim();
-  return label || 'Tile';
+  let label = '';
+  for (const { segment } of GRAPHEMES.segment(sentence(name.trim()))) {
+    if ([...label].length + [...segment].length > TILE_LABEL_MAX) break;
+    label += segment;
+  }
+  return label.trim() || 'Tile';
 }
 
 /** The Preset's action as a Layout Tile action, or null when the Layout rules refuse it. */

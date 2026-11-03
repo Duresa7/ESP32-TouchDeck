@@ -28,10 +28,11 @@ export function PageTabs({ store, layout, page }: { store: EditorStore; layout: 
           className={clsx('page-tab', p.id === page && 'is-current')}
           aria-current={p.id === page ? 'true' : undefined}
           onClick={() => store.selectPage(p.id)}
+          title={p.title}
           data-testid="page-tab"
           data-page={p.id}
         >
-          {p.title}
+          <span className="page-tab-title">{p.title}</span>
           {p.kind === 'dashboard' && <span className="page-tag">Usage</span>}
         </button>
       ))}

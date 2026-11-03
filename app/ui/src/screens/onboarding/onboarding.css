@@ -4,7 +4,7 @@
   width: 800px;
   min-height: 460px;
   padding: 0;
-  overflow: hidden;
+  overflow: hidden auto;
 }
 
 .onboarding-stage {

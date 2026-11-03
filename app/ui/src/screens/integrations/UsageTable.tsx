@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import clsx from 'clsx';
-import { badgeOf, countsLine, resetLine, type Usage, type UsageWindow } from '../../lib/integrations/model.ts';
+import { badgeOf, countsLine, formatCount, resetLine, type Usage, type UsageWindow } from '../../lib/integrations/model.ts';
 import { button } from '../../shell/button.ts';
 
 function Limit({ window, testId }: { window: UsageWindow | null; testId: string }) {
@@ -14,7 +14,7 @@ function Limit({ window, testId }: { window: UsageWindow | null; testId: string 
   const share = Math.min(100, Math.max(0, window.pct));
   return (
     <td data-testid={testId}>
-      <span className="usage-pct">{Math.round(window.pct)}%</span>
+      <span className="usage-pct">{formatCount(window.pct)}%</span>
       <span className="meter" aria-hidden>
         <span style={{ transform: `scaleX(${share / 100})` }} />
       </span>
