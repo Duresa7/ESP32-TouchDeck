@@ -179,6 +179,12 @@ impl Registry {
         }
         Ok(Self(entries))
     }
+    pub fn controls(&self) -> BTreeMap<String, Arc<dyn Control>> {
+        self.0
+            .iter()
+            .filter_map(|(id, i)| i.control().map(|c| (id.clone(), c)))
+            .collect()
+    }
     pub fn list(&self) -> Vec<IntegrationSummary> {
         self.0.values().map(|i| i.summary()).collect()
     }

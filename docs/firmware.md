@@ -673,8 +673,10 @@ compiled test libraries there. Resolve the locked dependencies first with
 runner additionally uses the pinned LittleFS sources over a RAM block device to
 check commit visibility, typed sync/close failures and handle cleanup. CI runs
 these tests after the Firmware build resolves its dependencies.
-These tests compile the production validator and
-Asset store. The store harness substitutes the scheduler and storage accounting;
+`python firmware/tools/test_tile_geometry.py` compiles `ui_geometry.c` and
+`ui_pages.c` and checks every case in `schema/live/tile-geometry-vectors.json`,
+the Tile rects the Companion and the app also reproduce. These tests compile the
+production validator and Asset store. The store harness substitutes the scheduler and storage accounting;
 Windows directory enumeration is not exercised by this harness.
 
 The GIF validator reads the temporary file as a stream, validates every LZW code,

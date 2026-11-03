@@ -48,7 +48,7 @@ export function screenSize(orientation: Orientation): Size {
 export function geometry(screen: Size, fullScreen = false): Geometry {
   const s = Math.min(screen.w, screen.h);
   const titleStrip = scaled(56, s);
-  const dotStrip = scaled(40, s);
+  const dotStrip = scaled(36, s);
   const marginX = scaled(28, s);
   const marginY = scaled(20, s);
   const band: Rect = fullScreen
@@ -121,8 +121,10 @@ export function tileRect(page: Cells, tile: Span, area: Rect, gap: number): Rect
   return { x: area.x + x0, y: area.y + y0, w: x1 - x0, h: y1 - y0 };
 }
 
+function lastCellAtOrBefore(offset: number, length: number, gap: number, cells: number): number {
+  return Math.floor(((Math.floor(offset) + 1) * cells - 1) / (length + gap));
+}
+
 export function cellAt(page: Cells, area: Rect, gap: number, x: number, y: number): [number, number] {
-  const col = Math.floor(((x - area.x) * page.cols) / (area.w + gap));
-  const row = Math.floor(((y - area.y) * page.rows) / (area.h + gap));
-  return [row, col];
+  return [lastCellAtOrBefore(y - area.y, area.h, gap, page.rows), lastCellAtOrBefore(x - area.x, area.w, gap, page.cols)];
 }

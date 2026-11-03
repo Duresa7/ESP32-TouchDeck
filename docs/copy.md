@@ -1250,6 +1250,7 @@ tile. A stale graph keeps its last line at 60% opacity, as on the Device.
 | Successful play_pause action | Playback changed. |
 | Successful next action | Next track. |
 | Cover storage failure | {device} is out of space for cover art. Remove unused Assets, then retry. |
+| Too many cover Tiles (`layout.live_image_limit`) | This Layout has too many Now playing Tiles for {device}. Remove one, then send it again. |
 | Volume description | Shows and sets this PC's volume. |
 | Media description | Shows what's playing on this PC, with play, pause and skip. |
 | Enabled | Turn on Volume; Turn on Media |
@@ -1260,7 +1261,8 @@ tile. A stale graph keeps its last line at 60% opacity, as on the Device.
 | Shows hint, a now-playing Tile | The title, artist and cover from Media. Tap its buttons to play, pause or skip. |
 | Preset tile the Device can't draw yet, accessible name | Add {preset} to Layout. Needs Firmware {x.y} |
 
-Integration action-log entries use kind integration and status ok or failed.
+The Companion's API error leaves ` for {device}` out of the Too many cover Tiles row, and its delivery status
+starts the cover storage row with "The Device"; the app puts in the Device's name. Integration action-log entries use kind integration and status ok or failed.
 A completed drag has one entry. An idle Media Integration is healthy; backend
 failures use error status. Wire/decoder details belong under Details.
 

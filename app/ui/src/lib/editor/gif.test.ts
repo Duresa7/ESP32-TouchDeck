@@ -40,7 +40,7 @@ describe('which Devices get a GIF choice', () => {
 describe('the canvas a GIF is fitted to', () => {
   test('is the Tile region on the Device, in Device pixels, over the Tile background', () => {
     const layout = starterLayout('landscape');
-    expect(gifTarget(layout, 'prev')).toEqual({ width: 312, height: 224, background: [24, 32, 49] });
+    expect(gifTarget(layout, 'prev')).toEqual({ width: 312, height: 226, background: [24, 32, 49] });
   });
 
   test('follows the Tile size, the grid, full screen and the orientation', () => {
@@ -49,9 +49,9 @@ describe('the canvas a GIF is fitted to', () => {
     if (media.kind !== 'grid') throw new Error('media is a grid');
     media.tiles[0] = { ...media.tiles[0], colSpan: 2 };
     media.tiles.splice(1, 1);
-    expect(gifTarget(layout, 'prev')).toMatchObject({ width: 640, height: 224 });
+    expect(gifTarget(layout, 'prev')).toMatchObject({ width: 640, height: 226 });
     expect(gifTarget({ ...layout, fullScreen: true }, 'prev')).toMatchObject({ width: 677, height: 292 });
-    expect(gifTarget(starterLayout('portrait'), 'prev')).toMatchObject({ width: 170, height: 436 });
+    expect(gifTarget(starterLayout('portrait'), 'prev')).toMatchObject({ width: 170, height: 438 });
   });
 
   test('is unknown for a Tile the Layout lacks', () => {
