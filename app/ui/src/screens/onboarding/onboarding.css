@@ -147,7 +147,7 @@
   background: var(--surface-raised);
   cursor: pointer;
   transition:
-    background-color var(--duration-hover) ease,
+    background-color var(--duration-hover) var(--ease-color),
     transform var(--duration-press) var(--ease-out);
 }
 
@@ -249,7 +249,7 @@
   inset: 0;
   background: var(--accent);
   transform-origin: 0 50%;
-  transition: transform 120ms linear;
+  transition: transform var(--duration-progress) var(--ease-progress);
 }
 
 .onboarding-failure {

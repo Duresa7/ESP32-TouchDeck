@@ -38,7 +38,7 @@
   background: transparent;
   text-align: start;
   cursor: pointer;
-  transition: background-color var(--duration-hover) ease;
+  transition: background-color var(--duration-hover) var(--ease-color);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -95,8 +95,8 @@
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   transition:
-    background-color var(--duration-hover) ease,
-    color var(--duration-hover) ease;
+    background-color var(--duration-hover) var(--ease-color),
+    color var(--duration-hover) var(--ease-color);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -123,7 +123,7 @@
   box-shadow: 0 0 0 var(--preset-rim) var(--screen-bg);
   color: var(--screen-ink);
   text-align: start;
-  transition: background-color var(--duration-hover) ease;
+  transition: background-color var(--duration-hover) var(--ease-color);
 }
 
 .preset-art {
