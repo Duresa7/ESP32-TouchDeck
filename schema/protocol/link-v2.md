@@ -294,8 +294,9 @@ with the new title; never retain the previous track's cover beside new metadata.
 
 The media profile uses `text_bytes:128`, `streams:4`, `formats:["tdi1","jpeg"]`,
 `image:[256,256]`, `asset_bytes:32768`, and `live_images:4`. With GIF enabled,
-retain its larger `asset_bytes:262144`, add `gif` and its `anim` caps. These are
-contract profiles, not a claim that production Firmware implements them yet.
+retain its larger `asset_bytes:262144`, add `gif` and its `anim` caps. The
+production Firmware implements the media profile and draws every Tile kind it
+advertises.
 
 ## Touch input events
 

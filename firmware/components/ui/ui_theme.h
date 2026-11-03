@@ -113,6 +113,22 @@ typedef struct {
         int16_t line_w;
         uint8_t area_mix;
     } graph;
+    /* A bar Tile, after the bar vectors: the speaker glyph, then the label in ink-2 `gap` after it, and the value
+     * value_w wide at the right, all line_h tall in the glyph's row. The track has track_radius corners, filled in the
+     * accent, or ink-2 while muted. */
+    struct {
+        int16_t gap;
+        int16_t value_w;
+        int16_t line_h;
+        int16_t track_radius;
+    } level;
+    /* A now-playing Tile, after the now-playing vectors: the title title_h tall in the value font over the artist
+     * artist_h tall in the sub font, and the cover with art_radius corners over a flat track-colored placeholder. */
+    struct {
+        int16_t title_h;
+        int16_t artist_h;
+        int16_t art_radius;
+    } now_playing;
     uint16_t anim_settle_ms;
     uint16_t anim_bounce_out_ms;
     uint16_t anim_bounce_back_ms;
@@ -132,6 +148,8 @@ typedef struct {
     const lv_font_t *font_title;
     /* The `lv:` icons, which are LVGL symbols that only the built-in Montserrat carries. */
     const lv_font_t *font_icon;
+    /* The bar's speaker and the now-playing controls: the same symbols at the 32px glyph size. */
+    const lv_font_t *font_glyph;
 } ui_theme_t;
 
 extern const ui_theme_t ui_theme;

@@ -469,6 +469,30 @@ td_asset_result_t td_asset_pin(const char *id)
     return result;
 }
 
+td_asset_result_t td_asset_read(const char *id, uint8_t *buf, size_t cap, size_t *len)
+{
+    *len = 0;
+    if (!td_asset_id_valid(id)) return TD_ASSET_STORAGE;
+    char path[ASSET_PATH_MAX];
+    asset_path(path, id);
+    td_store_lock();
+    FILE *file = fopen(path, "rb");
+    td_asset_result_t result = TD_ASSET_STORAGE;
+    if (file) {
+        const size_t got = fread(buf, 1, cap, file);
+        uint8_t extra;
+        if (ferror(file)) result = TD_ASSET_STORAGE;
+        else if (fread(&extra, 1, 1, file) == 1) result = TD_ASSET_SIZE;
+        else {
+            *len = got;
+            result = TD_ASSET_OK;
+        }
+        fclose(file);
+    }
+    td_store_unlock();
+    return result;
+}
+
 void td_asset_unpin(const char *id)
 {
     if (!td_asset_id_valid(id)) return;

@@ -306,7 +306,8 @@ The deck draws its text in six Archivo fonts, generated as LVGL C files into
 [SIL Open Font License](../firmware/components/ui/fonts/OFL.txt) next to them.
 The commands below give each one's instance, size and glyph set. The `lv:`
 icons are LVGL symbols, which only LVGL's own Montserrat 48 carries, so they
-still draw in it.
+still draw in it. The bar's speaker and the now-playing controls are the same
+symbols at the 32 px glyph size, in Montserrat 32.
 
 The source is `Archivo[wdth,wght].ttf`, version 2.001, from the upstream
 repository at commit `b5d63988ce19d044d3e10362de730af00526b672`:
@@ -529,6 +530,14 @@ idf.py -p COM3 flash monitor
 The monitor ends with Unity's summary, `N Tests 0 Failures 0 Ignored`, and `OK`.
 Flash `firmware/` again afterwards to get the deck firmware back.
 
+The `td_ui_core` tests also run on the PC. `python -B firmware/tools/test_ui_core.py`
+builds `firmware/components/td_ui_core/test` with ESP-IDF's own Unity, the
+production Layout parser and cJSON, and runs every test. It needs `IDF_PATH` set
+and one firmware build first, which fetches cJSON into
+`firmware/managed_components`. It uses `cl` on Windows and `cc` with
+`-std=c11 -D_POSIX_C_SOURCE=200809L` elsewhere. CI runs it after the firmware
+build, with the other host tests.
+
 ## Protocol v2 identity
 
 USB discovery retains the v1 hello and advertises protocols 1 and 2. Selecting
@@ -547,22 +556,25 @@ clock requests are below.
 
 ### Live tiles
 
-A schema 2 Tile with `render: "graph"` declares `streams: {"value": "number"}`
-or `{"value": "series"}` and draws the values `v2.live.set` sends for it. The
-Firmware advertises these caps:
+A schema 2 Tile with `render: "graph"`, `"bar"` or `"now-playing"` declares the
+streams the [protocol contract](../schema/protocol/link-v2.md) lists for it and
+draws the values `v2.live.set` sends. The Firmware advertises these caps:
 
 | Cap | Value | Why |
 |---|---|---|
-| `tile_kinds` | adds `graph` | The only Live tile drawn so far |
+| `tile_kinds` | adds `graph`, `bar` and `now-playing` | The Live tiles the Firmware draws |
 | `series` | 32 | Samples a graph keeps. 32 doubles is 256 bytes a stream |
 | `live_hz` | 2 | Twice the Companion's 1 Hz pace, so jitter isn't refused |
 | `live_total_hz` | 16 | 16 requests of 304 wire bytes is about 4.9 KB/s, under the 6,560 bytes/s the link budget gives live values |
-| `streams` | 1 | A graph Tile has one stream |
-| `text_bytes` | 0 | No Tile draws text values yet |
+| `streams` | 4 | A now-playing Tile has four streams |
+| `text_bytes` | 128 | A title or an artist, as the Companion's `fit_text` cuts it |
+| `live_images` | 4 | Covers held at once, each up to 128 KiB decoded |
+| `formats`, `image`, `asset_bytes` | `tdi1` and `jpeg`, 256 by 256, 32768 | A cover is a JPEG Asset |
 
-Activating a Layout allocates one slot and one set of graph objects for each
-declared stream, at most 64, in PSRAM: about 570 bytes a stream, so 36 KB at
-most. Activation clears every value and `n`. The `layout` a request names is
+Activating a Layout allocates one slot for each declared stream, at most 64,
+and one set of objects for each Live tile, in PSRAM: about 300 bytes each, so
+under 40 KB. Image streams past the fourth get no slot. Activation clears every
+value and `n`. The `layout` a request names is
 the SHA-256 of the stored file's bytes, or `builtin` for the built-in Layout.
 A new protocol selection clears every value too, and restarts the per-stream
 and per-Device one-second rate windows.
@@ -714,14 +726,59 @@ Presence and pin checks read only the stored JPEG header and size. JPEG is
 for live images; static Tile Assets remain tdi1. The Layout parser accepts bar
 and now-playing streams, with at most four image Tiles across all Pages.
 
-The renderer implementation is a separate step. Its image lifetime must pair
-`td_asset_pin` with `td_asset_unpin` after the UI releases the old image; deletion
-returns `in-use` while any reference remains. Eight pin entries allow four active
-covers plus four replacements. It must call `td_link_input_cancel` on Layout
-activation and use `td_link_input` only for a fresh, enabled bar gesture. The link
-cancels queued input on a new session or disconnect. `td_link_press_part` emits
-control parts only in a selected v2 session. The media capabilities describe the
-combined Firmware; rendering and live image application require step H.
+Deletion returns `in-use` while any pin remains. Eight pin entries allow four
+active covers plus four replacements. The link cancels queued input on a new
+session or disconnect, and `td_link_press_part` emits control parts only in a
+selected v2 session.
+
+### Volume and Media renderers
+
+A `bar` Tile draws, from `schema/live/bar-vectors.json`, the speaker glyph, its
+label and its value in percent along the top, and the track along the bottom.
+The fill is the accent, or ink-2 while `muted` is nonzero. A stale value keeps
+its fill at 60 percent with `--` for its number. A bar with `input: true` holds a
+press in its capture zone, so a drag on the bar never swipes the Page. A tap on
+the track sends nothing. Once the finger passes the pager's slop, the bar draws
+the finger's value and sends it with `td_link_input`, which coalesces moves to
+one every 50 ms, then sends the end when the finger lifts or the press is lost.
+After the lift the bar keeps the finger's value until a live value within 0.01
+of it arrives, or 1.5 s pass. A stale or unset value disables the drag and
+cancels one in progress, and so does a Layout or session change. A tap on the
+glyph of a bar that declares `muted` sends `press` with `part: "mute"`. Mute is
+drawn only as the Companion reports it.
+
+A `now-playing` Tile draws, from `schema/live/now-playing-vectors.json`, the
+cover, the title and the artist. A tall, wide Tile adds the previous,
+play/pause and next controls in a row below them, and a tap on one sends its
+part. A compact Tile is play/pause as a whole. State 0 draws "Nothing playing"
+over the placeholder art, with no artist, no controls and no parts. Until the
+Tile hears a state it shows the `--` marker. Text is drawn as sent and cut with
+an ellipsis to its column. Glyphs the font lacks draw as placeholder boxes.
+
+A cover is set in two phases, so no lock is held across a decode. The link task
+checks the set under the live-value lock and, for an image the slot does not
+already show, releases the lock. It pins the Asset with `td_asset_pin`, reads at
+most 32768 bytes of it, and decodes it with ROM TJpgDec into an RGB565 buffer in
+PSRAM. Then it commits the set under the lock again. The redraw timer swaps the
+buffer onto the screen, frees the old one and logs
+`live: cover <tile> shown t=<ms>`. A refusal at either phase frees the decode
+and gives the pin back. A Layout or session change during the decode refuses the
+set with `layout`. A heartbeat of the cover a slot already shows needs no decode.
+
+The pin follows the live value. A slot gives its pin back when its image is
+replaced or cleared, on a session reset, and on a Layout reload, before the link
+handles its next message. A delete of an old cover therefore answers `in-use`
+only while a slot still shows it. Unpins run with the live-value and LVGL locks
+released, so the LVGL task never waits on the storage lock.
+
+Taps come first. The touch and LVGL tasks never wait on a decode: the
+live-value lock is held only to check, commit and copy values, and the storage
+lock only to read the file. The link task runs at priority 3, below the LVGL
+task at 6. The decode sleeps a tick after each row of JPEG blocks, 16 rows for a
+256 by 256 cover, so the idle tasks run and feed the task watchdog. A decoded
+cover is at most 128 KiB. At most four are shown and four more wait to be drawn
+while one decodes, with its 32 KiB file buffer in PSRAM and a 4 KiB work area in
+internal RAM.
 
 ### GIF playback (test builds)
 
