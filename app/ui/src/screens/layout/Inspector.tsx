@@ -7,7 +7,7 @@ import { missingGlyphs } from '../../lib/deck/scene.ts';
 import { placedLook } from '../../lib/editor/graph.ts';
 import { ADD_KINDS, tileProblems, type EditorStore, type Target } from '../../lib/editor/store.ts';
 import { plural } from '../../lib/editor/messages.ts';
-import type { GridPage, Layout, Page } from '../../lib/editor/validate.ts';
+import { PAGES_MAX, type GridPage, type Layout, type Page } from '../../lib/editor/validate.ts';
 import { offersPresets } from '../../lib/integrations/model.ts';
 import { button } from '../../shell/button.ts';
 import { useUi } from '../../state/ui.ts';
@@ -223,7 +223,8 @@ function TileInspector({ store, page, tileId }: { store: EditorStore; page: Grid
   );
 }
 
-function where(target: Target, page: Page) {
+function where(target: Target, page: Page, pages: number) {
+  if (target === 'new-page' && pages >= PAGES_MAX) return `The ${page.title} Page is full. A Layout holds up to ${PAGES_MAX} Pages.`;
   if (target === 'new-page') return `The ${page.title} Page is full, so it starts a new Page`;
   return `Row ${target.row + 1}, column ${target.col + 1} on the ${page.title} Page`;
 }
@@ -286,7 +287,7 @@ function AddGif({ store }: { store: EditorStore }) {
   );
 }
 
-function AddTile({ store, page, target }: { store: EditorStore; page: Page; target: Target }) {
+function AddTile({ store, page, pages, target }: { store: EditorStore; page: Page; pages: number; target: Target }) {
   const first = useRef<HTMLButtonElement>(null);
   useEffect(() => first.current?.focus({ preventScroll: true }), []);
   return (
@@ -298,7 +299,7 @@ function AddTile({ store, page, target }: { store: EditorStore; page: Page; targ
         <div className="inspector-head-text">
           <h2 className="inspector-title">Add Tile</h2>
           <p className="inspector-sub" data-testid="add-where">
-            {where(target, page)}
+            {where(target, page, pages)}
           </p>
         </div>
       </div>
@@ -344,7 +345,7 @@ export function Inspector({ store, layout, device }: { store: EditorStore; layou
     <aside className={clsx('inspector', adding !== null && 'is-adding')} aria-label="Details" data-testid="inspector">
       {deviceId && <PendingApprovals deviceId={deviceId} device={device} layout={layout} />}
       {adding !== null ? (
-        <AddTile store={store} page={page} target={adding} />
+        <AddTile store={store} page={page} pages={layout.pages.length} target={adding} />
       ) : tileOpen && page.kind === 'grid' ? (
         <TileInspector store={store} page={page} tileId={selected!} />
       ) : (

@@ -11,6 +11,12 @@ export interface FakeIntegrationsOptions {
   /** Delivery per Device at the start. */
   delivery?: Delivery[];
   now?: () => number;
+  /** The accounts the hub reports, in place of the two samples. */
+  accounts?: (polled_ms: number) => AccountUsage[];
+  /** Why the hub is unreachable while it is down. */
+  hubMessage?: string;
+  /** More on-or-off Integrations, by id, after the built-in ones. */
+  extra?: Partial<Record<string, (enabled: boolean) => IntegrationView>>;
 }
 
 const json = (status: number, body: unknown) =>
@@ -79,12 +85,13 @@ function parseSettings(body: unknown): Settings | null {
 }
 
 export function createFakeIntegrations(options: FakeIntegrationsOptions) {
-  const { publish, now = Date.now } = options;
+  const { publish, now = Date.now, accounts = sampleAccounts, hubMessage = 'connection refused' } = options;
   const simple = new Map<string, { enabled: boolean; view(enabled: boolean): IntegrationView }>([
     ['this_pc', { enabled: true, view: fakeThisPc }],
     ['volume', { enabled: true, view: fakeVolume }],
     ['media', { enabled: true, view: fakeMedia }],
   ]);
+  for (const [id, view] of Object.entries(options.extra ?? {})) if (view) simple.set(id, { enabled: true, view });
   const simpleViews = () => [...simple.values()].map((entry) => entry.view(entry.enabled).summary);
   const configured = options.configured ?? false;
   let settings: Settings = configured ? { enabled: true, url: 'https://hub.example.com', interval_s: 300 } : { enabled: false, url: DEFAULT_URL, interval_s: 300 };
@@ -93,7 +100,7 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
   let hubUp = true;
   let revision = 0;
   const initialPoll = now() - 12_000;
-  let detail: IntegrationView['detail'] = configured ? { polled_ms: initialPoll, accounts: sampleAccounts(initialPoll) } : null;
+  let detail: IntegrationView['detail'] = configured ? { polled_ms: initialPoll, accounts: accounts(initialPoll) } : null;
   let lastRefresh: number | null = null;
   let refreshes = 0;
   let configPuts = 0;
@@ -109,7 +116,7 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
       name: 'CLIProxyAPI',
       icon: 'activity',
       enabled: settings.enabled,
-      status: { state, message: state === 'error' ? 'connection refused' : null, delivery: [...delivery.values()] },
+      status: { state, message: state === 'error' ? hubMessage : null, delivery: [...delivery.values()] },
       config_schema: [
         { name: 'enabled', kind: 'boolean', secret: false },
         { name: 'url', kind: 'string', secret: false },
@@ -190,7 +197,7 @@ export function createFakeIntegrations(options: FakeIntegrationsOptions) {
           lastRefresh = now();
           refreshes += 1;
           const polled_ms = now();
-          detail = { polled_ms, accounts: keySet() && hubUp ? sampleAccounts(polled_ms) : detail?.accounts ?? [] };
+          detail = { polled_ms, accounts: keySet() && hubUp ? accounts(polled_ms) : detail?.accounts ?? [] };
           changed();
         }
         return json(204, null);

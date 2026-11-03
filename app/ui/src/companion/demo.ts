@@ -6,6 +6,7 @@ import { worstCaseHits } from './fake-catalog-worst.ts';
 import type { FakePick } from './fake-firmware.ts';
 import { freshDevice, newBoard, type Answer, type BoardKind } from './fake-new-boards.ts';
 import { createFakeUpdates, sampleOffer, type FakeUpdates } from './fake-updates.ts';
+import { worstAccounts, worstBrowsers, worstCustom, worstDelivery, worstDevices, worstFolder, worstHubError, worstLayouts, worstNewBoards, worstOffer } from './fake-worst.ts';
 import { demoLayout, demoScenario } from './samples.ts';
 import { windowSession, type UpdateCheck } from './session.ts';
 
@@ -70,24 +71,81 @@ declare global {
   }
 }
 
+const DATA_KEYS = ['data', 'devices', 'offline'] as const;
+
+type DataParams = Partial<Record<(typeof DATA_KEYS)[number], string>>;
+
+const DATA_SETS: { label: string; params: DataParams }[] = [
+  { label: 'Demo data', params: {} },
+  { label: 'Worst case', params: { data: 'worst' } },
+  { label: 'No Devices', params: { data: 'worst', devices: '0' } },
+  { label: 'One', params: { data: 'worst', devices: '1' } },
+  { label: 'All offline', params: { data: 'worst', offline: 'all' } },
+];
+
+function mountDataToggle(target: Window, params: URLSearchParams) {
+  if (params.get('toggle') === '0') return;
+  const doc = target.document;
+  const bar = doc.createElement('div');
+  bar.setAttribute('role', 'group');
+  bar.setAttribute('aria-label', 'Demo data');
+  bar.dataset.demoToggle = '';
+  bar.style.cssText = 'position:fixed;left:50%;bottom:8px;translate:-50% 0;z-index:2147483647;display:flex;gap:2px;padding:2px;border-radius:999px;background:var(--fill-active);font:12px system-ui,sans-serif';
+  for (const set of DATA_SETS) {
+    const chosen = DATA_KEYS.every((name) => (params.get(name) ?? undefined) === set.params[name]);
+    const segment = doc.createElement('button');
+    segment.type = 'button';
+    segment.textContent = set.label;
+    segment.setAttribute('aria-pressed', String(chosen));
+    segment.style.cssText = `border:0;border-radius:999px;padding:4px 10px;cursor:pointer;color:var(--ink);background:${chosen ? 'var(--surface-raised)' : 'transparent'}`;
+    segment.addEventListener('click', () => {
+      const url = new URL(target.location.href);
+      for (const name of DATA_KEYS) url.searchParams.delete(name);
+      for (const name of DATA_KEYS) {
+        const value = set.params[name];
+        if (value !== undefined) url.searchParams.set(name, value);
+      }
+      target.location.assign(url);
+    });
+    bar.append(segment);
+  }
+  doc.body.append(bar);
+}
+
+function deviceCount(params: URLSearchParams, worst: boolean) {
+  const max = worst ? 10 : 5;
+  const fallback = worst ? 10 : 3;
+  const requested = Number(params.get('devices') ?? fallback);
+  return Number.isInteger(requested) && requested >= 0 && requested <= max ? requested : fallback;
+}
+
 export function demoEnvironment(target: Window): Environment {
   const params = new URL(target.location.href).searchParams;
-  const requested = Number(params.get('devices') ?? 3);
-  const count = Number.isInteger(requested) && requested >= 0 && requested <= 5 ? requested : 3;
-  const devices = demoScenario(count);
+  const worst = params.get('data') === 'worst';
+  const offline = params.get('offline') === 'all';
+  const count = deviceCount(params, worst);
+  const devices = worst ? worstDevices(count, { offline }) : demoScenario(count);
+  if (offline && !worst) for (const device of devices) device.link = { state: 'lost', reason: 'unplugged', detail: '', at_ms: Date.UTC(2026, 9, 27, 21, 40) };
   const fake = createFakeCompanion({
     devices,
-    layouts: Object.fromEntries(devices.map((d) => [d.id, demoLayout()])),
+    layouts: worst ? worstLayouts(devices) : Object.fromEntries(devices.map((d) => [d.id, demoLayout()])),
     system: { build: 'demo' },
     brightness: Object.fromEntries(devices.filter((_, i) => i % 3 !== 2).map((d) => [d.id, 80])),
     photoFrame: devices.filter((_, i) => i % 3 !== 2).map((d) => d.id),
-    browsers: params.get('browsers') === '0' ? [] : browsers,
-    integrations: { configured: params.get('integrations') !== 'new', delivery: devices.map((d) => ({ device: d.id, sent: 42, error: null })) },
+    browsers: params.get('browsers') === '0' ? [] : worst ? worstBrowsers(10) : browsers,
+    newBoards: worst ? worstNewBoards() : undefined,
+    integrations: {
+      configured: params.get('integrations') !== 'new',
+      delivery: worst ? worstDelivery(devices) : devices.map((d) => ({ device: d.id, sent: 42, error: null })),
+      ...(worst ? { accounts: worstAccounts, hubMessage: worstHubError, extra: { custom: worstCustom } } : {}),
+    },
     assets: { ...(params.get('icons') === 'worst' ? { hits: worstCaseHits() } : {}), ...renderMs(params.get('render-ms')) },
   });
   const update = params.get('update');
-  const updates = createFakeUpdates({ check: isCheckName(update) ? checks[update] : checks.none });
-  let picked: string | null = DEMO_FOLDER;
+  const offer = worst && update === 'available' ? worstOffer : isCheckName(update) ? checks[update] : checks.none;
+  const updates = createFakeUpdates({ check: offer });
+  mountDataToggle(target, params);
+  let picked: string | null = worst ? worstFolder : DEMO_FOLDER;
   const inBrowser = params.get('shell') === 'browser';
   const pickFolder = inBrowser ? undefined : async () => picked;
   target.touchdeckDemo = {

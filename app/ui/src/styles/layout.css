@@ -86,7 +86,15 @@
 }
 
 .editor-head .status {
+  flex: 0 1 auto;
+  min-width: 0;
   margin-left: var(--space-2);
+}
+
+.status-words {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .save-state {
@@ -121,18 +129,39 @@
 }
 
 @container editor-head (max-width: 680px) {
-  .add-tile-button {
+  .add-tile-button,
+  .push-button {
     width: 34px;
     padding: 0;
   }
 
-  .add-tile-words {
+  .add-tile-words,
+  .push-words {
     position: absolute;
     width: 1px;
     height: 1px;
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
+  }
+}
+
+@container editor-head (max-width: 520px) {
+  .editor-head {
+    gap: var(--space-1);
+  }
+
+  .editor-head .status {
+    flex: none;
+    margin-left: 0;
+  }
+
+  .editor-head .status-words {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
   }
 }
 
@@ -428,7 +457,7 @@
   min-width: 0;
   min-height: 0;
   padding: var(--space-6) var(--space-8) 72px;
-  overflow: hidden;
+  overflow: hidden auto;
 }
 
 .canvas.is-actual {
@@ -534,9 +563,16 @@
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--ink-2);
+  max-width: 180px;
   font-weight: var(--weight-medium);
   white-space: nowrap;
   cursor: pointer;
+}
+
+.page-tab-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -1170,14 +1206,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-}
-
-.textarea {
-  height: auto;
-  min-height: 60px;
-  padding: var(--space-2) 12px;
-  line-height: var(--leading-14);
-  resize: vertical;
 }
 
 .select {
@@ -1814,6 +1842,7 @@
 
 .start-choices {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-2);
 }
 
@@ -1867,6 +1896,8 @@
 .start-text {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .start-name {
