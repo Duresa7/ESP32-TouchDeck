@@ -1272,3 +1272,33 @@ Drag switch shows only when the bar's stream is settable. Without the Firmware,
 Add Tile still offers the Volume bar and Now playing Presets with Needs Firmware
 {x.y} where their art goes, and places them; the Tile shows its label and the
 badge until the Device can draw it.
+
+## Controls need a Send
+
+A connected Device whose Companion reports `control_layout` as `no-pushed-copy` or `differs`, with `has_controls`, shows these. `matches`, a Layout without controls, a Device that isn't connected and `unavailable` show nothing new. A Send that fails keeps the notice and shows the Send to Device failure with Details.
+
+| Element | String |
+| --- | --- |
+| Home, under the status | Controls need a Send |
+| Home button | Review Layout |
+| Home button, accessible name | Review Layout for {device} |
+| Editor notice title | Controls need a Send |
+| Editor notice, no copy on this PC | These Tiles show live values, but their controls aren't set up on this PC. Review the Layout, then choose Send to Device. |
+| Editor notice, the Layout differs | The Layout on {device} differs from the one this PC sent. Review the Layout, then choose Send to Device. |
+| Editor notice, second line | Sending replaces the Layout on {device} and lets its Tiles control the Integrations shown here. |
+| Editor notice, the editor shows the other orientation | {device} shows its {orientation} Layout. Switch to {Orientation} to review it. |
+| Editor notice button | Review Layout |
+| Editor notice button, while loading | Loading… |
+| Editor notice button, the other orientation | Switch to {Orientation} |
+| After a Send, until the Companion reports a match | Checking controls… |
+| Inspector section | Controls |
+| Inspector count | {n} Tiles |
+| Inspector hint | Tiles on every Page that control an Integration on this PC. Select one to change it. |
+| Inspector, no control Tiles | No Tile on this Layout controls an Integration. |
+| Row, where | {page} Page |
+| Row, the Integration's own account | Default account |
+| Row, an Integration this PC doesn't have | Unknown Integration “{id}” |
+| Row, an account this PC doesn't have | Unknown account “{id}” |
+| Row, controls | Drag to change, Mute, Previous track, Play or pause, Next track, joined by “ · ” |
+
+`{orientation}` is lowercase in a sentence and capitalized on the button, as the Orientation options are. Unknown names show the Device's text in quotes, so a Tile label never stands in for an Integration.

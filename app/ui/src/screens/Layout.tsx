@@ -8,6 +8,7 @@ import { useDevices } from '../companion/devices.ts';
 import type { EditorStore } from '../lib/editor/store.ts';
 import { needsFirmware, tileKind } from '../lib/device/needs-firmware.ts';
 import { statusOf } from './home-model.ts';
+import { ControlNoticeBar } from './layout/Controls.tsx';
 import { useOfferedFirmware } from './layout/device.ts';
 import { DeviceCanvas, deviceAspect } from './layout/DeviceCanvas.tsx';
 import { editorFor, useEditorState } from './layout/editor.ts';
@@ -56,7 +57,12 @@ function useEditorKeys(store: EditorStore) {
   }, [store]);
 }
 
-function useDeviceLong(canvas: RefObject<HTMLDivElement | null>, foot: RefObject<HTMLDivElement | null>, portrait: boolean, drawn: boolean) {
+interface Around {
+  head: RefObject<HTMLDivElement | null>;
+  foot: RefObject<HTMLDivElement | null>;
+}
+
+function useDeviceLong(canvas: RefObject<HTMLDivElement | null>, { head, foot }: Around, portrait: boolean, drawn: boolean) {
   const [long, setLong] = useState(LONG_MAX);
   useLayoutEffect(() => {
     const el = canvas.current;
@@ -64,18 +70,20 @@ function useDeviceLong(canvas: RefObject<HTMLDivElement | null>, foot: RefObject
     const fit = () => {
       const style = getComputedStyle(el);
       const aspect = deviceAspect();
+      const gap = Number.parseFloat(style.rowGap);
+      const taken = (part: HTMLDivElement | null) => (part?.offsetHeight ? part.offsetHeight + gap : 0);
       const w = el.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
-      const below = foot.current ? foot.current.offsetHeight + Number.parseFloat(style.rowGap) : 0;
-      const h = el.clientHeight - Number.parseFloat(style.paddingTop) - Number.parseFloat(style.paddingBottom) - below;
+      const h = el.clientHeight - Number.parseFloat(style.paddingTop) - Number.parseFloat(style.paddingBottom) - taken(head.current) - taken(foot.current);
       const fitted = portrait ? Math.min(h, w / aspect) : Math.min(w, h / aspect);
       setLong(Math.round(Math.min(LONG_MAX, Math.max(LONG_MIN, fitted))));
     };
     fit();
     const observer = new ResizeObserver(fit);
     observer.observe(el);
+    if (head.current) observer.observe(head.current);
     if (foot.current) observer.observe(foot.current);
     return () => observer.disconnect();
-  }, [canvas, foot, portrait, drawn]);
+  }, [canvas, head, foot, portrait, drawn]);
   return long;
 }
 
@@ -89,9 +97,10 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
   const adding = useEditorState(store, (s) => s.adding);
   const [actualSize, setActualSize] = useState(false);
   const canvas = useRef<HTMLDivElement>(null);
+  const head = useRef<HTMLDivElement>(null);
   const foot = useRef<HTMLDivElement>(null);
   const picker = useRef<HTMLInputElement>(null);
-  const long = useDeviceLong(canvas, foot, layout?.orientation === 'portrait', layout !== null);
+  const long = useDeviceLong(canvas, { head, foot }, layout?.orientation === 'portrait', layout !== null);
   const offered = useOfferedFirmware(device);
   useEditorKeys(store);
 
@@ -109,6 +118,9 @@ function Editor({ store, device }: { store: EditorStore; device: DeviceSummary }
             <strong>{name} isn't connected.</strong> Plug it in with a USB cable. You can still edit its Layout.
           </p>
         )}
+        <div ref={head} className="canvas-head">
+          <ControlNoticeBar store={store} device={name} />
+        </div>
         {layout && current ? (
           <>
             <DeviceCanvas

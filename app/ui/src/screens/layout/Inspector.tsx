@@ -14,6 +14,7 @@ import { useUi } from '../../state/ui.ts';
 import { usePresetNeeds } from '../integrations/addToLayout.ts';
 import { PresetButton } from '../integrations/PresetPreview.tsx';
 import { PendingApprovals } from './Approvals.tsx';
+import { ControlReview } from './Controls.tsx';
 import { useDeviceOffersGif, useDeviceShows, useEditorState, useGifTiles } from './editor.ts';
 import { GifInput } from './GifField.tsx';
 import { TileIcon } from './AssetImage.tsx';
@@ -134,6 +135,7 @@ function Details({ store, layout, page, device }: { store: EditorStore; layout: 
   const fullId = useId();
   return (
     <div className="inspector-details" data-testid="page-details">
+      <ControlReview store={store} layout={layout} />
       <section className="inspector-section" aria-labelledby={`${fullId}-page`}>
         <div className="section-head">
           <h2 className="section-title" id={`${fullId}-page`}>

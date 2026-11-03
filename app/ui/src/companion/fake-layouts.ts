@@ -1,6 +1,8 @@
 import { canonical, parseLayout, type Layout, type Orientation } from '../lib/editor/validate.ts';
 import type { DeviceSummary, ErrorBody, Job, JobMap, JobScope, Layout as StoredLayout, LinkState, PushReport } from './api.ts';
 
+export type JobEnd = 'succeeded' | 'failed';
+
 type Frame = Record<string, unknown> & { type: string };
 
 export interface FakeLayoutsOptions {
@@ -8,6 +10,10 @@ export interface FakeLayoutsOptions {
   publish(frame: Frame): void;
   seed?: Record<string, StoredLayout>;
   delayMs?: number;
+  pushes?: {
+    started(device: string): void;
+    finished(push: { device: string; orientation: Orientation; outcome: JobEnd }): void;
+  };
 }
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
@@ -51,6 +57,7 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
   let puts = 0;
   const held = new Set<string>();
   const releases = new Map<string, () => void>();
+  const settled = new Map<string, (outcome: JobEnd) => void>();
 
   const slot = (device: string, orientation: string) => `${device}/${orientation}`;
   for (const [device, layout] of Object.entries(options.seed ?? {})) stored.set(slot(device, layout.orientation), JSON.stringify(layout));
@@ -65,7 +72,7 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
   const active = (device: string) =>
     [...jobs.values()].find((job) => job.scope.kind === 'device' && job.scope.id === device && !['succeeded', 'failed', 'cancelled'].includes(job.state));
 
-  function startJob<K extends keyof JobMap>(kind: K, device: string, progress: JobMap[K]['progress'], work: () => JobMap[K]['result'], refusal: ErrorBody | null = null): Job {
+  function startJob<K extends keyof JobMap>(kind: K, device: string, progress: JobMap[K]['progress'], work: () => JobMap[K]['result'], refusal: ErrorBody | null = null, onSettled?: (outcome: JobEnd) => void): Job {
     minted += 1;
     const scope: JobScope = { kind: 'device', id: device };
     const job: Job = {
@@ -82,16 +89,23 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
       rev: 1,
     };
     jobs.set(job.id, job);
+    if (onSettled) settled.set(job.id, onSettled);
     publish({ type: 'job.updated', data: job });
     const finish = () => {
       const now = jobs.get(job.id)!;
       if (now.state === 'cancelled') return;
       if (refusal) update(now, { state: 'failed', error: refusal, cancellable: false, finished_ms: Date.now() });
       else update(now, { state: 'succeeded', result: work(), cancellable: false, finished_ms: Date.now() });
+      settle(job.id, refusal ? 'failed' : 'succeeded');
     };
     if (held.delete(device)) releases.set(device, () => setTimeout(finish, 0));
     else setTimeout(finish, delayMs);
     return job;
+  }
+
+  function settle(job: string, outcome: JobEnd) {
+    settled.get(job)?.(outcome);
+    settled.delete(job);
   }
 
   function deviceOr404(id: string): DeviceSummary | Response {
@@ -139,6 +153,7 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
     }
     const text = canonical(layout);
     const bytes = new TextEncoder().encode(text).length;
+    options.pushes?.started(device);
     const job = startJob('layouts.push', device, { assets_sent: 0, assets_total: 0, bytes_sent: 0, bytes_total: bytes }, () => {
       puts += 1;
       stored.set(slot(device, orientation), text);
@@ -153,7 +168,7 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
         revision: revisionOf(text),
       };
       return report;
-    }, animationRefusal(layout, found));
+    }, animationRefusal(layout, found), (outcome) => options.pushes?.finished({ device, orientation: layout.orientation, outcome }));
     return json(202, job);
   }
 
@@ -193,7 +208,9 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
         if (method !== 'DELETE') return failure(405, 'route.method_not_allowed', 'Use GET or DELETE.');
         if (!job.cancellable || job.finished_ms !== null) return failure(409, 'job.not_cancellable', "The Job's current phase can't be cancelled.");
         const error = { code: 'job.cancelled', message: 'The Job was cancelled.', details: null };
-        return json(200, update(job, { state: 'cancelled', error, cancellable: false, finished_ms: Date.now() }));
+        const cancelled = update(job, { state: 'cancelled', error, cancellable: false, finished_ms: Date.now() });
+        settle(job.id, 'failed');
+        return json(200, cancelled);
       }
       return null;
     },

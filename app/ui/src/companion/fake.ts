@@ -1,12 +1,13 @@
-import type { DeviceSummary, FirmwareBuild, Layout, NewBoard, SystemInfo } from './api.ts';
+import type { DeviceSummary, FirmwareBuild, Layout, NewBoard, Orientation, SystemInfo } from './api.ts';
 import { CLOSE_SESSION, type EventSocket } from './events.ts';
 import { createFakeActions } from './fake-actions.ts';
 import { createFakeAssets, type FakeAssetsOptions } from './fake-assets.ts';
 import { createFakeConsole } from './fake-console.ts';
+import { createFakeControls } from './fake-controls.ts';
 import { createFakeDeviceSettings } from './fake-device-settings.ts';
 import { createFakeFirmware } from './fake-firmware.ts';
 import { createFakeIntegrations, type FakeIntegrationsOptions } from './fake-integrations.ts';
-import { createFakeLayouts } from './fake-layouts.ts';
+import { createFakeLayouts, type JobEnd } from './fake-layouts.ts';
 import { createFakeLive } from './fake-live.ts';
 import { createFakeNewBoards } from './fake-new-boards.ts';
 import { createFakeSessions, type FakeBrowser } from './fake-sessions.ts';
@@ -109,7 +110,12 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   const sockets = new Set<FakeSocket>();
   let minted = 0;
   let requests = 0;
-  const layouts = createFakeLayouts({ devices, publish, seed: options.layouts, delayMs: options.jobMs });
+  const pushes = {
+    started: (device: string) => controls.started(device),
+    finished: (push: { device: string; orientation: Orientation; outcome: JobEnd }) => controls.finished(push),
+  };
+  const layouts = createFakeLayouts({ devices, publish, seed: options.layouts, delayMs: options.jobMs, pushes });
+  const controls = createFakeControls({ devices, publish, stored: layouts.stored, delayMs: options.jobMs });
   const settings = createFakeDeviceSettings({ devices, publish, brightness: options.brightness, photoFrame: options.photoFrame });
   const firmware = createFakeFirmware({ devices, publish, bundled: options.bundled, stepMs: options.jobMs });
   const newBoards = createFakeNewBoards({ devices, publish, bundled: options.bundled ?? { version: '1.5.0', build: 'fake' }, boards: options.newBoards, stepMs: options.jobMs });
@@ -215,6 +221,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     openSocket,
     bridge,
     layouts,
+    controls,
     firmware,
     newBoards,
     actions,

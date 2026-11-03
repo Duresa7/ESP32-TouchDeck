@@ -4,6 +4,7 @@ import { ArrowUpCircle, Cable } from 'lucide-react';
 import type { DeviceSummary } from '../companion/api.ts';
 import { useCompanion } from '../companion/connection.ts';
 import { useDevices } from '../companion/devices.ts';
+import { useControlNotice } from '../lib/device/controls.ts';
 import { button } from '../shell/button.ts';
 import { useUi } from '../state/ui.ts';
 import { DevicePreview } from './DevicePreview.tsx';
@@ -12,6 +13,34 @@ import { deviceWidth, firmwareUpdate, lastSeen, orientationOf, previewOf, status
 import { boardCards, boardInstallFor, boardsUi, useBoardsUi } from './new-boards.ts';
 import { IgnoredBoards, NewBoardCard } from './NewBoardCard.tsx';
 import './home.css';
+
+function ControlsNotice({ device, name }: { device: DeviceSummary; name: string }) {
+  const notice = useControlNotice(device);
+  const companion = useCompanion();
+  const openDevice = useUi((s) => s.openDevice);
+  if (notice.kind === 'none') return null;
+  if (notice.kind === 'checking') {
+    return (
+      <span className="device-controls" data-testid="controls-notice" data-state="checking">
+        <span className="status"><i className="led" aria-hidden />Checking controls…</span>
+      </span>
+    );
+  }
+  const review = async () => {
+    openDevice(device.id);
+    if (device.name === null) return;
+    const { editorFor, reviewLayout } = await import('./layout/editor.ts');
+    reviewLayout(editorFor(companion), { id: device.id, name: device.name }, notice.orientation);
+  };
+  return (
+    <span className="device-controls" data-testid="controls-notice" data-state={notice.reason}>
+      <span className="status is-waiting"><i className="led" aria-hidden />Controls need a Send</span>
+      <button type="button" className={button({ size: 'small' })} aria-label={`Review Layout for ${name}`} onClick={() => void review()} data-testid="controls-review">
+        Review Layout
+      </button>
+    </span>
+  );
+}
 
 function DeviceCard({ device, width }: { device: DeviceSummary; width: number }) {
   const openDevice = useUi((s) => s.openDevice);
@@ -30,6 +59,7 @@ function DeviceCard({ device, width }: { device: DeviceSummary; width: number })
         {seen && <span className="device-seen">{seen}</span>}
         {firmwareUpdate(device) && <span className="badge-signal"><ArrowUpCircle size={14} aria-hidden />Firmware update</span>}
       </span>
+      <ControlsNotice device={device} name={name} />
     </div>
   </li>;
 }
