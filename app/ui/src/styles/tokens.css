@@ -107,6 +107,7 @@
   --ease-progress: linear;
   --press-scale: 0.97;
   --press-scale-device: 0.985; /* a Device on Home */
+  --lift-device: -2px; /* a Device on Home under a fine pointer */
   --enter-scale: 0.97; /* dialogs, popovers and menus grow in from this */
   --enter-scale-tooltip: 0.96;
 
@@ -322,6 +323,7 @@
     --press-scale-device: 1;
     --enter-scale: 1;
     --enter-scale-tooltip: 1;
+    --duration-lift: 0ms;
     --duration-popover: 120ms;
     --duration-dialog: 140ms;
     --duration-chevron: 0ms;

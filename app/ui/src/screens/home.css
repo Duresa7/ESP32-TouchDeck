@@ -26,7 +26,7 @@
 .home .empty-text { margin-bottom: var(--space-3); }
 .home .empty-text.quiet { font-size: var(--text-14); line-height: var(--leading-14); margin-bottom: var(--space-6); }
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
-  .device-hit:hover .device-bezel { transform: translateY(-2px); }
+  .device-hit:hover .device-bezel { transform: translateY(var(--lift-device)); }
   .device-hit:hover .device-bezel::before { opacity: 0; }
   .device-hit:hover .device-bezel::after { opacity: 1; }
 }
