@@ -114,20 +114,31 @@ test('forcing a theme with Appearance sets data-theme over the Windows setting',
 });
 
 async function dialogScales(page: Page) {
+  await page.evaluate(() => {
+    const scales: string[] = [];
+    const sample = () => {
+      const dialog = document.querySelector('.dialog-settings');
+      if (dialog) scales.push(getComputedStyle(dialog).scale);
+    };
+    const observer = new MutationObserver(sample);
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+    Object.assign(window, { dialogScaleProbe: { scales, observer } });
+  });
   await navButton(page, 'Settings').click();
-  return page.evaluate(
-    () =>
-      new Promise<string[]>((resolve) => {
-        const scales: string[] = [];
-        const sample = () => {
-          const dialog = document.querySelector('.dialog-settings');
-          if (dialog) scales.push(getComputedStyle(dialog).scale);
-          if (scales.length < 20) requestAnimationFrame(sample);
-          else resolve(scales);
-        };
-        sample();
-      }),
-  );
+  await expect(settings(page)).toBeVisible();
+  return page.evaluate(() => {
+    const probe = window.dialogScaleProbe;
+    if (!probe) throw new Error('dialog scale probe is missing');
+    probe.observer.disconnect();
+    delete window.dialogScaleProbe;
+    return probe.scales;
+  });
+}
+
+declare global {
+  interface Window {
+    dialogScaleProbe?: { scales: string[]; observer: MutationObserver };
+  }
 }
 
 const grows = (scales: string[]) => scales.some((s) => s !== 'none' && s !== '1');
