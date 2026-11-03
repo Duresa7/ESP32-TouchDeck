@@ -15,7 +15,7 @@
 #include "ui_bar.h"
 #include "ui_graph.h"
 #include "ui_live_bar.h"
-#include "ui_now_playing.h"
+#include "ui_live_now_playing.h"
 #include "ui_theme.h"
 
 static const char *TAG = "live";
@@ -56,7 +56,6 @@ typedef struct {
     ui_bar_layout_t layout;
     ui_live_bar_t live;
     bool set;
-    bool fresh;
     bool muted;
 } bar_view_t;
 
@@ -68,7 +67,7 @@ typedef struct {
     lv_obj_t *controls[UI_NP_PARTS_MAX];
     ui_np_layout_t layout;
     int16_t h;
-    ui_np_state_t tap_state;
+    ui_live_np_t tap;
     cover_t *shown;
     lv_image_dsc_t dsc[2];
     uint8_t dsc_next;
@@ -268,11 +267,6 @@ static void drop_capture(void)
     }
 }
 
-static double latest(const ui_live_slot_t *slot)
-{
-    return slot->count > 0 ? slot->samples[(slot->head + slot->count - 1) % UI_LIVE_SERIES_MAX] : 0;
-}
-
 static const ui_live_slot_t *stream(const view_t *v, const char *id)
 {
     for (uint8_t k = 0; k < v->tile->stream_count && k < UI_LIVE_TILE_STREAMS; k++) {
@@ -338,7 +332,7 @@ static void draw_bar(bar_view_t *b)
     const ui_theme_t *t = &ui_theme;
     const double shown = ui_bar_shown(&b->live.bar);
     char text[8] = "--";
-    if (b->fresh) {
+    if (b->live.fresh) {
         snprintf(text, sizeof text, "%d", (int)lround(fmin(fmax(shown, 0), 1) * 100));
     }
     set_text(b->value, text);
@@ -347,7 +341,7 @@ static void draw_bar(bar_view_t *b)
     lv_obj_set_width(b->fill, fill);
     lv_obj_set_hidden(b->fill, fill == 0);
     lv_obj_set_style_bg_color(b->fill, ui_color(b->muted ? t->color.ink_2 : t->color.accent), 0);
-    const lv_opa_t opa = b->fresh ? LV_OPA_COVER : t->stale_opa;
+    const lv_opa_t opa = b->live.fresh ? LV_OPA_COVER : t->stale_opa;
     lv_obj_t *const parts[] = { b->glyph, b->label, b->value, b->track, b->fill };
     for (size_t i = 0; i < sizeof parts / sizeof parts[0]; i++) {
         lv_obj_set_style_opa(parts[i], opa, 0);
@@ -360,10 +354,9 @@ static void update_bar(view_t *v)
     const ui_live_slot_t *value = stream(v, "value");
     const ui_live_slot_t *muted = stream(v, "muted");
     b->set = value != NULL && value->set;
-    b->fresh = b->set && !value->stale;
-    b->muted = muted != NULL && muted->set && latest(muted) != 0;
+    b->muted = muted != NULL && muted->set && ui_live_latest(muted) != 0;
     ui_live_bar_feed(&b->live, s_view_generation, value);
-    if (!b->fresh && (b->live.bar.pressed || b->live.bar.phase != UI_BAR_LIVE)) {
+    if (!b->live.fresh && (b->live.bar.pressed || b->live.bar.phase != UI_BAR_LIVE)) {
         if (s.dragging >= 0 && &s.views[s.dragging] == v) {
             drop_capture();
         } else {
@@ -415,7 +408,7 @@ static void update_now_playing(view_t *v, cover_t *cover)
     const ui_live_slot_t *art = stream(v, "cover");
     const ui_live_slot_t *state = stream(v, "state");
     const bool known = state != NULL && state->set;
-    const ui_np_state_t st = known ? ui_np_state(latest(state)) : UI_NP_IDLE;
+    const ui_np_state_t st = known ? ui_np_state(ui_live_latest(state)) : UI_NP_IDLE;
     const bool idle = known && st == UI_NP_IDLE;
     const bool named = known && !idle;
     bool stale = !known;
@@ -423,7 +416,7 @@ static void update_now_playing(view_t *v, cover_t *cover)
     for (size_t i = 0; i < sizeof all / sizeof all[0]; i++) {
         stale = stale || (all[i] != NULL && all[i]->set && all[i]->stale);
     }
-    n->tap_state = known && !state->stale ? st : UI_NP_IDLE;
+    ui_live_np_feed(&n->tap, s_view_generation, state);
 
     if (cover != NULL && art != NULL && art->image[0] != '\0') {
         show_cover(v, cover);
@@ -794,6 +787,14 @@ void ui_live_build(lv_obj_t *obj, const ui_tile_t *tile, ui_rect_t rect)
     update(v, cover);
 }
 
+static uint32_t table_generation(void)
+{
+    xSemaphoreTake(s.lock, portMAX_DELAY);
+    const uint32_t generation = s.table.generation;
+    xSemaphoreGive(s.lock);
+    return generation;
+}
+
 static view_t *view_of(const ui_tile_t *tile)
 {
     for (uint16_t i = 0; i < s.view_count; i++) {
@@ -809,13 +810,10 @@ bool ui_live_capture(const ui_tile_t *tile, int16_t x, int16_t y)
     drop_capture();
     view_t *v = view_of(tile);
     if (v == NULL || v->kind != VIEW_BAR ||
-        ui_bar_hit(&v->bar.layout, x, y, v->bar.fresh, tile->input) != UI_BAR_ZONE_VALUE) {
+        ui_bar_hit(&v->bar.layout, x, y, v->bar.live.fresh, tile->input) != UI_BAR_ZONE_VALUE) {
         return false;
     }
-    xSemaphoreTake(s.lock, portMAX_DELAY);
-    const uint32_t generation = s.table.generation;
-    xSemaphoreGive(s.lock);
-    if (!ui_live_bar_press(&v->bar.live, generation, x, y)) {
+    if (!ui_live_bar_press(&v->bar.live, table_generation(), x, y)) {
         return false;
     }
     s.dragging = (int16_t)(v - s.views);
@@ -861,15 +859,12 @@ void ui_live_drop(void)
 const char *ui_live_part(const ui_tile_t *tile, int16_t x, int16_t y)
 {
     const view_t *v = view_of(tile);
-    if (v == NULL) {
+    if (v == NULL || v->kind == VIEW_GRAPH) {
         return NULL;
     }
-    if (v->kind == VIEW_BAR) {
-        return ui_bar_hit(&v->bar.layout, x, y, v->bar.fresh, tile->input) == UI_BAR_ZONE_MUTE
-                   ? ui_part_name(UI_PART_MUTE)
-                   : NULL;
-    }
-    return v->kind == VIEW_NOW_PLAYING ? ui_part_name(ui_np_hit(&v->np.layout, x, y, v->np.tap_state)) : NULL;
+    const uint32_t generation = table_generation();
+    return ui_part_name(v->kind == VIEW_BAR ? ui_live_bar_part(&v->bar.live, generation, &v->bar.layout, x, y)
+                                            : ui_live_np_part(&v->np.tap, generation, &v->np.layout, x, y));
 }
 
 void ui_live_select(void)

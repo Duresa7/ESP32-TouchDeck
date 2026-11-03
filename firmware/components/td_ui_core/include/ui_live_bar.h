@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "ui_bar.h"
 #include "ui_live.h"
+#include "ui_now_playing.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -13,12 +14,13 @@ extern "C" {
  * A bar Tile as the screen drives it from its `value` slot. `generation` is the live table's generation (see
  * ui_live_table_t) that the bar's drag and its fed value belong to. Each call below takes the table's generation as
  * it is now, and a bar from an older one starts over first: the press or drag it held ends without a move or an end,
- * and the value it was fed is forgotten. `fed_n` and `fed_digest` name the slot value it was fed last, so each value is
- * fed once.
+ * and the value it was fed is forgotten. `fresh` is true while that value is set and not stale. `fed_n` and
+ * `fed_digest` name the slot value it was fed last, so each value is fed once.
  */
 typedef struct {
     ui_bar_t bar;
     uint32_t generation;
+    bool fresh;
     uint32_t fed_n;
     uint32_t fed_digest;
 } ui_live_bar_t;
@@ -40,6 +42,11 @@ bool ui_live_bar_move(ui_live_bar_t *bar, uint32_t generation, const ui_bar_layo
 
 /* ui_bar_release in `generation`. A drag from an older generation sends no end. */
 bool ui_live_bar_release(ui_live_bar_t *bar, uint32_t generation, uint32_t now_ms);
+
+/* The part a tap at Tile point (x, y) names: UI_PART_MUTE on the mute zone of a bar fed a fresh value in
+ * `generation`, and UI_PART_NONE anywhere else. A bar from an older generation names none. */
+ui_part_t ui_live_bar_part(const ui_live_bar_t *bar, uint32_t generation, const ui_bar_layout_t *layout, int16_t x,
+                           int16_t y);
 
 #ifdef __cplusplus
 }
