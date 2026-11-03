@@ -331,6 +331,58 @@ async fn release_router_answers_no_approvals() {
 }
 
 #[tokio::test]
+async fn only_a_device_touch_reaches_an_integration_control_and_release_builds_have_no_route_to_one() {
+    let part = json!({"events": [
+        {"m": "press", "page": "media", "tile": "playing", "kind": "widget", "part": "next"},
+        {"m": "v2.input", "page": "media", "tile": "volume", "stream": "value", "phase": "end", "value": 0.5},
+    ]});
+    let hooks = TestCompanion::start().await;
+    hooks.plug_device("mock0001").await;
+    let emitted = hooks
+        .raw()
+        .post("/api/v1/test/devices/mock0001/emit")
+        .bearer_auth(&hooks.token)
+        .json(&part)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(emitted.status().as_u16(), 204);
+    let log = wait_count(&hooks, "actions/log", 1).await;
+    assert_eq!(log[0]["kind"], "integration");
+
+    let release = TestCompanion::start_release_router().await;
+    release.plug_device("mock0001").await;
+    for path in [
+        "/test/devices/mock0001/emit",
+        "/test/devices/mock0001/press",
+    ] {
+        let response = release
+            .raw()
+            .post(&format!("/api/v1{path}"))
+            .bearer_auth(&release.token)
+            .json(&part)
+            .send()
+            .await
+            .unwrap();
+        assert!(matches!(response.status().as_u16(), 404 | 405), "{path}");
+    }
+    let touch_routes: Vec<_> = td_companion::api::registry()
+        .into_iter()
+        .filter(|f| f.name != "test")
+        .flat_map(|f| f.endpoints)
+        .filter(|e| {
+            ["press", "input", "emit", "control", "part"]
+                .iter()
+                .any(|word| e.path.contains(word) || e.name.contains(word))
+        })
+        .map(|e| e.name)
+        .collect();
+    assert!(touch_routes.is_empty(), "{touch_routes:?}");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(get(&release, "actions/log").await, json!([]));
+}
+
+#[tokio::test]
 async fn a_slow_action_does_not_block_another_device() {
     let td = TestCompanion::start().await;
     let runs = Runs::new();

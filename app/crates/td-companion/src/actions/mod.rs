@@ -1,3 +1,4 @@
+mod controls;
 mod prompt;
 use crate::{
     api::{Clock, Event, Events},
@@ -14,12 +15,12 @@ use std::{
     collections::VecDeque,
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
-use td_core::layout::{Layout, Page};
+use td_core::layout::{Layout, Page, Tile};
 use td_host::{actions::Plan, approval::CommandSpec};
 use ts_rs::TS;
 
@@ -164,6 +165,7 @@ struct Inner {
     grants: Arc<dyn GrantStore>,
     prompter: Arc<dyn ApprovalPrompter>,
     running: AtomicUsize,
+    controls: OnceLock<controls::Wiring>,
     #[cfg(any(test, feature = "test-hooks"))]
     fake: Option<Arc<FakePrompter>>,
 }
@@ -200,6 +202,7 @@ impl Actions {
             grants,
             prompter,
             running: AtomicUsize::new(0),
+            controls: OnceLock::new(),
             #[cfg(any(test, feature = "test-hooks"))]
             fake,
         });
@@ -340,7 +343,7 @@ impl Actions {
         session: &td_link::Session,
         page: &str,
         tile: &str,
-    ) -> Result<Option<(Plan, prompt::Context)>, String> {
+    ) -> Result<Option<(Tile, prompt::Context)>, String> {
         let shown = session
             .layout_state(Duration::from_secs(2))
             .map_err(|e| format!("The Device didn't report its Layout: {e}"))?;
@@ -373,7 +376,7 @@ impl Actions {
             .and_then(|d| d.name)
             .unwrap_or_else(|| device.to_string());
         Ok(Some((
-            Plan::of(&found.action),
+            found.clone(),
             prompt::Context {
                 device: name,
                 page: title.into(),
@@ -382,6 +385,9 @@ impl Actions {
         )))
     }
     fn press(&self, device: &DeviceId, event: &serde_json::Value) {
+        if event.get("part").is_some() {
+            return self.part(device, event);
+        }
         let page = event["page"].as_str().unwrap_or_default();
         let tile = event["tile"].as_str().unwrap_or_default();
         let mut request = ApprovalRequest {
@@ -410,7 +416,7 @@ impl Actions {
             ),
         };
         let (plan, context) = match resolved {
-            Ok(Some(found)) => found,
+            Ok(Some((tile, context))) => (Plan::of(&tile.action), context),
             Ok(None) => {
                 self.logged(
                     &request,
@@ -427,7 +433,7 @@ impl Actions {
             }
         };
         let approval = match plan {
-            Plan::Deck => return, // Key and media reports are already typed by the Device's mirror.
+            Plan::Deck | Plan::Integration { .. } => return, // Key and media reports are already typed by the Device's mirror.
             Plan::Launch { path, args, cwd } => {
                 request.spec = ActionSpec {
                     kind: "launch".into(),

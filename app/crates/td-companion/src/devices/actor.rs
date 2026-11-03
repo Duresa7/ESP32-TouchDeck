@@ -4,6 +4,7 @@
 //! only be open once.
 use super::{
     DeviceConsole, DeviceEvent, DeviceId, DeviceKeyMirror, Inner, InputFactory, KeyMirrorState,
+    input::{InputHub, PressGate},
 };
 use std::{
     sync::{
@@ -11,11 +12,16 @@ use std::{
         mpsc::{self, Receiver, Sender},
     },
     thread,
+    time::{Duration, Instant},
 };
 use td_host::{Mirror, Mirrored, Outcome};
 use td_link::{Incoming, Session};
 
 pub type Work = Box<dyn FnOnce(&Session) + Send>;
+
+/// The shortest time between two batches of a Device's drags. The Firmware sends at most one move every 50 ms, so
+/// this only coalesces a Device that sends faster.
+const INPUT_PACE: Duration = Duration::from_millis(20);
 
 /// Dropping the handle ends the work thread, which closes the session and frees the port.
 pub(super) struct Handle {
@@ -44,16 +50,24 @@ pub(super) fn spawn(
     let (work, jobs) = mpsc::channel::<Work>();
     let session = Arc::new(session);
     let shared = session.clone();
-    let (presses, taps) = mpsc::sync_channel(16);
+    let (presses, taps) = mpsc::sync_channel::<serde_json::Value>(16);
     let action_inner = inner.clone();
     let action_id = id.clone();
     thread::spawn(move || {
+        let mut parts = PressGate::default();
         for event in taps {
+            if event.get("part").is_some() && !parts.accept(&event, Instant::now()) {
+                continue;
+            }
             if let Some(handler) = action_inner.actions.get() {
                 handler(&action_id, &event);
             }
         }
     });
+    let (drags, inputs) = mpsc::sync_channel::<serde_json::Value>(super::input::PENDING_MAX);
+    let input_inner = inner.clone();
+    let input_id = id.clone();
+    thread::spawn(move || run_inputs(&input_inner, &input_id, &inputs));
     thread::Builder::new()
         .name(format!("td-device-{id}"))
         .spawn(move || {
@@ -65,7 +79,16 @@ pub(super) fn spawn(
         .expect("the Device thread starts");
     thread::Builder::new()
         .name(format!("td-device-{id}-in"))
-        .spawn(move || forward(&inner, &id, generation, incoming, mirror, presses))
+        .spawn(move || {
+            forward(
+                &inner,
+                &id,
+                generation,
+                incoming,
+                mirror,
+                Touches { presses, drags },
+            )
+        })
         .expect("the Device forwarder starts");
     Handle {
         generation,
@@ -105,13 +128,42 @@ pub(super) fn mirror(
     }
 }
 
+/// Runs one session's drags: each batch takes what arrived since the last, newest per Tile stream, and sets it.
+fn run_inputs(inner: &Inner, id: &DeviceId, inputs: &Receiver<serde_json::Value>) {
+    let mut hub = InputHub::default();
+    while let Ok(first) = inputs.recv() {
+        hub.push(&first);
+        while let Ok(next) = inputs.try_recv() {
+            hub.push(&next);
+        }
+        let batch = hub.take();
+        if let Some(handler) = inner.inputs.get() {
+            for input in batch {
+                let Some(result) = handler.set(id, &input) else {
+                    continue;
+                };
+                if let Some(outcome) = hub.settled(&input, result, Instant::now()) {
+                    handler.gesture(id, &input, outcome);
+                }
+            }
+        }
+        thread::sleep(INPUT_PACE);
+    }
+}
+
+/// Where the forwarder hands a Device's touches. Both are bounded, and a full one drops the event.
+struct Touches {
+    presses: mpsc::SyncSender<serde_json::Value>,
+    drags: mpsc::SyncSender<serde_json::Value>,
+}
+
 fn forward(
     inner: &Inner,
     id: &DeviceId,
     generation: u64,
     incoming: Receiver<Incoming>,
     mut mirror: Option<Mirror>,
-    presses: mpsc::SyncSender<serde_json::Value>,
+    touches: Touches,
 ) {
     for item in incoming {
         match item {
@@ -121,7 +173,9 @@ fn forward(
             }),
             Incoming::Event(event) => {
                 if event["m"] == "press" {
-                    let _ = presses.try_send(event.clone());
+                    let _ = touches.presses.try_send(event.clone());
+                } else if event["m"] == "v2.input" {
+                    let _ = touches.drags.try_send(event.clone());
                 }
                 if let Some(report) = Mirrored::parse(&event) {
                     key_report(inner, id, mirror.as_mut(), &report);

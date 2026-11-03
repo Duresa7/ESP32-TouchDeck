@@ -5,9 +5,12 @@
 //! wakes it or a Device shows a new Layout. The cover thread turns Control pictures into cover JPEGs without holding
 //! any lock, so encoding never delays the link. Controls call `wake` from their own threads.
 //!
-//! Lock order: a Device's link, then `router`. `wake`, `changed`, `samples`, `covers`, `sent` and `injected` are
-//! each taken alone, never while waiting for another lock. Polled samples come from the registry with `try_lock`
-//! only, and Control samples without the registry at all.
+//! Lock order: a Device's link, then `router`. `wake`, `changed`, `shown`, `samples`, `covers`, `sent` and
+//! `injected` are each taken alone, never while waiting for another lock. Polled samples come from the registry with
+//! `try_lock` only, and Control samples without the registry at all.
+//!
+//! A Device's taps and drags find their Tile through `Live::tile`, which reads `changed` and then `shown`, each
+//! alone. It never takes `router` or a link, so a round that holds them for a cover upload never delays a drag.
 
 mod covers;
 mod router;
@@ -19,10 +22,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use parking_lot::{Condvar, Mutex};
+use td_core::Layout;
+use td_core::layout::Tile;
 use td_core::live::LiveValue;
 use td_host::integrations::{Delivery, LiveSample};
 
-pub use router::{Binding, LiveCaps, Report, Router, StreamKey, bindings};
+pub use router::{Binding, LiveCaps, Report, Router, StreamKey, bindings, stream_source};
 
 use crate::devices::{DeviceManager, LinkState};
 use crate::features::integrations::{Controls, Service};
@@ -43,6 +48,9 @@ struct Shared {
     router: Mutex<Router>,
     /// Devices that showed a new Layout since the last round.
     changed: Mutex<BTreeSet<String>>,
+    /// The Layout each Device showed when the router last read it, with the link session it was read in. A Device
+    /// in `changed` has none until a round reads its new Layout.
+    shown: Mutex<HashMap<String, (u64, Arc<Layout>)>>,
     /// The newest polled samples, kept for rounds when the Integrations are busy.
     samples: Mutex<HashMap<StreamKey, LiveSample>>,
     covers: Mutex<Prepared>,
@@ -89,7 +97,21 @@ impl Live {
     /// The Device now shows another Layout, so its bindings are read again and every value goes again.
     pub fn layout_changed(&self, device: &str) {
         self.0.changed.lock().insert(device.to_owned());
+        self.0.shown.lock().remove(device);
         self.0.wake();
+    }
+
+    /// A Tile of the Layout the Device showed in link session `session` (its `since_ms`), as the router last read
+    /// it. None while the router hasn't read that Layout, such as just after a push. Never waits for a link.
+    pub fn tile(&self, device: &str, session: u64, page: &str, tile: &str) -> Option<Tile> {
+        if self.0.changed.lock().contains(device) {
+            return None;
+        }
+        let layout = match self.0.shown.lock().get(device) {
+            Some((read_in, layout)) if *read_in == session => layout.clone(),
+            _ => return None,
+        };
+        td_host::actions::find_tile(&layout, page, tile).cloned()
     }
 
     /// Adds a sample as if an Integration reported it, for tests without real Integration values.
@@ -146,6 +168,12 @@ fn round(
         .collect();
     let covers = shared.covers.lock().clone();
     let changed = std::mem::take(&mut *shared.changed.lock());
+    {
+        let mut shown = shared.shown.lock();
+        for device in &changed {
+            shown.remove(device);
+        }
+    }
     let wanted = {
         let mut router = shared.router.lock();
         router.set_covers(covers);
@@ -173,7 +201,12 @@ fn round(
             record(shared, integrations, &device, report);
         }
     }
-    shared.router.lock().cover_jobs(&samples)
+    let (jobs, shown) = {
+        let router = shared.router.lock();
+        (router.cover_jobs(&samples), router.shown())
+    };
+    *shared.shown.lock() = shown;
+    jobs
 }
 
 fn make_covers(shared: Weak<Shared>, controls: Controls, queue: Receiver<Vec<CoverJob>>) {
