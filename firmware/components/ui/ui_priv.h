@@ -131,7 +131,8 @@ void ui_live_drag(int16_t x, int16_t y);
  * nothing. */
 void ui_live_drop(void);
 
-/* The part a tap at Tile point (x, y) names on a bar or now-playing Tile, from the shared vectors, or NULL. */
+/* The part a tap at Tile point (x, y) names on a bar or now-playing Tile, from the shared vectors, or NULL. A Tile not
+ * redrawn since the last session or Layout change names none. */
 const char *ui_live_part(const ui_tile_t *tile, int16_t x, int16_t y);
 
 /* Called without the LVGL lock. Decodes the next Layout's posters while the shown Layout keeps playing. */
