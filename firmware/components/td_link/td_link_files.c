@@ -15,6 +15,7 @@
 #include "td_update_state.h"
 #include "td_xfer.h"
 #include "ui.h"
+#include "ui_gif_player.h"
 
 #define LAYOUT_DIR "/storage/layouts"
 #define ICON_DIR "/storage/icons"
@@ -327,6 +328,8 @@ static void finish_put(cJSON *reply)
     }
     td_store_lock();
     for (uint8_t p = 0; p < parsed->page_count; p++) {
+        unsigned animated_tiles = 0;
+        uint32_t animated_pixels = 0;
         for (uint8_t t = 0; t < parsed->pages[p].tile_count; t++) {
             const char *icon = parsed->pages[p].tiles[t].icon;
             td_asset_format_t format = TD_ASSET_FMT_NONE;
@@ -346,6 +349,18 @@ static void finish_put(cJSON *reply)
                 td_layout_free(parsed);
                 td_link_fail(reply, "Layout references an absent or incompatible Asset");
                 return;
+            }
+            if (gif) {
+                uint16_t width = 0, height = 0;
+                if (!icon || !td_asset_gif_canvas(icon + 7, &width, &height) ||
+                    !ui_gif_budget_add(&animated_tiles, &animated_pixels, width, height,
+                                       TD_GIF_PAGE_TILES, TD_GIF_PAGE_PIXELS)) {
+                    td_store_unlock();
+                    td_layout_free(parsed);
+                    td_link_fail(reply, "This Page has too many animations. Remove an animated Tile.");
+                    cJSON_AddStringToObject(reply, "reason", "size");
+                    return;
+                }
             }
         }
     }

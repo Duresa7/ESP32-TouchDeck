@@ -125,6 +125,7 @@ static void mark(const td_layout_t *layout)
 {
     for (uint8_t p = 0; layout != NULL && p < layout->page_count; p++) {
         for (uint8_t t = 0; t < layout->pages[p].tile_count; t++) {
+            if (layout->pages[p].tiles[t].render == UI_RENDER_GIF) continue;
             const char *id = file_id(layout->pages[p].tiles[t].icon);
             icon_t *entry = id != NULL ? find(id) : NULL;
             if (entry != NULL) {
@@ -164,6 +165,7 @@ ui_icon_counts_t ui_icon_prepare(const td_layout_t *layout, const td_layout_t *k
     mark(layout);
     for (uint8_t p = 0; layout != NULL && p < layout->page_count; p++) {
         for (uint8_t t = 0; t < layout->pages[p].tile_count; t++) {
+            if (layout->pages[p].tiles[t].render == UI_RENDER_GIF) continue;
             const char *id = file_id(layout->pages[p].tiles[t].icon);
             if (id == NULL) {
                 continue;

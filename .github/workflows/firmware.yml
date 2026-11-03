@@ -60,6 +60,8 @@ jobs:
           python -B firmware/tools/test_media.py
           python -B firmware/tools/test_key_sink.py
           python -B firmware/tools/test_file_loaders.py
+          python -B firmware/tools/test_playback.py
+          python -B firmware/tools/test_gif_ui.py
 
       - name: Check the firmware is esp32s3 and radio-free
         shell: bash
