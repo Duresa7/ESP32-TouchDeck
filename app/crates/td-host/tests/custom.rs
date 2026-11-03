@@ -707,6 +707,7 @@ fn corrupt_or_unreadable_custom_json_recovers_without_blocking_other_integration
         std::fs::write(&custom_file, bad).unwrap();
 
         let mut r = Registry::new(Environment {
+            media_provider: Some(Arc::new(td_host::integrations::media::fake::FakeMedia::default())),
             secrets: Arc::new(MemorySecrets::default()),
             config_file: Some(sources_file),
             fetch: Arc::new(|| Box::new(Reply("{}"))),
@@ -742,6 +743,9 @@ fn corrupt_or_unreadable_custom_json_recovers_without_blocking_other_integration
     std::fs::create_dir(&unreadable_dir).unwrap();
 
     let mut r = Registry::new(Environment {
+        media_provider: Some(Arc::new(
+            td_host::integrations::media::fake::FakeMedia::default(),
+        )),
         secrets: Arc::new(MemorySecrets::default()),
         config_file: Some(sources_file),
         fetch: Arc::new(|| Box::new(Reply("{}"))),
