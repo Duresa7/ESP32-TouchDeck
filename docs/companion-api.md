@@ -748,6 +748,21 @@ ignore title and artist while idle, and hide controls. No stream is left unset.
 Paused retains metadata; GSMTC Changing keeps the last state value. Recheck thumbnail
 at 300 ms, 1 s and 3 s after title changes; never publish an old generation.
 Heartbeat every 10 s with ttl_ms 30000. Non-Windows reports "Media needs Windows."
+Settings persist in `media.json` beside `sources.json`. Disabling revokes event
+subscriptions, cancels pending work and clears samples and cached pictures.
+Re-enabling keeps sample sequence numbers ahead of earlier delivery.
+
+Windows 10 1809 or later is required. Thumbnail streams are capped at 4 MiB
+before allocating a read buffer; the returned length and stream size are checked
+again after the read. Source pictures use SHA-256 ids and an eight-entry cache.
+The Companion delivery layer owns image decoding and Device Asset conversion;
+Integration API responses contain neither track metadata nor thumbnail bytes.
+Commands have a maximum two-second deadline, including queue time. A timeout or
+false result reports "The player didn't respond." and is never retried.
+
+For an OS-only smoke check, run `cargo test -p td-host media_os_smoke -- --ignored --nocapture`
+from `app/`. It reports playback state and thumbnail presence without printing
+private metadata; with a current player, it toggles play/pause twice.
 
 These sections define steps B through I; step A adds contracts and mocks only.
 
@@ -971,6 +986,13 @@ Feature module `test_hooks`, compiled only with the `test-hooks` Cargo feature a
 | `test.approvals_script` | `POST /test/approvals/script` | `{answers: ("once" \| "always" \| "deny" \| "fail" \| "never")[]}` → `()`. Sets what the `FakePrompter` answers next. `fail` acts as a dialog that can't be shown |
 | `test.clock` | `POST /test/clock` | `{advance_ms}` → `()`. Moves the Companion's clock for expiry tests |
 | `test.firmware_script` | `POST /test/firmware/script` | `{answers: ("accept" \| "decline")[]}` → `()`. Replaces the native Firmware dialogs with a scripted prompter that gives these consent answers in order and waits once they run out. Its file picker returns the test bundle |
+
+`test.media` (`POST /test-hooks/media`) scripts the in-memory Media provider.
+Its body is `{session: null}` for idle, or `{session: {title, artist, state, cover?}}`.
+State is 0, 1 or 2; title and artist are at most 4096 UTF-8 bytes each; cover is
+base64 source image bytes (at most 4 MiB decoded), never a URL. The request limit
+is 6 MiB. Disabled Media rejects scripts. This endpoint requires test hooks and
+mock Devices; it cannot control a real player.
 
 ## Mapping from today's Tauri commands and events
 

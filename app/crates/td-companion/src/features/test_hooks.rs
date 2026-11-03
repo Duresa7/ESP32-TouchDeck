@@ -319,6 +319,7 @@ fn feature() -> Feature {
         .endpoint::<Clock>()
         .endpoint::<ApprovalsScript>()
         .endpoint::<FirmwareScript>()
+        .endpoint::<MediaScript>()
 }
 inventory::submit! { Registration(feature) }
 
@@ -365,6 +366,77 @@ impl Endpoint for FirmwareScript {
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<(), CommonError> {
         ctx.devices.mock().ok_or(CommonError::NotFound)?;
         ctx.firmware.script(req.body.answers);
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct MediaFixture {
+    pub title: String,
+    pub artist: String,
+    pub state: u8,
+    pub cover: Option<String>,
+}
+#[derive(Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct MediaScriptBody {
+    pub session: Option<MediaFixture>,
+}
+pub struct MediaScript;
+impl Endpoint for MediaScript {
+    const NAME: &'static str = "test.media";
+    const METHOD: Method = Method::POST;
+    const PATH: &'static str = "/test-hooks/media";
+    const STATUS: StatusCode = StatusCode::NO_CONTENT;
+    const BODY_LIMIT: usize = 6 * 1024 * 1024;
+    type Path = ();
+    type Query = NoQuery;
+    type Body = MediaScriptBody;
+    type Ok = ();
+    type Error = CommonError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<(), CommonError> {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        use td_host::integrations::media::{MAX_THUMBNAIL_BYTES, Playback};
+        ctx.devices.mock().ok_or(CommonError::NotFound)?;
+        let fake = ctx.integrations.media_fake().ok_or(CommonError::NotFound)?;
+        if !fake.running() {
+            return Err(CommonError::invalid("session", "Media is disabled"));
+        }
+        if let Some(session) = req.body.session {
+            if session.title.len() > 4096 || session.artist.len() > 4096 {
+                return Err(CommonError::invalid("session", "text is too long"));
+            }
+            let playback = match session.state {
+                0 => Playback::Idle,
+                1 => Playback::Paused,
+                2 => Playback::Playing,
+                _ => return Err(CommonError::invalid("session", "unknown playback state")),
+            };
+            let cover = session
+                .cover
+                .map(|encoded| {
+                    if encoded.len() > MAX_THUMBNAIL_BYTES.div_ceil(3) * 4 {
+                        return Err(CommonError::invalid("cover", "image is too large"));
+                    }
+                    let bytes = STANDARD
+                        .decode(encoded)
+                        .map_err(|_| CommonError::invalid("cover", "expected base64"))?;
+                    if bytes.len() > MAX_THUMBNAIL_BYTES {
+                        return Err(CommonError::invalid("cover", "image is too large"));
+                    }
+                    Ok(bytes)
+                })
+                .transpose()?;
+            let generation = fake.begin();
+            fake.metadata(generation, &session.title, &session.artist, playback);
+            fake.feed().clear_cover(generation);
+            if let Some(bytes) = cover {
+                fake.cover(generation, &bytes);
+            }
+        } else {
+            fake.idle();
+        }
         Ok(())
     }
 }

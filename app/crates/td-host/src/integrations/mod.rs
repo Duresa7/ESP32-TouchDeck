@@ -1,6 +1,7 @@
 //! Integration descriptors and runtime contract. Modules register their factory once.
 mod cliproxy;
 mod custom;
+pub mod media;
 pub use custom::CommandApproval;
 pub mod secrets;
 pub mod this_pc;
@@ -151,6 +152,7 @@ pub struct LiveSample {
     pub value: td_core::live::LiveValue,
 }
 pub struct Environment {
+    pub media_provider: Option<Arc<dyn media::MediaProvider>>,
     pub volume: Option<volume::ProviderFactory>,
     pub secrets: Arc<dyn secrets::SecretStore>,
     pub config_file: Option<PathBuf>,
@@ -210,6 +212,7 @@ mod tests {
     #[test]
     fn duplicate_registration_is_rejected() {
         let env = Environment {
+            media_provider: Some(Arc::new(media::fake::FakeMedia::default())),
             volume: Some(volume::fake::FakeVolume::default().factory()),
             secrets: Arc::new(secrets::MemorySecrets::default()),
             config_file: None,
@@ -222,6 +225,7 @@ mod tests {
     #[test]
     fn polling_integrations_have_no_control() {
         let env = Environment {
+            media_provider: Some(Arc::new(media::fake::FakeMedia::default())),
             volume: Some(volume::fake::FakeVolume::default().factory()),
             secrets: Arc::new(secrets::MemorySecrets::default()),
             config_file: None,
@@ -230,7 +234,7 @@ mod tests {
         let registry = Registry::new(env).unwrap();
         assert!(!registry.0.is_empty());
         for (id, integration) in &registry.0 {
-            if id == "volume" {
+            if id == "media" || id == "volume" {
                 continue;
             }
             assert!(integration.control().is_none(), "{id}");

@@ -9,6 +9,8 @@ export type Delivery = { url: string | null, notification: string | null, };
 export type DeviceId = string;
 export type DevicePath = { device: DeviceId, };
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;
+export type MediaFixture = { title: string, artist: string, state: number, cover: string | null, };
+export type MediaScriptBody = { session: MediaFixture | null, };
 export type MockAction = { 
 /**
  * `no-confirm`, `rollback`, `normal-update`, `stop` or `hang-up`.
@@ -29,6 +31,7 @@ export const testEndpoints = {
   'test.emit': { method: 'POST', path: '/test/devices/{device}/emit', access: 'session' },
   'test.firmware_script': { method: 'POST', path: '/test/firmware/script', access: 'session' },
   'test.input_log': { method: 'GET', path: '/test/input-log', access: 'session' },
+  'test.media': { method: 'POST', path: '/test-hooks/media', access: 'session' },
   'test.mock': { method: 'POST', path: '/test/devices/{device}/mock', access: 'session' },
   'test.pairing_delivery': { method: 'GET', path: '/test/pairing-delivery', access: 'session' },
   'test.ports': { method: 'POST', path: '/test/ports', access: 'session' },
