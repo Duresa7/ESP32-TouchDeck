@@ -397,7 +397,7 @@ export function DevicePanel({ device }: { device: DeviceSummary }) {
   return (
     <Popover.Root>
       <Popover.Trigger className="device-switch" data-testid="device-name">
-        <span className="device-switch-name">{name}</span>
+        <span className="device-switch-name" title={name}>{name}</span>
         <ChevronDown className="chev" size={16} strokeWidth={2} aria-hidden />
       </Popover.Trigger>
       <Popover.Portal>

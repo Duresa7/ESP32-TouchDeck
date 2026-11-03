@@ -97,9 +97,9 @@ export function EditorHeader({ store, device, onImport, onExport }: EditorHeader
   return (
     <header className="editor-head">
       <DevicePanel device={device} />
-      <span className={clsx('status', status.live && 'is-live')} data-testid="connection">
+      <span className={clsx('status', status.live && 'is-live')} title={status.words} data-testid="connection">
         <i className="led" aria-hidden />
-        {status.words}
+        <span className="status-words">{status.words}</span>
       </span>
       <SaveState store={store} />
       <ToggleGroup
@@ -145,13 +145,13 @@ export function EditorHeader({ store, device, onImport, onExport }: EditorHeader
           <Tip label={status.live ? `Send this Layout to ${name}` : `${name} isn't connected`}>
             <button
               type="button"
-              className={button({ kind: 'primary' })}
+              className={clsx(button({ kind: 'primary' }), 'push-button')}
               aria-disabled={!canSend}
               onClick={() => canSend && void store.push()}
               data-testid="push"
             >
               <Upload size={16} strokeWidth={2} aria-hidden />
-              {busy === 'push' ? 'Sending…' : 'Send to Device'}
+              <span className="push-words">{busy === 'push' ? 'Sending…' : 'Send to Device'}</span>
             </button>
           </Tip>
         </>

@@ -8,7 +8,10 @@ const dialog = (page: Page) => page.getByTestId('onboarding');
 const demo = (page: Page) => ({
   plug: () => page.evaluate((id) => window.touchdeckDemo?.newBoards.plug({ id, port: 'COM7' }), ID),
   unplug: () => page.evaluate((id) => window.touchdeckDemo?.newBoards.unplug(id), ID),
-  answer: (answer: 'accept' | 'decline') => page.evaluate(({ id, answer }) => window.touchdeckDemo?.newBoards.answer(id, answer), { id: ID, answer }),
+  answer: async (answer: 'accept' | 'decline') => {
+    await expect.poll(() => demo(page).confirming()).toBe(true);
+    await page.evaluate(({ id, answer }) => window.touchdeckDemo?.newBoards.answer(id, answer), { id: ID, answer });
+  },
   confirming: () => page.evaluate((id) => window.touchdeckDemo?.newBoards.confirming(id) ?? false, ID),
   fail: (fail: boolean) => page.evaluate(({ id, fail }) => window.touchdeckDemo?.newBoards.fail(id, fail), { id: ID, fail }),
   hold: (pct: number) => page.evaluate(({ id, pct }) => window.touchdeckDemo?.newBoards.hold(id, pct), { id: ID, pct }),

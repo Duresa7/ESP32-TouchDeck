@@ -1,14 +1,46 @@
 import clsx from 'clsx';
 import type { Orientation } from '../companion/api.ts';
 import { geometry, screenSize } from '../lib/deck/geometry.ts';
-import { buildDots, buildPage, buildTitle, type TextView } from '../lib/deck/scene.ts';
+import { buildDots, buildPage, buildTitle, FONTS, type FontSize, type TextView } from '../lib/deck/scene.ts';
+import type { Line } from '../lib/deck/text.ts';
 import type { Preview } from './home-model.ts';
+
+const BOX_HEIGHT = 0.72;
+const BOX_EDGE = 2;
+
+function emptyBoxPath(x: number, y: number, w: number, h: number): string {
+  const e = BOX_EDGE;
+  return `M${x} ${y}h${w}v${h}h${-w}Z M${x + e} ${y + e}v${h - 2 * e}h${w - 2 * e}v${2 * e - h}Z`;
+}
+
+function SceneLine({ line, size }: { line: Line; size: FontSize }) {
+  const font = FONTS[size];
+  const height = Math.round(size * BOX_HEIGHT);
+  const top = line.y + font.lineHeight - font.baseLine - height;
+  const runs: { x: number; text: string }[] = [];
+  const boxes: string[] = [];
+  let run: { x: number; text: string } | null = null;
+  for (const letter of line.letters) {
+    if (letter.placeholder) {
+      boxes.push(emptyBoxPath(line.x + letter.x + 1, top, letter.width - 2, height));
+      run = null;
+      continue;
+    }
+    if (!run) {
+      run = { x: line.x + letter.x, text: '' };
+      runs.push(run);
+    }
+    run.text += String.fromCodePoint(letter.letter);
+  }
+  return <>
+    {runs.map((run, index) => <text key={index} x={run.x} y={line.y} dominantBaseline="hanging" fontSize={size}>{run.text}</text>)}
+    {boxes.length > 0 && <path className="preview-box" d={boxes.join(' ')} fillRule="evenodd" />}
+  </>;
+}
 
 function SceneText({ view }: { view: TextView }) {
   return <g transform={`translate(${view.x} ${view.y})`} opacity={view.opacity / 255}>
-    {view.label.lines.map((line, index) => <text key={index} x={line.x} y={line.y} dominantBaseline="hanging" fontSize={view.size}>
-      {line.letters.map((letter) => String.fromCodePoint(letter.letter)).join('')}
-    </text>)}
+    {view.label.lines.map((line, index) => <SceneLine key={index} line={line} size={view.size} />)}
   </g>;
 }
 
@@ -22,11 +54,11 @@ export function DevicePreview({ preview, live, orientation = 'landscape' }: { pr
       <span className="device-screen" style={{ aspectRatio: `${g.screen.w} / ${g.screen.h}` }}>
         <svg className="device-scene" viewBox={`0 0 ${g.screen.w} ${g.screen.h}`} data-page={page?.id}>
           {title && <g className="preview-title"><SceneText view={title} /></g>}
-          {page?.tiles.map((tile) => <g key={tile.id} transform={`translate(${tile.rect.x} ${tile.rect.y})`}>
+          {page?.tiles.map((tile) => <svg key={tile.id} x={tile.rect.x} y={tile.rect.y} width={tile.rect.w} height={tile.rect.h} overflow="hidden">
             <rect width={tile.rect.w} height={tile.rect.h} rx={18} className="preview-tile" />
             {tile.texts.map((view, i) => !view.icon && <SceneText key={i} view={view} />)}
             {tile.bar && <rect {...{ x: tile.bar.x, y: tile.bar.y, width: tile.bar.w, height: tile.bar.h, rx: tile.bar.radius }} className="preview-active" />}
-          </g>)}
+          </svg>)}
           {preview && buildDots(g, preview.layout.pages.length, preview.index).map((dot, i) => <rect key={i} x={dot.x} y={dot.y} width={dot.w} height={dot.h} rx={dot.h / 2} className={dot.active ? 'preview-active' : 'preview-idle'} />)}
         </svg>
       </span>

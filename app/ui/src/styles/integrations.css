@@ -4,6 +4,9 @@
 }
 
 .integration-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 168px;
+  column-gap: var(--space-4);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -13,12 +16,22 @@
 }
 
 .integration {
+  grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 168px;
+  grid-template-columns: subgrid;
   align-items: center;
-  gap: var(--space-4);
   min-height: 84px;
   padding: var(--space-3) var(--space-5);
+}
+
+@media (max-width: 900px) {
+  .integrations {
+    padding-inline: var(--space-6);
+  }
+
+  .integration-list {
+    grid-template-columns: minmax(0, 1fr) auto 132px;
+  }
 }
 
 .integration + .integration {
@@ -283,7 +296,7 @@
 
 .detail-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-4);
 }
 
@@ -452,6 +465,7 @@
   padding: 10px var(--space-3);
   text-align: start;
   vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
 .usage-table th {
@@ -467,6 +481,23 @@
 
 .usage-table tbody tr.is-stale td {
   opacity: 0.6;
+}
+
+.usage-table .usage-account {
+  min-width: 160px;
+}
+
+.usage-table td:nth-child(2),
+.usage-table td:nth-child(3) {
+  min-width: 80px;
+}
+
+.usage-table td:nth-child(6) {
+  min-width: 132px;
+}
+
+.usage-table .status {
+  white-space: normal;
 }
 
 .usage-account code {
@@ -495,6 +526,7 @@
 }
 
 .meter {
+  display: block;
   width: 100%;
   min-width: 90px;
   height: 6px;

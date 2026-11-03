@@ -192,6 +192,8 @@ test('a title too wide for the screen stays on one line, cut with dots short of 
 test('characters outside the deck font are listed once', () => {
   assert.deepEqual(missingGlyphs('Café ☕ é'), ['é', '☕']);
   assert.deepEqual(missingGlyphs('Play/Pause 100°'), []);
+  assert.deepEqual(missingGlyphs('👩‍👩‍👧‍👦 Call mum'), ['👩‍👩‍👧‍👦']);
+  assert.deepEqual(missingGlyphs('Über'), ['Ü']);
 });
 
 test('colors widen from RGB565 the way a deck screenshot reads them', () => {
