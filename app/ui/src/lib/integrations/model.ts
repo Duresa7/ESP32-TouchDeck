@@ -15,6 +15,8 @@ interface IntegrationCopy {
 }
 
 const COPY: Partial<Record<string, IntegrationCopy>> = {
+  volume: { line: "Shows and sets this PC's volume.", fields: { enabled: { label: 'Turn on Volume' } } },
+  media: { line: "Shows what's playing on this PC, with play, pause and skip.", fields: { enabled: { label: 'Turn on Media' } } },
   custom: { line: 'Read values from HTTP or a command approved on this PC.', fields: { enabled: { label: 'Turn on Custom' }, sources: { label: 'Custom sources (JSON)', placeholder: '[]' } } },
   cliproxyapi: {
     line: "Shows how much of each AI account's limit is used, read from your CLIProxyAPI hub.",
@@ -283,10 +285,12 @@ export function parseAction(value: JsonValue): Action | null {
   return page.kind === 'grid' ? page.tiles[0].action : null;
 }
 
-/** How a Preset tile is drawn: a bar for a share, a graph for a count, or its value as text. */
-export type PresetLook = 'bar' | 'graph' | 'text';
+/** How a Preset tile is drawn: a bar for a share, a graph for a count, its value as text, or its renderer's look. */
+export type PresetLook = 'bar' | 'graph' | 'text' | 'level' | 'now-playing';
 
 export function presetLook(preset: PresetTile, streams: readonly DataStream[]): PresetLook {
+  if (preset.render === 'bar') return 'level';
+  if (preset.render === 'now-playing') return 'now-playing';
   const action = parseAction(preset.action);
   const stream = action?.type === 'widget' ? streams.find((s) => s.id === action.field) : undefined;
   if (stream?.unit === '%') return 'bar';

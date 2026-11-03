@@ -191,10 +191,16 @@ fn text_is_available_internally_without_device_presets() {
 
 struct Grant(Option<(String, Vec<String>)>);
 impl td_host::integrations::CommandApproval for Grant {
-    fn approved(&self, program: &str, args: &[String]) -> bool {
-        self.0
+    fn decision(&self, program: &str, args: &[String]) -> td_host::approval::CommandDecision {
+        if self
+            .0
             .as_ref()
             .is_some_and(|(p, a)| p == program && a.as_slice() == args)
+        {
+            td_host::approval::CommandDecision::Approved
+        } else {
+            td_host::approval::CommandDecision::Waiting
+        }
     }
 }
 #[test]
@@ -498,8 +504,12 @@ fn a_failing_source_backs_off_between_polls() {
 
 struct Answer(std::sync::atomic::AtomicBool);
 impl td_host::integrations::CommandApproval for Answer {
-    fn approved(&self, _: &str, _: &[String]) -> bool {
-        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    fn decision(&self, _: &str, _: &[String]) -> td_host::approval::CommandDecision {
+        if self.0.load(std::sync::atomic::Ordering::SeqCst) {
+            td_host::approval::CommandDecision::Approved
+        } else {
+            td_host::approval::CommandDecision::Waiting
+        }
     }
 }
 #[test]
@@ -523,4 +533,217 @@ fn waiting_for_approval_does_not_back_off_and_a_late_answer_runs_promptly() {
     answer.0.store(true, std::sync::atomic::Ordering::SeqCst);
     i.tick();
     assert_eq!(i.live()[0].value, td_core::live::LiveValue::Number(42.0));
+}
+
+struct ScriptedApproval {
+    decisions: std::sync::Mutex<
+        std::collections::BTreeMap<Vec<String>, td_host::approval::CommandDecision>,
+    >,
+    calls: std::sync::atomic::AtomicUsize,
+}
+impl ScriptedApproval {
+    fn new() -> Self {
+        Self {
+            decisions: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+    fn set(&self, args: &[&str], decision: td_host::approval::CommandDecision) {
+        self.decisions
+            .lock()
+            .unwrap()
+            .insert(args.iter().map(|s| (*s).to_owned()).collect(), decision);
+    }
+    fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+impl td_host::integrations::CommandApproval for ScriptedApproval {
+    fn decision(&self, _: &str, args: &[String]) -> td_host::approval::CommandDecision {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.decisions
+            .lock()
+            .unwrap()
+            .get(args)
+            .copied()
+            .unwrap_or(td_host::approval::CommandDecision::Waiting)
+    }
+}
+
+#[test]
+fn denied_and_expired_commands_report_their_state_stop_republishing_and_recover_on_new_requests() {
+    use std::time::Duration;
+    use td_host::approval::CommandDecision;
+    let dir = tempfile::tempdir().unwrap();
+    let program = fixture_program(dir.path());
+    let mut r = shared_registry(Arc::default());
+    let i = r.get("custom").unwrap();
+    let approval = Arc::new(ScriptedApproval::new());
+    approval.set(&["literal", "11"], CommandDecision::Waiting);
+    i.command_approval(approval.clone());
+    i.configure(serde_json::json!({
+        "enabled": true,
+        "sources": [{
+            "id": "load",
+            "name": "Load",
+            "interval_s": 60,
+            "kind": "number",
+            "input": {"type": "command", "program": program, "args": ["literal", "11"], "value_path": null}
+        }]
+    }))
+    .unwrap();
+
+    i.tick();
+    let waiting_rev = i.summary().revision;
+    assert_eq!(
+        i.summary().status.message.as_deref(),
+        Some("Waiting for approval on this PC.")
+    );
+    assert_eq!(approval.calls(), 1);
+
+    std::thread::sleep(Duration::from_millis(1100));
+    i.tick();
+    assert_eq!(approval.calls(), 2);
+    assert_eq!(i.summary().revision, waiting_rev);
+
+    approval.set(&["literal", "11"], CommandDecision::Denied);
+    std::thread::sleep(Duration::from_millis(1100));
+    i.tick();
+    let denied_rev = i.summary().revision;
+    assert_eq!(
+        i.summary().status.message.as_deref(),
+        Some("Denied on this PC.")
+    );
+    assert!(denied_rev > waiting_rev);
+    let denied_calls = approval.calls();
+
+    std::thread::sleep(Duration::from_millis(1100));
+    i.tick();
+    assert_eq!(approval.calls(), denied_calls);
+    assert_eq!(i.summary().revision, denied_rev);
+
+    approval.set(&["literal", "11"], CommandDecision::Waiting);
+    std::thread::sleep(Duration::from_millis(1100));
+    i.refresh();
+    let retry_rev = i.summary().revision;
+    assert_eq!(
+        i.summary().status.message.as_deref(),
+        Some("Waiting for approval on this PC.")
+    );
+    assert!(retry_rev > denied_rev);
+
+    approval.set(&["literal", "11"], CommandDecision::Approved);
+    std::thread::sleep(Duration::from_millis(1100));
+    i.tick();
+    let ok_rev = i.summary().revision;
+    assert_eq!(i.summary().status.state, "ok");
+    assert_eq!(i.summary().status.message, None);
+    assert!(ok_rev > retry_rev);
+    assert_eq!(i.live()[0].value, td_core::live::LiveValue::Number(11.0));
+
+    approval.set(&["literal", "11"], CommandDecision::Expired);
+    std::thread::sleep(Duration::from_millis(1100));
+    i.refresh();
+    let expired_rev = i.summary().revision;
+    assert_eq!(
+        i.summary().status.message.as_deref(),
+        Some("Approval expired.")
+    );
+    assert!(expired_rev > ok_rev);
+    let expired_calls = approval.calls();
+
+    std::thread::sleep(Duration::from_millis(1100));
+    i.tick();
+    assert_eq!(approval.calls(), expired_calls);
+    assert_eq!(i.summary().revision, expired_rev);
+
+    approval.set(&["literal", "29"], CommandDecision::Waiting);
+    i.configure(serde_json::json!({
+        "enabled": true,
+        "sources": [{
+            "id": "load",
+            "name": "Load",
+            "interval_s": 60,
+            "kind": "number",
+            "input": {"type": "command", "program": program, "args": ["literal", "29"], "value_path": null}
+        }]
+    }))
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(1100));
+    i.tick();
+    assert_eq!(
+        i.summary().status.message.as_deref(),
+        Some("Waiting for approval on this PC.")
+    );
+    approval.set(&["literal", "29"], CommandDecision::Approved);
+    std::thread::sleep(Duration::from_millis(1100));
+    i.tick();
+    assert_eq!(i.summary().status.state, "ok");
+    assert_eq!(i.summary().status.message, None);
+    assert_eq!(i.live()[0].value, td_core::live::LiveValue::Number(29.0));
+}
+
+#[test]
+fn corrupt_or_unreadable_custom_json_recovers_without_blocking_other_integrations() {
+    for bad in [
+        b"{not valid json".as_slice(),
+        br#"{"enabled":true,"sources":[],"unknown":1}"#.as_slice(),
+        br#"{"enabled":true,"sources":[{"id":"bad","name":"Bad","interval_s":0,"kind":"number","input":{"type":"http","url":"https://example.invalid/","value_path":"$.v"}}]}"#.as_slice(),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let sources_file = dir.path().join("sources.json");
+        let custom_file = dir.path().join("custom.json");
+        let aside_file = dir.path().join("custom.corrupt.json");
+        std::fs::write(&custom_file, bad).unwrap();
+
+        let mut r = Registry::new(Environment {
+            secrets: Arc::new(MemorySecrets::default()),
+            config_file: Some(sources_file),
+            fetch: Arc::new(|| Box::new(Reply("{}"))),
+        })
+        .expect("corrupt custom.json must not block Registry::new");
+
+        assert!(r.get("cliproxyapi").is_ok());
+        assert!(r.get("this_pc").is_ok());
+        assert!(!custom_file.exists());
+        assert_eq!(std::fs::read(&aside_file).unwrap(), bad);
+
+        let custom = r.get("custom").unwrap();
+        let view = custom.view().unwrap();
+        assert_eq!(view.config, serde_json::json!({"enabled": false, "sources": []}));
+        assert_eq!(view.summary.status.state, "error");
+        assert_eq!(
+            view.summary.status.message.as_deref(),
+            Some("Couldn't read custom.json. Kept it as custom.corrupt.json and started empty.")
+        );
+
+        let cleared = custom
+            .configure(serde_json::json!({"enabled": false, "sources": []}))
+            .unwrap();
+        assert_eq!(cleared.summary.status.state, "not_configured");
+        assert_eq!(cleared.summary.status.message, None);
+        assert!(custom_file.exists());
+        assert_eq!(std::fs::read(&aside_file).unwrap(), bad);
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let sources_file = dir.path().join("sources.json");
+    let unreadable_dir = dir.path().join("custom.json");
+    std::fs::create_dir(&unreadable_dir).unwrap();
+
+    let mut r = Registry::new(Environment {
+        secrets: Arc::new(MemorySecrets::default()),
+        config_file: Some(sources_file),
+        fetch: Arc::new(|| Box::new(Reply("{}"))),
+    })
+    .expect("unreadable custom.json must not block Registry::new");
+
+    assert!(r.get("cliproxyapi").is_ok());
+    assert!(unreadable_dir.is_dir());
+    let summary = r.get("custom").unwrap().summary();
+    assert_eq!(summary.status.state, "error");
+    assert_eq!(
+        summary.status.message.as_deref(),
+        Some("Couldn't read custom.json. Started empty.")
+    );
 }

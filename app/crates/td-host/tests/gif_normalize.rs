@@ -749,3 +749,78 @@ fn stops_at_the_next_frame_once_cancelled() {
     assert_eq!(result.unwrap_err(), GifError::Cancelled);
     assert_eq!(asked.get(), 3);
 }
+
+fn short_lzw(declared: u16, gif89: bool) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.extend_from_slice(if gif89 { b"GIF89a" } else { b"GIF87a" });
+    b.extend_from_slice(&declared.to_le_bytes());
+    b.extend_from_slice(&declared.to_le_bytes());
+    b.extend_from_slice(&[0x80, 0, 0]);
+    b.extend_from_slice(&[0, 0, 0, 255, 0, 0]);
+    b.extend_from_slice(&[0x21, 0xFF, 0x0B]);
+    b.extend_from_slice(b"NETSCAPE2.0");
+    b.extend_from_slice(&[0x03, 0x01, 0x00, 0x00, 0x00]);
+    b.extend_from_slice(&[0x21, 0xF9, 0x04, 0x04, 10, 0, 0, 0]);
+    b.push(0x2C);
+    b.extend_from_slice(&[0, 0, 0, 0]);
+    b.extend_from_slice(&declared.to_le_bytes());
+    b.extend_from_slice(&declared.to_le_bytes());
+    b.push(0);
+    b.push(2);
+    let bits: u32 = 4 | (1 << 3) | (5 << 6);
+    b.extend_from_slice(&[2, (bits & 0xFF) as u8, (bits >> 8) as u8, 0]);
+    b.push(0x3B);
+    b
+}
+
+#[test]
+fn short_lzw_streams_with_a_valid_end_code_are_refused() {
+    use td_host::gif_normalize::inspect_normalized;
+    let fit = Target {
+        width: 64,
+        height: 64,
+        fit: Fit::Contain,
+    };
+    let one = short_lzw(1, true);
+    let normalized = normalize_gif(&one, fit, &limits()).unwrap();
+    assert_eq!(
+        (normalized.width, normalized.height, normalized.frames),
+        (64, 64, 1)
+    );
+    let inspected = inspect_normalized(&one).unwrap();
+    assert_eq!(
+        (inspected.width, inspected.height, inspected.frames),
+        (1, 1, 1)
+    );
+
+    for gif89 in [true, false] {
+        for side in [4u16, 64, 4096] {
+            let truncated = short_lzw(side, gif89);
+            assert_eq!(
+                normalize_gif(&truncated, fit, &limits()).unwrap_err(),
+                GifError::Corrupt,
+                "side={side} gif89={gif89}"
+            );
+            if gif89 {
+                assert_eq!(
+                    inspect_normalized(&truncated).unwrap_err(),
+                    GifError::Corrupt,
+                    "inspect side={side}"
+                );
+            }
+        }
+    }
+
+    let single = short_lzw(4096, true);
+    let frame_start = single.iter().rposition(|&x| x == 0x21).unwrap();
+    let frame_bytes = &single[frame_start..single.len() - 1];
+    let mut many = single[..single.len() - 1].to_vec();
+    for _ in 0..299 {
+        many.extend_from_slice(frame_bytes);
+    }
+    many.push(0x3B);
+    assert_eq!(
+        normalize_gif(&many, fit, &limits()).unwrap_err(),
+        GifError::Corrupt
+    );
+}

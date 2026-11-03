@@ -19,6 +19,7 @@ struct Entry {
     expires: Instant,
     reserved: usize,
     bytes: Option<Vec<u8>>,
+    claimed: bool,
 }
 #[derive(Clone, Default)]
 pub(crate) struct Uploads(Arc<Mutex<HashMap<String, Entry>>>);
@@ -32,6 +33,31 @@ impl Drop for Reservation {
         if !self.committed {
             self.uploads.0.lock().remove(&self.id);
         }
+    }
+}
+pub(crate) struct UploadClaim {
+    uploads: Uploads,
+    id: String,
+    taken: bool,
+}
+impl Drop for UploadClaim {
+    fn drop(&mut self) {
+        if !self.taken
+            && let Some(entry) = self.uploads.0.lock().get_mut(&self.id)
+        {
+            entry.claimed = false;
+        }
+    }
+}
+impl UploadClaim {
+    pub(crate) fn take(mut self, now: Instant) -> Option<Vec<u8>> {
+        self.taken = true;
+        let mut entries = self.uploads.0.lock();
+        if entries.get(&self.id).is_none_or(|e| e.expires <= now) {
+            entries.remove(&self.id);
+            return None;
+        }
+        entries.remove(&self.id)?.bytes
     }
 }
 impl Uploads {
@@ -58,6 +84,7 @@ impl Uploads {
                 expires: now + Duration::from_secs(3600),
                 reserved: MAX,
                 bytes: None,
+                claimed: false,
             },
         );
         Ok(Reservation {
@@ -66,13 +93,21 @@ impl Uploads {
             committed: false,
         })
     }
-    pub(crate) fn take(&self, owner: &str, id: &str, now: Instant) -> Option<Vec<u8>> {
+    pub(crate) fn claim(&self, owner: &str, id: &str, now: Instant) -> Option<UploadClaim> {
         let mut entries = self.0.lock();
-        let entry = entries.get(id)?;
-        if entry.owner != owner || entry.expires <= now || entry.bytes.is_none() {
+        let entry = entries.get_mut(id)?;
+        if entry.owner != owner || entry.expires <= now || entry.bytes.is_none() || entry.claimed {
             return None;
         }
-        entries.remove(id)?.bytes
+        entry.claimed = true;
+        Some(UploadClaim {
+            uploads: self.clone(),
+            id: id.to_owned(),
+            taken: false,
+        })
+    }
+    pub(crate) fn take(&self, owner: &str, id: &str, now: Instant) -> Option<Vec<u8>> {
+        self.claim(owner, id, now)?.take(now)
     }
 }
 #[derive(Serialize, Deserialize, TS)]

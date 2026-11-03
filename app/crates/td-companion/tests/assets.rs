@@ -229,3 +229,142 @@ async fn catalog_search_and_render_jobs() {
     assert_eq!(done.state, JobState::Failed);
     assert_eq!(done.error.unwrap().code, "asset.render_failed");
 }
+
+struct PanicFetch;
+impl td_host::catalog::Fetcher for PanicFetch {
+    fn fetch(&self, _: &str) -> Result<Vec<u8>, td_host::catalog::Error> {
+        panic!("simulated catalog panic");
+    }
+}
+
+#[tokio::test]
+async fn a_panicking_render_job_fails_and_frees_its_slot() {
+    let td = TestCompanion::start_with_catalog(Default::default(), Box::new(PanicFetch)).await;
+    let panicking = |id: &str| {
+        serde_json::from_value::<CreateAsset>(
+            json!({"source": {"kind": "catalog", "catalog": "simple-icons", "id": id}}),
+        )
+        .unwrap()
+    };
+    for id in ["github", "gitlab"] {
+        let job = td.call::<Create>((), NoQuery, panicking(id)).await.unwrap();
+        let done = td.wait(&job).await;
+        assert_eq!(done.state, JobState::Failed, "{done:?}");
+        assert_eq!(done.error.unwrap().code, "internal");
+    }
+
+    let app_icon = || CreateAsset {
+        source: serde_json::from_value(json!({"kind": "app", "path": "/no/such/program"})).unwrap(),
+        fit: None,
+    };
+    td.hold_jobs();
+    let first = td.call::<Create>((), NoQuery, app_icon()).await.unwrap();
+    let second = td.call::<Create>((), NoQuery, app_icon()).await.unwrap();
+    td.release_jobs();
+    for job in [first, second] {
+        assert_eq!(td.wait(&job).await.state, JobState::Failed);
+    }
+}
+
+fn png_color(rgb: [u8; 3]) -> Vec<u8> {
+    let image = image::RgbaImage::from_pixel(64, 64, image::Rgba([rgb[0], rgb[1], rgb[2], 255]));
+    let mut out = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+async fn render_png(td: &TestCompanion, rgb: [u8; 3]) -> td_companion::jobs::Job {
+    let uploaded: Value = td
+        .raw()
+        .post("/api/v1/uploads")
+        .bearer_auth(&td.token)
+        .header("content-type", "image/png")
+        .body(png_color(rgb))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let body: CreateAsset = serde_json::from_value(
+        json!({"source": {"kind": "upload", "upload": uploaded["id"]}, "fit": "contain"}),
+    )
+    .unwrap();
+    let job = td.call::<Create>((), NoQuery, body).await.unwrap();
+    td.wait(&job).await
+}
+
+#[tokio::test]
+async fn a_running_layout_push_pins_its_assets_against_a_sweep() {
+    let td = TestCompanion::start_with(td_companion::Limits {
+        asset_store_bytes: td_host::icon_pack::FILE_BYTES as u64,
+        ..Default::default()
+    })
+    .await;
+    let _events = td.events().await;
+    let device = td.plug_device("mock0001").await;
+
+    let first = render_png(&td, [255, 0, 0]).await;
+    assert_eq!(first.state, JobState::Succeeded, "{first:?}");
+    let pinned_id = first.result.unwrap()["id"].as_str().unwrap().to_owned();
+
+    let layout: Layout = serde_json::from_value(json!({
+        "schema": 2,
+        "name": "Pinned",
+        "orientation": "landscape",
+        "pages": [{
+            "id": "main",
+            "title": "Main",
+            "kind": "grid",
+            "rows": 1,
+            "cols": 1,
+            "tiles": [{
+                "id": "t0",
+                "label": "Pinned",
+                "row": 0,
+                "col": 0,
+                "rowSpan": 1,
+                "colSpan": 1,
+                "icon": null,
+                "asset": format!("sha256:{pinned_id}"),
+                "action": {"type": "none"}
+            }]
+        }]
+    }))
+    .unwrap();
+
+    let before = td.deck(&device).received().len();
+    td.deck(&device)
+        .delay_replies(std::time::Duration::from_millis(800));
+    let push_job = td
+        .call::<Push>(
+            LayoutPath {
+                device: device.to_string(),
+                orientation: Orientation::Landscape,
+            },
+            NoQuery,
+            LayoutBody::new(&layout),
+        )
+        .await
+        .unwrap();
+    td.until(|td| {
+        td.deck(&device).received()[before..]
+            .iter()
+            .any(|m| m["m"] == "icon.list")
+    })
+    .await;
+    td.clock()
+        .advance(std::time::Duration::from_secs(2 * 60 * 60));
+
+    let contender = render_png(&td, [0, 0, 255]).await;
+    td.deck(&device).delay_replies(std::time::Duration::ZERO);
+
+    assert_eq!(contender.state, JobState::Failed, "{contender:?}");
+    assert_eq!(contender.error.unwrap().code, "asset.store_full");
+
+    let pushed = td.wait(&push_job).await;
+    assert_eq!(pushed.state, JobState::Succeeded, "{pushed:?}");
+    assert!(td.deck(&device).assets().contains_key(&pinned_id));
+}

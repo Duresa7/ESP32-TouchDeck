@@ -5,6 +5,7 @@ import { test } from 'vitest';
 import { parseLayout, type GridPage, type Page } from '../editor/validate.ts';
 import { geometry, screenSize, tileRect } from './geometry.ts';
 import { graphPoints } from './graph.ts';
+import { BAR, barLayout, nowPlayingLayout } from './live-tiles.ts';
 import { buildDots, buildPage, buildTitle, fitLabel, FONTS, missingGlyphs, sampleRows, sampleSeries, sampleWidget, type GraphSample } from './scene.ts';
 import { layoutLabel } from './text.ts';
 import { panelColor, THEME } from './theme.ts';
@@ -205,4 +206,78 @@ test('a GIF tile shows its GIF in the middle of the whole tile, with no label or
   assert.deepEqual(gif.texts, []);
   assert.equal(gif.image, null);
   assert.deepEqual(gif.gif, { id: 'a'.repeat(64), w: gif.rect.w, h: gif.rect.h });
+});
+
+const media = () => buildPage(load('media.json').pages[0], landscape, {
+  level: (tile) => (tile.id === 'volume' ? { value: 0.64, muted: false, stale: false } : null),
+  nowPlaying: () => ({ title: 'Night Drive', artist: 'Tidal Lines', state: 2, stale: false }),
+});
+const tileOf = (page: ReturnType<typeof media>, id: string) => page.tiles.find((t) => t.id === id)!;
+
+test('a bar Tile draws its speaker, label and level over a track as wide as the reading', () => {
+  const volume = tileOf(media(), 'volume');
+  const { track, glyph } = barLayout(volume.rect.w, volume.rect.h, true);
+  assert.deepEqual(volume.level?.track, { ...track, radius: THEME.level.trackRadius });
+  assert.deepEqual(volume.level?.glyph, { ...glyph, muted: false });
+  assert.equal(volume.level?.fill, Math.round(0.64 * track.w));
+  assert.equal(volume.level?.value.text, '64');
+  assert.equal(volume.level?.label.text, 'Volume');
+  assert.equal(volume.level?.label.x, glyph.x + glyph.w + THEME.level.gap);
+  assert.equal(volume.level?.value.x + volume.level!.value.w, volume.rect.w - BAR.pad);
+  assert.deepEqual([volume.level?.stale, volume.level?.muted, volume.level?.input], [false, false, true]);
+  assert.deepEqual([volume.texts, volume.bar, volume.graph, volume.nowPlaying], [[], null, null, null]);
+});
+
+test('a muted bar shows the mute glyph and greys its fill, and only a bar that declares muted can show it', () => {
+  const muted = buildPage(load('media.json').pages[0], landscape, { level: () => ({ value: 0.3, muted: true, stale: false }) });
+  assert.deepEqual([tileOf(muted, 'volume').level?.muted, tileOf(muted, 'volume').level?.glyph.muted], [true, true]);
+  assert.deepEqual([tileOf(muted, 'level').level?.muted, tileOf(muted, 'level').level?.glyph.muted, tileOf(muted, 'level').level?.input], [false, false, false]);
+});
+
+test('a bar with no value shows the unavailable marker and an empty track, and a stale one keeps its fill', () => {
+  const unset = tileOf(media(), 'level').level;
+  assert.deepEqual([unset?.value.text, unset?.fill, unset?.stale], ['--', 0, true]);
+  const stale = tileOf(buildPage(load('media.json').pages[0], landscape, { level: () => ({ value: 0.5, muted: false, stale: true }) }), 'volume').level;
+  assert.deepEqual([stale?.value.text, stale?.fill, stale?.stale], ['--', Math.round(0.5 * stale!.track.w), true]);
+  const over = tileOf(buildPage(load('media.json').pages[0], landscape, { level: () => ({ value: 3, muted: false, stale: false }) }), 'volume').level;
+  assert.deepEqual([over?.value.text, over?.fill], ['100', over?.track.w]);
+});
+
+test('a now-playing Tile draws its cover box, title and artist in the text column, and the controls in their zones', () => {
+  const playing = tileOf(media(), 'playing');
+  const layout = nowPlayingLayout(playing.rect.w, playing.rect.h);
+  const view = playing.nowPlaying!;
+  assert.deepEqual(view.art, layout.art);
+  assert.deepEqual([view.title.text, view.title.x, view.title.w, view.title.idle], ['Night Drive', layout.text.x, layout.text.w, false]);
+  assert.deepEqual([view.artist?.text, view.artist?.x, view.artist?.w], ['Tidal Lines', layout.text.x, layout.text.w]);
+  assert.ok(view.artist!.y >= view.title.y + view.title.h);
+  assert.ok(view.artist!.y + view.artist!.h <= layout.parts[0].y);
+  assert.deepEqual(view.controls, layout.parts.map((zone, i) => ({ ...zone, glyph: (['prev', 'pause', 'next'] as const)[i] })));
+  const paused = buildPage(load('media.json').pages[0], landscape, { nowPlaying: () => ({ title: 'A', artist: 'B', state: 1, stale: false }) });
+  assert.deepEqual(tileOf(paused, 'playing').nowPlaying?.controls.map((c) => c.glyph), ['prev', 'play', 'next']);
+});
+
+test('a now-playing Tile shows the title and artist as the Companion fits them for the Device', () => {
+  const page = buildPage(load('media.json').pages[0], landscape, {
+    nowPlaying: () => ({ title: '\u0141o\u0301dz\u0301\tLive', artist: '\u200bSi\u0219  Band\u2009', state: 2, stale: false }),
+  });
+  const view = tileOf(page, 'playing').nowPlaying!;
+  assert.deepEqual([view.title.text, view.artist?.text], ['L\u00f3dz Live', 'Sis Band']);
+});
+
+test('with nothing playing a now-playing Tile says so, with no artist and no controls', () => {
+  const idle = buildPage(load('media.json').pages[0], landscape, { nowPlaying: () => ({ title: 'ignored', artist: 'ignored', state: 0, stale: false }) });
+  const view = tileOf(idle, 'playing').nowPlaying!;
+  assert.deepEqual([view.title.text, view.title.idle, view.artist, view.controls, view.idle], ['Nothing playing', true, null, [], true]);
+  assert.deepEqual(view.art, nowPlayingLayout(tileOf(idle, 'playing').rect.w, tileOf(idle, 'playing').rect.h).art);
+});
+
+test('a now-playing Tile too small for the controls row draws none, and one with no values shows the unavailable marker', () => {
+  const small: Page = { ...gridPage(load('media.json').pages[0]), rows: 8, cols: 4 };
+  const page = buildPage(small, landscape, { nowPlaying: () => ({ title: 'Night Drive', artist: 'Tidal Lines', state: 2, stale: false }) });
+  const playing = tileOf(page, 'playing');
+  assert.equal(nowPlayingLayout(playing.rect.w, playing.rect.h).controls, false);
+  assert.deepEqual(playing.nowPlaying?.controls, []);
+  const unset = tileOf(buildPage(load('media.json').pages[0], landscape), 'playing').nowPlaying!;
+  assert.deepEqual([unset.title.text, unset.artist, unset.controls, unset.stale], ['--', null, [], true]);
 });
