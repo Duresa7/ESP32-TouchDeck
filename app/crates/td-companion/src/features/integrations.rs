@@ -17,6 +17,7 @@ pub struct Service(
     Arc<Mutex<Result<Registry, Error>>>,
     Arc<Mutex<Vec<IntegrationSummary>>>,
     Arc<Pending>,
+    #[cfg(any(test, feature = "test-hooks"))] Option<td_host::integrations::media::fake::FakeMedia>,
 );
 type Pending = Mutex<HashMap<(String, String), Delivery>>;
 impl Service {
@@ -28,8 +29,12 @@ impl Service {
         }
     }
     pub fn new(mock: bool, events: Events) -> Self {
+        let media = mock.then(td_host::integrations::media::fake::FakeMedia::default);
         let service = Self(
             Arc::new(Mutex::new(Registry::new(Environment {
+                media_provider: media.as_ref().map(|fake| {
+                    Arc::new(fake.clone()) as Arc<dyn td_host::integrations::media::MediaProvider>
+                }),
                 secrets: if mock {
                     Arc::new(MemorySecrets::default())
                 } else {
@@ -44,6 +49,8 @@ impl Service {
             }))),
             Arc::new(Mutex::new(Vec::new())),
             Arc::default(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            media,
         );
         if let Ok(registry) = service.0.lock().unwrap().as_ref() {
             *service.1.lock().unwrap() = registry.list();
@@ -71,6 +78,10 @@ impl Service {
     }
     pub fn summaries(&self) -> Vec<IntegrationSummary> {
         self.1.lock().unwrap().clone()
+    }
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn media_fake(&self) -> Option<td_host::integrations::media::fake::FakeMedia> {
+        self.3.clone()
     }
     /// The newest samples of the wanted streams. None while an Integration is busy, such as during a poll.
     pub fn live(&self, wanted: &BTreeSet<StreamKey>) -> Option<HashMap<StreamKey, LiveSample>> {
