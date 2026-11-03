@@ -330,8 +330,8 @@ Motion gives feedback and shows where things come from. It never decorates. Anim
 | Update label out | opacity | `--duration-label-out` 140ms | `--ease-out` |
 | Switch thumb | `translate` | `--duration-switch` 180ms | `--ease-out` |
 | Device panel chevron | `rotate(180deg)` | `--duration-chevron` 180ms | `--ease-out` |
-| A Device's screen lights up as it connects, on Home and in setup | opacity of the screen from `--screen-offline-opacity`, and of its light spill in dark | `--duration-light` 240ms; dims in `--duration-exit` | `--ease-out` |
-| A dropped Tile settles into its cell | `transform` | `--duration-settle` 160ms | `--ease-out` |
+| A Device's screen lights up as it connects, on Home and in setup | opacity of the screen from `--screen-offline-opacity`, and of its light spill in dark | `--duration-screen-light` 240ms; dims in `--duration-exit` | `--ease-out` |
+| A dropped Tile settles into its cell | `transform` | `--duration-tile-settle` 160ms | `--ease-out` |
 | Download progress | `scaleX` | `--duration-progress` 120ms | `--ease-progress` (`linear`) |
 | Theme change | background, color | `--duration-theme` 240ms | `--ease-color` |
 

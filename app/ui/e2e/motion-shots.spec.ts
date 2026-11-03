@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { cellPoint, importText, openLayout, placeOf, swipe, tile, waitEvent } from './layout-helpers.ts';
 
-const folder = process.env.TD_SHOTS;
+const folder = process.env.TD_SHOTS ?? '';
 const devText = readFileSync(join(import.meta.dirname, '..', '..', '..', 'schema', 'examples', 'dev.json'), 'utf8');
 const AT_VISIBLE_ICON = { position: { x: 22, y: 22 } };
 const nav = (page: Page) => page.getByRole('navigation', { name: 'Main' });
@@ -12,10 +12,9 @@ const navButton = (page: Page, name: string) => nav(page).getByRole('button', { 
 test.skip(!folder, 'set TD_SHOTS to a folder to film each animation');
 
 async function shoot(page: Page, name: string) {
-  await page.screenshot({ path: join(folder!, `${name}.png`) });
+  await page.screenshot({ path: join(folder, `${name}.png`) });
 }
 
-/** Films the transitions `act` starts: before, a third and two thirds of the way, and after. */
 async function film(page: Page, name: string, act: () => Promise<void>) {
   await page.evaluate(() => document.fonts.ready);
   await shoot(page, `${name}-1-before`);

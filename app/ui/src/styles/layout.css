@@ -870,7 +870,7 @@
   outline: none;
   cursor: pointer;
   touch-action: none;
-  transition: transform var(--duration-settle) var(--ease-out);
+  transition: transform var(--duration-tile-settle) var(--ease-out);
 }
 
 /* The Tile's face clips its label and icon to its corners, as the Device does; the corner dot sits outside it */

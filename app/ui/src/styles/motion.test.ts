@@ -6,7 +6,7 @@ const src = join(import.meta.dirname, '..');
 const sheets = readdirSync(src, { recursive: true, encoding: 'utf8' })
   .filter((file) => file.endsWith('.css'))
   .map((file) => ({ file: file.split(sep).join('/'), text: readFileSync(join(src, file), 'utf8') }));
-const tokens = sheets.find((sheet) => sheet.file === 'styles/tokens.css')!.text;
+const tokens = readFileSync(join(import.meta.dirname, 'tokens.css'), 'utf8');
 const components = sheets.filter((sheet) => sheet.file !== 'styles/tokens.css');
 
 const transitions = (text: string) => [...text.matchAll(/\btransition(?:-duration|-delay|-timing-function)?\s*:\s*([^;}]+)/g)].map((m) => m[1].trim());
@@ -41,11 +41,11 @@ describe('motion tokens', () => {
 
   it('remove movement under reduced motion and keep the fades', () => {
     for (const scale of ['--press-scale', '--press-scale-device', '--enter-scale', '--enter-scale-tooltip']) expect(reducedValue(scale), scale).toBe('1');
-    for (const duration of ['--duration-lift', '--duration-chevron', '--duration-switch', '--duration-expand', '--duration-collapse', '--duration-label', '--duration-label-out', '--delay-label', '--duration-settle', '--duration-progress']) {
+    for (const duration of ['--duration-lift', '--duration-chevron', '--duration-switch', '--duration-expand', '--duration-collapse', '--duration-label', '--duration-label-out', '--delay-label', '--duration-tile-settle', '--duration-progress']) {
       expect(reducedValue(duration), duration).toBe('0ms');
     }
     expect(reducedValue('--duration-popover')).toBe('120ms');
     expect(reducedValue('--duration-dialog')).toBe('140ms');
-    for (const fade of ['--duration-light', '--duration-tooltip', '--duration-exit', '--duration-hover', '--duration-theme']) expect(reducedValue(fade), fade).toBeUndefined();
+    for (const fade of ['--duration-screen-light', '--duration-tooltip', '--duration-exit', '--duration-hover', '--duration-theme']) expect(reducedValue(fade), fade).toBeUndefined();
   });
 });

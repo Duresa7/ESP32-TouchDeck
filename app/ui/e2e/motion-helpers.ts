@@ -1,6 +1,5 @@
 import { expect, type Page } from '@playwright/test';
 
-/** What a probe reads from an element's computed style on each frame. */
 export type Reading = 'opacity' | 'scale' | 'rotate' | 'translate-x' | 'matrix-a' | 'matrix-x' | 'matrix-y' | 'visible-width';
 
 export interface Probe {
@@ -70,6 +69,10 @@ export async function trace(page: Page, probes: Probe[]) {
           return matrix(style.transform)[5];
         case 'visible-width':
           return visibleWidth(el, style.clipPath);
+        default: {
+          const unknown: never = probe.reading;
+          return unknown;
+        }
       }
     };
     const state = { series: probes.map(() => [] as number[]), running: true };
@@ -87,7 +90,8 @@ export async function trace(page: Page, probes: Probe[]) {
   return {
     stop: () =>
       page.evaluate(() => {
-        const state = window.motionTrace!;
+        const state = window.motionTrace;
+        if (!state) throw new Error('No trace is running.');
         state.running = false;
         return state.series;
       }),
@@ -105,7 +109,7 @@ const progressOf = (values: number[], rest: number, goal: number) => values.map(
 const between = (p: number, low: number, high: number) => p > low + 0.01 && p < high - 0.01;
 
 /** The series left `rest`, went part way toward `goal`, and came back to `rest` through the values in between. */
-export function expectTurnedBack(values: number[], rest: number, goal: number, { removed = false } = {}) {
+export function expectTurnedBack(values: number[], { rest, goal, removed = false }: { rest: number; goal: number; removed?: boolean }) {
   const progress = progressOf(values, rest, goal);
   const peak = Math.max(...progress);
   const turn = progress.indexOf(peak);
@@ -113,20 +117,25 @@ export function expectTurnedBack(values: number[], rest: number, goal: number, {
   expect(peak, `turned back before arriving: ${values.join(' ')}`).toBeLessThan(0.99);
   const back = progress.slice(turn + 1);
   expect(back.filter((p) => between(p, 0, peak)).length, `came back without a jump: ${values.join(' ')}`).toBeGreaterThanOrEqual(2);
-  expect(Math.abs(progress.at(-1)!), `ended at rest: ${values.join(' ')}`).toBeLessThan(removed ? 0.15 : 0.001);
+  expect(Math.abs(progress[progress.length - 1]), `ended at rest: ${values.join(' ')}`).toBeLessThan(removed ? 0.15 : 0.001);
 }
 
 /** The series went from `rest` to `goal` through the values in between. */
-export function expectArrived(values: number[], rest: number, goal: number) {
+export function expectArrived(values: number[], { rest, goal }: { rest: number; goal: number }) {
   const progress = progressOf(values, rest, goal);
   expect(progress.filter((p) => between(p, 0, 1)).length, `moved through values in between: ${values.join(' ')}`).toBeGreaterThanOrEqual(2);
-  expect(Math.abs(progress.at(-1)! - 1), `arrived: ${values.join(' ')}`).toBeLessThan(0.001);
+  expect(Math.abs(progress[progress.length - 1] - 1), `arrived: ${values.join(' ')}`).toBeLessThan(0.001);
 }
 
-/** The series only ever held `a` or `b`: it jumped between them with nothing in between. */
-export function expectJumped(values: number[], a: number, b: number) {
+/** The series only ever held one of `ends`: it jumped between them with nothing in between. */
+export function expectJumped(values: number[], ends: [number, number]) {
   expect(values.length).toBeGreaterThan(0);
-  expect(values.filter((v) => Math.abs(v - a) > 0.001 && Math.abs(v - b) > 0.001), `jumped: ${values.join(' ')}`).toEqual([]);
+  expect(values.filter((v) => ends.every((end) => Math.abs(v - end) > 0.001)), `jumped: ${values.join(' ')}`).toEqual([]);
+}
+
+/** The series never left `value`. */
+export function expectHeld(values: number[], value: number) {
+  expectJumped(values, [value, value]);
 }
 
 /** Records the time of every animation frame, and every long animation frame (50ms or more), until `stop()`. */
@@ -151,7 +160,8 @@ export async function frames(page: Page) {
   return {
     stop: () =>
       page.evaluate(() => {
-        const state = window.frameTrace!;
+        const state = window.frameTrace;
+        if (!state) throw new Error('No frame trace is running.');
         state.running = false;
         return { stamps: state.stamps, long: state.long };
       }),

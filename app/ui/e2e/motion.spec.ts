@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { cellPoint, importText, openLayout, placeOf, swipe, tile, waitEvent } from './layout-helpers.ts';
-import { droppedFrames, expectArrived, expectJumped, expectTurnedBack, frames, longestGap, slowMotion, trace } from './motion-helpers.ts';
+import { droppedFrames, expectArrived, expectHeld, expectJumped, expectTurnedBack, frames, longestGap, slowMotion, trace } from './motion-helpers.ts';
 
 const nav = (page: Page) => page.getByRole('navigation', { name: 'Main' });
 const navButton = (page: Page, name: string) => nav(page).getByRole('button', { name, exact: true });
@@ -10,6 +10,12 @@ const settings = (page: Page) => page.getByRole('dialog', { name: 'Settings' });
 const AT_VISIBLE_ICON = { position: { x: 22, y: 22 } };
 const devText = readFileSync(join(import.meta.dirname, '..', '..', '..', 'schema', 'examples', 'dev.json'), 'utf8');
 const AWAY = { x: 600, y: 300 };
+
+async function widthOf(locator: Locator) {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error('The element is not on screen.');
+  return box.width;
+}
 
 async function home(page: Page, query = '') {
   await page.goto(`/${query}`);
@@ -46,8 +52,8 @@ test.describe('with motion', () => {
     const [opened] = await opening.stop();
     await icon.hover(AT_VISIBLE_ICON);
     await page.waitForTimeout(3500);
-    const open = (await icon.boundingBox())!.width + 4;
-    expectTurnedBack(opened, 44, open);
+    const open = (await widthOf(icon)) + 4;
+    expectTurnedBack(opened, { rest: 44, goal: open });
     await expect(page.locator('.update-label')).toHaveCSS('opacity', '1');
 
     const closing = await trace(page, [{ selector: '.update-button', reading: 'visible-width' }]);
@@ -56,7 +62,7 @@ test.describe('with motion', () => {
     await icon.hover(AT_VISIBLE_ICON);
     await page.waitForTimeout(3500);
     const [closed] = await closing.stop();
-    expectTurnedBack(closed, open, 44);
+    expectTurnedBack(closed, { rest: open, goal: 44 });
   });
 
   test('Escape mid-open shrinks Settings away from where it is, then it opens fully', async ({ page }) => {
@@ -68,8 +74,8 @@ test.describe('with motion', () => {
     await page.keyboard.press('Escape');
     await expect(settings(page)).toHaveCount(0, { timeout: 5000 });
     const [scale, opacity] = await leaving.stop();
-    expectTurnedBack(scale, 0.97, 1, { removed: true });
-    expectTurnedBack(opacity, 0, 1, { removed: true });
+    expectTurnedBack(scale, { rest: 0.97, goal: 1, removed: true });
+    expectTurnedBack(opacity, { rest: 0, goal: 1, removed: true });
     await expect(navButton(page, 'Settings')).toBeFocused();
 
     const entering = await trace(page, [{ selector: '.dialog-settings', reading: 'scale' }]);
@@ -77,7 +83,7 @@ test.describe('with motion', () => {
     await expect(settings(page)).toHaveCSS('scale', 'none', { timeout: 5000 });
     await expect(settings(page)).toHaveCSS('opacity', '1');
     const [grown] = await entering.stop();
-    expectArrived(grown, 0.97, 1);
+    expectArrived(grown, { rest: 0.97, goal: 1 });
   });
 
   test('a second click mid-open closes the Device panel from where it is, and its chevron turns back', async ({ page }) => {
@@ -95,8 +101,8 @@ test.describe('with motion', () => {
     await expect(panel).toHaveCount(0, { timeout: 5000 });
     await page.waitForTimeout(500);
     const [scale, rotate] = await toggled.stop();
-    expectTurnedBack(scale, 0.97, 1, { removed: true });
-    expectTurnedBack(rotate, 0, 180);
+    expectTurnedBack(scale, { rest: 0.97, goal: 1, removed: true });
+    expectTurnedBack(rotate, { rest: 0, goal: 180 });
 
     await name.click();
     await expect(panel).toHaveCSS('scale', 'none', { timeout: 5000 });
@@ -114,7 +120,7 @@ test.describe('with motion', () => {
     await page.mouse.move(AWAY.x, AWAY.y);
     await expect(page.locator('.tooltip')).toHaveCount(0, { timeout: 5000 });
     const [scale] = await shown.stop();
-    expectTurnedBack(scale, 0.96, 1, { removed: true });
+    expectTurnedBack(scale, { rest: 0.96, goal: 1, removed: true });
 
     await navButton(page, 'Layout').hover();
     await expect(page.locator('.tooltip')).toHaveText('Layout');
@@ -138,8 +144,8 @@ test.describe('with motion', () => {
     await page.mouse.move(AWAY.x, 20);
     await page.waitForTimeout(2500);
     const [lift, shadow] = await lifted.stop();
-    expectTurnedBack(lift, 0, -2);
-    expectTurnedBack(shadow, 0, 1);
+    expectTurnedBack(lift, { rest: 0, goal: -2 });
+    expectTurnedBack(shadow, { rest: 0, goal: 1 });
 
     await page.locator('.device-hit').hover();
     await expect(bezel).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, -2)', { timeout: 5000 });
@@ -167,7 +173,7 @@ test.describe('with motion', () => {
     await page.mouse.up();
     await page.waitForTimeout(2000);
     const [scale] = await pressed.stop();
-    expectTurnedBack(scale, 1, 0.985);
+    expectTurnedBack(scale, { rest: 1, goal: 0.985 });
   });
 
   test("a Device's screen lights up as it connects and dims as it goes, turning back from where it is", async ({ page }) => {
@@ -190,8 +196,8 @@ test.describe('with motion', () => {
     await demo(page).offline('mock0001');
     await page.waitForTimeout(2500);
     const [screen, light] = await lit.stop();
-    expectTurnedBack(screen, 0.7, 1);
-    expectTurnedBack(light, 0, 0.32);
+    expectTurnedBack(screen, { rest: 0.7, goal: 1 });
+    expectTurnedBack(light, { rest: 0, goal: 0.32 });
 
     await demo(page).connect('mock0001');
     await expect(scene).toHaveCSS('opacity', '1', { timeout: 5000 });
@@ -208,7 +214,7 @@ test.describe('with motion', () => {
     await toggle.click();
     await page.waitForTimeout(2500);
     const [thumb] = await slid.stop();
-    expectTurnedBack(thumb, 0, 14);
+    expectTurnedBack(thumb, { rest: 0, goal: 14 });
     await expect(toggle).not.toHaveAttribute('data-checked');
   });
 
@@ -241,8 +247,9 @@ test.describe('with motion', () => {
     await page.waitForTimeout(2500);
     const [x] = await settled.stop();
     expect(await placeOf(page, 'f5')).toMatchObject(free);
-    const dropped = x.find((v) => v > 1)!;
-    expectArrived(x.slice(x.indexOf(dropped)), dropped, 0);
+    const dropped = x.findIndex((v) => v > 1);
+    expect(dropped).toBeGreaterThanOrEqual(0);
+    expectArrived(x.slice(dropped), { rest: x[dropped], goal: 0 });
     await expect(tile(page, 'f5')).toHaveCSS('transform', 'none');
   });
 
@@ -265,9 +272,9 @@ test.describe('with motion', () => {
     await expect(preview).not.toHaveAttribute('data-sliding');
     const [x] = await sliding.stop();
     expect(x.length).toBeGreaterThan(0);
-    const width = Math.round(-x.at(-1)!);
+    const width = Math.round(-x[x.length - 1]);
     expect(width).toBeGreaterThan(0);
-    expectArrived(x.slice(x.findIndex((v) => v < -1)), 0, -width);
+    expectArrived(x.slice(x.findIndex((v) => v < -1)), { rest: 0, goal: -width });
 
     await swipe(page, 300);
     await expect(preview).toHaveAttribute('data-page', 'shortcuts');
@@ -334,8 +341,8 @@ test.describe('with reduced motion', () => {
     await expect(settings(page)).toHaveCSS('opacity', '1');
     await page.waitForTimeout(100);
     const [scale, opacity] = await opened.stop();
-    expectJumped(scale, 1, 1);
-    expectArrived(opacity, 0, 1);
+    expectHeld(scale, 1);
+    expectArrived(opacity, { rest: 0, goal: 1 });
     await expect(page.locator('.dialog-settings')).toHaveCSS('transition-duration', '0.14s, 0.14s');
   });
 
@@ -349,8 +356,8 @@ test.describe('with reduced motion', () => {
     await expect(page.getByTestId('device-panel')).toHaveCSS('opacity', '1');
     await page.waitForTimeout(100);
     const [scale, rotate] = await opened.stop();
-    expectJumped(scale, 1, 1);
-    expectJumped(rotate, 0, 180);
+    expectHeld(scale, 1);
+    expectJumped(rotate, [0, 180]);
     expect(rotate.at(-1)).toBe(180);
   });
 
@@ -360,7 +367,7 @@ test.describe('with reduced motion', () => {
     await navButton(page, 'Home').hover();
     await expect(page.locator('.tooltip')).toHaveCSS('opacity', '1');
     const [scale] = await shown.stop();
-    expectJumped(scale, 1, 1);
+    expectHeld(scale, 1);
   });
 
   test('the Update icon jumps open and shut', async ({ page }) => {
@@ -374,7 +381,7 @@ test.describe('with reduced motion', () => {
     await expect(page.locator('.update-slot')).not.toHaveClass(/is-expanded/);
     await page.waitForTimeout(100);
     const [width] = await opened.stop();
-    expectJumped(width, 44, (await icon.boundingBox())!.width + 4);
+    expectJumped(width, [44, (await widthOf(icon)) + 4]);
     await expect(page.locator('.update-label')).toHaveCSS('transition-duration', '0s');
   });
 
@@ -390,8 +397,8 @@ test.describe('with reduced motion', () => {
     await page.mouse.move(AWAY.x, 20);
     await page.mouse.up();
     const [lift, press] = await watched.stop();
-    expectJumped(lift, 0, 0);
-    expectJumped(press, 1, 1);
+    expectHeld(lift, 0);
+    expectHeld(press, 1);
   });
 
   test("a Device's screen still fades as it connects", async ({ page }) => {
@@ -402,7 +409,7 @@ test.describe('with reduced motion', () => {
     await demo(page).connect('mock0001');
     await expect(page.locator('.device-scene')).toHaveCSS('opacity', '1');
     const [screen] = await lit.stop();
-    expectArrived(screen, 0.7, 1);
+    expectArrived(screen, { rest: 0.7, goal: 1 });
   });
 
   test('a switch thumb and a dropped Tile jump to their end state', async ({ page }) => {
@@ -413,7 +420,7 @@ test.describe('with reduced motion', () => {
     await expect(toggle).toHaveAttribute('data-checked');
     await page.waitForTimeout(100);
     const [thumb] = await slid.stop();
-    expectJumped(thumb, 0, 14);
+    expectJumped(thumb, [0, 14]);
     await expect(tile(page, 'f5')).toHaveCSS('transition-duration', '0s');
   });
 
