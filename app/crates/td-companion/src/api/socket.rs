@@ -340,3 +340,31 @@ fn subscribe(subscriber: &Subscriber, text: &str) {
         _ => {}
     }
 }
+
+#[cfg(test)]
+mod delivery_review_tests {
+    use super::*;
+    #[test]
+    fn review_delivery_error_reaches_event_stream() {
+        let events = Events::default();
+        let subscriber = events.subscribe();
+        let service = crate::features::integrations::Service::new(true, events);
+        let message = "The Device is out of space for cover art. Remove unused Assets, then retry.";
+        service.delivered(
+            "this_pc",
+            td_host::integrations::Delivery {
+                device: "mock0001".into(),
+                sent: 0,
+                error: Some(message.into()),
+            },
+        );
+        assert!(
+            subscriber
+                .queue
+                .lock()
+                .frames
+                .iter()
+                .any(|(frame, _)| frame.to_string().contains(message))
+        );
+    }
+}

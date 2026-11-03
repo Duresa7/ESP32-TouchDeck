@@ -68,7 +68,7 @@ describe('adding a GIF Tile', () => {
     expect(tile(id)).toMatchObject({ render: 'gif', icon: null });
     expect(assetOf(tile(id))).toMatch(/^[0-9a-f]{64}$/);
     expect(layout().schema).toBe(2);
-    expect(gifSources()).toEqual([{ kind: 'gif', upload: expect.any(String), device: 'mock0001', target: { width: 230, height: 224, background: [24, 32, 49] } }]);
+    expect(gifSources()).toEqual([{ kind: 'gif', upload: expect.any(String), device: 'mock0001', target: { width: 230, height: 226, background: [24, 32, 49] } }]);
   });
 
   test('turns an existing Tile into a GIF Tile, and its old icon goes', async () => {
@@ -141,7 +141,7 @@ describe('fitting', () => {
     await settled('prev');
     expect(tile('prev').asset).not.toBe(contained);
     expect(gifs.fitOf(tile('prev'))).toBe('cover');
-    expect(fake.assets.created.at(-1)).toMatchObject({ kind: 'gif', target: { width: 312, height: 224 } });
+    expect(fake.assets.created.at(-1)).toMatchObject({ kind: 'gif', target: { width: 312, height: 226 } });
     expect(fake.assets.fits.at(-1)).toBe('cover');
   });
 
@@ -152,7 +152,7 @@ describe('fitting', () => {
     const before = tile('prev').asset;
     editor.clearTile('playpause');
     expect(editor.resizeTile('prev', 1, 2)).toBeNull();
-    await vi.waitFor(() => expect(gifSources().at(-1)?.target).toMatchObject({ width: 476, height: 224 }));
+    await vi.waitFor(() => expect(gifSources().at(-1)?.target).toMatchObject({ width: 476, height: 226 }));
     await settled('prev');
     expect(tile('prev').asset).not.toBe(before);
   });
@@ -165,7 +165,7 @@ describe('fitting', () => {
     expect(editor.resizeTile('prev', 1, 2)).toBeNull();
     fake.assets.holdGifs(false);
     await settled('prev');
-    expect(gifSources().at(-1)?.target).toMatchObject({ width: 640, height: 224 });
+    expect(gifSources().at(-1)?.target).toMatchObject({ width: 640, height: 226 });
   });
 
   test('a full screen Layout refits its GIFs', async () => {
