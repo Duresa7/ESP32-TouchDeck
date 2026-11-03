@@ -62,6 +62,14 @@ ui_np_layout_t ui_np_layout(int16_t w, int16_t h);
 /* The part a tap at Tile point (x, y) names. Nothing playing names none. */
 ui_part_t ui_np_hit(const ui_np_layout_t *layout, int16_t x, int16_t y, ui_np_state_t state);
 
+/*
+ * The window of a w by h cover that the art box draws, in cover pixels: the centred part no wider and no taller than
+ * the box. LVGL rounds the corners of the image it draws rather than of the box, so a cover drawn whole past the box
+ * would lose its rounded corners. The window's rows, read at the cover's full row stride, end at most one row past
+ * the cover's last pixel.
+ */
+ui_rect_t ui_np_cover_crop(int16_t w, int16_t h, ui_rect_t art);
+
 #ifdef __cplusplus
 }
 #endif

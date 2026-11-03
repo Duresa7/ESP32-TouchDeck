@@ -236,6 +236,7 @@ static struct {
     bool decoded_locked;
     char trace[TRACE_MAX];
     int pins;
+    int unpins;
     ui_live_result_t pin_result;
     ui_live_result_t decode_result;
     int decodes;
@@ -287,6 +288,7 @@ static void fake_unpin(void *ctx, const char *id)
     TEST_ASSERT_EQUAL_size_t(UI_LIVE_IMAGE_ID_LEN, strlen(id));
     note("unpin");
     fake.pins--;
+    fake.unpins++;
 }
 
 static int s_pixel_store[64];
@@ -417,6 +419,12 @@ TEST_CASE("live: an Asset the pin refuses, or one that fails to decode, commits 
 
 static void rebind_during_decode(void)
 {
+    for (size_t i = 0; i < sizeof fake.shown / sizeof fake.shown[0]; i++) {
+        if (fake.shown[i] != NULL) {
+            fake.shown[i] = NULL;
+            fake.pixels_live--;
+        }
+    }
     ui_live_bind(&s_table, s_slots, 16, "builtin", k_pages, 1);
 }
 
@@ -427,11 +435,12 @@ TEST_CASE("live: a slot replaced while its decode ran refuses with layout and fr
     fake.during_decode = rebind_during_decode;
     TEST_ASSERT_EQUAL(UI_LIVE_LAYOUT, apply(image_set("np", 2, "sha256:" ID_B), 1600));
     TEST_ASSERT_EQUAL(0, fake.pins);
-    TEST_ASSERT_EQUAL(1, fake.pixels_live);
+    TEST_ASSERT_EQUAL(0, fake.pixels_live);
     TEST_ASSERT_FALSE(slot_of(0, "cover")->set);
     fake.during_decode = NULL;
     TEST_ASSERT_EQUAL(UI_LIVE_OK, apply(image_set("np", 2, "sha256:" ID_B), 2100));
     TEST_ASSERT_EQUAL(1, fake.pins);
+    TEST_ASSERT_EQUAL(1, fake.pixels_live);
 }
 
 TEST_CASE("live: a session reset gives back every pin before the next set", "[ui_live]")
@@ -448,6 +457,37 @@ TEST_CASE("live: a session reset gives back every pin before the next set", "[ui
     TEST_ASSERT_EQUAL_UINT8(0, s_table.released_count);
     ui_live_release(&s_table, &k_ops);
     TEST_ASSERT_EQUAL(0, fake.pins);
+}
+
+TEST_CASE("live: a table nobody drains refuses a new image with memory before an unpin could be lost", "[ui_live]")
+{
+    fresh();
+    const char *const ids[] = { "sha256:" ID_A, "sha256:" ID_B };
+    ui_live_set_t set;
+    for (uint32_t n = 1; n <= UI_LIVE_RELEASE_MAX; n++) {
+        set = image_set("np", n, ids[n % 2]);
+        TEST_ASSERT_EQUAL(UI_LIVE_OK, ui_live_set(&s_table, &set, 1000 + 600 * n, NULL));
+    }
+    TEST_ASSERT_EQUAL_UINT8(UI_LIVE_RELEASE_MAX - 1, s_table.released_count);
+    set = image_set("np", UI_LIVE_RELEASE_MAX + 1, ids[(UI_LIVE_RELEASE_MAX + 1) % 2]);
+    TEST_ASSERT_EQUAL(UI_LIVE_MEMORY, ui_live_set(&s_table, &set, 9000, NULL));
+    TEST_ASSERT_EQUAL_UINT8(UI_LIVE_RELEASE_MAX - 1, s_table.released_count);
+    ui_live_release(&s_table, &k_ops);
+    TEST_ASSERT_EQUAL(UI_LIVE_RELEASE_MAX - 1, fake.unpins);
+    TEST_ASSERT_EQUAL(UI_LIVE_OK, ui_live_set(&s_table, &set, 9000, NULL));
+
+    for (uint32_t n = UI_LIVE_RELEASE_MAX + 2; n <= 2 * UI_LIVE_RELEASE_MAX - 1; n++) {
+        set = image_set("np", n, ids[n % 2]);
+        TEST_ASSERT_EQUAL(UI_LIVE_OK, ui_live_set(&s_table, &set, 10000 + 600 * n, NULL));
+    }
+    set = image_set("np", 2 * UI_LIVE_RELEASE_MAX, NULL);
+    TEST_ASSERT_EQUAL(UI_LIVE_OK, ui_live_set(&s_table, &set, 30000, NULL));
+    TEST_ASSERT_EQUAL_UINT8(UI_LIVE_RELEASE_MAX, s_table.released_count);
+    ui_live_session(&s_table, 31000);
+    ui_live_release(&s_table, &k_ops);
+    TEST_ASSERT_EQUAL(2 * UI_LIVE_RELEASE_MAX - 1, fake.unpins);
+    set = image_set("np", 1, ids[0]);
+    TEST_ASSERT_EQUAL(UI_LIVE_OK, ui_live_set(&s_table, &set, 31000, NULL));
 }
 
 TEST_CASE("live: text and numbers go through apply in one locked step", "[ui_live]")

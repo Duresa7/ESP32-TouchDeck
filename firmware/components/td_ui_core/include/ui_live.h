@@ -13,7 +13,8 @@ extern "C" {
  * The live-value limits this Firmware advertises in `caps`, from schema/protocol/link-v2.md. A graph keeps
  * UI_LIVE_SERIES_MAX samples. A stream takes UI_LIVE_HZ updates and the Device UI_LIVE_TOTAL_HZ in each one-second
  * window. A Tile declares at most UI_LIVE_TILE_STREAMS streams, and one Layout at most UI_LIVE_SLOTS_MAX, of which at
- * most UI_LIVE_IMAGES_MAX are images.
+ * most UI_LIVE_IMAGES_MAX are images. The images the slots hold and the ids waiting to be unpinned number at most
+ * UI_LIVE_RELEASE_MAX together.
  */
 #define UI_LIVE_SERIES_MAX 32
 #define UI_LIVE_HZ 2
@@ -22,7 +23,7 @@ extern "C" {
 #define UI_LIVE_TEXT_MAX 128
 #define UI_LIVE_IMAGES_MAX 4
 #define UI_LIVE_IMAGE_ID_LEN 64
-#define UI_LIVE_RELEASE_MAX 8
+#define UI_LIVE_RELEASE_MAX (2 * UI_LIVE_IMAGES_MAX)
 #define UI_LIVE_SLOTS_MAX 64
 #define UI_LIVE_TTL_MIN_MS 1000
 #define UI_LIVE_TTL_MAX_MS 60000
@@ -138,8 +139,9 @@ void ui_live_session(ui_live_table_t *table, uint32_t now_ms);
  * Applies one set and returns why it was refused, or UI_LIVE_OK. A refusal changes nothing. An identical retry of the
  * last accepted `n` succeeds without changing anything. *retry_ms is set for UI_LIVE_RATE: the time to the next
  * window, 1 to 1000. Text is at most UI_LIVE_TEXT_MAX bytes, and a bar's `value` is 0 to 1. An image is NULL or
- * `sha256:` and 64 lowercase hex digits; the image it replaces goes to `released`. This commits without checking the
- * Asset, which is ui_live_apply's first phase.
+ * `sha256:` and 64 lowercase hex digits; the image it replaces goes to `released`. A new image is refused with
+ * UI_LIVE_MEMORY while the held images and `released` already fill UI_LIVE_RELEASE_MAX, so no pin is ever dropped,
+ * and ui_live_release makes room again. This commits without checking the Asset, which is ui_live_apply's first phase.
  */
 ui_live_result_t ui_live_set(ui_live_table_t *table, const ui_live_set_t *set, uint32_t now_ms, uint32_t *retry_ms);
 

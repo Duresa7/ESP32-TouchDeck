@@ -62,6 +62,13 @@ ui_np_layout_t ui_np_layout(int16_t w, int16_t h)
     return layout;
 }
 
+ui_rect_t ui_np_cover_crop(int16_t w, int16_t h, ui_rect_t art)
+{
+    const int16_t crop_w = w < art.w ? w : art.w;
+    const int16_t crop_h = h < art.h ? h : art.h;
+    return (ui_rect_t){ (int16_t)((w - crop_w) / 2), (int16_t)((h - crop_h) / 2), crop_w, crop_h };
+}
+
 ui_part_t ui_np_hit(const ui_np_layout_t *layout, int16_t x, int16_t y, ui_np_state_t state)
 {
     if (state == UI_NP_IDLE) {

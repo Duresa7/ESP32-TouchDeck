@@ -1,6 +1,10 @@
 #include "ui_live.h"
+#include <assert.h>
 #include <math.h>
 #include <string.h>
+
+_Static_assert(UI_LIVE_RELEASE_MAX > UI_LIVE_IMAGES_MAX, "a drained table always has room for one more image");
+_Static_assert(UI_LIVE_RELEASE_MAX <= UINT8_MAX, "released_count counts to UI_LIVE_RELEASE_MAX");
 
 static const char *const k_reasons[] = {
     NULL, "layout", "page", "tile", "stream", "type", "args", "size", "sequence", "rate", "memory", "asset",
@@ -24,9 +28,20 @@ size_t ui_live_streams(const ui_page_t *pages, uint8_t page_count)
 
 static void release(ui_live_table_t *table, const char *id)
 {
-    if (id[0] != '\0' && table->released_count < UI_LIVE_RELEASE_MAX) {
+    if (id[0] != '\0') {
+        assert(table->released_count < UI_LIVE_RELEASE_MAX);
         memcpy(table->released[table->released_count++], id, UI_LIVE_IMAGE_ID_LEN + 1);
     }
+}
+
+static uint8_t held(const ui_live_table_t *table)
+{
+    uint8_t count = 0;
+    for (uint16_t i = 0; i < table->count; i++) {
+        const ui_live_slot_t *slot = &table->slots[i];
+        count = (uint8_t)(count + (slot->stream->type == UI_STREAM_IMAGE && slot->image[0] != '\0'));
+    }
+    return count;
 }
 
 static void clear_value(ui_live_table_t *table, ui_live_slot_t *slot)
@@ -277,6 +292,10 @@ static ui_live_result_t prepare(const ui_live_table_t *table, const ui_live_set_
             *retry_ms = 1000 - elapsed % 1000;
         }
         return UI_LIVE_RATE;
+    }
+    if (set->type == UI_STREAM_IMAGE && set->image != NULL && strcmp(slot->image, image_of(set)) != 0 &&
+        table->released_count + held(table) >= UI_LIVE_RELEASE_MAX) {
+        return UI_LIVE_MEMORY;
     }
     *changed = slot;
     return UI_LIVE_OK;

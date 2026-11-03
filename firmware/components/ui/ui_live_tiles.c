@@ -14,6 +14,7 @@
 #include "td_asset.h"
 #include "ui_bar.h"
 #include "ui_graph.h"
+#include "ui_live_bar.h"
 #include "ui_now_playing.h"
 #include "ui_theme.h"
 
@@ -21,6 +22,8 @@ static const char *TAG = "live";
 
 #define JPEG_WORK_BYTES 4096
 
+/* LVGL refuses an image whose data_size is under stride * h, so `rgb565` holds a spare row after its h rows of w
+ * pixels for a window ui_np_cover_crop cuts at the full row stride. */
 typedef struct {
     uint16_t w;
     uint16_t h;
@@ -51,9 +54,7 @@ typedef struct {
     lv_obj_t *track;
     lv_obj_t *fill;
     ui_bar_layout_t layout;
-    ui_bar_t bar;
-    uint32_t fed_n;
-    uint32_t fed_digest;
+    ui_live_bar_t live;
     bool set;
     bool fresh;
     bool muted;
@@ -100,6 +101,7 @@ static struct {
 } s = { .dragging = -1 };
 
 static ui_live_slot_t s_view_slots[UI_LIVE_TILE_STREAMS];
+static uint32_t s_view_generation;
 
 static uint32_t now_ms(void)
 {
@@ -195,7 +197,7 @@ static ui_live_result_t op_decode(void *ctx, const char *id, void **pixels)
         }
     }
     if (result == UI_LIVE_OK) {
-        const size_t bytes = sizeof *d.cover + (size_t)jd.width * jd.height * sizeof d.cover->rgb565[0];
+        const size_t bytes = sizeof *d.cover + (size_t)jd.width * (jd.height + 1u) * sizeof d.cover->rgb565[0];
         d.cover = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (d.cover == NULL) {
             result = UI_LIVE_MEMORY;
@@ -260,7 +262,7 @@ static void cancel_input(void)
 static void drop_capture(void)
 {
     if (s.dragging >= 0) {
-        ui_bar_cancel(&s.views[s.dragging].bar.bar);
+        ui_bar_cancel(&s.views[s.dragging].bar.live.bar);
         s.dragging = -1;
         cancel_input();
     }
@@ -293,6 +295,7 @@ static bool copy_slots(view_t *v, bool even_clean, cover_t **undrawn)
     *undrawn = NULL;
     bool dirty = even_clean;
     xSemaphoreTake(s.lock, portMAX_DELAY);
+    s_view_generation = s.table.generation;
     for (uint8_t k = 0; k < UI_LIVE_TILE_STREAMS && !dirty; k++) {
         dirty = v->stream_slot[k] >= 0 && s.table.slots[v->stream_slot[k]].dirty;
     }
@@ -333,7 +336,7 @@ static void draw_graph(graph_view_t *o)
 static void draw_bar(bar_view_t *b)
 {
     const ui_theme_t *t = &ui_theme;
-    const double shown = ui_bar_shown(&b->bar);
+    const double shown = ui_bar_shown(&b->live.bar);
     char text[8] = "--";
     if (b->fresh) {
         snprintf(text, sizeof text, "%d", (int)lround(fmin(fmax(shown, 0), 1) * 100));
@@ -359,20 +362,12 @@ static void update_bar(view_t *v)
     b->set = value != NULL && value->set;
     b->fresh = b->set && !value->stale;
     b->muted = muted != NULL && muted->set && latest(muted) != 0;
-    if (b->set && (value->n != b->fed_n || value->digest != b->fed_digest)) {
-        b->fed_n = value->n;
-        b->fed_digest = value->digest;
-        ui_bar_live(&b->bar, latest(value));
-    }
-    if (!b->set) {
-        b->fed_n = 0;
-        b->fed_digest = 0;
-    }
-    if (!b->fresh && (b->bar.pressed || b->bar.phase != UI_BAR_LIVE)) {
+    ui_live_bar_feed(&b->live, s_view_generation, value);
+    if (!b->fresh && (b->live.bar.pressed || b->live.bar.phase != UI_BAR_LIVE)) {
         if (s.dragging >= 0 && &s.views[s.dragging] == v) {
             drop_capture();
         } else {
-            ui_bar_cancel(&b->bar);
+            ui_bar_cancel(&b->live.bar);
         }
     }
     draw_bar(b);
@@ -387,11 +382,13 @@ static void show_cover(view_t *v, cover_t *cover)
     }
     lv_image_dsc_t *dsc = &n->dsc[n->dsc_next];
     n->dsc_next ^= 1;
+    const ui_rect_t crop = ui_np_cover_crop((int16_t)cover->w, (int16_t)cover->h, n->layout.art);
+    const uint32_t stride = cover->w * sizeof cover->rgb565[0];
     *dsc = (lv_image_dsc_t){
-        .header = { .magic = LV_IMAGE_HEADER_MAGIC, .cf = LV_COLOR_FORMAT_RGB565, .w = cover->w, .h = cover->h,
-                    .stride = cover->w * sizeof cover->rgb565[0] },
-        .data_size = (uint32_t)cover->w * cover->h * sizeof cover->rgb565[0],
-        .data = (const uint8_t *)cover->rgb565,
+        .header = { .magic = LV_IMAGE_HEADER_MAGIC, .cf = LV_COLOR_FORMAT_RGB565, .w = (uint32_t)crop.w,
+                    .h = (uint32_t)crop.h, .stride = stride },
+        .data_size = stride * (uint32_t)crop.h,
+        .data = (const uint8_t *)(cover->rgb565 + (size_t)crop.y * cover->w + crop.x),
     };
     cover_t *old = n->shown;
     lv_image_set_src(n->art, dsc);
@@ -518,7 +515,7 @@ static void on_redraw(lv_timer_t *timer)
         if (copy_slots(v, false, &cover)) {
             update(v, cover);
         }
-        if (v->kind == VIEW_BAR && ui_bar_tick(&v->bar.bar, now)) {
+        if (v->kind == VIEW_BAR && ui_bar_tick(&v->bar.live.bar, now)) {
             draw_bar(&v->bar);
         }
     }
@@ -717,7 +714,7 @@ static void build_bar(lv_obj_t *obj, const ui_tile_t *tile, ui_rect_t rect, bar_
 {
     const ui_theme_t *t = &ui_theme;
     b->layout = ui_bar_layout(rect.w, rect.h, declares(tile, "muted"));
-    ui_bar_init(&b->bar);
+    ui_live_bar_init(&b->live, 0);
     const ui_rect_t g = b->layout.glyph;
     const int32_t value_x = rect.w - g.x - t->level.value_w;
     const int32_t label_x = g.x + g.w + t->level.gap;
@@ -815,7 +812,12 @@ bool ui_live_capture(const ui_tile_t *tile, int16_t x, int16_t y)
         ui_bar_hit(&v->bar.layout, x, y, v->bar.fresh, tile->input) != UI_BAR_ZONE_VALUE) {
         return false;
     }
-    ui_bar_press(&v->bar.bar, x, y);
+    xSemaphoreTake(s.lock, portMAX_DELAY);
+    const uint32_t generation = s.table.generation;
+    xSemaphoreGive(s.lock);
+    if (!ui_live_bar_press(&v->bar.live, generation, x, y)) {
+        return false;
+    }
     s.dragging = (int16_t)(v - s.views);
     return true;
 }
@@ -826,10 +828,14 @@ void ui_live_drag(int16_t x, int16_t y)
         return;
     }
     view_t *v = &s.views[s.dragging];
-    if (ui_bar_move(&v->bar.bar, &v->bar.layout, x, y, ui_geo()->slop)) {
-        if (s.input != NULL) {
-            s.input(v->page, v->tile->id, v->bar.bar.finger, false);
-        }
+    xSemaphoreTake(s.lock, portMAX_DELAY);
+    const bool moved =
+        ui_live_bar_move(&v->bar.live, s.table.generation, &v->bar.layout, x, y, ui_geo()->slop);
+    if (moved && s.input != NULL) {
+        s.input(v->page, v->tile->id, v->bar.live.bar.finger, false);
+    }
+    xSemaphoreGive(s.lock);
+    if (moved) {
         draw_bar(&v->bar);
     }
 }
@@ -841,10 +847,13 @@ void ui_live_drop(void)
     }
     view_t *v = &s.views[s.dragging];
     s.dragging = -1;
-    if (ui_bar_release(&v->bar.bar, now_ms())) {
-        if (s.input != NULL) {
-            s.input(v->page, v->tile->id, v->bar.bar.finger, true);
-        }
+    xSemaphoreTake(s.lock, portMAX_DELAY);
+    const bool ended = ui_live_bar_release(&v->bar.live, s.table.generation, now_ms());
+    if (ended && s.input != NULL) {
+        s.input(v->page, v->tile->id, v->bar.live.bar.finger, true);
+    }
+    xSemaphoreGive(s.lock);
+    if (ended) {
         draw_bar(&v->bar);
     }
 }
