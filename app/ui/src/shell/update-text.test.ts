@@ -5,8 +5,8 @@ const MB = 1024 * 1024;
 
 describe('changeLines', () => {
   it('turns Markdown release notes into plain change lines', () => {
-    const notes = "## What's Changed\r\n\r\n- Volume Tiles follow your finger.\n* Proxmox Tiles show storage.\n  + Nested <b>tags</b> stay text\nPlain line\n-\n";
-    expect(changeLines(notes)).toEqual(['Volume Tiles follow your finger.', 'Proxmox Tiles show storage.', 'Nested <b>tags</b> stay text', 'Plain line']);
+    const notes = "## What's Changed\r\n\r\n- Volume Tiles follow your finger.\n* Devices reconnect faster.\n  + Nested <b>tags</b> stay text\nPlain line\n-\n";
+    expect(changeLines(notes)).toEqual(['Volume Tiles follow your finger.', 'Devices reconnect faster.', 'Nested <b>tags</b> stay text', 'Plain line']);
   });
 
   it('gives no lines for missing or blank notes', () => {
