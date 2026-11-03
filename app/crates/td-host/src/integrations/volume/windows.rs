@@ -128,7 +128,6 @@ impl CoreAudio {
     fn recover<T>(&mut self, result: WinResult<T>) -> Result<T, Failure> {
         result.map_err(|_| {
             self.endpoint.take();
-            self.notifier.endpoint_changed();
             Failure::Unavailable
         })
     }

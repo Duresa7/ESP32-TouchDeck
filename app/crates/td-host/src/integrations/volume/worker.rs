@@ -137,83 +137,150 @@ fn read(provider: &mut dyn VolumeProvider, rebind: bool) -> Result<Snapshot, Fai
         }
     })
 }
+struct Binding {
+    generation: Option<u64>,
+    next: Instant,
+    retry: Duration,
+}
+impl Binding {
+    fn current(&self, queue: &Queue) -> bool {
+        self.generation == Some(queue.notifier.generation.load(Ordering::Acquire))
+            && !queue.stop.load(Ordering::Acquire)
+    }
+    fn record(&mut self, state: &Mutex<State>, generation: u64, result: Result<Snapshot, Failure>) {
+        if result.is_ok() {
+            self.generation = Some(generation);
+            self.retry = Duration::from_secs(1);
+            self.next = Instant::now() + HEARTBEAT;
+        } else {
+            self.generation = None;
+            self.next = Instant::now() + self.retry;
+            self.retry = (self.retry * 2).min(Duration::from_secs(4));
+        }
+        publish(state, result);
+    }
+}
 fn run(factory: ProviderFactory, state: Arc<Mutex<State>>, queue: Queue, rx: Receiver<Message>) {
     let mut provider = None;
-    let mut next = Instant::now();
+    let mut binding = Binding {
+        generation: None,
+        next: Instant::now(),
+        retry: Duration::from_secs(1),
+    };
     let mut message = None;
+    let mut observed_generation = queue.notifier.generation.load(Ordering::Acquire);
     while !queue.stop.load(Ordering::Acquire) {
         let flags = queue.notifier.flags.swap(0, Ordering::AcqRel);
-        if flags != 0 || Instant::now() >= next {
-            if provider.is_none() {
+        let generation = queue.notifier.generation.load(Ordering::Acquire);
+        let topology_changed = generation != observed_generation || flags & REBIND != 0;
+        observed_generation = generation;
+        if topology_changed
+            || Instant::now() >= binding.next
+            || (flags & DIRTY != 0 && binding.generation.is_some())
+        {
+            let opened = if provider.is_none() {
                 match factory(queue.notifier.clone()) {
-                    Ok(opened) => provider = Some(opened),
-                    Err(error) => publish(&state, Err(error)),
+                    Ok(opened) => {
+                        provider = Some(opened);
+                        Ok(())
+                    }
+                    Err(error) => Err(error),
                 }
+            } else {
+                Ok(())
+            };
+            let result = opened.and_then(|()| {
+                if generation != queue.notifier.generation.load(Ordering::Acquire) {
+                    return Err(Failure::Unavailable);
+                }
+                read(
+                    &mut **provider.as_mut().unwrap(),
+                    topology_changed || binding.generation.is_none(),
+                )
+            });
+            if generation != queue.notifier.generation.load(Ordering::Acquire) {
+                continue;
             }
-            let result = provider
-                .as_mut()
-                .map(|p| read(&mut **p, flags & REBIND != 0));
-            let healthy = result.as_ref().is_some_and(Result::is_ok);
-            if let Some(result) = result {
-                publish(&state, result);
-            }
-            next = Instant::now()
-                + if healthy {
-                    HEARTBEAT
-                } else {
-                    Duration::from_secs(1)
-                };
+            binding.record(&state, generation, result);
         }
         if queue.stop.load(Ordering::Acquire) {
             break;
         }
-        if queue.notifier.flags.load(Ordering::Acquire) & REBIND != 0 {
+        if generation != queue.notifier.generation.load(Ordering::Acquire) {
             continue;
         }
-        let generation = queue.notifier.generation.load(Ordering::Acquire);
         if let Some(Message::Mute {
             generation: expected,
             deadline,
             result,
         }) = message.take()
         {
-            let outcome = if expected != generation || Instant::now() >= deadline {
-                Err(Failure::Unavailable)
-            } else if let Some(provider) = provider.as_mut() {
-                read(&mut **provider, false).and_then(|snapshot| {
-                    if Instant::now() >= deadline
-                        || expected != queue.notifier.generation.load(Ordering::Acquire)
-                    {
-                        Err(Failure::Unavailable)
-                    } else {
-                        provider.set_mute(!snapshot.muted)
+            let outcome =
+                if expected != generation || Instant::now() >= deadline || !binding.current(&queue)
+                {
+                    Err(Failure::Unavailable)
+                } else {
+                    let provider = provider.as_mut().unwrap();
+                    let snapshot = read(&mut **provider, false);
+                    if let Err(error) = snapshot {
+                        binding.record(&state, generation, Err(error));
                     }
-                })
-            } else {
-                Err(Failure::Unavailable)
-            };
-            if let Some(provider) = provider.as_mut() {
-                publish(&state, read(&mut **provider, false));
-            }
+                    snapshot.and_then(|snapshot| {
+                        if Instant::now() >= deadline || !binding.current(&queue) {
+                            Err(Failure::Unavailable)
+                        } else {
+                            let outcome = provider.set_mute(!snapshot.muted);
+                            if binding.current(&queue) {
+                                let readback = outcome.and_then(|()| read(&mut **provider, false));
+                                if binding.current(&queue) {
+                                    binding.record(&state, generation, readback);
+                                }
+                            }
+                            outcome
+                        }
+                    })
+                };
             let _ = result.try_send(outcome.map_err(Failure::control));
         }
-        let pending = queue.pending.lock().unwrap().take();
-        if let Some((expected, value)) = pending
-            && expected == queue.notifier.generation.load(Ordering::Acquire)
-            && !queue.stop.load(Ordering::Acquire)
-            && let Some(provider) = provider.as_mut()
-        {
-            let result = provider.set_level(value).and_then(|()| {
-                if value > 0.0 {
-                    provider.set_mute(false)
+        if generation != queue.notifier.generation.load(Ordering::Acquire) {
+            continue;
+        }
+        if binding.current(&queue) {
+            let pending = {
+                let mut pending = queue.pending.lock().unwrap();
+                if binding.current(&queue)
+                    && pending.is_some_and(|(expected, _)| expected <= generation)
+                {
+                    pending.take()
                 } else {
-                    Ok(())
+                    None
                 }
-            });
-            publish(&state, result.and_then(|()| read(&mut **provider, false)));
+            };
+            if let Some((expected, value)) = pending
+                && Some(expected) == binding.generation
+                && binding.current(&queue)
+            {
+                let provider = provider.as_mut().unwrap();
+                let result = provider.set_level(value).and_then(|()| {
+                    if value > 0.0 && binding.current(&queue) {
+                        provider.set_mute(false)
+                    } else {
+                        Ok(())
+                    }
+                });
+                if binding.current(&queue) {
+                    let readback = result.and_then(|()| read(&mut **provider, false));
+                    if binding.current(&queue) {
+                        binding.record(&state, generation, readback);
+                    }
+                }
+            }
+        }
+        if generation != queue.notifier.generation.load(Ordering::Acquire) {
+            continue;
         }
         message = rx
-            .recv_timeout(next.saturating_duration_since(Instant::now()))
+            .recv_timeout(binding.next.saturating_duration_since(Instant::now()))
             .ok();
     }
 }

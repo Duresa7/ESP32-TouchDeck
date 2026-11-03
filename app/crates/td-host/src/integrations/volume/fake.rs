@@ -5,6 +5,8 @@ struct FakeState {
     notifier: Option<Notifier>,
     active: usize,
     sets: u64,
+    fail_reads: bool,
+    reads: u64,
 }
 #[derive(Clone)]
 pub struct FakeVolume(Arc<Mutex<FakeState>>);
@@ -23,6 +25,8 @@ impl FakeVolume {
             notifier: None,
             active: 0,
             sets: 0,
+            fail_reads: false,
+            reads: 0,
         })))
     }
     pub fn factory(&self) -> ProviderFactory {
@@ -48,6 +52,19 @@ impl FakeVolume {
         }
         Ok(())
     }
+    pub fn fail_reads(&self, fail: bool) {
+        self.0.lock().unwrap().fail_reads = fail;
+        self.changed();
+    }
+    pub fn changed(&self) {
+        let notifier = self.0.lock().unwrap().notifier.clone();
+        if let Some(notifier) = notifier {
+            notifier.changed();
+        }
+    }
+    pub fn reads(&self) -> u64 {
+        self.0.lock().unwrap().reads
+    }
     pub fn snapshot(&self) -> Option<Snapshot> {
         self.0.lock().unwrap().snapshot
     }
@@ -61,7 +78,13 @@ impl FakeVolume {
 struct Provider(FakeVolume);
 impl VolumeProvider for Provider {
     fn read(&mut self, _: bool) -> Result<Snapshot, Failure> {
-        self.0.snapshot().ok_or(Failure::NoDevice)
+        let mut state = self.0.0.lock().unwrap();
+        state.reads += 1;
+        if state.fail_reads {
+            Err(Failure::Unavailable)
+        } else {
+            state.snapshot.ok_or(Failure::NoDevice)
+        }
     }
     fn set_level(&mut self, level: f64) -> Result<(), Failure> {
         let notifier = {

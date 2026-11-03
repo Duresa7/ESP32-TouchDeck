@@ -366,3 +366,55 @@ fn input_after_a_default_change_waits_for_the_new_endpoint_binding() {
     assert_eq!(gate.stale_sets.load(std::sync::atomic::Ordering::SeqCst), 0);
     assert_eq!(fake.snapshot().unwrap().level, 0.7);
 }
+
+#[test]
+fn a_default_change_during_a_mute_read_binds_before_the_next_level() {
+    let (_volume, fake, control, gate, entered, release) = gated();
+    gate.block.store(true, std::sync::atomic::Ordering::SeqCst);
+    let caller_control = control.clone();
+    let caller = std::thread::spawn(move || caller_control.act("", "mute", Duration::from_secs(2)));
+    entered.recv_timeout(Duration::from_secs(1)).unwrap();
+    gate.needs_rebind
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    fake.publish(Some(Snapshot {
+        level: 0.2,
+        muted: true,
+    }))
+    .unwrap();
+    control.set("", "level", 0.7).unwrap();
+    release.send(()).unwrap();
+    assert!(caller.join().unwrap().is_err());
+    wait(|| fake.sets() == 1);
+    assert_eq!(gate.stale_sets.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(fake.snapshot().unwrap().level, 0.7);
+}
+
+#[test]
+fn repeated_read_failures_back_off_and_bound_subscriber_wakes() {
+    let (_volume, fake, control) = setup();
+    let (tx, rx) = mpsc::channel();
+    control.subscribe(Arc::new(move || {
+        let _ = tx.send(());
+    }));
+    let before = fake.reads();
+    fake.fail_reads(true);
+    let until = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < until {
+        fake.changed();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let attempts = fake.reads() - before;
+    let wakes = rx.try_iter().count();
+    assert!(
+        (2..=3).contains(&attempts),
+        "{attempts} read attempts in 5 seconds"
+    );
+    assert!(wakes <= 3, "{wakes} subscriber wakes in 5 seconds");
+    fake.fail_reads(false);
+    fake.publish(Some(Snapshot {
+        level: 0.6,
+        muted: false,
+    }))
+    .unwrap();
+    wait(|| value(&*control, "level") == Some(0.6));
+}
