@@ -33,6 +33,26 @@ fn config(url: &str) -> Value {
 }
 
 #[test]
+fn refresh_during_proxy_poll_survives_apply_and_respects_spacing() {
+    let calls = Recorder::default();
+    let mut r = registry(calls.clone(), None);
+    let i = r.get("cliproxyapi").unwrap();
+    i.configure(config("https://hub.example")).unwrap();
+    i.secret_put("management_key", "fixture-key").unwrap();
+    let poll = i.prepare_poll().unwrap();
+    i.request_refresh();
+    i.apply_poll(poll());
+    assert_eq!(calls.0.lock().unwrap().len(), 1);
+    assert!(i.prepare_poll().is_none());
+    std::thread::sleep(td_host::sources::PROXY_REFRESH_FLOOR);
+    let poll = i
+        .prepare_poll()
+        .expect("the queued refresh must survive applying the first poll");
+    i.apply_poll(poll());
+    assert_eq!(calls.0.lock().unwrap().len(), 2);
+}
+
+#[test]
 fn registry_schema_presets_config_and_summaries_never_contain_secret_values() {
     let root = std::env::temp_dir().join(format!("td-integration-test-{}", std::process::id()));
     let file = root.join("sources.json");

@@ -64,7 +64,7 @@ test('a Layout pushed to a Device shows on its miniature, and stays when it is u
   expect((await api('POST', '/test/ports', { unplug: 'mock0002' })).status()).toBe(204);
   await expect(card).toContainText('Not connected');
   await expect(card).toContainText('Last seen');
-  await expect(card.locator('.device-spill')).toHaveCount(0);
+  await expect(card.locator('.device-spill')).toHaveCSS('opacity', '0');
   await expect(card.locator('.device-scene')).toHaveAttribute('data-page', 'keys');
   await expect(card.locator('.device-scene')).toContainText('Copy');
   if (process.env.TD_SHOTS) await page.screenshot({ path: join(process.env.TD_SHOTS, 'home-companion-3.png') });
