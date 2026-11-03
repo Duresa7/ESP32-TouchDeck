@@ -40,8 +40,11 @@ struct Settings {
     enabled: bool,
 }
 
+#[derive(Clone)]
 pub struct ThisPc {
-    source: Box<dyn CounterSource>,
+    generation: u64,
+    supported: bool,
+    source: Arc<std::sync::Mutex<Box<dyn CounterSource>>>,
     settings: Settings,
     file: Option<PathBuf>,
     next: Option<Instant>,
@@ -55,7 +58,9 @@ pub struct ThisPc {
 impl ThisPc {
     pub fn new(source: Box<dyn CounterSource>) -> Self {
         Self {
-            source,
+            generation: 0,
+            supported: source.supported(),
+            source: Arc::new(std::sync::Mutex::new(source)),
             settings: Settings { enabled: true },
             file: None,
             next: None,
@@ -71,7 +76,7 @@ impl ThisPc {
         if !self.settings.enabled || self.next.is_some_and(|next| now < next) {
             return;
         }
-        let sample = self.source.collect();
+        let sample = self.source.lock().unwrap().collect();
         let mut values = sample.values;
         self.unavailable = STREAMS
             .iter()
@@ -135,8 +140,32 @@ impl ThisPc {
     }
 }
 impl Integration for ThisPc {
+    fn prepare_poll(&mut self) -> Option<Poll> {
+        if !self.settings.enabled || self.next.is_some_and(|next| Instant::now() < next) {
+            return None;
+        }
+        let mut snapshot = self.clone();
+        self.next = Some(Instant::now() + Duration::from_secs(1));
+        Some(Box::new(move || {
+            snapshot.tick();
+            Box::new(snapshot)
+        }))
+    }
+    fn apply_poll(&mut self, state: PollState) {
+        let Ok(state) = state.downcast::<Self>() else {
+            return;
+        };
+        if self.settings.enabled && self.generation == state.generation {
+            self.previous = state.previous;
+            self.readings = state.readings;
+            self.live = state.live;
+            self.samples = state.samples;
+            self.unavailable = state.unavailable;
+        }
+    }
+
     fn summary(&self) -> IntegrationSummary {
-        let message = if !self.source.supported() {
+        let message = if !self.supported {
             Some("This PC needs Windows.".into())
         } else if !self.unavailable.is_empty() {
             Some(format!("Unavailable: {}.", self.unavailable.join(", ")))
@@ -201,6 +230,7 @@ impl Integration for ThisPc {
                 )
                 .map_err(|_| Error::Storage)?;
             }
+            self.generation += 1;
             self.settings = settings;
             self.previous = None;
             self.next = None;

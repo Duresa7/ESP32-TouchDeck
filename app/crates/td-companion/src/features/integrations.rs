@@ -18,10 +18,58 @@ pub type Controls = Arc<BTreeMap<String, Arc<dyn Control>>>;
 #[derive(Clone)]
 pub struct Service {
     registry: Arc<Mutex<Result<Registry, Error>>>,
+    runtime: Arc<PollRuntime>,
     summaries: Arc<Mutex<Vec<IntegrationSummary>>>,
     pending: Arc<Pending>,
     events: Events,
     pub(crate) controls: Controls,
+}
+#[derive(Default)]
+struct PollRuntime {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    handle: Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+impl Drop for PollRuntime {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(handle) = self.handle.get_mut().unwrap().take() {
+            handle.thread().unpark();
+            let _ = handle.join();
+        }
+    }
+}
+struct PollWorker {
+    jobs: Option<std::sync::mpsc::SyncSender<td_host::integrations::Poll>>,
+    results: std::sync::mpsc::Receiver<td_host::integrations::PollState>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    busy: bool,
+}
+impl PollWorker {
+    fn new() -> Self {
+        let (jobs, work) = std::sync::mpsc::sync_channel::<td_host::integrations::Poll>(1);
+        let (done, results) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            while let Ok(poll) = work.recv() {
+                if done.send(poll()).is_err() {
+                    break;
+                }
+            }
+        });
+        Self {
+            jobs: Some(jobs),
+            results,
+            handle: Some(handle),
+            busy: false,
+        }
+    }
+}
+impl Drop for PollWorker {
+    fn drop(&mut self) {
+        self.jobs.take();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
 }
 type Pending = Mutex<HashMap<(String, String), Delivery>>;
 impl Service {
@@ -54,6 +102,7 @@ impl Service {
         );
         let service = Self {
             registry: Arc::new(Mutex::new(registry)),
+            runtime: Arc::default(),
             summaries: Arc::default(),
             pending: Arc::default(),
             events: events.clone(),
@@ -64,16 +113,36 @@ impl Service {
         }
         let cache = service.summaries.clone();
         let pending = service.pending.clone();
-        let weak = Arc::downgrade(&service.registry);
-        std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(1));
-                let Some(state) = weak.upgrade() else { break };
+        let state = service.registry.clone();
+        let stop = service.runtime.stop.clone();
+        let handle = std::thread::spawn(move || {
+            let mut workers = BTreeMap::<String, PollWorker>::new();
+            while !stop.load(std::sync::atomic::Ordering::Acquire) {
+                std::thread::park_timeout(std::time::Duration::from_secs(1));
+                if stop.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
+                }
                 let mut state = state.lock().unwrap();
                 if let Ok(registry) = state.as_mut() {
                     let before = serde_json::to_value(registry.list()).unwrap();
                     apply_pending(registry, &pending);
-                    registry.tick();
+                    for (id, worker) in &mut workers {
+                        if let Ok(result) = worker.results.try_recv() {
+                            worker.busy = false;
+                            if let Ok(integration) = registry.get(id) {
+                                integration.apply_poll(result);
+                            }
+                        }
+                    }
+                    let busy = workers
+                        .iter()
+                        .filter(|(_, w)| w.busy)
+                        .map(|(id, _)| id.clone())
+                        .collect();
+                    for (id, poll) in registry.poll_jobs(&busy) {
+                        let worker = workers.entry(id).or_insert_with(PollWorker::new);
+                        worker.busy = worker.jobs.as_ref().unwrap().send(poll).is_ok();
+                    }
                     *cache.lock().unwrap() = registry.list();
                     if before != serde_json::to_value(registry.list()).unwrap() {
                         publish(registry, &events);
@@ -81,13 +150,13 @@ impl Service {
                 }
             }
         });
+        *service.runtime.handle.lock().unwrap() = Some(handle);
         service
     }
     pub fn summaries(&self) -> Vec<IntegrationSummary> {
         self.summaries.lock().unwrap().clone()
     }
-    /// The newest samples of the wanted streams that Integrations poll. None while an Integration is busy, such as
-    /// during a poll.
+    /// The newest samples of the wanted streams. None while the registry is being updated.
     pub fn live(&self, wanted: &BTreeSet<StreamKey>) -> Option<HashMap<StreamKey, LiveSample>> {
         let state = self.registry.try_lock().ok()?;
         let Ok(registry) = state.as_ref() else {
@@ -396,7 +465,7 @@ impl Endpoint for Refresh {
     type Error = IntegrationError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
         work(ctx, move |r| {
-            r.get(&req.path.integration)?.refresh();
+            r.get(&req.path.integration)?.request_refresh();
             Ok(())
         })
         .await
@@ -626,5 +695,107 @@ mod control_tests {
         let id = cover.as_str().unwrap().strip_prefix("sha256:").unwrap();
         let picture = image::load_from_memory(&run.deck.assets()[id]).unwrap();
         assert_eq!((picture.width(), picture.height()), (256, 256));
+    }
+}
+
+#[cfg(test)]
+mod poll_isolation_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+    struct Fetch(Arc<AtomicUsize>);
+    impl td_host::sources::Fetch for Fetch {
+        fn post_json(&self, _: &str, _: &str, _: &Value) -> Result<String, String> {
+            Ok("[]".into())
+        }
+        fn get(&self, _: &str, _: &str) -> Result<String, String> {
+            Ok("[]".into())
+        }
+        fn request(
+            &self,
+            _: &td_host::sources::network::GetRequest<'_>,
+        ) -> Result<String, td_host::sources::network::FetchError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_secs(3));
+            Ok("42".into())
+        }
+    }
+    fn config(enabled: bool, path: &str) -> Value {
+        serde_json::json!({"enabled": enabled, "sources": [{"id":"value", "name":"Value", "interval_s":3600, "kind":"number", "input":{"type":"http", "url":format!("https://example.invalid/{path}"), "value_path":"$"}}]})
+    }
+    fn start() -> (Service, Arc<AtomicUsize>) {
+        let count = Arc::new(AtomicUsize::new(0));
+        let fetch = count.clone();
+        let mut registry = Registry::new(Environment {
+            secrets: Arc::new(MemorySecrets::default()),
+            config_file: None,
+            fetch: Arc::new(move || Box::new(Fetch(fetch.clone()))),
+        })
+        .unwrap();
+        registry
+            .get("custom")
+            .unwrap()
+            .configure(config(true, "old"))
+            .unwrap();
+        let service = Service::new(true, Events::default());
+        *service.registry.lock().unwrap() = Ok(registry);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while count.load(Ordering::SeqCst) == 0 {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        (service, count)
+    }
+    #[test]
+    fn slow_poll_does_not_block_registry_calls() {
+        let (service, _) = start();
+        let at = Instant::now();
+        service
+            .with_registry(&service.events, |r| {
+                r.get("custom")?.view()?;
+                Ok(r.list())
+            })
+            .unwrap();
+        assert!(
+            at.elapsed() < Duration::from_millis(200),
+            "registry call took {:?}",
+            at.elapsed()
+        );
+    }
+    fn change_during_poll(enabled: bool) {
+        let (service, _) = start();
+        let at = Instant::now();
+        let view = service
+            .with_registry(&service.events, |r| {
+                r.get("custom")?.configure(config(enabled, "new"))
+            })
+            .unwrap();
+        assert_eq!(view.summary.enabled, enabled);
+        assert!(
+            at.elapsed() < Duration::from_millis(200),
+            "config change took {:?}",
+            at.elapsed()
+        );
+        std::thread::sleep(Duration::from_millis(3100));
+        service
+            .with_registry(&service.events, |r| {
+                assert!(r.get("custom")?.live().is_empty());
+                Ok(())
+            })
+            .unwrap();
+    }
+    #[test]
+    fn disable_drops_in_flight_result() {
+        change_during_poll(false);
+    }
+    #[test]
+    fn config_edit_drops_in_flight_result() {
+        change_during_poll(true);
+    }
+    #[test]
+    fn only_one_poll_is_in_flight() {
+        let (_service, count) = start();
+        std::thread::sleep(Duration::from_millis(2100));
+        assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 }

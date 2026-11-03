@@ -87,7 +87,15 @@ pub enum Error {
     Storage,
 }
 
+pub type PollState = Box<dyn std::any::Any + Send>;
+pub type Poll = Box<dyn FnOnce() -> PollState + Send>;
+
 pub trait Integration: Send {
+    fn prepare_poll(&mut self) -> Option<Poll> {
+        None
+    }
+    fn apply_poll(&mut self, _state: PollState) {}
+    fn request_refresh(&mut self) {}
     fn command_approval(&mut self, _approval: Arc<dyn CommandApproval>) {}
     fn summary(&self) -> IntegrationSummary;
     fn view(&self) -> Result<IntegrationView, Error>;
@@ -190,6 +198,13 @@ impl Registry {
     }
     pub fn get(&mut self, id: &str) -> Result<&mut Box<dyn Integration>, Error> {
         self.0.get_mut(id).ok_or(Error::NotFound)
+    }
+    pub fn poll_jobs(&mut self, busy: &std::collections::BTreeSet<String>) -> Vec<(String, Poll)> {
+        self.0
+            .iter_mut()
+            .filter(|(id, _)| !busy.contains(*id))
+            .filter_map(|(id, i)| i.prepare_poll().map(|poll| (id.clone(), poll)))
+            .collect()
     }
     pub fn tick(&mut self) {
         for i in self.0.values_mut() {

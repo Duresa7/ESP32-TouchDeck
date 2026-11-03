@@ -11,7 +11,9 @@ struct Settings {
     url: String,
     interval_s: u64,
 }
+#[derive(Clone)]
 struct CliProxyIntegration {
+    generation: u64,
     revision: u64,
     detail: Option<CliProxyDetail>,
     settings: Settings,
@@ -36,6 +38,7 @@ fn create(env: &Environment) -> Result<Box<dyn Integration>, Error> {
         &legacy.cliproxy_url,
     ));
     Ok(Box::new(CliProxyIntegration {
+        generation: 0,
         revision: 0,
         detail: None,
         settings: Settings {
@@ -57,6 +60,7 @@ fn create(env: &Environment) -> Result<Box<dyn Integration>, Error> {
 inventory::submit! { Registration(create) }
 impl CliProxyIntegration {
     fn reset(&mut self) {
+        self.generation += 1;
         self.source = CliProxy::new(&self.settings.url, self.keys.clone(), (self.fetch)());
         self.next = Some(Instant::now());
         self.readings.clear();
@@ -101,6 +105,39 @@ impl CliProxyIntegration {
     }
 }
 impl Integration for CliProxyIntegration {
+    fn prepare_poll(&mut self) -> Option<Poll> {
+        let now = Instant::now();
+        if !self.settings.enabled
+            || self.next.is_none_or(|next| now < next)
+            || self
+                .last_request
+                .is_some_and(|last| now.duration_since(last) < crate::sources::PROXY_REFRESH_FLOOR)
+        {
+            return None;
+        }
+        let mut snapshot = self.clone();
+        self.last_request = Some(now);
+        Some(Box::new(move || {
+            snapshot.tick();
+            Box::new(snapshot)
+        }))
+    }
+    fn apply_poll(&mut self, state: PollState) {
+        let Ok(state) = state.downcast::<Self>() else {
+            return;
+        };
+        if self.settings.enabled && self.generation == state.generation {
+            self.source = state.source;
+            self.readings = state.readings;
+            self.detail = state.detail;
+            self.revision = state.revision;
+            self.next = state.next;
+        }
+    }
+    fn request_refresh(&mut self) {
+        self.next = Some(Instant::now());
+    }
+
     fn summary(&self) -> IntegrationSummary {
         let Info::Proxy(info) = self.source.info();
         let (state, message) = match self.keys.get() {

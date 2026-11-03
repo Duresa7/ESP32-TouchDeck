@@ -163,6 +163,7 @@ impl Settings {
     }
 }
 
+#[derive(Clone)]
 struct Sample {
     next: Instant,
     failures: u32,
@@ -171,13 +172,15 @@ struct Sample {
     error: Option<&'static str>,
 }
 
+#[derive(Clone)]
 struct Custom {
+    generation: u64,
     approval: Option<Arc<dyn CommandApproval>>,
     settings: Settings,
     file: Option<PathBuf>,
     load_error: Option<&'static str>,
     secrets: Arc<dyn secrets::SecretStore>,
-    fetch: Box<dyn crate::sources::Fetch>,
+    fetch: Arc<dyn crate::sources::Fetch>,
     samples: BTreeMap<String, Sample>,
     sequence: u64,
     last_poll: Option<Instant>,
@@ -212,12 +215,13 @@ fn create(env: &Environment) -> Result<Box<dyn Integration>, Error> {
         _ => (Settings::default(), None),
     };
     Ok(Box::new(Custom {
+        generation: 0,
         approval: None,
         settings,
         file,
         load_error,
         secrets: env.secrets.clone(),
-        fetch: (env.fetch)(),
+        fetch: (env.fetch)().into(),
         samples: BTreeMap::new(),
         sequence: 0,
         last_poll: None,
@@ -332,6 +336,53 @@ impl Custom {
 }
 
 impl Integration for Custom {
+    fn prepare_poll(&mut self) -> Option<Poll> {
+        if !self.settings.enabled
+            || self
+                .last_poll
+                .is_some_and(|at| at.elapsed() < Duration::from_secs(1))
+            || self.settings.sources.iter().all(|s| {
+                self.samples
+                    .get(&s.id)
+                    .is_some_and(|s| Instant::now() < s.next)
+            })
+        {
+            return None;
+        }
+        let mut snapshot = self.clone();
+        let secrets = Arc::new(secrets::MemorySecrets::default());
+        for field in self.settings.fields().keys() {
+            match self.secrets.get("custom", field) {
+                Ok(Some(secret)) => {
+                    secrets::SecretStore::put(secrets.as_ref(), "custom", field, secret).ok()?;
+                }
+                Ok(None) => {}
+                Err(_) => return None,
+            }
+        }
+        snapshot.secrets = secrets;
+        self.last_poll = Some(Instant::now());
+        Some(Box::new(move || {
+            snapshot.tick();
+            Box::new(snapshot)
+        }))
+    }
+    fn apply_poll(&mut self, state: PollState) {
+        let Ok(state) = state.downcast::<Self>() else {
+            return;
+        };
+        if self.settings.enabled && self.generation == state.generation {
+            self.samples = state.samples;
+            self.sequence = state.sequence;
+            self.revision = state.revision;
+        }
+    }
+    fn request_refresh(&mut self) {
+        for sample in self.samples.values_mut() {
+            sample.next = Instant::now();
+        }
+    }
+
     fn command_approval(&mut self, approval: Arc<dyn CommandApproval>) {
         self.approval = Some(approval);
     }
@@ -412,6 +463,7 @@ impl Integration for Custom {
         self.load_error = None;
         self.samples
             .retain(|id, _| settings.sources.iter().any(|s| s.id == *id));
+        self.generation += 1;
         self.settings = settings;
         let now = Instant::now();
         for sample in self.samples.values_mut() {
@@ -430,6 +482,7 @@ impl Integration for Custom {
         if value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control) {
             return Err(Error::ConfigInvalid);
         }
+        self.generation += 1;
         self.secrets
             .put(
                 "custom",
@@ -445,6 +498,7 @@ impl Integration for Custom {
         if !self.settings.fields().contains_key(field) {
             return Err(Error::ConfigInvalid);
         }
+        self.generation += 1;
         self.secrets
             .delete("custom", field)
             .map_err(|_| Error::Credentials)
