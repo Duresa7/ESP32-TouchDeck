@@ -697,3 +697,57 @@ or invalid stored Layout prevents deletion. Production still advertises and
 accepts only tdi1 on the link until `CONFIG_TD_GIF_CAPS` is enabled after playback
 and the combined board proof. The C Layout parser already accepts the GIF schema
 introduced by the contract step; this step tests its render kind and empty streams.
+
+### GIF playback (test builds)
+
+`CONFIG_TD_GIF_CAPS` also enables the GIF Tile renderer. It remains disabled in
+the shipped configurations: real Devices still advertise only `tdi1`, zero GIF
+frames, and no `anim`. Enable it only in a separate test configuration until the
+combined hardware pass establishes the animation and tap budgets.
+
+One priority-1 worker on core 1 owns playback: its file reads, decoding and
+PSRAM allocations. It sleeps on its task notification until the earliest frame
+deadline among playing Tiles. While nothing plays it sleeps until a Page, pause,
+wake or Layout change notifies it. It checks cancellation at most every 256
+input, dictionary or pixel operations and yields a scheduler tick when a slice
+has consumed about 1 ms. No LVGL or shared state lock spans a decode or a file read. The LVGL timer
+only consumes a ready descriptor and invalidates the Tile image. An expired
+frame is discarded during decode, at publication, or when the UI consumes it;
+each Tile has at most one pending frame, with no catch-up queue.
+
+Each playing Tile retains its encoded bytes, a bounded decoder workspace, two
+RGB565/A8 playback buffers and an immutable frame-0 poster. A Page change
+cancels outgoing work and drops its playback buffers, encoded bytes and decoder
+before starting incoming playback. Off-screen Pages, the idle face and
+screen-off retain only posters and Tile metadata. A Layout reload decodes the
+next Layout's posters on the reload task, outside the LVGL lock, while the shown
+Layout keeps playing. Under the LVGL lock it then detaches the old images, waits
+for the worker to release the old buffers, and builds the new Layout. If the
+LVGL lock times out, the reload frees the staged posters and returns
+`display.busy`, and the shown Layout keeps playing as before.
+
+Slides, the idle face and screen-off show posters and pause playback. Wake and
+the end of a slide restart from frame 0. `ui_gif_set_dimmed` supplies the same
+pause for a future screen-dimming implementation. Any task may call it; the
+LVGL timer applies it. The current power gate has active and off states only.
+A Companion disconnect alone does not pause a GIF. A refused allocation shows
+the poster and retries after 1 s or on the next Page activation. A file or
+decode error keeps the Tile on its poster until the next Layout load. A Tile
+whose poster could not be prepared uses its existing label rendering.
+
+Layout commit checks every Page before writing it: at most four animated Tiles
+and 65536 canvas pixels, counting repeated Assets once per Tile. Refusal returns
+wire reason `size` and preserves the stored Layout.
+
+Run `python -B firmware/tools/test_playback.py` and
+`python -B firmware/tools/test_gif_ui.py` alongside the existing host tests.
+The latter compiles the production worker/renderer against host scheduling and
+LVGL substitutes and checks buffer ownership across concurrent Page changes,
+slides, idle/off/dim states, and repeated Layout teardown. It also checks that a
+reload whose LVGL lock times out keeps the shown Layout and leaks nothing, that
+the worker stays asleep while every Tile is paused, and allocation retries. It does not measure
+the panel or ESP32 timing. `test_gif.py` also runs 32 synthetic Companion outputs
+through the production validator and decoder, comparing all decoded frames and
+delays. Regenerate that corpus with
+`python -B firmware/tools/generate_gif_fixtures.py`; this invokes the repository's
+Rust normalizer in a temporary Cargo project using the app lockfile.

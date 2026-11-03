@@ -11,6 +11,11 @@ READ = ctypes.CFUNCTYPE(ctypes.c_size_t, ctypes.c_void_p, ctypes.POINTER(ctypes.
 YIELD = ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p)
 
 
+class Info(ctypes.Structure):
+    _fields_ = [("width", ctypes.c_uint16), ("height", ctypes.c_uint16), ("frames", ctypes.c_uint16),
+                ("duration_ms", ctypes.c_uint32), ("delays_ms", ctypes.c_uint32 * 60)]
+
+
 def gif(frames=1, width=1, height=1, codes=None):
     header = b"GIF89a" + struct.pack("<HHBBB", width, height, 0x80, 0, 0)
     header += bytes([0, 0, 0, 255, 255, 255]) + b"\x21\xff\x0bNETSCAPE2.0\x03\x01\x00\x00\x00"
@@ -28,18 +33,26 @@ class GifTest(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(dir=os.environ.get("TD_TEST_OUT"))
         dll = Path(cls.tmp.name) / ("gif.dll" if os.name == "nt" else "gif.so")
-        source = str(ROOT / "components/td_store/td_gif.c")
-        include = str(ROOT / "components/td_store/include")
+        sources = [str(ROOT / "components/td_store/td_gif.c"), str(ROOT / "tools/host/heap/heap_caps_host.c")]
+        includes = [str(ROOT / "components/td_store/include"), str(ROOT / "tools/host/heap")]
         if os.name == "nt":
-            command = ["cl", "/nologo", "/LD", "/W4", "/WX", "/I" + include, source,
-                       "/Fo" + str(Path(cls.tmp.name) / "gif.obj"), "/link", "/OUT:" + str(dll),
-                       "/EXPORT:td_gif_validate"]
+            command = ["cl", "/nologo", "/LD", "/W4", "/WX"] + ["/I" + i for i in includes] + sources + [
+                       "/Fo" + cls.tmp.name + "\\", "/link", "/OUT:" + str(dll),
+                       "/EXPORT:td_gif_validate", "/EXPORT:td_gif_open", "/EXPORT:td_gif_close",
+                       "/EXPORT:td_gif_render", "/EXPORT:td_gif_info"]
         else:
             command = [os.environ.get("CC", "cc"), "-shared", "-fPIC", "-O2", "-Wall", "-Wextra",
-                       "-Werror", "-I" + include, source, "-o", str(dll)]
+                       "-Werror"] + ["-I" + i for i in includes] + sources + ["-o", str(dll)]
         subprocess.run(command, check=True, cwd=cls.tmp.name)
         cls.lib = ctypes.CDLL(str(dll))
         cls.lib.td_gif_validate.argtypes = [READ, YIELD, ctypes.c_void_p, ctypes.c_uint32]
+        cls.lib.td_gif_open.argtypes = [ctypes.c_void_p, ctypes.c_uint32, YIELD, ctypes.c_void_p,
+                                      ctypes.POINTER(ctypes.c_void_p)]
+        cls.lib.td_gif_close.argtypes = [ctypes.c_void_p]
+        cls.lib.td_gif_info.argtypes = [ctypes.c_void_p]
+        cls.lib.td_gif_info.restype = ctypes.POINTER(Info)
+        cls.lib.td_gif_render.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p,
+                                        ctypes.c_size_t, YIELD, ctypes.c_void_p]
 
     @classmethod
     def tearDownClass(cls):
@@ -134,6 +147,95 @@ class GifTest(unittest.TestCase):
         result, count = self.validate(gif(frames=60), cancel=True)
         self.assertEqual(result, 4)
         self.assertEqual(count, 1)
+
+    def test_decoder_pixels_bounds_and_cancel(self):
+        data = gif(width=3, codes=[4, 0, 1, 0, 5])
+        decoder = ctypes.c_void_p()
+        keep = YIELD(lambda _: True)
+        self.assertEqual(self.lib.td_gif_open(data, len(data), keep, None, ctypes.byref(decoder)), 0)
+        try:
+            out = (ctypes.c_uint8 * 9)()
+            self.assertEqual(self.lib.td_gif_render(decoder, 0, out, 8, keep, None), 2)
+            self.assertEqual(self.lib.td_gif_render(decoder, 1, out, 9, keep, None), 1)
+            self.assertEqual(self.lib.td_gif_render(decoder, 0, out, 9, keep, None), 0)
+            self.assertEqual(bytes(out), bytes([0, 0, 255, 255, 0, 0, 255, 255, 255]))
+        finally:
+            self.lib.td_gif_close(decoder)
+
+    def test_decoder_cancels_expansion_not_only_input(self):
+        from PIL import Image
+        import io
+        image = Image.new("P", (128, 128))
+        image.putpalette(bytes(range(256)) * 3)
+        encoded = io.BytesIO()
+        image.save(encoded, format="GIF", duration=100, loop=0, disposal=1, interlace=False)
+        data = encoded.getvalue()
+        decoder = ctypes.c_void_p()
+        keep = YIELD(lambda _: True)
+        self.assertEqual(self.lib.td_gif_open(data, len(data), keep, None, ctypes.byref(decoder)), 0)
+        try:
+            out = (ctypes.c_uint8 * (128 * 128 * 3))()
+            self.assertEqual(self.lib.td_gif_render(decoder, 0, out, len(out), YIELD(lambda _: False), None), 4)
+        finally:
+            self.lib.td_gif_close(decoder)
+
+    def test_companion_outputs_validate_and_decode(self):
+        from PIL import Image
+        import io
+        folder = ROOT / "tools/fixtures/gif"
+        manifest = (folder / "manifest.tsv").read_text().splitlines()
+        self.assertEqual(len(manifest), 32)
+        for line in manifest:
+            name, width, height, delays = line.split("\t")
+            data = (folder / name).read_bytes()
+            self.assertEqual(self.validate(data)[0], 0, name)
+            decoder = ctypes.c_void_p()
+            keep = YIELD(lambda _: True)
+            self.assertEqual(self.lib.td_gif_open(data, len(data), keep, None, ctypes.byref(decoder)), 0, name)
+            try:
+                info = self.lib.td_gif_info(decoder).contents
+                self.assertEqual((info.width, info.height), (int(width), int(height)))
+                self.assertEqual(list(info.delays_ms)[:info.frames], list(map(int, delays.split(","))))
+                image = Image.open(io.BytesIO(data))
+                for frame in reversed(range(info.frames)):
+                    image.seek(frame)
+                    raw = image.convert("RGBA").tobytes()
+                    rgba = list(zip(raw[0::4], raw[1::4], raw[2::4], raw[3::4]))
+                    rgb = b"".join(struct.pack("<H", ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3))
+                                   if a else b"\0\0" for r, g, b, a in rgba)
+                    expected = rgb + bytes(a for _, _, _, a in rgba)
+                    pixels = (ctypes.c_uint8 * len(expected))()
+                    self.assertEqual(self.lib.td_gif_render(decoder, frame, pixels, len(pixels), keep, None), 0)
+                    self.assertEqual(bytes(pixels), expected, (name, frame))
+            finally:
+                self.lib.td_gif_close(decoder)
+
+    def test_decoder_composes_dependent_transparency(self):
+        white = gif(codes=[4, 1, 5])
+        transparent = bytearray(gif())
+        control = transparent.index(b"\x21\xf9")
+        transparent[control + 3] = 5
+        data = white[:-1] + bytes(transparent[control:])
+        decoder = ctypes.c_void_p()
+        keep = YIELD(lambda _: True)
+        self.assertEqual(self.lib.td_gif_open(data, len(data), keep, None, ctypes.byref(decoder)), 0)
+        try:
+            out = (ctypes.c_uint8 * 3)()
+            for frame in [1, 0, 1]:
+                self.assertEqual(self.lib.td_gif_render(decoder, frame, out, 3, keep, None), 0)
+                self.assertEqual(bytes(out), b"\xff\xff\xff")
+        finally:
+            self.lib.td_gif_close(decoder)
+
+    def test_decoder_refuses_truncation_and_invalid_expansion(self):
+        keep = YIELD(lambda _: True)
+        data = gif()
+        bad = [data[:n] for n in range(len(data))]
+        bad += [gif(width=129), gif(frames=61), gif(codes=[4, 7, 5]), gif(codes=[4, 0, 6, 5])]
+        for data in bad:
+            decoder = ctypes.c_void_p()
+            self.assertNotEqual(self.lib.td_gif_open(data, len(data), keep, None, ctypes.byref(decoder)), 0)
+            self.assertFalse(decoder.value)
 
 
 if __name__ == "__main__":
