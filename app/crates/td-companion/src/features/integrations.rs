@@ -23,6 +23,10 @@ pub struct Service {
     pending: Arc<Pending>,
     events: Events,
     pub(crate) controls: Controls,
+    #[cfg(any(test, feature = "test-hooks"))]
+    media: Option<td_host::integrations::media::fake::FakeMedia>,
+    #[cfg(any(test, feature = "test-hooks"))]
+    volume: Option<td_host::integrations::volume::fake::FakeVolume>,
 }
 #[derive(Default)]
 struct PollRuntime {
@@ -81,7 +85,13 @@ impl Service {
         }
     }
     pub fn new(mock: bool, events: Events) -> Self {
+        let media = mock.then(td_host::integrations::media::fake::FakeMedia::default);
+        let volume = mock.then(td_host::integrations::volume::fake::FakeVolume::default);
         let registry = Registry::new(Environment {
+            media_provider: media.as_ref().map(|fake| {
+                Arc::new(fake.clone()) as Arc<dyn td_host::integrations::media::MediaProvider>
+            }),
+            volume: volume.as_ref().map(|fake| fake.factory()),
             secrets: if mock {
                 Arc::new(MemorySecrets::default())
             } else {
@@ -107,6 +117,10 @@ impl Service {
             pending: Arc::default(),
             events: events.clone(),
             controls,
+            #[cfg(any(test, feature = "test-hooks"))]
+            media,
+            #[cfg(any(test, feature = "test-hooks"))]
+            volume,
         };
         if let Ok(registry) = service.registry.lock().unwrap().as_ref() {
             *service.summaries.lock().unwrap() = registry.list();
@@ -153,10 +167,18 @@ impl Service {
         *service.runtime.handle.lock().unwrap() = Some(handle);
         service
     }
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn mock_volume(&self) -> Option<td_host::integrations::volume::fake::FakeVolume> {
+        self.volume.clone()
+    }
     pub fn summaries(&self) -> Vec<IntegrationSummary> {
         self.summaries.lock().unwrap().clone()
     }
-    /// The newest samples of the wanted streams. None while the registry is being updated.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn media_fake(&self) -> Option<td_host::integrations::media::fake::FakeMedia> {
+        self.media.clone()
+    }
+
     pub fn live(&self, wanted: &BTreeSet<StreamKey>) -> Option<HashMap<StreamKey, LiveSample>> {
         let state = self.registry.try_lock().ok()?;
         let Ok(registry) = state.as_ref() else {
@@ -736,6 +758,8 @@ mod poll_isolation_tests {
         let count = Arc::new(AtomicUsize::new(0));
         let fetch = count.clone();
         let mut registry = Registry::new(Environment {
+            media_provider: Some(Arc::new(td_host::integrations::media::fake::FakeMedia::default())),
+            volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
             secrets: Arc::new(MemorySecrets::default()),
             config_file: None,
             fetch: Arc::new(move || Box::new(Fetch(fetch.clone()))),

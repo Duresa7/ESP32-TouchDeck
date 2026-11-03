@@ -698,6 +698,31 @@ accepts only tdi1 on the link until `CONFIG_TD_GIF_CAPS` is enabled after playba
 and the combined board proof. The C Layout parser already accepts the GIF schema
 introduced by the contract step; this step tests its render kind and empty streams.
 
+### Volume and Media protocol foundations
+
+Run `python firmware/tools/test_media.py` in the same host environment as the
+Asset tests. It compiles the production Layout and live-message parsers and the
+input mailbox. The Asset runner also checks complete JPEG decode, dimensions,
+truncation, unsupported encodings and reference-counted deletion protection on
+both native files and LittleFS. Host JPEG tests use the pinned LVGL TJpgDec with
+ROM-compatible format restrictions; the ESP32-S3 build uses ROM TJpgDec.
+
+JPEG uploads are at most 32768 bytes and 256 by 256 pixels. The store syncs the
+upload before full decode to a null sink without per-block sleeps, then commits it
+atomically. The decoder unread-byte count locates EOI; trailing data is refused.
+Presence and pin checks read only the stored JPEG header and size. JPEG is
+for live images; static Tile Assets remain tdi1. The Layout parser accepts bar
+and now-playing streams, with at most four image Tiles across all Pages.
+
+The renderer implementation is a separate step. Its image lifetime must pair
+`td_asset_pin` with `td_asset_unpin` after the UI releases the old image; deletion
+returns `in-use` while any reference remains. Eight pin entries allow four active
+covers plus four replacements. It must call `td_link_input_cancel` on Layout
+activation and use `td_link_input` only for a fresh, enabled bar gesture. The link
+cancels queued input on a new session or disconnect. `td_link_press_part` emits
+control parts only in a selected v2 session. The media capabilities describe the
+combined Firmware; rendering and live image application require step H.
+
 ### GIF playback (test builds)
 
 `CONFIG_TD_GIF_CAPS` also enables the GIF Tile renderer. It remains disabled in

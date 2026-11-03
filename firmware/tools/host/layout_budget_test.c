@@ -21,6 +21,7 @@ static ui_page_t pages[2];
 static td_layout_t layout;
 static unsigned committed;
 static unsigned candidate;
+static bool selected = true, parse_budget_error;
 static void td_link_fail(cJSON *reply, const char *message) { (void)message; reply->failed = true; }
 static bool td_xfer_complete(const void *x) { (void)x; return true; }
 static bool le16_is(const uint8_t *p, unsigned value) { return (unsigned)(p[0] | p[1] << 8) == value; }
@@ -32,12 +33,16 @@ static void cJSON_AddStringToObject(cJSON *reply, const char *name, const char *
 {
     if (!strcmp(name, "reason")) reply->reason = value;
 }
+static void td_link_v2_fail(cJSON *reply, const char *reason, const char *message)
+{ td_link_fail(reply, message); reply->reason = reason; }
 bool td_layout_parse(const char *data, size_t bytes, td_layout_t **out, td_layout_error_t *error)
 {
-    (void)data; (void)bytes; (void)error; *out = &layout; return true;
+    (void)data; (void)bytes;
+    if (parse_budget_error) { memcpy(error->key, "layout.live_image_limit", sizeof "layout.live_image_limit"); return false; }
+    *out = &layout; return true;
 }
 void td_layout_free(td_layout_t *p) { (void)p; }
-static bool td_link_v2_selected(void) { return true; }
+static bool td_link_v2_selected(void) { return selected; }
 static void td_store_lock(void) {}
 static void td_store_unlock(void) {}
 bool td_asset_present(const char *id, uint32_t *bytes, td_asset_format_t *format)
@@ -93,5 +98,9 @@ int main(void)
     finish_put(&reply);
     assert(!reply.failed && committed == 4);
     puts("Layout commit counts reused Assets per Tile, resets each Page, refuses size by Tiles or pixels and retains stored Layout: OK");
+    selected = false; parse_budget_error = true;
+    reply = (cJSON){0};
+    finish_put(&reply);
+    assert(reply.failed && !reply.reason && committed == 4);
     return 0;
 }

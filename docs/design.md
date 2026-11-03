@@ -317,29 +317,33 @@ Motion gives feedback and shows where things come from. It never decorates. Anim
 | What | Property | Duration | Easing |
 | --- | --- | --- | --- |
 | Press on buttons, nav buttons, Add Tile choices | `scale` to `--press-scale` (0.97) | `--duration-press` 120ms | `--ease-out` |
-| Press on a Device on Home | `scale` to 0.985 | 120ms | `--ease-out` |
-| Hover color | background, color | `--duration-hover` 150ms | `ease` |
-| Device lift on Home (fine pointer only) | `translateY(-2px)` and shadow | 150ms | `--ease-out` |
-| Tooltip in | opacity, scale 0.96 to 1 from its trigger | `--duration-tooltip` 140ms | `--ease-out` |
-| Device panel in | opacity, scale 0.97 to 1 from the trigger | `--duration-popover` 180ms | `--ease-out` |
-| Dialog in | opacity, scale 0.97 to 1 from the center; the scrim fades | `--duration-dialog` 220ms | `--ease-out` |
+| Press on a Device on Home | `scale` to `--press-scale-device` (0.985) | 120ms | `--ease-out` |
+| Hover color | background, color | `--duration-hover` 150ms | `--ease-color` (`ease`) |
+| Device lift on Home (fine pointer only) | `translateY(--lift-device)` (-2px), and the lifted shadow crossfades over the resting one by `opacity` | `--duration-lift` 150ms | `--ease-out` |
+| Tooltip in | opacity, scale `--enter-scale-tooltip` (0.96) to 1 from its trigger | `--duration-tooltip` 140ms | `--ease-out` |
+| Device panel in | opacity, scale `--enter-scale` (0.97) to 1 from the trigger | `--duration-popover` 180ms | `--ease-out` |
+| Dialog in | opacity, scale `--enter-scale` (0.97) to 1 from the center; the scrim fades | `--duration-dialog` 220ms | `--ease-out` |
 | Any exit | the reverse of its enter | `--duration-exit` 140ms | `--ease-out` |
 | Update icon opens | `clip-path` | `--duration-expand` 280ms | `--ease-out` |
 | Update icon closes | `clip-path` | `--duration-collapse` 200ms | `--ease-out` |
 | Update label in | opacity, after `--delay-label` 60ms | `--duration-label` 160ms | `--ease-out` |
-| Update label out | opacity | 140ms | `--ease-out` |
-| Switch thumb | `translate` | 180ms | `--ease-out` |
-| Device panel chevron | `rotate(180deg)` | 180ms | `--ease-out` |
-| Download progress | `scaleX` | 120ms | `linear` |
-| Theme change | background, color | `--duration-theme` 240ms | `ease` |
+| Update label out | opacity | `--duration-label-out` 140ms | `--ease-out` |
+| Switch thumb | `translate` | `--duration-switch` 180ms | `--ease-out` |
+| Device panel chevron | `rotate(180deg)` | `--duration-chevron` 180ms | `--ease-out` |
+| A Device's screen lights up as it connects, on Home and in setup | opacity of the screen from `--screen-offline-opacity`, and of its light spill in dark | `--duration-screen-light` 240ms; dims in `--duration-exit` | `--ease-out` |
+| A dropped Tile settles into its cell | `transform` | `--duration-tile-settle` 160ms | `--ease-out` |
+| Download progress | `scaleX` | `--duration-progress` 120ms | `--ease-progress` (`linear`) |
+| Theme change | background, color | `--duration-theme` 240ms | `--ease-color` |
+
+Every duration, easing, scale and distance is a token in `tokens.css`; a component never writes its own. Only an instant `0ms` is written in place. `app/ui/src/styles/motion.test.ts` checks this.
 
 `--ease-out` is `cubic-bezier(0.23, 1, 0.32, 1)`. `--ease-in-out` (`cubic-bezier(0.77, 0, 0.175, 1)`) is for things that move on screen, and `--ease-drawer` (`cubic-bezier(0.32, 0.72, 0, 1)`) is for sheets, if one is ever added.
 
-**What never animates:** changing Page, changing section from the nav, selecting a Tile, swapping the inspector between action, Live tile and Add Tile, and anything you do with the keyboard. Keyboard focus opens the Update icon on the next frame.
+**What never animates:** changing Page, changing section from the nav, selecting a Tile, swapping the inspector between action, Live tile and Add Tile, and anything you do with the keyboard. Keyboard focus opens the Update icon on the next frame. The editor's try-it mode is the one exception: a swipe or a Page-jump Tile slides between Pages with the Firmware's own timing (`THEME.anim`), because it shows what the Device does. The arrow keys change Page there at once.
 
 **Interruptible.** Use CSS transitions, not keyframes, for anything a pointer can reverse. A transition turns back from wherever it is: leaving the Update icon halfway through opening closes it from that width.
 
-**Reduced motion.** Under `prefers-reduced-motion: reduce`, the tokens remove movement and keep fades: `--press-scale` becomes 1, popovers and dialogs fade in 120ms and 140ms without scaling, the Device lift is off, and every Update icon duration and delay becomes 0ms, so it jumps straight to its end state.
+**Reduced motion.** Under `prefers-reduced-motion: reduce`, the tokens remove movement and keep fades, in one block at the end of `tokens.css`: every press and entry scale becomes 1, popovers and dialogs fade in 120ms and 140ms without scaling, the Device lift is off, and the switch thumb, the chevron, a Tile settling, progress and every Update icon duration and delay become 0ms, so each jumps straight to its end state. Tooltips, the scrim, hover color, the theme change and a screen lighting up still fade. The try-it Page slide changes Page at once.
 
 ## Device translation
 

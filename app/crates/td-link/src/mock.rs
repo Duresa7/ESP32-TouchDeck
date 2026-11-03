@@ -1503,7 +1503,7 @@ fn jpeg_size(data: &[u8]) -> Option<(u16, u16)> {
                     return None;
                 };
                 let (w, h) = (u16::from_be_bytes([w0, w1]), u16::from_be_bytes([h0, h1]));
-                if precision != 8 || !matches!(components, 1 | 3) || w == 0 || h == 0 {
+                if precision != 8 || components != 3 || w == 0 || h == 0 {
                     return None;
                 }
                 size = Some((w, h));
@@ -2402,5 +2402,17 @@ mod tests {
             crate::probe_transport(Box::new(other.connect())),
             crate::Probe::NotDeck { detail } if detail.contains("esp-at")
         ));
+    }
+}
+
+#[cfg(test)]
+mod jpeg_contract_tests {
+    #[test]
+    fn grayscale_is_not_a_device_jpeg() {
+        let gray = [
+            0xff, 0xd8, 0xff, 0xc0, 0, 11, 8, 0, 8, 0, 8, 1, 1, 0x11, 0, 0xff, 0xda, 0, 2, 0xff,
+            0xd9,
+        ];
+        assert_eq!(super::jpeg_size(&gray), None);
     }
 }

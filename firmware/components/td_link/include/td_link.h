@@ -34,6 +34,10 @@ void td_link_idle_boot(void);
 /* Queues a `press` event for a tap on an app or widget tile, from any task and without blocking. It is dropped when
  * the queue is full or the app is not connected. */
 void td_link_press(const char *page, const char *tile, const char *kind);
+void td_link_press_part(const char *page, const char *tile, const char *kind, const char *part);
+/* Called by the bar renderer after drag slop. Cancel on Layout changes. */
+void td_link_input(const char *page, const char *tile, double value, bool end);
+void td_link_input_cancel(void);
 td_link_state_t td_link_state(void);
 void td_link_hello(void);
 cJSON *td_link_dispatch(const cJSON *request);

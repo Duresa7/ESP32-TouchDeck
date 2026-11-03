@@ -3,6 +3,10 @@
 #include <stdlib.h>
 static uint32_t used;
 static unsigned slices;
+static unsigned delays, decodes;
+void host_note_decode(void) { decodes++; }
+unsigned host_decodes(void) { return decodes; }
+unsigned host_delays(void) { return delays; }
 static unsigned interrupt_at;
 bool td_store_mounted(void) { return true; }
 void td_store_lock(void) {}
@@ -22,6 +26,7 @@ void host_interrupt(unsigned at)
 void vTaskDelay(unsigned ticks)
 {
     (void)ticks;
+    delays++;
     if (interrupt_at && ++slices == interrupt_at) {
         exit(94);
     }
