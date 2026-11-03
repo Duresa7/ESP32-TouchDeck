@@ -104,7 +104,6 @@ test.describe('the Update dialog', () => {
     await expect(dialog(page).getByRole('heading', { name: "What's new" })).toBeVisible();
     await expect(dialog(page).getByRole('listitem')).toHaveText([
       'Volume Tiles follow your finger as you drag.',
-      'Proxmox Tiles can show storage use.',
       'Devices reconnect faster after this PC wakes.',
     ]);
     await expect(dialog(page)).not.toContainText('##');

@@ -15,6 +15,7 @@ test('isolated shell, exact preload, navigation, renewal, single instance and cl
     const page = await app.firstWindow();
     await page.waitForURL(fake.origin + '/');
     expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getTitle())).toBe('Open TouchDeck');
+    expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getMinimumSize())).toEqual([800, 600]);
     expect(await page.evaluate(() => ['require', 'process', 'Buffer', 'global'].map(k => typeof (window as any)[k]))).toEqual(['undefined', 'undefined', 'undefined', 'undefined']);
     expect(await page.evaluate(() => Object.keys((window as any).openTouchDeck).sort())).toEqual(['onSessionChanged', 'pickFolder', 'session', 'updates', 'version']);
     await app.evaluate(({ dialog }) => {

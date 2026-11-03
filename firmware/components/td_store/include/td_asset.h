@@ -97,6 +97,10 @@ td_asset_result_t td_asset_list(const char *after, td_asset_item_t items[TD_ASSE
 td_asset_result_t td_asset_pin(const char *id);
 void td_asset_unpin(const char *id);
 
+/* Copies a committed Asset's bytes into buf, which holds `cap` bytes, under the storage lock, and sets *len.
+ * TD_ASSET_SIZE when the file is larger than cap, TD_ASSET_STORAGE when it is absent or unreadable; *len is 0 then.
+ * The caller pins the Asset first, so a delete cannot race the read. */
+td_asset_result_t td_asset_read(const char *id, uint8_t *buf, size_t cap, size_t *len);
 /* Removes <id>.bin unless pinned. An absent Asset succeeds with *deleted false. */
 td_asset_result_t td_asset_delete(const char *id, bool *deleted);
 

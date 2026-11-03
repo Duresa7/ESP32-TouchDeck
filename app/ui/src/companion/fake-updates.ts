@@ -17,7 +17,7 @@ export const sampleOffer: UpdateOffer = {
   state: 'available',
   version: '1.1.0',
   current: '0.2.0',
-  notes: '## Changes\n- Volume Tiles follow your finger as you drag.\n- Proxmox Tiles can show storage use.\n- Devices reconnect faster after this PC wakes.',
+  notes: '## Changes\n- Volume Tiles follow your finger as you drag.\n- Devices reconnect faster after this PC wakes.',
   date: '2026-11-02T09:00:00Z',
 };
 

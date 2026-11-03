@@ -20,6 +20,7 @@ def load(path):
     lib.td_asset_gif_canvas.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_uint16), ctypes.POINTER(ctypes.c_uint16)]
     lib.td_asset_gif_canvas.restype = ctypes.c_bool
     lib.td_asset_result_reason.restype = ctypes.c_char_p
+    lib.td_asset_read.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
     return lib
 
 
@@ -87,7 +88,7 @@ class AssetTest(unittest.TestCase):
                     source = wrapper
                 sources.append(source)
         exports = ["td_asset_upload_begin", "td_asset_upload_write", "td_asset_upload_finish",
-                   "td_asset_upload_abort", "td_asset_present", "td_asset_gif_canvas", "td_asset_delete", "td_asset_result_reason", "host_interrupt", "td_asset_pin", "td_asset_unpin", "host_delays", "host_decodes"]
+                   "td_asset_upload_abort", "td_asset_present", "td_asset_gif_canvas", "td_asset_delete", "td_asset_result_reason", "host_interrupt", "td_asset_pin", "td_asset_unpin", "td_asset_read", "host_delays", "host_decodes"]
         if cls.littlefs:
             exports += ["host_lfs_init", "host_lfs_done", "host_handles", "host_exists", "host_fail_sync", "host_fail_close"]
         if os.name == "nt":
@@ -180,6 +181,23 @@ class AssetTest(unittest.TestCase):
         self.assertEqual(self.lib.td_asset_delete(key, ctypes.byref(deleted)), 0)
         self.assertTrue(deleted.value)
         self.assertNotEqual(self.lib.td_asset_pin(key), 0)
+
+    def test_read_returns_a_committed_asset_within_its_bound(self):
+        from io import BytesIO
+        from PIL import Image
+        out = BytesIO()
+        Image.new("RGB", (48, 48), (200, 10, 10)).save(out, format="JPEG")
+        data = out.getvalue()
+        key, result = upload(self.lib, data, fmt=3)
+        self.assertEqual(result, 0)
+        buf = ctypes.create_string_buffer(len(data) + 8)
+        got = ctypes.c_size_t()
+        self.assertEqual(self.lib.td_asset_read(key, buf, len(data), ctypes.byref(got)), 0)
+        self.assertEqual(buf.raw[:got.value], data)
+        self.assertEqual(self.lib.td_asset_result_reason(self.lib.td_asset_read(key, buf, len(data) - 1, ctypes.byref(got))), b"size")
+        self.assertEqual(got.value, 0)
+        self.assertEqual(self.lib.td_asset_result_reason(self.lib.td_asset_read(b"0" * 64, buf, len(buf), ctypes.byref(got))), b"storage")
+        self.assertEqual(self.lib.td_asset_result_reason(self.lib.td_asset_read(b"../" + key[3:], buf, len(buf), ctypes.byref(got))), b"storage")
 
     def test_static_asset_remains_static(self):
         import struct

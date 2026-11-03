@@ -62,3 +62,4 @@ void ui_gif_set_dimmed(bool dimmed);
 bool ui_layout_reload(bool use_builtin, td_layout_error_t *err);
 td_layout_t *host_stored_layout(void);
 void host_load_locked(const td_layout_t *layout);
+void ui_live_unpin_dropped(void);

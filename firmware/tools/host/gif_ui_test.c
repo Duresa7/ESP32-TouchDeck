@@ -280,12 +280,20 @@ void host_load_locked(const td_layout_t *layout)
     }
     ui_gif_resume();
 }
+static atomic_uint unpins_unlocked;
+void ui_live_unpin_dropped(void)
+{
+    assert(!holds_lv);
+    atomic_fetch_add(&unpins_unlocked, 1);
+}
 static unsigned load(td_layout_t *layout)
 {
     stored = layout;
     atomic_store(&fail_slow_lock, 0);
     td_layout_error_t err = {0};
+    const unsigned unpins = atomic_load(&unpins_unlocked);
     assert(ui_layout_reload(false, &err));
+    assert(atomic_load(&unpins_unlocked) == unpins + 1);
     return first_image;
 }
 

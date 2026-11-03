@@ -12,6 +12,12 @@ pub(crate) struct FakeControl {
     pictures: Mutex<HashMap<String, Arc<[u8]>>>,
     next: Mutex<u64>,
     pub picture_calls: Mutex<usize>,
+    pub acts: Mutex<Vec<(String, String, Duration)>>,
+    pub set_times: Mutex<Vec<std::time::Instant>>,
+    pub sets: Mutex<Vec<(String, String, f64)>>,
+    pub act_delay: Mutex<Duration>,
+    pub act_result: Mutex<Option<ControlError>>,
+    pub set_result: Mutex<Option<ControlError>>,
 }
 
 impl FakeControl {
@@ -57,11 +63,19 @@ impl Control for FakeControl {
     fn subscribe(&self, wake: Arc<dyn Fn() + Send + Sync>) {
         *self.wake.lock() = Some(wake);
     }
-    fn act(&self, _: &str, _: &str, _: Duration) -> Result<(), ControlError> {
-        Err(ControlError::UnknownAction)
+    fn act(&self, account: &str, action: &str, timeout: Duration) -> Result<(), ControlError> {
+        self.acts
+            .lock()
+            .push((account.to_owned(), action.to_owned(), timeout));
+        std::thread::sleep(*self.act_delay.lock());
+        self.act_result.lock().clone().map_or(Ok(()), Err)
     }
-    fn set(&self, _: &str, _: &str, _: f64) -> Result<(), ControlError> {
-        Err(ControlError::NotSettable)
+    fn set(&self, account: &str, stream: &str, value: f64) -> Result<(), ControlError> {
+        self.set_times.lock().push(std::time::Instant::now());
+        self.sets
+            .lock()
+            .push((account.to_owned(), stream.to_owned(), value));
+        self.set_result.lock().clone().map_or(Ok(()), Err)
     }
     fn picture(&self, id: &str) -> Option<Arc<[u8]>> {
         *self.picture_calls.lock() += 1;

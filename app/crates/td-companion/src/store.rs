@@ -20,6 +20,9 @@ impl LayoutStore {
     pub(crate) fn new(dir: PathBuf) -> Self {
         Self { dir }
     }
+    pub fn pushed(&self) -> Self {
+        Self::new(self.dir.join("pushed-v1"))
+    }
     fn path(&self, device: &str, orientation: Orientation) -> Option<PathBuf> {
         // Device ids are lowercase letters, digits and `-`, so they never leave the folder.
         let safe = !device.is_empty()
@@ -139,7 +142,15 @@ fn sweep_stale_temps(dir: &std::path::Path) {
         let name = entry.file_name();
         if name
             .to_str()
-            .is_some_and(|n| n.starts_with('.') && n.ends_with(".tmp"))
+            .and_then(|name| name.strip_prefix('.'))
+            .and_then(|name| name.strip_suffix(".tmp"))
+            .and_then(|name| name.split_once(".bin."))
+            .is_some_and(|(id, pid)| {
+                td_link::asset::valid_asset_id(id)
+                    && pid
+                        .parse::<u32>()
+                        .is_ok_and(|value| value.to_string() == pid)
+            })
             && entry.file_type().is_ok_and(|t| t.is_file())
         {
             let _ = std::fs::remove_file(entry.path());
@@ -407,6 +418,38 @@ mod quota {
         again.put(&icon(3)).unwrap();
         assert!(again.get(&old).is_none());
         assert!(again.get(&used).is_some());
+    }
+
+    #[test]
+    fn startup_preserves_unrelated_temp_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "a".repeat(64);
+        let names = [
+            ".foo.tmp".to_owned(),
+            format!(".{id}.bin.worker.tmp"),
+            format!(".{id}.bin..tmp"),
+            format!(".{id}.bin.4294967296.tmp"),
+            format!(".{id}.other.123.tmp"),
+            format!(".{}.bin.123.tmp", "g".repeat(64)),
+        ];
+        for name in &names {
+            std::fs::write(dir.path().join(name), b"unrelated").unwrap();
+        }
+        let stale = dir.path().join(format!(".{id}.bin.123.tmp"));
+        std::fs::write(&stale, b"partial asset").unwrap();
+        let nested = dir.path().join(format!(".{id}.bin.456.tmp"));
+        std::fs::create_dir(&nested).unwrap();
+        let _assets = AssetStore::new(
+            dir.path().to_owned(),
+            LayoutStore::new(dir.path().join("layouts")),
+            Clock::default(),
+            ICON,
+        );
+        for name in &names {
+            assert_eq!(std::fs::read(dir.path().join(name)).unwrap(), b"unrelated");
+        }
+        assert!(!stale.exists());
+        assert!(nested.is_dir());
     }
 
     #[test]

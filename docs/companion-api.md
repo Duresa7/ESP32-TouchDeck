@@ -637,7 +637,7 @@ requires any supported live kind, not specifically graph.
 Control MUST NOT start a process. No public API route reaches act or set.
 Only Device touch events (or test-hook MockDeck events) reach them. Process
 launching Integrations continue through ADR 0006 approval. Resolve the Tile's
-source/account from the cached active Layout; require input and a settable
+source/account from the Companion's pushed copy of the active Layout; require input and a settable
 stream for sets, drop non-finite values, clamp to 0..1, and coalesce moves.
 A tap passes the press `part` unchanged as `Control::act`'s `action`.
 A drag passes the Integration stream id bound by the Tile's `value` stream
@@ -647,6 +647,44 @@ on that Integration stream.
 Limit actions to ten per Device per second and a two-second timeout. The action
 log gains `kind:"integration"`, status `ok` or `failed`, and copy.md detail.
 A completed gesture logs once, never per move. No new API endpoint is added.
+
+As built in step C, per Device link session, before anything binds:
+
+- Only a Device connected over link v2 reaches a Control. `page` and `tile`
+  must be Layout ids (`^[a-z0-9_]{1,15}$`), `part` must match `^[a-z_]{1,15}$`,
+  `seq` must be a u32 that rises (taps and drags count separately), and a drag's
+  `stream` must be `value`. Anything else is dropped without a log entry.
+- Taps with a `part` pass a gate of ten per second at arrival. A separate
+  worker accepts one at a time; excess taps are dropped and counted, without
+  occupying the ordinary tap queue. The Companion enforces a two-second wait.
+  A timed-out call remains in flight until it returns; no second call starts
+  for that Device, including after reconnect. A hung call cannot be forcibly
+  cancelled; it disables further control taps for that Device until it returns
+  or the Companion restarts, while ordinary taps remain available.
+- Drags coalesce at arrival into a mailbox of at most 64 Tile streams plus
+  64 completed snapshots. An end survives later moves and is applied first.
+  Once completed capacity is exhausted, new gestures are rejected while
+  existing ends remain intact. A batch runs at most every 20 ms; completed
+  gestures log at most ten times per second. Layout changes clear pending
+  gestures and failures; a new link session starts a new hub. There is no wire
+  start phase: processing an end clears the previous gesture failure. A Layout
+  change conservatively cancels pending gestures on all connected Devices.
+  Sequence numbers do not wrap under link-v2: sending u32::MAX exhausts only
+  that Device's session, and reconnecting starts fresh sequence tracking.
+- Both touch paths use only the Companion's pushed Layout for that Device
+  and orientation, after the router's active copy matches its canonical bytes
+  (and therefore its canonical CRC revision). No touch fetches a Layout.
+  Device-read Layouts and old cache files do not authorize controls: the pushed
+  copies live separately in `layouts/pushed-v1`. Push an existing Layout once
+  to authorize its controls. Unmatched control taps fail with
+  "This Tile's control isn't available." A completed drag on an unmatched Layout
+  logs the same failure; an unknown Tile within a matching Layout does nothing.
+- A drag requires a `bar` Tile with `input: true`, a numeric stream and the
+  Integration's `settable` flag. Changes invalidate the cache before sending
+  a Layout or orientation; an older round cannot restore an invalidated entry.
+- A tap binds only a part its renderer draws: `previous`, `play_pause` or
+  `next` on `now-playing`, `mute` on a `bar` that declares `muted`, on a
+  `widget` action with a source. A part never runs any other action type.
 
 The Companion computes a Tile's pixel rect from the active Layout's grid,
 position/span and `fullScreen`, and the Device's screen size in the Layout's
@@ -982,7 +1020,7 @@ Feature module `test_hooks`, compiled only with the `test-hooks` Cargo feature a
 | `test.press` | `POST /test/devices/{device}/press` | `{page, tile, kind}` → `()` |
 | `test.sets` | `GET /test/devices/{device}/sets` | → `Value[]` |
 | `test.record` | `GET /test/devices/{device}/record` | → `{received, lines, settings, reboots, assets, layouts}` |
-| `test.emit` | `POST /test/devices/{device}/emit` | `{events, repeat?, every_ms?}` → `()` |
+| `test.emit` | `POST /test/devices/{device}/emit` | `{events, repeat?, every_ms?}` → `()`. Events: `key.report`, `key.resync`, `press` (with an optional renderer `part`), `v2.input` (`page`, `tile`, `stream`, `phase`, `value`) and `drop` |
 | `test.input_log` | `GET /test/input-log` | → `string[]` |
 | `test.ports` | `POST /test/ports` | `{plug: {id, kind: "device" \| "device-v1" \| "silent" \| "other-firmware" \| "busy"}}` or `{unplug: id}` → `()` |
 | `test.approvals_script` | `POST /test/approvals/script` | `{answers: ("once" \| "always" \| "deny" \| "fail" \| "never")[]}` → `()`. Sets what the `FakePrompter` answers next. `fail` acts as a dialog that can't be shown |

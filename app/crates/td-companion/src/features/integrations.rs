@@ -211,6 +211,17 @@ impl Service {
                 .collect(),
         )
     }
+    /// Whether a Device's input can set this Integration stream: its Integration lists it as `settable`. Reads the
+    /// cached summaries, never the registry.
+    pub fn settable(&self, key: &StreamKey) -> bool {
+        self.summaries.lock().unwrap().iter().any(|summary| {
+            summary.id == key.integration
+                && summary
+                    .streams
+                    .iter()
+                    .any(|stream| stream.id == key.stream && stream.settable)
+        })
+    }
     /// The newest samples of the wanted streams that come from Controls. Never waits for the registry.
     pub fn control_live(&self, wanted: &BTreeSet<StreamKey>) -> HashMap<StreamKey, LiveSample> {
         self.controls
@@ -631,6 +642,42 @@ mod control_tests {
 
     fn shown(deck: &td_link::MockDeck) -> Option<serde_json::Value> {
         deck.live_sets().last().map(|set| set["value"].clone())
+    }
+
+    #[test]
+    fn only_a_stream_its_integration_lists_as_settable_takes_input() {
+        let service = Service::new(true, Events::default());
+        let key = |integration: &str, stream: &str| StreamKey {
+            integration: integration.into(),
+            account: String::new(),
+            stream: stream.into(),
+        };
+        let busy = service.registry.lock().unwrap();
+        let mut summaries = service.summaries.lock().unwrap();
+        let mut volume = summaries[0].clone();
+        volume.id = "volume".into();
+        volume.streams = vec![
+            td_host::integrations::DataStream {
+                id: "level".into(),
+                kind: "number".into(),
+                unit: None,
+                settable: true,
+            },
+            td_host::integrations::DataStream {
+                id: "muted".into(),
+                kind: "number".into(),
+                unit: None,
+                settable: false,
+            },
+        ];
+        summaries.push(volume);
+        drop(summaries);
+        assert!(service.settable(&key("volume", "level")));
+        assert!(!service.settable(&key("volume", "muted")));
+        assert!(!service.settable(&key("volume", "other")));
+        assert!(!service.settable(&key("media", "level")));
+        assert!(!service.settable(&key("this_pc", "cpu")));
+        drop(busy);
     }
 
     #[test]

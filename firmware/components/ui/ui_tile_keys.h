@@ -17,5 +17,9 @@ void ui_tile_keys_dress(lv_obj_t *obj, const ui_tile_t *tile);
  * the link turns into a `press` event, and logs `ui: press <page>/<tile> <kind>` when no hook is set. */
 void ui_tile_keys_click(const ui_page_t *page, const ui_tile_t *tile);
 
+/* A tap named `part` of a bar or now-playing Tile on `page`: goes to the part hook with the Tile's action kind, and
+ * logs `ui: press <page>/<tile> <kind> <part>` when no hook is set. */
+void ui_tile_keys_press_part(const ui_page_t *page, const ui_tile_t *tile, const char *part);
+
 /* The page changed: one-shot modifiers return to OFF and locked ones stay. */
 void ui_tile_keys_page_changed(void);

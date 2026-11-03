@@ -113,8 +113,26 @@ void ui_widget_begin(void);
  * ui_widget_begin does, before the Layout's objects are built and before the old Layout is freed. */
 void ui_live_begin(const td_layout_t *layout);
 
-/* Draws a graph Tile's label, unavailable marker, plot area and line on `obj`, and ties them to its slot. */
+/* Draws a graph, bar or now-playing Tile on `obj` and ties it to its slots. */
 void ui_live_build(lv_obj_t *obj, const ui_tile_t *tile, ui_rect_t rect);
+
+/* Gives back the pins of the covers the last ui_live_begin dropped. Call it once the LVGL lock is released, before the
+ * link handles its next message, so nothing takes the storage lock under the LVGL lock. */
+void ui_live_unpin_dropped(void);
+
+/* A press at Tile point (x, y) on a bar Tile. True when it lands in the value zone of a fresh bar that takes input:
+ * the bar holds the finger from then on, and the pager must not see it. */
+bool ui_live_capture(const ui_tile_t *tile, int16_t x, int16_t y);
+
+/* The held finger is at Tile point (x, y). Once it passes the slop the bar draws its value and sends it as a move. */
+void ui_live_drag(int16_t x, int16_t y);
+
+/* The held finger lifted or the press was lost. A drag sends its end and settles; a press that never moved sends
+ * nothing. */
+void ui_live_drop(void);
+
+/* The part a tap at Tile point (x, y) names on a bar or now-playing Tile, from the shared vectors, or NULL. */
+const char *ui_live_part(const ui_tile_t *tile, int16_t x, int16_t y);
 
 /* Called without the LVGL lock. Decodes the next Layout's posters while the shown Layout keeps playing. */
 void ui_gif_prepare(const td_layout_t *layout);

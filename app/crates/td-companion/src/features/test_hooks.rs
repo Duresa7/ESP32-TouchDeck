@@ -9,7 +9,7 @@ use axum::http::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::time::Duration;
-use td_core::Orientation;
+use td_core::{InputPhase, Orientation};
 use td_link::MockDeck;
 use ts_rs::TS;
 
@@ -152,7 +152,8 @@ impl Endpoint for Record {
 }
 
 /// Events for a mock Device to send: a `key.report` with `type` and `mods` and `keys` or
-/// `usage`, a `key.resync` with `mods` and `keys`, a `press` with `page`, `tile` and `kind`,
+/// `usage`, a `key.resync` with `mods` and `keys`, a `press` with `page`, `tile`, `kind` and an
+/// optional renderer `part`, a `v2.input` drag with `page`, `tile`, `stream`, `phase` and `value`,
 /// or `{"m": "drop", "count": n}`, which loses `n` key reports. The list runs `repeat` times
 /// with `every_ms` between entries, on its own thread.
 #[derive(Serialize, Deserialize, TS)]
@@ -213,8 +214,20 @@ fn emit(deck: &MockDeck, event: &Value) {
                 .unwrap_or_default();
             deck.emit_resync(number("mods") as u8, &keys);
         }
+        "press" if event.get("part").is_some() => {
+            deck.emit_press_part(text("page"), text("tile"), text("kind"), text("part"));
+        }
         "press" => {
             deck.emit_press(text("page"), text("tile"), text("kind"));
+        }
+        "v2.input" => {
+            let phase = if text("phase") == "end" {
+                InputPhase::End
+            } else {
+                InputPhase::Move
+            };
+            let value = event.get("value").and_then(Value::as_f64).unwrap_or(0.0);
+            deck.emit_input(text("page"), text("tile"), text("stream"), phase, value);
         }
         "drop" => deck.drop_key_reports(number("count") as u32),
         _ => {}
