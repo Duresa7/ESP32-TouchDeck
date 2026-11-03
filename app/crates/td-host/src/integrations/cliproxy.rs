@@ -14,6 +14,7 @@ struct Settings {
 #[derive(Clone)]
 struct CliProxyIntegration {
     generation: u64,
+    refreshes: u64,
     revision: u64,
     detail: Option<CliProxyDetail>,
     settings: Settings,
@@ -39,6 +40,7 @@ fn create(env: &Environment) -> Result<Box<dyn Integration>, Error> {
     ));
     Ok(Box::new(CliProxyIntegration {
         generation: 0,
+        refreshes: 0,
         revision: 0,
         detail: None,
         settings: Settings {
@@ -126,15 +128,20 @@ impl Integration for CliProxyIntegration {
         let Ok(state) = state.downcast::<Self>() else {
             return;
         };
-        if self.settings.enabled && self.generation == state.generation {
+        if self.generation == state.generation {
             self.source = state.source;
             self.readings = state.readings;
             self.detail = state.detail;
             self.revision = state.revision;
-            self.next = state.next;
+            self.next = if self.refreshes == state.refreshes {
+                state.next
+            } else {
+                Some(Instant::now())
+            };
         }
     }
     fn request_refresh(&mut self) {
+        self.refreshes += 1;
         self.next = Some(Instant::now());
     }
 
@@ -242,6 +249,7 @@ impl Integration for CliProxyIntegration {
         if settings == self.settings {
             return self.view();
         }
+        self.generation += 1;
         self.keys
             .rebind(&settings.url)
             .map_err(|_| Error::Credentials)?;

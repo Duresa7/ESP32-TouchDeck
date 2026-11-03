@@ -768,3 +768,36 @@ fn corrupt_or_unreadable_custom_json_recovers_without_blocking_other_integration
         Some("Couldn't read custom.json. Started empty.")
     );
 }
+
+#[test]
+fn a_failed_save_that_deletes_a_secret_drops_the_poll_that_used_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let custom_file = dir.path().join("custom.json");
+    let mut r = Registry::new(Environment {
+        media_provider: Some(Arc::new(
+            td_host::integrations::media::fake::FakeMedia::default(),
+        )),
+        volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
+        secrets: Arc::new(MemorySecrets::default()),
+        config_file: Some(dir.path().join("sources.json")),
+        fetch: Arc::new(|| Box::new(Reply(r#"{"readings":[{"value":23.5}]}"#))),
+    })
+    .unwrap();
+    let i = r.get("custom").unwrap();
+    i.configure(config("https://example.invalid/metrics"))
+        .unwrap();
+    i.secret_put("auth", "synthetic-header").unwrap();
+    let poll = i.prepare_poll().expect("a due source prepares a poll");
+
+    std::fs::remove_file(&custom_file).unwrap();
+    std::fs::create_dir(&custom_file).unwrap();
+    std::fs::write(custom_file.join("keep"), b"").unwrap();
+    assert!(matches!(
+        i.configure(config("https://other.example.invalid/")),
+        Err(td_host::integrations::Error::Storage)
+    ));
+    assert!(!i.view().unwrap().secrets["auth"].set);
+
+    i.apply_poll(poll());
+    assert!(i.live().is_empty());
+}

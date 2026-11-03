@@ -49,12 +49,17 @@ struct PollWorker {
     busy: bool,
 }
 impl PollWorker {
-    fn new() -> Self {
+    fn new(id: String) -> Self {
         let (jobs, work) = std::sync::mpsc::sync_channel::<td_host::integrations::Poll>(1);
         let (done, results) = std::sync::mpsc::channel();
         let handle = std::thread::spawn(move || {
             while let Ok(poll) = work.recv() {
-                if done.send(poll()).is_err() {
+                let state = std::panic::catch_unwind(std::panic::AssertUnwindSafe(poll))
+                    .unwrap_or_else(|_| {
+                        eprintln!("Companion: the {id} poll failed; it runs again when due.");
+                        Box::new(())
+                    });
+                if done.send(state).is_err() {
                     break;
                 }
             }
@@ -154,7 +159,9 @@ impl Service {
                         .map(|(id, _)| id.clone())
                         .collect();
                     for (id, poll) in registry.poll_jobs(&busy) {
-                        let worker = workers.entry(id).or_insert_with(PollWorker::new);
+                        let worker = workers
+                            .entry(id.clone())
+                            .or_insert_with(|| PollWorker::new(id));
                         worker.busy = worker.jobs.as_ref().unwrap().send(poll).is_ok();
                     }
                     *cache.lock().unwrap() = registry.list();
@@ -178,7 +185,6 @@ impl Service {
     pub fn media_fake(&self) -> Option<td_host::integrations::media::fake::FakeMedia> {
         self.media.clone()
     }
-
     pub fn live(&self, wanted: &BTreeSet<StreamKey>) -> Option<HashMap<StreamKey, LiveSample>> {
         let state = self.registry.try_lock().ok()?;
         let Ok(registry) = state.as_ref() else {
@@ -725,7 +731,33 @@ mod poll_isolation_tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
-    struct Fetch(Arc<AtomicUsize>);
+    #[derive(Clone, Copy)]
+    struct Upstream {
+        delay: Duration,
+        panic_first: bool,
+    }
+    const SLOW: Upstream = Upstream {
+        delay: Duration::from_secs(3),
+        panic_first: false,
+    };
+    const SLOWER: Upstream = Upstream {
+        delay: Duration::from_secs(5),
+        panic_first: false,
+    };
+    #[derive(Default)]
+    struct Calls {
+        started: AtomicUsize,
+        finished: AtomicUsize,
+    }
+    impl Calls {
+        fn started(&self) -> usize {
+            self.started.load(Ordering::SeqCst)
+        }
+        fn finished(&self) -> usize {
+            self.finished.load(Ordering::SeqCst)
+        }
+    }
+    struct Fetch(Arc<Calls>, Upstream);
     impl td_host::sources::Fetch for Fetch {
         fn post_json(&self, _: &str, _: &str, _: &Value) -> Result<String, String> {
             Ok("[]".into())
@@ -735,11 +767,21 @@ mod poll_isolation_tests {
         }
         fn request(
             &self,
-            _: &td_host::sources::network::GetRequest<'_>,
+            request: &td_host::sources::network::GetRequest<'_>,
         ) -> Result<String, td_host::sources::network::FetchError> {
-            self.0.fetch_add(1, Ordering::SeqCst);
-            std::thread::sleep(Duration::from_secs(3));
-            Ok("42".into())
+            let call = self.0.started.fetch_add(1, Ordering::SeqCst);
+            assert!(
+                !(self.1.panic_first && call == 0),
+                "upstream fixture fails its first call"
+            );
+            std::thread::sleep(self.1.delay);
+            self.0.finished.fetch_add(1, Ordering::SeqCst);
+            Ok(if request.url.ends_with("/old") {
+                "1"
+            } else {
+                "2"
+            }
+            .into())
         }
     }
     struct Counter;
@@ -754,9 +796,12 @@ mod poll_isolation_tests {
     fn config(enabled: bool, path: &str) -> Value {
         serde_json::json!({"enabled": enabled, "sources": [{"id":"value", "name":"Value", "interval_s":3600, "kind":"number", "input":{"type":"http", "url":format!("https://example.invalid/{path}"), "value_path":"$"}}]})
     }
-    fn start() -> (Service, Arc<AtomicUsize>) {
-        let count = Arc::new(AtomicUsize::new(0));
-        let fetch = count.clone();
+    fn start() -> (Service, Arc<Calls>) {
+        start_with(SLOW)
+    }
+    fn start_with(upstream: Upstream) -> (Service, Arc<Calls>) {
+        let calls = Arc::new(Calls::default());
+        let fetch = calls.clone();
         let mut registry = Registry::new(Environment {
             media_provider: Some(Arc::new(
                 td_host::integrations::media::fake::FakeMedia::default(),
@@ -764,7 +809,7 @@ mod poll_isolation_tests {
             volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
             secrets: Arc::new(MemorySecrets::default()),
             config_file: None,
-            fetch: Arc::new(move || Box::new(Fetch(fetch.clone()))),
+            fetch: Arc::new(move || Box::new(Fetch(fetch.clone(), upstream))),
         })
         .unwrap();
         registry
@@ -777,12 +822,63 @@ mod poll_isolation_tests {
         ));
         let service = Service::new(true, Events::default());
         *service.registry.lock().unwrap() = Ok(registry);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while count.load(Ordering::SeqCst) == 0 {
-            assert!(Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(5));
+        assert!(
+            wait_until(Duration::from_secs(5), || calls.started() > 0),
+            "the first poll never started"
+        );
+        (service, calls)
+    }
+    fn wait_until(limit: Duration, mut done: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + limit;
+        loop {
+            if done() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
         }
-        (service, count)
+    }
+    fn this_pc_sample(service: &Service) -> Option<u64> {
+        let key = StreamKey {
+            integration: "this_pc".into(),
+            account: String::new(),
+            stream: "cpu_pct".into(),
+        };
+        let values = service.live(&BTreeSet::from([key.clone()]))?;
+        Some(values.get(&key)?.sample)
+    }
+    fn this_pc_advances(service: &Service, times: usize) -> bool {
+        let mut seen = None;
+        let mut advances = 0;
+        wait_until(Duration::from_secs(5), || {
+            if let Some(sample) = this_pc_sample(service) {
+                if seen.is_some_and(|seen| sample > seen) {
+                    advances += 1;
+                }
+                if seen.is_none_or(|seen| sample > seen) {
+                    seen = Some(sample);
+                }
+            }
+            advances >= times
+        })
+    }
+    fn custom_values(service: &Service) -> Vec<td_core::live::LiveValue> {
+        service
+            .with_registry(&service.events, |r| Ok(r.get("custom")?.live()))
+            .unwrap()
+            .into_iter()
+            .map(|sample| sample.value)
+            .collect()
+    }
+    fn refresh_custom(service: &Service) {
+        service
+            .with_registry(&service.events, |r| {
+                r.get("custom")?.request_refresh();
+                Ok(())
+            })
+            .unwrap();
     }
     #[test]
     fn slow_poll_does_not_block_registry_calls() {
@@ -831,30 +927,22 @@ mod poll_isolation_tests {
         assert!(at.elapsed() >= Duration::from_secs(2));
         assert!(at.elapsed() < Duration::from_secs(5));
     }
-
     #[test]
     fn slow_poll_does_not_delay_other_live_values() {
-        let (service, count) = start();
-        let key = StreamKey {
-            integration: "this_pc".into(),
-            account: String::new(),
-            stream: "cpu_pct".into(),
-        };
-        let wanted = BTreeSet::from([key.clone()]);
-        let mut previous = 0;
-        for _ in 0..2 {
-            std::thread::sleep(Duration::from_millis(1100));
-            let values = service
-                .live(&wanted)
-                .expect("registry remains available during poll");
-            let sample = values.get(&key).expect("other Integration has live values");
-            assert!(sample.sample > previous);
-            previous = sample.sample;
-            assert_eq!(count.load(Ordering::SeqCst), 1);
-        }
+        let (service, calls) = start_with(SLOWER);
+        assert!(
+            this_pc_advances(&service, 2),
+            "This PC samples stopped advancing during the slow poll"
+        );
+        assert_eq!(
+            calls.finished(),
+            0,
+            "the slow poll ended before This PC advanced twice"
+        );
+        assert_eq!(calls.started(), 1);
     }
     fn change_during_poll(enabled: bool) {
-        let (service, _) = start();
+        let (service, calls) = start();
         let at = Instant::now();
         let view = service
             .with_registry(&service.events, |r| {
@@ -867,13 +955,23 @@ mod poll_isolation_tests {
             "config change took {:?}",
             at.elapsed()
         );
-        std::thread::sleep(Duration::from_millis(4200));
-        service
-            .with_registry(&service.events, |r| {
-                assert!(r.get("custom")?.live().is_empty());
-                Ok(())
-            })
+        assert!(wait_until(Duration::from_secs(5), || calls.finished() > 0));
+        assert!(
+            this_pc_advances(&service, 2),
+            "the loop stopped ticking after the old poll ended"
+        );
+        let summary = service
+            .with_registry(&service.events, |r| Ok(r.get("custom")?.summary()))
             .unwrap();
+        assert_eq!(summary.enabled, enabled);
+        assert_eq!(
+            summary.revision, view.summary.revision,
+            "an old poll result rewound the summary"
+        );
+        assert!(
+            !custom_values(&service).contains(&td_core::live::LiveValue::Number(1.0)),
+            "an old poll result became a live value"
+        );
     }
     #[test]
     fn disable_drops_in_flight_result() {
@@ -885,21 +983,41 @@ mod poll_isolation_tests {
     }
     #[test]
     fn only_one_poll_is_in_flight() {
-        let (service, count) = start();
-        for _ in 0..2 {
+        let (service, calls) = start_with(SLOWER);
+        let until = Instant::now() + Duration::from_millis(3500);
+        while Instant::now() < until {
             let at = Instant::now();
-            service
-                .with_registry(&service.events, |r| {
-                    r.get("custom")?.request_refresh();
-                    Ok(())
-                })
-                .unwrap();
+            refresh_custom(&service);
             assert!(
                 at.elapsed() < Duration::from_millis(200),
-                "refresh must return while one poll is in flight"
+                "refresh took {:?} while one poll was in flight",
+                at.elapsed()
             );
-            std::thread::sleep(Duration::from_millis(1100));
-            assert_eq!(count.load(Ordering::SeqCst), 1);
+            assert_eq!(calls.started(), 1);
+            std::thread::sleep(Duration::from_millis(100));
         }
+    }
+    #[test]
+    fn refresh_during_poll_polls_again_when_it_ends() {
+        let (service, calls) = start();
+        refresh_custom(&service);
+        assert_eq!(calls.started(), 1);
+        assert!(
+            wait_until(Duration::from_secs(8), || calls.started() > 1),
+            "a refresh sent during a poll was lost"
+        );
+        assert_eq!(calls.finished(), 1, "the second poll overlapped the first");
+    }
+    #[test]
+    fn a_panicking_poll_is_retried() {
+        let (service, _) = start_with(Upstream {
+            delay: Duration::ZERO,
+            panic_first: true,
+        });
+        assert!(
+            wait_until(Duration::from_secs(8), || !custom_values(&service)
+                .is_empty()),
+            "polling stopped after one poll panicked"
+        );
     }
 }

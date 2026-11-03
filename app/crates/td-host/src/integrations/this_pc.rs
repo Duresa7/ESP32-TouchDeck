@@ -76,7 +76,11 @@ impl ThisPc {
         if !self.settings.enabled || self.next.is_some_and(|next| now < next) {
             return;
         }
-        let sample = self.source.lock().unwrap().collect();
+        let sample = self
+            .source
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .collect();
         let mut values = sample.values;
         self.unavailable = STREAMS
             .iter()
@@ -159,7 +163,7 @@ impl Integration for ThisPc {
         let Ok(state) = state.downcast::<Self>() else {
             return;
         };
-        if self.settings.enabled && self.generation == state.generation {
+        if self.generation == state.generation {
             self.previous = state.previous;
             self.readings = state.readings;
             self.live = state.live;
