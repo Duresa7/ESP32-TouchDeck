@@ -1,10 +1,10 @@
 # Desktop setup for Open TouchDeck over USB
 
-Open TouchDeck connects through USB-Serial/JTAG. The running desktop app mirrors the deck's keys into the host session. Bluetooth is not supported. Wi-Fi and battery support are postponed.
+Open TouchDeck connects through USB-Serial/JTAG. The running Companion sends the Device's keys to the focused window on this PC. Bluetooth is not supported. Wi-Fi and battery support are postponed.
 
 ## Running a distributed app versus building it
 
-A distributed app does not need Node, pnpm, Rust, or a C++ compiler. The Windows installer carries the Electron window, the Companion and the Firmware bundle; the [packaging guide](packaging.md) describes it. Linux needs a graphical desktop, the matching WebKitGTK/GTK runtime libraries, USB serial access, and permission to create a virtual keyboard through `/dev/uinput`.
+A distributed app does not need Node, pnpm, Rust, or a C++ compiler. The Windows installer carries the Electron window, the Companion and the Firmware bundle; the [packaging guide](packaging.md) describes it. Linux source builds need a graphical desktop, Electron runtime dependencies, USB serial access and permission to create a virtual keyboard through `/dev/uinput`.
 
 Source builds use **Node.js 24**, matching [app CI](../.github/workflows/app.yml), and the **exact pnpm version in [app/package.json](../app/package.json)** (currently `12.12.1`). Use stable Rust, at least the workspace's declared minimum in [app/Cargo.toml](../app/Cargo.toml). Firmware build prerequisites are separate from desktop setup.
 
@@ -64,13 +64,13 @@ cargo build -p td-companion
 pnpm --filter @touchdeck/electron build
 ```
 
-Use `pnpm dev:electron` to run the desktop window with a mock Device. Use `pnpm lint`, `pnpm test`, `pnpm e2e:ui` and `cargo test --workspace` to check changes.
+Use `pnpm dev:electron` to run the Electron window with a mock Device. Use `pnpm dev:ui:demo` from `app/` (or `pnpm dev:demo` from `app/ui/`) for the React UI with demo data and no hardware. Use `pnpm lint`, `pnpm test`, `pnpm e2e:ui` and `cargo test --workspace` to check changes.
 
 Do not enable `test-hooks` for a distributed app. To build the Windows installer, follow [Build the installer](packaging.md#build-the-installer).
 
 ## Linux runtime libraries and device access
 
-Build headers and compilers are not runtime permissions. A Linux distribution of the app needs its linked shared libraries and their dependencies, including WebKitGTK **4.1**, GTK 3, and libudev. On Ubuntu 24.04, WebKitGTK's runtime package is [`libwebkit2gtk-4.1-0`](https://packages.ubuntu.com/noble/libwebkit2gtk-4.1-0); the serial backend uses `libudev1`. Let the app package's dependency metadata and distribution package manager resolve the full set. A portable archive does not imply that all those libraries are bundled.
+Build headers and compilers are not runtime permissions. The Electron window uses its bundled Chromium, not WebKitGTK. Source builds need the shared libraries required by the installed Electron version and `libudev1` for serial discovery. A portable archive does not imply that all runtime libraries are bundled.
 
 Before using a connected deck, inspect the actual nodes without opening them or generating input (replace `ttyACM0` with the deck's node):
 
@@ -97,15 +97,15 @@ SUBSYSTEM=="misc", KERNEL=="uinput", GROUP="touchdeck-uinput", MODE="0660"
 
 See the [udev rule and permission reference](https://www.freedesktop.org/software/systemd/man/latest/udev.html). Granting uinput access allows processes under that account to inject system input, regardless of which physical device triggered it. Restrict it to a trusted account/session. Do not make device nodes world-writable, grant access to all input devices, disable desktop security controls, or run the desktop app as root. If local policy disallows virtual keyboard creation, leave that permission unavailable; mirrored typing will not work.
 
-## Optional Sources credential storage
+## Integration credential storage
 
-The CLIProxyAPI management key is stored through the OS credential store, not in the ordinary Sources JSON configuration ([implementation](../app/src-tauri/src/sources.rs)). The locked `keyring` 4.2 backend uses **Windows Credential Manager** on Windows, **Keychain Services** on macOS, and **Secret Service** on Linux ([upstream platform mapping](https://docs.rs/keyring/4.2.0/keyring/v1/index.html)). This is a credential-store mapping, not a claim that every app feature supports macOS.
+The CLIProxyAPI management key is stored through the OS credential store, not in the ordinary Integration configuration ([implementation](../app/crates/td-host/src/integrations/secrets.rs)). The locked `keyring` 4.2 backend uses **Windows Credential Manager** on Windows, **Keychain Services** on macOS, and **Secret Service** on Linux ([upstream platform mapping](https://docs.rs/keyring/4.2.0/keyring/v1/index.html)). This is a credential-store mapping, not a claim that every app feature supports macOS.
 
-On Linux, run the app in the intended user's desktop login session with a session D-Bus and an available Secret Service provider, such as GNOME Keyring or a compatible configured wallet. Its default collection must be usable/unlocked when saving or reading the key; an unlock prompt may be required. See the [Secret Service specification](https://specifications.freedesktop.org/secret-service/latest/description.html). Minimal desktops, headless sessions, containers, and CI may lack that service. Install/configure the provider through the distribution's documented desktop setup if you want this optional source. Do not work around credential-store errors by saving keys in scripts, logs, or world-readable files.
+On Linux, run the app in the intended user's desktop login session with a session D-Bus and an available Secret Service provider, such as GNOME Keyring or a compatible configured wallet. Its default collection must be usable/unlocked when saving or reading the key; an unlock prompt may be required. See the [Secret Service specification](https://specifications.freedesktop.org/secret-service/latest/description.html). Minimal desktops, headless sessions, containers, and CI may lack that service. Install/configure the provider through the distribution's documented desktop setup if you want this Integration. Do not work around credential-store errors by saving keys in scripts, logs, or world-readable files.
 
 ## Verification boundary
 
-Linux CI builds the app and runs mock GUI tests under Xvfb. [The app deliberately uses fake input for Linux mock tests](../app/src-tauri/src/commands.rs), and mock Sources use an in-memory key store. Those checks establish neither real serial permissions, real `/dev/uinput` operation, nor a usable desktop credential store. The setup changes were verified with isolated Windows process fixtures; no real installers, Linux runtime session, device permission changes, or real key injection were exercised in that validation.
+Linux CI builds the app and runs mock GUI tests under Xvfb. Mock Devices and fake input do not exercise hardware, and mock Integrations use an in-memory key store. Those checks establish neither real serial permissions, real `/dev/uinput` operation, nor a usable desktop credential store. The setup changes were verified with isolated Windows process fixtures; no real installers, Linux runtime session, device permission changes, or real key injection were exercised in that validation.
 
 The focused setup tests require Windows and PowerShell 7, with no Pester or installed Node/Rust/pnpm dependency:
 
