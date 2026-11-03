@@ -656,13 +656,19 @@ As built in step C, per Device link session, before anything binds:
   worker accepts one at a time; excess taps are dropped and counted, without
   occupying the ordinary tap queue. The Companion enforces a two-second wait.
   A timed-out call remains in flight until it returns; no second call starts
-  for that Device, including after reconnect.
+  for that Device, including after reconnect. A hung call cannot be forcibly
+  cancelled; it disables further control taps for that Device until it returns
+  or the Companion restarts, while ordinary taps remain available.
 - Drags coalesce at arrival into a mailbox of at most 64 Tile streams plus
   64 completed snapshots. An end survives later moves and is applied first.
   Once completed capacity is exhausted, new gestures are rejected while
   existing ends remain intact. A batch runs at most every 20 ms; completed
   gestures log at most ten times per second. Layout changes clear pending
-  gestures and failures; a new link session starts a new hub.
+  gestures and failures; a new link session starts a new hub. There is no wire
+  start phase: processing an end clears the previous gesture failure. A Layout
+  change conservatively cancels pending gestures on all connected Devices.
+  Sequence numbers do not wrap under link-v2: sending u32::MAX exhausts only
+  that Device's session, and reconnecting starts fresh sequence tracking.
 - Both touch paths use only the Companion's pushed Layout for that Device
   and orientation, after the router's active copy matches its canonical bytes
   (and therefore its canonical CRC revision). No touch fetches a Layout.

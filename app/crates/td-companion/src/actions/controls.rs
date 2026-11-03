@@ -1,6 +1,3 @@
-//! A Device's taps on renderer controls and its drags, run on the Integrations' Controls. They come only from a
-//! Device's touch (or a test-hooks MockDeck); no API route reaches them. A Control starts no process, so nothing
-//! here asks for approval. Every value comes from the Device and is checked before it binds anything.
 use super::{ActionSpec, Actions, ApprovalRequest};
 use crate::devices::{DeviceId, Input, InputHandler, LinkState};
 use crate::features::integrations::Controls;

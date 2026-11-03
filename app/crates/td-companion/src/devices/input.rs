@@ -1,6 +1,3 @@
-//! What a Device's touch asks of its Integrations: drags (`v2.input`) and taps on a renderer's control (`press`
-//! with `part`). Everything here comes from the Device, so it is untrusted: each event is checked against the
-//! link contract, and what is kept per session is bounded, whatever the Device sends.
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::{Duration, Instant};
