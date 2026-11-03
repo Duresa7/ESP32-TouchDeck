@@ -37,7 +37,7 @@ impl LiveValue {
             LiveValue::Series(values) => {
                 !values.is_empty() && values.len() <= series && values.iter().all(number)
             }
-            LiveValue::Text(text) => text.len() <= text_bytes,
+            LiveValue::Text(text) => text_bytes > 0 && text.len() <= text_bytes,
             LiveValue::Image(_) => true,
         }
     }

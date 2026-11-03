@@ -135,6 +135,9 @@ impl LiveCaps {
     /// The value as this Device can take it: a series cut to its newest `series` numbers and text folded and cut by
     /// `td_core::live::fit_text`. None when nothing of it fits.
     fn fit(&self, value: &LiveValue) -> Option<LiveValue> {
+        if matches!(value, LiveValue::Image(_)) && self.live_images == 0 {
+            return None;
+        }
         let fitted = match value {
             LiveValue::Series(values) => {
                 let keep = values.len().min(self.series as usize);
@@ -184,6 +187,8 @@ struct DeviceState {
     rate_strikes: u32,
     covers: CoverStore,
     swept: bool,
+    cover_retry: Option<Instant>,
+    cover_failures: u32,
     titles: HashMap<TileKey, String>,
     covered: HashSet<TileKey>,
 }
@@ -306,10 +311,17 @@ impl Router {
             return report;
         }
         let mut sweep_error = None;
-        if caps.live_images > 0 && !state.swept {
+        if caps.live_images > 0 && !state.swept && state.cover_retry.is_none_or(|at| now >= at) {
             match state.covers.sweep(session) {
-                Ok(()) => state.swept = true,
-                Err(error) => sweep_error = Some(error.to_string()),
+                Ok(done) => {
+                    state.swept = done;
+                    state.cover_retry = None;
+                    state.cover_failures = 0;
+                }
+                Err(error) => {
+                    retry_cover(state, caps.gap(true), now);
+                    sweep_error = Some(error.to_string());
+                }
             }
         }
         if state.active.is_none() {
@@ -396,6 +408,54 @@ impl Router {
             if binding.kind == StreamType::Image && cleared.contains(&tile) {
                 continue;
             }
+            let title_changed = bindings.iter().find(|b| tile_key(b) == tile && b.stream == TITLE_STREAM)
+                .and_then(|b| samples.get(&b.source).and_then(|s| caps.fit(&s.value)))
+                .is_some_and(|value| matches!(value, LiveValue::Text(ref title) if state.titles.get(&tile) != Some(title)));
+            if title_changed
+                && state.covered.contains(&tile)
+                && let Some(cover) = bindings
+                    .iter()
+                    .find(|b| tile_key(b) == tile && b.kind == StreamType::Image)
+            {
+                let gap = caps.gap(self.controls.contains_key(&cover.source.integration));
+                if state
+                    .tracks
+                    .get(&key(cover))
+                    .and_then(|t| t.last_sent)
+                    .is_some_and(|at| now.duration_since(at) < gap)
+                {
+                    continue;
+                }
+                let clear = LiveValue::Image(None);
+                let cover_sample = samples.get(&cover.source);
+                let cleared_sample = cover_sample.filter(|s| s.value == clear).map(|s| s.sample);
+                let out = Outgoing {
+                    binding: cover,
+                    sample: cover_sample.map_or(0, |s| s.sample),
+                    ttl_ms: sample.ttl_ms,
+                    value: &clear,
+                    delivered: cleared_sample,
+                };
+                match send(
+                    state,
+                    session,
+                    &reference,
+                    out,
+                    now,
+                    &mut budget,
+                    &mut report,
+                ) {
+                    Sent::Accepted => {
+                        state.covered.remove(&tile);
+                        cleared.insert(tile.clone());
+                    }
+                    Sent::Stop => break,
+                    Sent::AssetRefused | Sent::Refused => continue,
+                }
+            }
+            if binding.kind == StreamType::Image && cleared.contains(&tile) {
+                continue;
+            }
             let mut delivered = Some(sample.sample);
             let value = match fitted {
                 LiveValue::Image(Some(_)) => {
@@ -407,11 +467,20 @@ impl Router {
                     });
                     match prepared {
                         Some(Some(Some(cover))) => {
-                            if !state.swept {
+                            if !state.swept || state.cover_retry.is_some_and(|at| now < at) {
                                 continue;
                             }
                             match state.covers.upload(session, &cover) {
-                                Ok(()) => LiveValue::Image(Some(format!("sha256:{}", cover.id))),
+                                Ok(true) => {
+                                    state.cover_retry = None;
+                                    state.cover_failures = 0;
+                                    LiveValue::Image(Some(format!("sha256:{}", cover.id)))
+                                }
+                                Ok(false) => {
+                                    delivered = None;
+                                    retry_cover(state, caps.gap(true), now);
+                                    LiveValue::Image(None)
+                                }
                                 Err(error) if error.reason() == Some(&AssetReason::Full) => {
                                     report
                                         .errors
@@ -419,6 +488,7 @@ impl Router {
                                     LiveValue::Image(None)
                                 }
                                 Err(error) => {
+                                    retry_cover(state, caps.gap(true), now);
                                     let link = matches!(error, AssetError::Link(_));
                                     report.errors.insert(integration.clone(), error.to_string());
                                     if link {
@@ -454,39 +524,6 @@ impl Router {
                 }
                 _ => None,
             };
-            if new_title.is_some()
-                && state.covered.contains(&tile)
-                && let Some(cover) = bindings
-                    .iter()
-                    .find(|b| tile_key(b) == tile && b.kind == StreamType::Image)
-            {
-                let clear = LiveValue::Image(None);
-                let cover_sample = samples.get(&cover.source);
-                let cleared_sample = cover_sample.filter(|s| s.value == clear).map(|s| s.sample);
-                let out = Outgoing {
-                    binding: cover,
-                    sample: cover_sample.map_or(0, |s| s.sample),
-                    ttl_ms: sample.ttl_ms,
-                    value: &clear,
-                    delivered: cleared_sample,
-                };
-                match send(
-                    state,
-                    session,
-                    &reference,
-                    out,
-                    now,
-                    &mut budget,
-                    &mut report,
-                ) {
-                    Sent::Accepted => {
-                        state.covered.remove(&tile);
-                        cleared.insert(tile.clone());
-                    }
-                    Sent::Stop => break,
-                    Sent::AssetRefused | Sent::Refused => continue,
-                }
-            }
             let out = Outgoing {
                 binding,
                 sample: sample.sample,
@@ -530,6 +567,12 @@ impl Router {
         }
         report
     }
+}
+
+fn retry_cover(state: &mut DeviceState, gap: Duration, now: Instant) {
+    state.cover_failures = state.cover_failures.saturating_add(1);
+    state.cover_retry =
+        Some(now + (gap * 2_u32.pow(state.cover_failures.min(4) - 1)).min(BACKOFF_MAX));
 }
 
 struct Outgoing<'a> {
@@ -634,6 +677,9 @@ fn send(
         }
         Err(LiveError::Link(error)) => {
             track.unanswered = Some((n, sample, value.clone()));
+            if matches!(value, LiveValue::Image(Some(_))) {
+                state.covered.insert(tile_key(binding));
+            }
             report.errors.insert(integration, error.to_string());
             Sent::Stop
         }
@@ -1459,6 +1505,242 @@ mod tests {
         assert_eq!(
             deck.live("page", "cpu", "value").unwrap().samples,
             [0.0, 500.0]
+        );
+    }
+    #[test]
+    fn review_track_change_waits_for_cover_gap() {
+        let mut m = Media::new(1);
+        let start = m.now;
+        m.deck.set_live_time(0);
+        track(&m.fake, "First", Some("sha256:art1"));
+        m.round();
+        make_covers(&mut m.router, &m.fake, &mut m.cache);
+        m.now = start + Duration::from_millis(500);
+        m.deck.set_live_time(500);
+        m.round();
+        assert!(m.shown("cover").is_string());
+        track(&m.fake, "Second", None);
+        m.fake
+            .publish(&[("artist", LiveValue::Text("New artist".into()))]);
+        m.now = start + Duration::from_millis(600);
+        m.deck.set_live_time(600);
+        let count = m.deck.live_sets().len();
+        m.round();
+        assert_eq!(
+            m.deck.live_sets().len(),
+            count,
+            "metadata and clear must wait"
+        );
+        assert_eq!(m.shown("title"), "First");
+        m.now = start + Duration::from_millis(1000);
+        m.deck.set_live_time(1000);
+        m.round();
+        assert!(m.shown("cover").is_null());
+        assert_eq!(m.shown("title"), "Second");
+        assert_eq!(m.shown("artist"), "New artist");
+    }
+    #[test]
+    fn review_disabled_media_streams_are_not_fitted() {
+        let caps = LiveCaps {
+            text_bytes: 0,
+            live_images: 0,
+            ..MEDIA_CAPS
+        };
+        assert!(caps.fit(&LiveValue::Text("hello".into())).is_none());
+        assert!(caps.fit(&LiveValue::Image(None)).is_none());
+    }
+
+    #[test]
+    fn review_busy_uploads_back_off_during_frequent_wakes() {
+        let mut m = Media::new(1);
+        track(&m.fake, "First", Some("sha256:art1"));
+        m.round();
+        make_covers(&mut m.router, &m.fake, &mut m.cache);
+        m.deck.refuse_assets("v2.asset.put", "busy", 3);
+        let start = m.now;
+        for ms in (500..=2500).step_by(50) {
+            m.now = start + Duration::from_millis(ms);
+            m.deck.set_live_time(ms);
+            m.round();
+        }
+        assert!(m.puts() <= 3, "put attempts: {}", m.puts());
+        m.now = start + Duration::from_millis(4500);
+        m.deck.set_live_time(4500);
+        m.round();
+        assert!(m.shown("cover").is_string());
+    }
+
+    #[test]
+    fn review_unanswered_cover_is_cleared_before_next_title() {
+        let mut m = Media::new(1);
+        track(&m.fake, "First", Some("sha256:art1"));
+        m.deliver();
+        m.fake.publish(&[("cover", LiveValue::Image(None))]);
+        m.round();
+        m.now += CONTROL_GAP;
+        m.fake
+            .publish(&[("cover", LiveValue::Image(Some("sha256:art1".into())))]);
+        make_covers(&mut m.router, &m.fake, &mut m.cache);
+        m.deck.set_live_time(2000);
+        m.deck.delay_replies(Duration::from_millis(2300));
+        assert!(m.round().errors.contains_key("media"));
+        m.deck.delay_replies(Duration::ZERO);
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(m.shown("cover").is_string());
+        m.fake
+            .publish(&[("title", LiveValue::Text("Second".into()))]);
+        let start = m.deck.live_sets().len();
+        m.now += CONTROL_GAP;
+        m.deck.set_live_time(3000);
+        m.round();
+        let sets = m.deck.live_sets()[start..].to_vec();
+        let clear = sets
+            .iter()
+            .position(|s| s["stream"] == "cover" && s["value"].is_null())
+            .expect("clear the possibly delivered cover");
+        let title = sets.iter().position(|s| s["stream"] == "title").unwrap();
+        assert!(clear < title);
+    }
+
+    #[test]
+    fn sweep_errors_back_off_without_blocking_metadata() {
+        let mut m = Media::new(1);
+        m.deck.refuse_assets("v2.asset.list", "busy", 3);
+        track(&m.fake, "First", None);
+        let start = m.now;
+        for ms in (0..=2000).step_by(50) {
+            m.now = start + Duration::from_millis(ms);
+            m.deck.set_live_time(ms);
+            m.round();
+        }
+        assert_eq!(m.shown("title"), "First");
+        assert_eq!(
+            m.deck
+                .received()
+                .iter()
+                .filter(|r| r["m"] == "v2.asset.list")
+                .count(),
+            3
+        );
+        m.now = start + Duration::from_millis(4000);
+        m.round();
+        assert!(m.router.devices["d"].swept);
+    }
+    #[test]
+    fn four_showing_covers_defer_a_cover_only_replacement() {
+        let deck = MockDeck::v2();
+        deck.set_media_capabilities(true);
+        deck.set_live_time(0);
+        let session = open(&deck);
+        let mut layout = serde_json::to_value(media_layout(1, 1)).unwrap();
+        let tile = layout["pages"][0]["tiles"][0].clone();
+        layout["pages"][0]["rows"] = serde_json::json!(4);
+        layout["pages"][0]["tiles"] = serde_json::json!(
+            (0..4)
+                .map(|n| {
+                    let mut t = tile.clone();
+                    t["id"] = serde_json::json!(format!("player{n}"));
+                    t["row"] = serde_json::json!(n);
+                    t["action"]["source"] = serde_json::json!(format!("media{n}"));
+                    t
+                })
+                .collect::<Vec<_>>()
+        );
+        let layout = Layout::parse(&serde_json::to_vec(&layout).unwrap()).unwrap();
+        show(&session, &layout);
+        let mut router = Router::default();
+        let start = Instant::now();
+        let mut samples = HashMap::new();
+        for n in 0..4 {
+            samples.insert(
+                key(&format!("media{n}"), "title"),
+                sample(1, LiveValue::Text("First".into())),
+            );
+            samples.insert(
+                key(&format!("media{n}"), "cover"),
+                sample(1, LiveValue::Image(Some(format!("art{n}")))),
+            );
+        }
+        router.deliver("d", 1, &session, MEDIA_CAPS, &samples, start);
+        let mut cache = CoverCache::default();
+        let prepared = router
+            .cover_jobs(&samples)
+            .into_iter()
+            .enumerate()
+            .map(|(n, j)| {
+                let cover = cache
+                    .prepare(&format!("art{n}"), &noise_png(64, 64, n as u32), j.side)
+                    .unwrap();
+                ((j.source, j.sample.sample, j.side), Some(cover))
+            })
+            .collect();
+        router.set_covers(prepared);
+        deck.set_live_time(1000);
+        router.deliver(
+            "d",
+            1,
+            &session,
+            MEDIA_CAPS,
+            &samples,
+            start + Duration::from_secs(1),
+        );
+        assert_eq!(deck.assets().len(), 4);
+        for n in 0..4 {
+            assert!(
+                deck.live("main", &format!("player{n}"), "cover")
+                    .unwrap()
+                    .value
+                    .is_string()
+            );
+        }
+        samples.insert(
+            key("media0", "cover"),
+            sample(2, LiveValue::Image(Some("new".into()))),
+        );
+        let job = router
+            .cover_jobs(&samples)
+            .into_iter()
+            .find(|j| j.source.integration == "media0")
+            .unwrap();
+        let cover = cache
+            .prepare("new", &noise_png(64, 64, 10), job.side)
+            .unwrap();
+        router
+            .covers
+            .insert((job.source, 2, job.side), Some(cover.clone()));
+        deck.set_live_time(2000);
+        router.deliver(
+            "d",
+            1,
+            &session,
+            MEDIA_CAPS,
+            &samples,
+            start + Duration::from_secs(2),
+        );
+        assert_eq!(deck.assets().len(), 4);
+        assert!(
+            deck.live("main", "player0", "cover")
+                .unwrap()
+                .value
+                .is_null()
+        );
+        assert_eq!(
+            deck.live("main", "player0", "title").unwrap().value,
+            "First"
+        );
+        deck.set_live_time(3000);
+        router.deliver(
+            "d",
+            1,
+            &session,
+            MEDIA_CAPS,
+            &samples,
+            start + Duration::from_secs(3),
+        );
+        assert_eq!(deck.assets().len(), 4);
+        assert_eq!(
+            deck.live("main", "player0", "cover").unwrap().value,
+            format!("sha256:{}", cover.id)
         );
     }
 }

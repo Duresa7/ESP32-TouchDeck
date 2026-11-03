@@ -145,11 +145,12 @@ fn round(
         })
         .collect();
     let covers = shared.covers.lock().clone();
+    let changed = std::mem::take(&mut *shared.changed.lock());
     let wanted = {
         let mut router = shared.router.lock();
         router.set_covers(covers);
         router.retain(&connected.iter().map(|(id, ..)| id.clone()).collect());
-        for device in std::mem::take(&mut *shared.changed.lock()) {
+        for device in changed {
             router.layout_changed(&device);
         }
         router.wanted()
@@ -188,7 +189,7 @@ fn make_covers(shared: Weak<Shared>, controls: Controls, queue: Receiver<Vec<Cov
             };
             let still_reported = || control.live().contains(&job.sample);
             let cover = match cache.get(source, job.side) {
-                Some(cover) => Some(cover),
+                Some(cover) => cover.ok(),
                 None if !still_reported() => continue,
                 None => control
                     .picture(source)

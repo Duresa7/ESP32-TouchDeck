@@ -37,3 +37,31 @@ fn the_cover_thread_makes_only_covers_for_current_samples_then_wakes_a_round() {
     assert_eq!(image::load_from_memory(&made.bytes).unwrap().width(), 64);
     assert!(*shared.wake.lock());
 }
+
+#[test]
+fn review_corrupt_picture_is_requested_once_across_rounds() {
+    let shared = Arc::new(Shared::default());
+    let fake = Arc::new(FakeControl::default());
+    fake.add_picture("bad", b"broken".to_vec());
+    fake.publish(&[("cover", LiveValue::Image(Some("bad".into())))]);
+    let job = CoverJob {
+        source: StreamKey {
+            integration: "media".into(),
+            account: String::new(),
+            stream: "cover".into(),
+        },
+        sample: fake.samples().remove(0),
+        side: 64,
+    };
+    let controls: Controls = Arc::new(BTreeMap::from([(
+        "media".into(),
+        fake.clone() as Arc<dyn td_host::integrations::Control>,
+    )]));
+    let (jobs, queue) = sync_channel(20);
+    for _ in 0..20 {
+        jobs.send(vec![job.clone()]).unwrap();
+    }
+    drop(jobs);
+    make_covers(Arc::downgrade(&shared), controls, queue);
+    assert_eq!(*fake.picture_calls.lock(), 1);
+}

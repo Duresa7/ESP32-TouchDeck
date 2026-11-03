@@ -675,18 +675,22 @@ Image samples name source pictures owned by Control, never arbitrary URLs.
 On a track change publish cover null at once with new metadata. Discard stale
 metadata, thumbnail and encoding completions by session/track generation. The
 router enforces both on its side too: before it sends a Tile's new `title`, it
-clears a cover that Tile shows, and it sends a Control's sample, or a cover made
+clears a cover that Tile shows. The clear obeys cover pacing; the Tile's title,
+artist and state wait for it. It sends a Control's sample, or a cover made
 from one, only while the Control still reports that sample.
 Decode at most 4 MiB source, 4096 by 4096 pixels and 64 MiB decoded memory;
 center-crop to the shared Tile art box and encode baseline JPEG at most 32 KiB
-using the photo quality ladder. Upload by SHA-256 with put_asset before sending
+using the photo quality ladder. Cache decode failures by source and art-box size. Upload by SHA-256 with put_asset before sending
 the image reference. Text goes first; encoding stays outside the link lock.
 Keep at most four cover Assets per Device/session, deleting oldest unreferenced
 covers first, and sweep leftover JPEG covers at session start. A referenced
-Asset remains protected by the Device's in-use refusal. On asset refusal forget
-the known id and upload again; busy retries next round. On full, remove covers
+Asset remains protected by the Device's in-use refusal. If all four covers are
+pinned, clear the replacing Tile and defer its upload until a later round. On asset refusal forget
+the known id and upload again; busy and other upload failures retry after the
+cover gap, doubling up to 8 s. On full, remove covers
 except the current ones and retry once; then report the out-of-space error.
-A sweep that fails is retried next round; until it succeeds no cover goes, and
+The sweep continues across rounds in batches of at most 16 pages. Failures use
+the same backoff; until the listing ends no cover goes, and
 other values still do. A cover still being made leaves the art box on its
 placeholder (`cover: null`) and never holds up the Tile's text. Control
 streams wake a round at once; the cover thread encodes without any lock and

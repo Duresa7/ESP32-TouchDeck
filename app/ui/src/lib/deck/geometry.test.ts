@@ -124,7 +124,7 @@ test('every pixel of every cell maps back to that cell, on every grid in both or
         for (let row = 0; row < rows; row++) {
           for (let col = 0; col < cols; col++) {
             const r = tileRect(page, { row, col, rowSpan: 1, colSpan: 1 }, g.grid, g.gap);
-            for (const [x, y] of [[r.x, r.y], [r.x + r.w - 1, r.y + r.h - 1], [r.x + r.w + g.gap - 1, r.y + r.h + g.gap - 1]]) {
+            for (const [x, y] of [[r.x, r.y], [r.x + r.w - 1, r.y + r.h - 1], [r.x + r.w + g.gap - 1, r.y + r.h + g.gap - 1], [r.x + r.w + g.gap - 0.1, r.y + r.h + g.gap - 0.1]]) {
               assert.deepEqual(cellAt(page, g.grid, g.gap, x, y), [row, col]);
             }
           }

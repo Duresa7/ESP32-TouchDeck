@@ -11,6 +11,7 @@ pub(crate) struct FakeControl {
     wake: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     pictures: Mutex<HashMap<String, Arc<[u8]>>>,
     next: Mutex<u64>,
+    pub picture_calls: Mutex<usize>,
 }
 
 impl FakeControl {
@@ -63,6 +64,7 @@ impl Control for FakeControl {
         Err(ControlError::NotSettable)
     }
     fn picture(&self, id: &str) -> Option<Arc<[u8]>> {
+        *self.picture_calls.lock() += 1;
         self.pictures.lock().get(id).cloned()
     }
 }

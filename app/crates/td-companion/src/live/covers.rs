@@ -27,13 +27,15 @@ pub(super) struct Cover {
     pub bytes: Arc<[u8]>,
 }
 
+type CachedCover = ((String, u16), Result<Arc<Cover>, String>);
+
 #[derive(Default)]
 pub(super) struct CoverCache {
-    entries: VecDeque<((String, u16), Arc<Cover>)>,
+    entries: VecDeque<CachedCover>,
 }
 
 impl CoverCache {
-    pub fn get(&mut self, source: &str, side: u16) -> Option<Arc<Cover>> {
+    pub fn get(&mut self, source: &str, side: u16) -> Option<Result<Arc<Cover>, String>> {
         let at = self
             .entries
             .iter()
@@ -46,15 +48,15 @@ impl CoverCache {
 
     pub fn prepare(&mut self, source: &str, bytes: &[u8], side: u16) -> Result<Arc<Cover>, String> {
         if let Some(cover) = self.get(source, side) {
-            return Ok(cover);
+            return cover;
         }
-        let cover = Arc::new(encode(bytes, side)?);
+        let cover = encode(bytes, side).map(Arc::new);
         if self.entries.len() == CACHED {
             self.entries.pop_front();
         }
         self.entries
             .push_back(((source.to_owned(), side), cover.clone()));
-        Ok(cover)
+        cover
     }
 }
 
@@ -102,41 +104,48 @@ fn encode(source: &[u8], side: u16) -> Result<Cover, String> {
 #[derive(Debug, Default)]
 pub(super) struct CoverStore {
     known: VecDeque<String>,
+    sweep_after: Option<String>,
 }
 
 impl CoverStore {
     /// Deletes the JPEG Assets a Device holds when a session starts. In this release JPEG Assets are only covers,
     /// and a cover a Layout or a live value still shows is refused `in-use` and stays.
-    pub fn sweep(&mut self, session: &Session) -> Result<(), AssetError> {
-        let mut after = None;
-        let mut jpegs = Vec::new();
+    pub fn sweep(&mut self, session: &Session) -> Result<bool, AssetError> {
         for _ in 0..SWEEP_PAGES {
-            let page = asset::list_asset_page(session, after.as_deref())?;
-            jpegs.extend(
-                page.items
-                    .into_iter()
-                    .filter(|a| a.format == AssetFormat::Jpeg)
-                    .map(|a| a.id),
-            );
-            if page.next.is_none() || page.next == after {
-                break;
+            let page = asset::list_asset_page(session, self.sweep_after.as_deref())?;
+            for item in page
+                .items
+                .into_iter()
+                .filter(|a| a.format == AssetFormat::Jpeg)
+            {
+                if !delete_unless_shown(session, &item.id)? && !self.known.contains(&item.id) {
+                    self.known.push_back(item.id);
+                }
             }
-            after = page.next;
+            if page.next.is_some() && page.next == self.sweep_after {
+                return Err(AssetError::Refused {
+                    reason: AssetReason::Busy,
+                    error: "Asset listing did not advance.".into(),
+                });
+            }
+            self.sweep_after = page.next;
+            if self.sweep_after.is_none() {
+                return Ok(true);
+            }
         }
-        for id in jpegs {
-            delete_unless_shown(session, &id)?;
-        }
-        self.known.clear();
-        Ok(())
+        Ok(false)
     }
 
-    pub fn upload(&mut self, session: &Session, cover: &Cover) -> Result<(), AssetError> {
+    pub fn upload(&mut self, session: &Session, cover: &Cover) -> Result<bool, AssetError> {
         if self.known.contains(&cover.id) {
             self.forget(&cover.id);
             self.known.push_back(cover.id.clone());
-            return Ok(());
+            return Ok(true);
         }
         while self.known.len() >= KEPT && self.evict_oldest(session)? {}
+        if self.known.len() >= KEPT {
+            return Ok(false);
+        }
         if let Err(error) = asset::put_asset(session, &cover.bytes, AssetFormat::Jpeg) {
             if error.reason() != Some(&AssetReason::Full) {
                 return Err(error);
@@ -145,7 +154,7 @@ impl CoverStore {
             asset::put_asset(session, &cover.bytes, AssetFormat::Jpeg)?;
         }
         self.known.push_back(cover.id.clone());
-        Ok(())
+        Ok(true)
     }
 
     pub fn forget(&mut self, id: &str) {
@@ -280,5 +289,64 @@ mod tests {
         assert!(cache.prepare("wide", &noise_png(4097, 1, 1), 48).is_err());
         assert!(cache.prepare("side", &noise_png(10, 10, 1), 47).is_err());
         assert!(cache.prepare("side", &noise_png(10, 10, 1), 257).is_err());
+    }
+    #[test]
+    fn review_failed_decode_is_cached() {
+        let mut cache = CoverCache::default();
+        assert!(cache.prepare("bad", b"broken", 64).is_err());
+        assert!(cache.prepare("bad", &noise_png(64, 64, 1), 64).is_err());
+    }
+
+    #[test]
+    fn review_all_pinned_covers_prevent_a_fifth_upload() {
+        let (deck, session) = deck();
+        let mut store = CoverStore::default();
+        for n in 0..4 {
+            store.upload(&session, &cover(n)).unwrap();
+        }
+        deck.refuse_assets("v2.asset.delete", "in-use", 4);
+        let _ = store.upload(&session, &cover(5));
+        assert_eq!(deck.assets().len(), 4);
+        assert_eq!(puts(&deck), 4);
+    }
+
+    #[test]
+    fn review_sweep_reaches_past_sixty_four_icons() {
+        let (deck, session) = deck();
+        let last = (0..100).map(cover).max_by_key(|c| c.id.clone()).unwrap();
+        let mut count = 0;
+        for seed in 0..=255u8 {
+            let mut bytes = b"TDI1".to_vec();
+            bytes.extend_from_slice(&[64, 0, 64, 0, 1, 0, 0, 0]);
+            bytes.extend((12..12300).map(|i| (i as u8).wrapping_add(seed)));
+            if asset::asset_id(&bytes) < last.id {
+                asset::put_asset(&session, &bytes, AssetFormat::Tdi1).unwrap();
+                count += 1;
+                if count == 65 {
+                    break;
+                }
+            }
+        }
+        assert_eq!(count, 65);
+        asset::put_asset(&session, &last.bytes, AssetFormat::Jpeg).unwrap();
+        let mut store = CoverStore::default();
+        for _ in 0..3 {
+            store.sweep(&session).unwrap();
+        }
+        assert!(!deck.assets().contains_key(&last.id));
+    }
+
+    #[test]
+    fn full_retry_succeeds_and_eviction_skips_pinned_cover() {
+        let (deck, session) = deck();
+        let mut store = CoverStore::default();
+        for n in 0..3 {
+            store.upload(&session, &cover(n)).unwrap();
+        }
+        deck.refuse_assets("v2.asset.put", "full", 1);
+        deck.refuse_assets("v2.asset.delete", "in-use", 1);
+        store.upload(&session, &cover(4)).unwrap();
+        assert!(deck.assets().contains_key(&cover(4).id));
+        assert!(!deck.assets().contains_key(&cover(1).id));
     }
 }

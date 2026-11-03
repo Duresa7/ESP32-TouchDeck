@@ -20,6 +20,7 @@ pub struct Service {
     registry: Arc<Mutex<Result<Registry, Error>>>,
     summaries: Arc<Mutex<Vec<IntegrationSummary>>>,
     pending: Arc<Pending>,
+    events: Events,
     pub(crate) controls: Controls,
 }
 type Pending = Mutex<HashMap<(String, String), Delivery>>;
@@ -55,6 +56,7 @@ impl Service {
             registry: Arc::new(Mutex::new(registry)),
             summaries: Arc::default(),
             pending: Arc::default(),
+            events: events.clone(),
             controls,
         };
         if let Ok(registry) = service.registry.lock().unwrap().as_ref() {
@@ -69,8 +71,8 @@ impl Service {
                 let Some(state) = weak.upgrade() else { break };
                 let mut state = state.lock().unwrap();
                 if let Ok(registry) = state.as_mut() {
-                    apply_pending(registry, &pending);
                     let before = serde_json::to_value(registry.list()).unwrap();
+                    apply_pending(registry, &pending);
                     registry.tick();
                     *cache.lock().unwrap() = registry.list();
                     if before != serde_json::to_value(registry.list()).unwrap() {
@@ -142,7 +144,12 @@ impl Service {
         if let Ok(mut state) = self.registry.try_lock()
             && let Ok(registry) = state.as_mut()
         {
+            let before = serde_json::to_value(registry.list()).unwrap();
             apply_pending(registry, &self.pending);
+            *self.summaries.lock().unwrap() = registry.list();
+            if before != serde_json::to_value(registry.list()).unwrap() {
+                publish(registry, &self.events);
+            }
         }
     }
     fn with_registry<T>(
@@ -152,8 +159,8 @@ impl Service {
     ) -> Result<T, IntegrationError> {
         let mut guard = self.registry.lock().unwrap();
         let registry = guard.as_mut().map_err(|_| IntegrationError::Credentials)?;
-        apply_pending(registry, &self.pending);
         let before = serde_json::to_value(registry.list()).unwrap();
+        apply_pending(registry, &self.pending);
         let result = f(registry).map_err(IntegrationError::from);
         *self.summaries.lock().unwrap() = registry.list();
         if before != serde_json::to_value(registry.list()).unwrap() {

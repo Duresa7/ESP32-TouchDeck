@@ -1,7 +1,7 @@
 //! A deck that speaks protocol 1 in process, so the app and its tests run without a board.
 //! It keeps the state the firmware keeps and records every message it receives.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::{self, ErrorKind, Read, Write};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -179,6 +179,8 @@ struct State {
     asset_end: Option<(u8, Map<String, Value>)>,
     live: Live,
     live_sets: Vec<Value>,
+    live_time: Option<u64>,
+    asset_refusals: VecDeque<(String, String)>,
     idle_settings: IdleSettings,
     idle: bool,
     photo_interval: Option<Duration>,
@@ -329,6 +331,8 @@ impl MockDeck {
                 asset_end: None,
                 live: Live::new(),
                 live_sets: Vec::new(),
+                live_time: None,
+                asset_refusals: VecDeque::new(),
                 idle_settings: IdleSettings::default(),
                 idle: false,
                 photo_interval: None,
@@ -609,7 +613,19 @@ impl MockDeck {
         self.state().sets.clone()
     }
 
-    /// Every `v2.live.set` the deck accepted, in order, each with the `at_ms` it arrived.
+    /// Queues refusals for the next matching Asset requests.
+    pub fn refuse_assets(&self, method: &str, reason: &str, count: usize) {
+        self.state()
+            .asset_refusals
+            .extend((0..count).map(|_| (method.into(), reason.into())));
+    }
+
+    /// Sets the elapsed time used by live-value rate windows.
+    pub fn set_live_time(&self, milliseconds: u64) {
+        self.state().live_time = Some(milliseconds);
+    }
+
+    /// Every accepted `v2.live.set`, in arrival order.
     pub fn live_sets(&self) -> Vec<Value> {
         self.state().live_sets.clone()
     }
@@ -1541,6 +1557,16 @@ impl MockDeck {
 
     fn asset(&self, m: &str, request: &Map<String, Value>) -> Map<String, Value> {
         let refused = |reason: &str| refusal(reason, "Request refused");
+        {
+            let mut state = self.state();
+            if state
+                .asset_refusals
+                .front()
+                .is_some_and(|(method, _)| method == m)
+            {
+                return refused(&state.asset_refusals.pop_front().unwrap().1);
+            }
+        }
         let only = |keys: &[&str]| {
             request
                 .keys()
@@ -1856,7 +1882,9 @@ impl MockDeck {
         }
         let sent = json!([ttl, kind, value]);
         let mut state = self.state();
-        let elapsed = state.live.session.elapsed().as_millis() as u64;
+        let elapsed = state
+            .live_time
+            .unwrap_or_else(|| state.live.session.elapsed().as_millis() as u64);
         let window = elapsed / 1000;
         let all = if state.live.window == window {
             state.live.in_window

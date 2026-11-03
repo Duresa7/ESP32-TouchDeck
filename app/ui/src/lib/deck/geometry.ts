@@ -122,7 +122,7 @@ export function tileRect(page: Cells, tile: Span, area: Rect, gap: number): Rect
 }
 
 function lastCellAtOrBefore(offset: number, length: number, gap: number, cells: number): number {
-  return Math.floor(((offset + 1) * cells - 1) / (length + gap));
+  return Math.floor(((Math.floor(offset) + 1) * cells - 1) / (length + gap));
 }
 
 export function cellAt(page: Cells, area: Rect, gap: number, x: number, y: number): [number, number] {
