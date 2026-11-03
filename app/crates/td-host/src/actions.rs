@@ -285,3 +285,16 @@ mod tests {
         assert!(launch("td-host-no-such-program", &[], "").is_err());
     }
 }
+
+#[cfg(test)]
+mod controls_tests {
+    use super::*;
+    #[test]
+    fn renderer_parts_bind_account_and_cannot_launch_processes() {
+        let mut tile: Tile = serde_json::from_value(serde_json::json!({"id":"media","label":"Player","row":0,"col":0,"rowSpan":1,"colSpan":1,"render":"now-playing","action":{"type":"widget","source":"media","account":"chosen","field":"state"}})).unwrap();
+        assert_eq!(Plan::part(&tile,"next"), Some(Plan::Integration {source:"media".into(),account:"chosen".into(),action:"next".into()}));
+        assert_eq!(Plan::part(&tile,"mute"),None);
+        tile.action=Action::Launch {path:"example.exe".into(),args:vec![],cwd:String::new()};
+        assert_eq!(Plan::part(&tile,"next"),None);
+    }
+}

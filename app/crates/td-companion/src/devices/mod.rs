@@ -3,6 +3,7 @@
 //! thread that owns its link session. Blocking `td-link` work never runs on the async runtime:
 //! probes run on the scan thread and requests on each Device's actor thread.
 mod actor;
+mod input;
 pub mod console;
 mod ports;
 mod scan;
