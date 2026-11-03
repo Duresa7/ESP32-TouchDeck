@@ -17,7 +17,9 @@ extern "C" {
 #define UI_LIVE_SERIES_MAX 32
 #define UI_LIVE_HZ 2
 #define UI_LIVE_TOTAL_HZ 16
-#define UI_LIVE_TILE_STREAMS 1
+#define UI_LIVE_TILE_STREAMS 4
+#define UI_LIVE_TEXT_MAX 128
+#define UI_LIVE_IMAGES_MAX 4
 #define UI_LIVE_SLOTS_MAX 64
 #define UI_LIVE_TTL_MIN_MS 1000
 #define UI_LIVE_TTL_MAX_MS 60000
@@ -37,6 +39,7 @@ typedef enum {
     UI_LIVE_SEQUENCE,
     UI_LIVE_RATE,
     UI_LIVE_MEMORY,
+    UI_LIVE_ASSET,
 } ui_live_result_t;
 
 /* One `v2.live.set`, with its value already read from the JSON. `values` holds `count` numbers: one for a number,
@@ -50,6 +53,8 @@ typedef struct {
     uint32_t ttl_ms;
     ui_stream_type_t type;
     const double *values;
+    const char *text;
+    const char *image;
     size_t count;
 } ui_live_set_t;
 

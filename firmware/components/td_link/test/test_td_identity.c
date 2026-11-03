@@ -49,9 +49,9 @@ TEST_CASE("hello golden vectors bound escaped fields and match advertised capabi
     cJSON *caps = td_link_capabilities();
     TEST_ASSERT_NOT_NULL(caps);
 #if CONFIG_TD_GIF_CAPS
-    const int selected = 1;
+    const int selected = 3;
 #else
-    const int selected = 0;
+    const int selected = 2;
 #endif
     cJSON *expected = cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(vectors, selected), "caps"), true);
     cJSON_DeleteItemFromObjectCaseSensitive(expected, "free_bytes");

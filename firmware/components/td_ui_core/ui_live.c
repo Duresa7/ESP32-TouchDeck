@@ -93,6 +93,7 @@ static bool in_range(double v)
 
 static ui_live_result_t check_value(const ui_live_set_t *set)
 {
+    if (set->type == UI_STREAM_TEXT && set->text && strlen(set->text) > UI_LIVE_TEXT_MAX) return UI_LIVE_SIZE;
     if (set->type != UI_STREAM_NUMBER && set->type != UI_STREAM_SERIES) {
         return UI_LIVE_TYPE;
     }

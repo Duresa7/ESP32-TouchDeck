@@ -1,5 +1,7 @@
 #include "td_asset.h"
 #include "td_gif.h"
+#include "esp32s3/rom/tjpgd.h"
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <dirent.h>
@@ -56,6 +58,8 @@ bool td_asset_id_valid(const char *id)
 const char *td_asset_result_reason(td_asset_result_t result)
 {
     switch (result) {
+    case TD_ASSET_IN_USE:
+        return "in-use";
     case TD_ASSET_SIZE:
         return "size";
     case TD_ASSET_MEMORY:
@@ -81,12 +85,13 @@ td_asset_format_t td_asset_format_parse(const char *name)
 {
     if (name && strcmp(name, "tdi1") == 0) return TD_ASSET_FMT_TDI1;
     if (name && strcmp(name, "gif") == 0) return TD_ASSET_FMT_GIF;
+    if (name && strcmp(name, "jpeg") == 0) return TD_ASSET_FMT_JPEG;
     return TD_ASSET_FMT_NONE;
 }
 
 const char *td_asset_format_name(td_asset_format_t format)
 {
-    return format == TD_ASSET_FMT_TDI1 ? "tdi1" : format == TD_ASSET_FMT_GIF ? "gif" : NULL;
+    return format == TD_ASSET_FMT_TDI1 ? "tdi1" : format == TD_ASSET_FMT_GIF ? "gif" : format == TD_ASSET_FMT_JPEG ? "jpeg" : NULL;
 }
 
 static uint16_t le16(const uint8_t *p)
@@ -100,6 +105,7 @@ static td_asset_format_t detect(const uint8_t head[HEAD_BYTES], uint32_t bytes)
         && le16(head + 8) == 1 && le16(head + 10) == 0) {
         return TD_ASSET_FMT_TDI1;
     }
+    if (bytes >= 4 && bytes <= TD_ASSET_JPEG_MAX_BYTES && head[0] == 0xff && head[1] == 0xd8) return TD_ASSET_FMT_JPEG;
     if (bytes >= 13 && bytes <= TD_GIF_MAX_BYTES && memcmp(head, "GIF89a", 6) == 0) return TD_ASSET_FMT_GIF;
     return TD_ASSET_FMT_NONE;
 }
@@ -130,6 +136,57 @@ static td_asset_result_t validate_gif(const char *path, uint32_t bytes)
     case TD_GIF_MEMORY: return TD_ASSET_MEMORY;
     default: return TD_ASSET_FORMAT;
     }
+}
+
+static UINT jpeg_read(JDEC *decoder, BYTE *out, UINT bytes)
+{
+    FILE *file = decoder->device;
+    if (out) return (UINT)fread(out, 1, bytes, file);
+    UINT done = 0;
+    while (done < bytes && fgetc(file) != EOF) done++;
+    return done;
+}
+
+
+#ifndef TD_JPEG_OUTPUT
+#define TD_JPEG_OUTPUT UINT
+#endif
+static TD_JPEG_OUTPUT jpeg_sink(JDEC *decoder, void *pixels, JRECT *rect)
+{
+    (void)decoder;
+    (void)pixels;
+    (void)rect;
+    return 1;
+}
+
+static td_asset_result_t validate_jpeg(const char *path)
+{
+    FILE *file = fopen(path, "rb");
+    if (!file) return TD_ASSET_STORAGE;
+    void *work = calloc(1, 4096);
+    if (!work) { fclose(file); return TD_ASSET_MEMORY; }
+    JDEC decoder;
+    JRESULT decoded = jd_prepare(&decoder, jpeg_read, work, 4096, file);
+    td_asset_result_t result = TD_ASSET_FORMAT;
+    if (decoded == JDR_OK) {
+        if (!decoder.width || !decoder.height || decoder.width > TD_ASSET_IMAGE_MAX || decoder.height > TD_ASSET_IMAGE_MAX) {
+            result = TD_ASSET_SIZE;
+        } else if (jd_decomp(&decoder, jpeg_sink, 0) == JDR_OK) {
+            const long read_end = ftell(file);
+            if (read_end >= 0 && (unsigned long)read_end >= decoder.dctr &&
+                fseek(file, read_end - (long)decoder.dctr, SEEK_SET) == 0) {
+                int marker = fgetc(file);
+                if (marker == 0xff) {
+                    do { marker = fgetc(file); } while (marker == 0xff);
+                    if (marker == 0xd9 && fgetc(file) == EOF) result = TD_ASSET_OK;
+                }
+            }
+        }
+    }
+    if (ferror(file)) result = TD_ASSET_STORAGE;
+    free(work);
+    fclose(file);
+    return result;
 }
 
 static void shard_path(char out[SHARD_PATH_MAX], char shard)
@@ -244,8 +301,16 @@ bool td_asset_present(const char *id, uint32_t *bytes, td_asset_format_t *format
     char got[TD_ASSET_ID_LEN + 1];
     struct stat st;
     td_store_lock();
-    bool ok = stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0 && st.st_size <= TD_GIF_MAX_BYTES
-        && hash_file(path, (uint32_t)st.st_size, digest, head);
+    bool ok = stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0 && st.st_size <= TD_GIF_MAX_BYTES;
+    bool jpeg = false;
+    if (ok) {
+        FILE *file = fopen(path, "rb");
+        memset(head, 0, sizeof head);
+        ok = file && fread(head, 1, sizeof head, file) >= 4;
+        if (file) fclose(file);
+        jpeg = ok && detect(head, (uint32_t)st.st_size) == TD_ASSET_FMT_JPEG;
+        if (ok && !jpeg) ok = hash_file(path, (uint32_t)st.st_size, digest, head);
+    }
     if (ok && detect(head, (uint32_t)st.st_size) == TD_ASSET_FMT_GIF) {
         ok = validate_gif(path, (uint32_t)st.st_size) == TD_ASSET_OK;
     }
@@ -253,9 +318,9 @@ bool td_asset_present(const char *id, uint32_t *bytes, td_asset_format_t *format
     if (!ok) {
         return false;
     }
-    hex(digest, got);
+    if (!jpeg) hex(digest, got);
     const td_asset_format_t detected = detect(head, (uint32_t)st.st_size);
-    if (strcmp(got, id) != 0 || detected == TD_ASSET_FMT_NONE) {
+    if ((!jpeg && strcmp(got, id) != 0) || detected == TD_ASSET_FMT_NONE) {
         ESP_LOGW(TAG, "%.12s does not validate", id);
         return false;
     }
@@ -371,6 +436,49 @@ td_asset_result_t td_asset_list(const char *after, td_asset_item_t items[TD_ASSE
     return TD_ASSET_OK;
 }
 
+static struct {
+    char id[TD_ASSET_ID_LEN + 1];
+    uint16_t refs;
+} s_pins[8];
+
+td_asset_result_t td_asset_pin(const char *id)
+{
+    if (!td_asset_id_valid(id)) return TD_ASSET_FORMAT;
+    td_store_lock();
+    td_asset_format_t format;
+    td_asset_result_t result = TD_ASSET_FORMAT;
+    if (td_asset_present(id, NULL, &format) && format == TD_ASSET_FMT_JPEG) {
+        size_t free_slot = sizeof s_pins / sizeof s_pins[0];
+        for (size_t i = 0; i < sizeof s_pins / sizeof s_pins[0]; i++) {
+            if (!s_pins[i].refs) free_slot = i;
+            else if (!strcmp(s_pins[i].id, id)) {
+                if (s_pins[i].refs == UINT16_MAX) { td_store_unlock(); return TD_ASSET_MEMORY; }
+                s_pins[i].refs++;
+                td_store_unlock();
+                return TD_ASSET_OK;
+            }
+        }
+        result = TD_ASSET_MEMORY;
+        if (free_slot < sizeof s_pins / sizeof s_pins[0]) {
+            memcpy(s_pins[free_slot].id, id, TD_ASSET_ID_LEN + 1);
+            s_pins[free_slot].refs = 1;
+            result = TD_ASSET_OK;
+        }
+    }
+    td_store_unlock();
+    return result;
+}
+
+void td_asset_unpin(const char *id)
+{
+    if (!td_asset_id_valid(id)) return;
+    td_store_lock();
+    for (size_t i = 0; i < sizeof s_pins / sizeof s_pins[0]; i++) {
+        if (s_pins[i].refs && !strcmp(s_pins[i].id, id)) { s_pins[i].refs--; break; }
+    }
+    td_store_unlock();
+}
+
 td_asset_result_t td_asset_delete(const char *id, bool *deleted)
 {
     *deleted = false;
@@ -382,6 +490,12 @@ td_asset_result_t td_asset_delete(const char *id, bool *deleted)
     char shard[SHARD_PATH_MAX];
     shard_path(shard, id[0]);
     td_store_lock();
+    for (size_t i = 0; i < sizeof s_pins / sizeof s_pins[0]; i++) {
+        if (s_pins[i].refs && !strcmp(s_pins[i].id, id)) {
+            td_store_unlock();
+            return TD_ASSET_IN_USE;
+        }
+    }
     struct stat previous;
     bool existed = stat(path, &previous) == 0;
     const int rc = unlink(path);
@@ -424,7 +538,8 @@ td_asset_result_t td_asset_upload_begin(const char *id, uint32_t bytes, td_asset
     if (!td_asset_id_valid(id) || !td_store_mounted()) {
         return TD_ASSET_STORAGE;
     }
-    if (format == TD_ASSET_FMT_NONE) return TD_ASSET_FORMAT;
+    if (format < TD_ASSET_FMT_TDI1 || format > TD_ASSET_FMT_JPEG) return TD_ASSET_FORMAT;
+    if (format == TD_ASSET_FMT_JPEG && (bytes == 0 || bytes > TD_ASSET_JPEG_MAX_BYTES)) return TD_ASSET_SIZE;
     if (format == TD_ASSET_FMT_GIF && (bytes == 0 || bytes > TD_GIF_MAX_BYTES)) return TD_ASSET_SIZE;
     td_asset_space_t space;
     td_store_lock();
@@ -512,6 +627,7 @@ td_asset_result_t td_asset_upload_finish(void)
     if (result == TD_ASSET_OK && s_up.format == TD_ASSET_FMT_GIF) {
         result = validate_gif(UPLOAD_TMP, s_up.bytes);
     }
+    if (result == TD_ASSET_OK && s_up.format == TD_ASSET_FMT_JPEG) result = validate_jpeg(UPLOAD_TMP);
     if (result != TD_ASSET_OK) {
         td_asset_upload_abort();
         return result;
