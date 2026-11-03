@@ -45,24 +45,27 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
     struct Player {
-        state: Mutex<Option<WorkerState>>,
+        state: Arc<Mutex<Option<WorkerState>>>,
     }
     impl MediaProvider for Player {
         fn start(&self, feed: Feed) -> Result<Arc<dyn MediaSession>, String> {
             feed.metadata(feed.generation(), "Track", "Artist", Playback::Playing);
             *self.state.lock().unwrap() =
                 Some(WorkerState::new(feed.clone(), Arc::new(AtomicU64::new(1))));
-            Ok(Arc::new(CommandPlayer { feed }))
+            Ok(Arc::new(CommandPlayer {
+                state: self.state.clone(),
+            }))
         }
     }
     struct CommandPlayer {
-        feed: Feed,
+        state: Arc<Mutex<Option<WorkerState>>>,
     }
     impl MediaSession for CommandPlayer {
         fn command(&self, _: MediaCommand, _: Instant) -> Receiver<Result<bool, String>> {
-            let mut state = WorkerState::new(self.feed.clone(), Arc::new(AtomicU64::new(1)));
+            let mut guard = self.state.lock().unwrap();
+            let state = guard.as_mut().unwrap();
             let identity = state.identity.load(Ordering::SeqCst);
-            self.feed.invalidate();
+            state.feed.invalidate();
             state.properties_event(Instant::now());
             let (tx, rx) = mpsc::sync_channel(1);
             tx.send(if state.command_current(identity) {
@@ -76,20 +79,22 @@ mod tests {
     }
     fn player() -> (Media, Arc<Player>) {
         let player = Arc::new(Player {
-            state: Mutex::new(None),
+            state: Arc::new(Mutex::new(None)),
         });
         (Media::new(player.clone()), player)
     }
     #[test]
     fn property_event_before_true_command_completion_reports_success() {
         let (media, _) = player();
-        assert!(
-            media
-                .control()
-                .unwrap()
-                .act("", "next", Duration::from_secs(1))
-                .is_ok()
-        );
+        for action in ["next", "previous"] {
+            assert!(
+                media
+                    .control()
+                    .unwrap()
+                    .act("", action, Duration::from_secs(1))
+                    .is_ok()
+            );
+        }
     }
     #[test]
     fn obsolete_session_and_stopped_lifecycle_refuse_commands() {
@@ -143,7 +148,13 @@ mod tests {
         let (media, player) = player();
         let mut guard = player.state.lock().unwrap();
         let state = guard.as_mut().unwrap();
-        let now = Instant::now();
+        let previous = Instant::now();
+        state.properties_event(previous);
+        state.metadata_changed(previous);
+        for ms in [300, 1000, 3000] {
+            assert!(state.retry_due(previous + Duration::from_millis(ms)));
+        }
+        let now = previous + Duration::from_secs(4);
         fetch(state, true);
         state.feed.invalidate();
         state.properties_event(now);
