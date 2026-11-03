@@ -1,446 +1,228 @@
-# Use Open TouchDeck over USB
+# Open TouchDeck user guide
 
-Use this guide to install Open TouchDeck, connect your deck, and set up its buttons.
-You need the Waveshare ESP32-S3-Touch-LCD-5B, a USB data cable, and a Windows
-or Linux desktop session.
+Design a Layout in the app, send it to a Device and tap its Tiles to use it. A Layout holds Pages; each Page holds Tiles. An Integration supplies live data or controls on this PC. The Companion runs in the tray and connects everything over USB.
 
-Keep the app running and connected for keyboard and media keys, buttons that open
-apps or run commands, and live AI usage. The app types the deck's key presses into
-your computer. The deck does not act as a standalone USB keyboard. Swiping between
-pages works on the deck without the app. Bluetooth is not supported. Wi-Fi, battery
-support, and standalone USB HID (direct TinyUSB) are deferred to the post-product
-update.
+This guide covers the 1.0 app. App screenshots use demo data at the default 1100 × 760 window size.
 
-The app has three screens, chosen at the top: **Buttons**, where you set up the
-deck, **AI usage**, and **Settings**. The deck indicator at the top right shows
-whether your deck is connected and opens the list of decks.
+## Install
 
-## Obtain and install the desktop app
+You need a Waveshare ESP32-S3-Touch-LCD-5B, a USB data cable and Windows x64.
 
-This section is for people who run the app. If you build it from source, use
-[Build from source (developers)](#build-from-source-developers) instead.
+1. Download [OpenTouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe) from the project's [releases](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest).
+2. Run the installer. It installs for the current user, without administrator rights. No development tools are needed.
+3. Open **Open TouchDeck** from the Start menu.
 
-**Windows installer.** Download
-[OpenTouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe)
-from [the latest GitHub release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest)
-and run it. It installs Open TouchDeck for your user under
-`%LOCALAPPDATA%\Programs\Open TouchDeck`, with the matching Firmware bundle in
-`resources\firmware\touchdeck.tdfw`. You need no Node, pnpm, Rust, Python, or
-ESP-IDF, and no admin rights. The [packaging guide](packaging.md) lists the
-installer's contents.
-Windows SmartScreen may warn the first time, because the installer has no Authenticode signature; choose **More info**, then **Run anyway**.
+Windows SmartScreen may warn because the installer has no Authenticode signature. Check that the download came from the project's release before choosing **More info > Run anyway**. The built-in updater checks a separate project signature.
 
-To build the app yourself, follow [Build from source (developers)](#build-from-source-developers).
-Linux has no installer. Run
-`touchdeck` from a source build. The
-[desktop setup guide](setup.md) lists the Linux runtime libraries, the serial and
-`/dev/uinput` permissions, and the desktop credential store that the optional
-CLIProxyAPI connection needs.
+The [packaging guide](packaging.md) lists installed files and uninstall behavior. Developers and Linux users should follow [setup](setup.md) and [app development](../app/README.md).
 
-Start `touchdeck.exe` on Windows or `touchdeck` on Linux. The window title, and
-**Settings > Troubleshooting**, show the source revision the app was built from.
+## First run and connection
 
-### Build from source (developers)
+1. Plug the Device's USB-Serial/JTAG port into this PC with a data cable. Close any serial monitor or flash tool using it.
+2. Wait for its Home card to say **Connected**. There is no manual Connect step.
+3. If setup opens, enter a name such as “Desk”. The name stays on the Device.
+4. Choose **Landscape** or **Portrait**. Each orientation has its own Layout. A change may restart the Device.
+5. Choose **Starter Layout**, **Blank Layout** or **Keep** the existing Layout when offered.
+6. If a Firmware update is offered, choose **Update** and keep USB connected, or **Skip** to continue with the current Firmware.
+7. Choose **Edit Layout** to customize it, or **Done** to return Home.
 
-Source builds are for development and for Linux. On Windows,
-run `pwsh -NoProfile -File app/scripts/setup-windows.ps1` from the checkout root.
-It installs missing developer tools, so read [the setup guide](setup.md) first.
-Then follow [Build the desktop app](../app/README.md#build-the-desktop-app). The
-packaging recipe in the [packaging guide](packaging.md) produces installer
-candidates. A candidate is not a published release.
+Click the Device on Home to edit it. The bottom-left navigation opens Home, Layout, Integrations and Settings. In Settings, choose **Appearance** and whether to **Start at sign-in**.
 
-## Connect your deck
+Closing the window leaves the Companion running in the tray. **Open** brings the window back; **Quit** stops it. Keep the Companion running for keyboard input, commands, Volume, Media and live readings. Keyboard Tiles send input to the focused window on this PC. The Device is not a standalone USB keyboard.
 
-1. Plug the board's USB-Serial/JTAG port into your computer with a data cable.
-2. Start the app. If it finds the deck, the Buttons screen says
-   **Your deck is plugged in**. Select **Connect** there.
-3. Or select the deck indicator at the top right, which reads
-   **Deck not connected**, and select **Connect** beside your deck.
-4. The indicator turns green and reads **Deck connected**.
+## Install Firmware on a New board
 
-The deck list names what it found on each port. **Another program is using it**
-means you must close the other app, serial monitor, or flashing tool first. On
-Linux, also check serial-device permissions. **Didn't answer yet** does not prove
-the firmware is healthy. Check the cable, the port, and the firmware before using
-the deck's repair path. Select **Disconnect** in the same list before opening a
-separate serial tool. If the connection drops, the indicator reads
-**Connection lost**, and the list explains what to try.
+A supported board without working Open TouchDeck Firmware appears as **New board**.
 
-**Settings > Troubleshooting** shows the connected deck's details: its software
-version and build ID, which slot it runs from, safe mode, and the USB port.
+1. Choose **Install Firmware** on its card.
+2. Read the warning. Installation replaces everything on the board, including another project. Cancel if you need to preserve it.
+3. Confirm the target and bundle in the native confirmation dialog on this PC. A browser cannot give this approval.
+4. Keep USB connected while **Installing Firmware…** is shown.
+5. After **Firmware installed**, choose **Next** and follow the naming and Layout steps above.
 
-Keep the app running after connecting. The deck's keys go to whichever window has
-focus. If typing fails, check **Settings > Troubleshooting > Test your keys** and
-the Linux `/dev/uinput` permissions described in the setup guide. Buttons that
-open apps, run commands, or show AI usage grey out on the deck while the app is
-offline. Key buttons do not grey out, but still need the connected app to type
-into the computer.
+**Ignore** leaves the board unchanged. Select its ignored card later to install. If installation fails, read **Details**, unplug and reconnect the board, then retry. The installer includes the Firmware bundle; no separate Python or flashing tool is needed for this flow.
 
-## Set up your buttons
+## Edit a Layout
 
-The Buttons screen draws your deck exactly as the deck draws it: the same
-1024 by 600 screen (600 by 1024 in portrait), the same Montserrat letters at the
-same sizes, the same colors, and the same rules for shrinking a long name. What you
-see is what the deck will show, scaled to fit the window.
+![Layout editor in light mode with demo Pages](images/app-layout-light.png)
 
-The app keeps a separate layout for **Landscape** and **Portrait**. These buttons
-choose which layout you edit and which slot on the deck it goes to, not which way
-the deck is turned.
+1. Open a Device from Home. At **Start a Layout**, choose **Load from Desk** (using the Device's name), **Starter Layout**, **Blank Layout** or **Import**.
+2. Select a Page below the preview. **+ Page** adds another Page.
+3. Select a Tile to edit its label, icon, color, size and action in the right panel. **Add Tile** or an empty cell opens the choices for action Tiles and Preset tiles.
+4. Drag Tiles to move them. Use the size controls to resize them. Changes that overlap another Tile or go outside the grid are refused.
+5. Click away from a Tile to edit the Page name and grid. **Full screen** hides the Page name and dots; swiping still changes Pages.
+6. Choose **Send to Device**. Wait for confirmation that the Layout was sent before unplugging.
 
-1. Open **Buttons** and choose **Landscape** or **Portrait**.
-2. With nothing open yet, pick a start: **Start from your deck** loads the
-   buttons your deck has now, **Start with examples** gives you media controls and
-   everyday shortcuts, and **Start blank** gives you one empty page. **Open a
-   layout file…** opens a layout you saved before, such as
-   [builtin.json](../schema/examples/builtin.json) for keys and media controls or
-   [dev.json](../schema/examples/dev.json) for apps, commands, and AI usage.
-3. Select a page at the top of the deck, then a button. Change its
-   **Name on the button**, what it does under **When pressed**, and its
-   **Picture** in the panel on the right.
-4. Drag a button to move it, and drag its corner dot to resize it. With a button
-   selected, the arrow keys move it, and Shift with an arrow key resizes it. Exact
-   numbers are under **Position and size**. A move onto another button, or past the
-   grid's edge, is refused and the status line says why.
-5. Select an empty square, or **Add button**, to add a button there. **Add page**
-   adds a page. With no button selected, the panel shows the page: its
-   **Page name**, its **Grid** of rows and columns, and **Remove this page**, which
-   asks you to select it a second time.
-6. Before replacing what you have, open the **Layout** menu and select
-   **Save to a file…**.
-7. With the deck connected, select **Send to deck**. The status line says what the
-   deck now shows, and whether any picture could not be sent.
+The orientation buttons in the editor choose which Layout to edit. They do not turn the Device. To change how it stands, click its name, change **Orientation** in the Device panel and confirm **Restart**. Send the other orientation's Layout separately.
 
-The panel warns when a name uses a letter the deck can't show, such as an accented
-letter or an emoji. The deck draws an empty box for each, and so does the preview.
+Choose **Preview** or press **P** to try Page swipes, Tile presses and Page jumps. Arrow keys change Pages. **Actual size** shows Device pixels at their original size. Preview does not run commands on this PC.
 
-### Try it before you send it
+### Actions and approvals
 
-Select **Try it** (or press **P**) to use the preview the way you use the deck.
-Swipe sideways, or press the left and right arrow keys, to change pages. The
-pages slide with the deck's own timing. Tap a button to see its pressed glow, a
-page button jumps to its page, and Ctrl, Shift, Alt, and Windows buttons show the
-deck's held and locked looks. AI usage buttons and pages show example numbers.
-**Actual pixels** shows one deck pixel per screen pixel. Select **Edit** to go back.
+Under **When tapped**, choose a key or shortcut, media key, modifier, app launch, file or website open, command, Page jump or no action. **When held** gives an action a separate hold behavior where offered.
 
-### Use the whole screen
+For a command, enter the program, arguments and working folder in the action form. Check each argument. Shell mode does not turn the program field into a general shell script.
 
-With no button selected, the panel's **All pages** section has
-**Use the whole screen**. Turn it on to hide the page name at the top left and the
-page dots at the bottom, so the buttons fill the screen. You still swipe between
-pages. The gap between buttons stays the same. An AI usage page with no rows yet
-shows nothing at all on a full-screen layout, because it has no page name to show.
+The first attempt to start an unapproved program opens a native dialog on this PC. This applies to commands, app launches and file or folder opens; ordinary HTTP, HTTPS and mail links do not need process approval. Review the exact program, arguments, working folder and shell setting, then choose **Run once**, **Always allow** or **Deny**.
 
-The setting is saved in the layout as `"fullScreen": true`, and the app writes it
-only when it is on, so a layout without it is unchanged. It needs deck software
-that knows the setting. Older deck software refuses such a layout, and the status
-line's **Details** give the deck's reason. See
-[full-screen.json](../schema/examples/full-screen.json) for an example.
+**Always allow** remembers that exact command on this PC. Changing its arguments or other approved fields asks again. A Layout imported from someone else cannot approve itself. If the app says **Waiting for approval on this PC**, find the native dialog or use **Show prompt again**. Device key input pauses while a native approval dialog is open.
 
-### Opening, loading, and saving
+### Icons, Assets and backups
 
-Opening a file switches to the orientation written inside it.
-**Layout > Start blank** replaces the current orientation's layout with an empty
-one, and **Start with examples** with the example set. **Load from deck** reads the
-selected orientation's layout from the deck. Select **Replace** to use it or
-**Keep mine** to keep what you have. A deck that runs only its built-in layout may
-have nothing to load. Open the built-in example in that case.
+Use the Tile's **Icon** controls to choose a built-in symbol, search the catalog or use an app's icon where offered. Search uses the bundled catalog; picking an uncached catalog image needs internet access. The Companion prepares it as an Asset for the Device.
 
-Sending writes the layout's orientation slot. Sending the orientation the deck
-shows reloads it. Sending the other orientation saves it for later and leaves the
-shown layout, its buttons, and its AI usage running. Layout writers refuse a file
-whose declared orientation differs from the target slot. The CLI's optional
-`put-layout --orientation` must match the JSON; edit the file's `orientation`
-member to move it to the other slot. Save each orientation to a file separately.
-The app has no undo or autosave, and it does not keep your layouts across restarts.
+Drafts are kept in this window or browser's local storage, separately for each Device and orientation. Export files for backups and transfers between browsers or PCs.
 
-The panel names the layout under **All pages > Layout name**. Pages added in the
-app are grid pages. To add an AI usage page, which lists every account, edit the
-JSON outside the app and open it. See the [layout reference](../schema/README.md)
-for limits and rules. From a source checkout, check examples and your own file
-without running its actions:
+The **Layout options** menu (three dots) offers **Export**, **Import**, **Load from Desk**, starting Layouts and **Remove unused Assets**. Export both orientations before replacing a Layout. Open the exported files again to check them.
 
-```sh
-npm ci --prefix schema
-node schema/check-layouts.mjs path/to/layout.json
+A Layout JSON file contains Asset references, not the image files, Integration secrets or command approvals. Keep original custom images and GIFs separately. On another PC, set up Integrations again, check program paths and prepare missing Assets before sending. Loading a Layout from the Device does not copy its Assets back to this PC. Remove unused Assets only after keeping the originals you need.
+
+## Set up Integrations
+
+![Integrations in dark mode with demo data](images/app-integrations-dark.png)
+
+Open **Integrations**, select one and turn it on. Choose **Save** for configuration changes. Secrets have their own **Save** and **Forget** controls. Use **Check now** when available, then inspect **Details** if it cannot connect.
+
+Choose a Preset tile's **Add to Layout**, select its destination when asked, then open Layout and **Send to Device**. Adding a Preset tile edits the Layout; it does not send it automatically.
+
+### This PC
+
+Turn on **This PC** and save. It needs no account or key. Add its CPU, memory or network Preset tiles. For a Graph Tile, select the value, display style, history and accent in the inspector. A graph needs enough room; unavailable sizes are disabled.
+
+### CLIProxyAPI usage limits
+
+Use your own CLIProxyAPI hub and its management key. Open TouchDeck does not sign in to AI providers for you.
+
+1. Set up the hub and sign the desired accounts into it. Enable its management API.
+2. In **Integrations > CLIProxyAPI**, turn it on. Replace the placeholder `https://YOUR_HUB_URL` with your hub's address.
+3. Set **Check every** and choose **Save**. The default is 120 seconds; polling cannot be faster than 60 seconds.
+4. Paste your own `YOUR_MANAGEMENT_KEY` into **Management key** and use its **Save** button. Do not put the key in a Layout or share it in a screenshot.
+5. Choose **Check now**. Check the account table before adding a Preset tile.
+6. Add a usage Tile, select its account and value, then **Send to Device**.
+
+Use HTTPS for a remote hub. Plain HTTP on a private network exposes the key in transit; public HTTP is refused. Keys are stored in the OS credential store, which is Windows Credential Manager on Windows.
+
+Codex and Claude readings include 5-hour and 7-day usage limits and resets when available. Other providers can supply account status and request counts. An unavailable limit is not zero. **All accounts** uses the highest usage percentage for each window. Check-now requests share a cooldown. After repeated failed checks, readings become stale and Tiles grey out.
+
+Use **Forget** beside the key to remove it. Uninstalling the app does not remove Integration secrets from Windows Credential Manager.
+
+### Custom HTTP values
+
+**Custom** reads numbers or text from an HTTP response or an approved command. Its **Custom sources (JSON)** field holds a list, with at most 16 entries. Each entry needs a unique `id`, a `name`, `interval_s` (1 to 3600), a `kind` (`number` or `text`) and an `input`.
+
+For an HTTP response such as `{"temperature": 21.5}`, adapt this example. Replace the address before saving:
+
+```json
+[
+  {
+    "id": "temperature",
+    "name": "Temperature",
+    "interval_s": 30,
+    "kind": "number",
+    "input": {
+      "type": "http",
+      "url": "https://YOUR_SERVICE_URL/metrics",
+      "value_path": "$.temperature",
+      "headers": {}
+    }
+  }
+]
 ```
 
-The checker covers the repository examples too. A valid layout fits within 32768
-bytes of compact JSON. A file that fails to open leaves your layout as it was, and
-the status line's **Details** shows the rule it broke.
+Turn on Custom and choose **Save**, then **Check now**. Paths start at `$`; use `.field` for an object field or `[0]` for an array element. Wildcards are not supported. The selected value must match `kind`.
 
-## Change which way the deck stands and when its screen turns off
+For authentication, map an HTTP header to a secret-field name, for example `"headers": {"Authorization": "metrics_token"}`. Save the configuration, then enter the complete header value in the generated secret field and save it separately. Keep secret values out of the JSON. Changing the service address may require saving its secret again.
 
-1. Send a layout for the orientation you want the deck to show.
-2. Open **Settings > Your deck** and choose **Which way it stands**.
-3. Set **Turn the screen off after** to a whole number of seconds from 1 to 86400.
-   The hint below it says it in minutes and hours.
-4. Select **Save to deck**. The screen timeout takes effect at once.
-5. When offered, select **Restart deck now** to turn the screen. The status line
-   says the deck needs a restart first.
-6. Connect again once the deck's buttons are back.
+Numeric entries offer value and graph Preset tiles. Add one and send the Layout.
 
-A saved orientation takes effect only after the deck restarts. Until then the deck
-keeps showing the previous orientation, and the app's buttons and AI usage follow
-the layout the deck actually shows, not the saved setting. Sending a layout to the
-other orientation's slot stores it without changing the shown layout, its buttons,
-or live AI usage. Sending to the shown orientation reloads the screen and both.
+### Custom command values
 
-A portrait file in storage does not turn the current screen. Portrait uses a
-600 by 1024 screen with the panel turned 90 degrees clockwise. If the shown slot
-has no valid layout, the deck shows its built-in layout. That layout has no
-buttons that open apps or show AI usage. On reconnect the app swaps the previous
-layout's actions and AI usage for that built-in layout.
+For a command, use the same outer entry and replace `input` with:
 
-## Buttons that work on your computer, and command approvals
-
-Choose what a button does under **When pressed**, then send the layout. The choices
-are grouped by where they happen:
-
-- **Press a key or shortcut** picks a key (letters, digits, and F1 to F24) and the
-  keys to hold down with it. The hint spells out the shortcut, such as
-  **Ctrl + Shift + F5**.
-- **Control music and volume** picks play or pause, next, previous, stop, mute, or
-  volume up and down.
-- **Hold Ctrl, Shift, Alt, or Windows** makes a modifier button. Tap it once and
-  it's held for your next key. Tap it twice quickly and it stays on until you tap
-  it again.
-- **Open an app** starts the app at its path, with optional arguments and a folder
-  to start in under **More options**.
-- **Open a file, folder, or website** opens it the way double-clicking it would.
-- **Run a command** runs a program with arguments, one per line, in an optional
-  folder, and optionally through the system shell. Shell mode still passes
-  arguments as data; it does not run the field as a shell script.
-- **Go to another page** jumps to a page of the same layout.
-- **Show AI usage** shows a number from your CLIProxyAPI hub, described below.
-- **Nothing** shows the button but does nothing, which is handy as a label.
-
-Only **Run a command** asks before it runs. The dialog shows the exact program,
-its arguments, its folder, and whether it uses the system shell. Choose
-**Run once**, **Always allow**, or **Don't run**. Always allow remembers that exact
-command on this computer, and changing any of those four values asks again.
-**Open an app** and **Open a file, folder, or website** run without asking, so
-check a layout from someone else before using its buttons.
-
-**Settings > Troubleshooting > Button activity** shows which layout the app uses
-for these buttons and what happened at each press: started, finished, didn't work,
-or not run. **Use a layout file instead…** loads local button actions for
-troubleshooting. It does not send anything to the deck or change its screen. Use
-**Send to deck** for the normal workflow, and keep local actions in step with the
-shown layout. **Test your keys** shows each key the deck sends and what this
-computer typed. To check a key, give a button F13, click in the box, and press it.
-
-## Pictures on buttons
-
-Select a button, then use **Picture**. **Symbol** offers the deck's built-in
-media symbols. **Choose a picture** opens the searchable gallery that comes with
-the app. **Suggested** offers a picture that fits what the button does. For an
-**Open an app** button, **Use the app's icon** takes the icon from that app and
-saves it on this computer.
-
-Sending a layout also sends the pictures the deck lacks, if they are on this
-computer. The status line says when a picture couldn't be found, and that button
-shows only its name. A layout file stores `file:<id>` references, not the images.
-**Load from deck** reads the layout and does not copy pictures back to this
-computer.
-
-To move a layout to another computer, prefer the built-in symbols or the gallery.
-Take app icons again on the new computer, or copy their cache files separately,
-and update the app paths for that computer. **Clear unused pictures from the deck**
-deletes pictures that neither stored orientation nor the layouts open in the app
-use. A saved file elsewhere is not protected by that check, so keep copies of
-custom pictures before clearing.
-
-## Show AI usage on the deck
-
-AI usage buttons and AI usage pages show how much of your AI plans you've used.
-Open TouchDeck reads the numbers from your CLIProxyAPI hub while the app runs. Open
-**AI usage** to check readings and problems. While the deck is connected, the app
-fills the AI usage buttons of the layout the deck shows, so sending to the other
-orientation's slot does not interrupt them. To fill the buttons of a saved file
-instead, set **Which buttons to fill > Layout file** to the full path of the
-layout the deck actually shows, then select **Save**. This does not send a layout
-to the deck. Keep that file in step with what you sent.
-
-Earlier pre-release builds could wrap your Claude Code status line. Before removing
-that build, run its old `td-statusline --unwrap` helper (with `--settings <file>` for
-a custom settings file), or restore the `settings.json.touchdeck.bak` beside your
-Claude settings. Current builds do not edit Claude settings.
-
-### Connect CLIProxyAPI
-
-Open TouchDeck shows your Codex and Claude usage limits through your own
-[CLIProxyAPI hub](https://github.com/router-for-me/CLIProxyAPI).
-
-1. Run CLIProxyAPI and enable its management API with a management secret key.
-   Allow remote management only if the hub is not on this computer.
-2. Sign your Codex and Claude accounts into CLIProxyAPI using its login commands
-   or management center. Open TouchDeck does not handle provider sign-ins.
-3. In **AI usage**, turn on **Connect to your CLIProxyAPI hub**, set
-   **Hub address**, and select **Save**. A hub on this computer can use
-   `http://127.0.0.1:8317`. Use HTTPS for a hub elsewhere; plain HTTP sends the
-   management key unencrypted, and the page warns you. HTTPS uses the operating
-   system's certificate trust store, including private CAs installed in the
-   Windows certificate store.
-4. Enter the hub's **Management key** and select **Save key**, then **Check now**.
-   The key is kept in the computer's secure password store (Windows Credential
-   Manager), not in the configuration file.
-5. The table shows each account's plan, how much of each limit is used, and when it
-   resets. On the Buttons screen, choose **When pressed > Show AI usage**, then what
-   to **Show** and which **Account**. Copy an account from the table to show only
-   that account. The account includes the service, such as
-   `codex:alice@example.com` or `claude:alice@example.com`, so the same email can
-   be used with both.
-6. Send the layout to fill its AI usage buttons and pages.
-
-The numbers a button can show are the 5-hour and 7-day limits used
-(`five_hour_pct`, `seven_day_pct`), the time until each resets (`five_hour_reset`,
-`seven_day_reset`), and the plan name (`plan`). Reset times are the time left at
-the last check. Codex windows of up to one day use the 5-hour numbers; longer
-windows use the 7-day numbers. **All accounts** shows the highest percentage for
-each window. Plans and reset times belong to single accounts. A missing window is
-unavailable, not zero.
-
-Account status (`status`), requests that worked and failed (`success`, `failed`),
-and requests in the last 10 minutes (`recent_10m`) are also available. The
-all-accounts status is the worst one, and the all-accounts counts are summed.
-`recent_10m` uses the newest bucket, with each account's bar relative to the
-busiest account. Gemini and other services show status and counts only for now.
-Disabled accounts are listed but not checked. AI usage pages show up to eight rows,
-with the service, the account name, and the usage percentages.
-
-The hub is checked every 120 seconds by default, and at most every 60. Each check
-lists the hub's accounts and asks the hub to fetch usage from Codex and Claude, so
-it makes real calls to those services. **Check now** and taps on AI usage buttons
-share a 15-second limit; extra requests in that time are ignored. A failure on one
-service affects only that account and shows a short reason. After three failed
-checks, the numbers count as stale and the deck greys out its AI usage buttons.
-
-Uninstalling leaves the management key in Windows Credential Manager. Select
-**Forget key** in AI usage before uninstalling to remove it.
-
-## Back up layouts and restore them
-
-1. Before replacing a layout in the app, open **Layout** and select
-   **Save to a file…**, and keep the JSON file. Repeat for Landscape and Portrait.
-2. To back up what's stored on the deck, choose an orientation, select
-   **Layout > Load from deck**, and choose **Replace**. Save that to a file, then
-   repeat for the other orientation.
-3. Check that each saved file exists where you saved it. Open it again to check the
-   layout before relying on the backup.
-4. Keep custom picture cache files separately, along with any local layout files
-   named in AI usage. Note the screen timeout and saved orientation separately.
-5. On the new computer, open the JSON, check paths and actions, restore or take
-   again any custom pictures, and send each orientation. Set up AI usage again and
-   review command approvals on that computer.
-
-Saving writes the selected orientation as formatted JSON. The app uses the
-webview's save dialog when it can, otherwise a browser download. Check the actual
-file location rather than relying on the **Saved** message alone. A saved layout
-does not include pictures, deck settings, AI usage settings, management keys,
-command approvals, or logs.
-
-AI usage settings live in
-`%APPDATA%/io.github.duresa7.touchdeck/sources.json` on Windows and
-`${XDG_CONFIG_HOME:-~/.config}/io.github.duresa7.touchdeck/sources.json` on Linux.
-These are the app's per-user Tauri folders, which also hold approvals; the picture
-cache is in the matching Tauri cache folder. Moving the app's folder does not move
-these files. Enter the management key again in AI usage on another computer; it is
-not in the JSON file.
-
-## Install or update deck firmware
-
-The desktop app and the deck's own software update separately. **Settings >
-Deck software** takes a `.tdfw` bundle, not the desktop installer or the app update
-metadata. Use the bundle that comes with the deck software you want for this
-board. Each release lists a `touchdeck.tdfw` asset, and the Windows installer
-places it at `firmware/touchdeck.tdfw`. Its version and SHA-256 are recorded in
-`install-manifest.json`. For your own firmware build, make a bundle as described
-below.
-
-If you build firmware yourself, use ESP-IDF 6.1 and the
-[firmware build instructions](firmware.md#build-and-flash). From the checkout root,
-after building `firmware/`, create and check a bundle:
-
-```sh
-python firmware/tools/make_bundle.py --build-dir firmware/build --out-dir firmware/build
-python firmware/tools/make_bundle.py --check firmware/build/touchdeck-<version>.tdfw
+```json
+{
+  "type": "command",
+  "program": "C:/Tools/YOUR_PROGRAM.exe",
+  "args": ["--print-value"],
+  "value_path": null
+}
 ```
 
-Replace `<version>` with the filename printed by the first command. The bundle
-contains the application image, bootloader, partition table, and a manifest with
-image hashes. Keep the bundle intact.
+Replace the program and arguments with a program you trust. Use an absolute executable path; Windows commands must use an `.exe` or `.com` program. With `value_path: null`, the program's output is read as the selected number or text. If it prints JSON, use a path such as `$.value` instead.
 
-To update a deck that runs Open TouchDeck software:
+Save and check the Integration. Approve the command in the native dialog on this PC. **Run once** allows one execution; a polling command needs **Always allow** to keep running without new approvals. **Deny** leaves it unable to run. Editing the command asks again. Command output must be small and finish promptly; failures appear in the Integration's status.
 
-1. Close serial monitors, `td-link`, and flash tools that use the deck's port.
-2. Open **Settings > Deck software**.
-3. Select **Choose file…** and pick the `.tdfw` file.
-4. Keep the deck plugged in and select **Update deck**. The app sends the software,
-   restarts the deck, and checks that the new software started.
-5. Wait for **Done. Your deck is running the new software.**, or
-   **Your deck already has this version** if it matches.
-6. Connect again from the deck indicator.
+### Volume
 
-The app closes its ordinary connection while the update owns the port. A normal
-update writes the inactive application slot and checks the image before the
-restart. The deck confirms a good start. An image that resets before confirming
-can roll back to the previous slot, and the app says so. If the update doesn't
-finish, the message says what happened and **Details** has the reason; read it
-before trying again. **Update log** lists every step in the update's own words.
-Reaching 100% alone does not prove a confirmed start.
+Turn on **Volume**, save and add **Volume bar**. Send the Layout, then drag along the bar on the Device to change this PC's default output volume. Its live level follows changes made on this PC too. It needs an available audio output and current Firmware.
 
-If the deck does not run working Open TouchDeck software, use **Repair deck** under
-**Repair the deck**, with the same bundle and the right **USB port**, such as
-`COM3` or `/dev/ttyACM0`. It uses the ESP32-S3 ROM downloader over USB-Serial/JTAG
-and writes the bundled bootloader, partition table, and application. It resets the
-boot selection and keeps the saved-layout storage partition for the supported
-partition map. Use it for a first install or broken software. It is not the
-ordinary update path or a layout reset. It needs no separate Python or esptool.
+### Media
 
-The deck's ten-second touch hold is a different recovery feature. It starts the
-built-in layout and default settings from RAM while keeping stored files. See
-[Recovery](firmware.md#recovery) for its behavior.
+Turn on **Media**, save and add **Now playing**. Start playback in an app that exposes a Windows media session, then send the Layout. The Tile shows title, artist, cover art and playback state when the player supplies them. Its control parts are previous, play/pause and next. Tap the relevant control on the Device. A player may not support every control or supply cover art. The Tile is not a seek slider.
 
-## Update the desktop app
+## Animated GIF Tiles
 
-This section covers the app. The deck's own software, including its repair path,
-is in [Install or update deck firmware](#install-or-update-deck-firmware).
+Choose **Add Tile > GIF**, select a file and choose **Whole GIF** or **Fill Tile**. Wait for preparation to finish, inspect the fitted dimensions and timing, then **Send to Device**. **Change GIF** replaces it later.
 
-The app can check for its own updates in **Settings > This app**:
+The Companion resizes and resamples the animation for the Device; the Firmware plays it from stored Assets. Current Firmware allows up to 128 × 128 pixels per GIF, 60 frames, at least 100 ms per frame (10 frames per second), and four animated Tiles per Page. The per-Page pixel budget is 65,536; total decoded frame pixels per GIF are capped at 983,040. Prepared Assets must also fit the 262,144-byte Asset limit. The app checks the connected Device's reported limits, so older Firmware may offer less or require an update.
 
-1. Save open layouts to files. They are not kept when the app closes.
-2. Open **Settings > This app**. It shows the installed version.
-3. Select **Check for updates**. The app says **You're on the latest app version**,
-   or shows the new version with its release notes. If it cannot reach a release,
-   it says why, and you can keep using the current version.
-4. Select **Download update**. Open TouchDeck stays open while it downloads the signed
-   installer and checks its signature.
-5. Disconnect the deck from the deck indicator. The install button is off while a
-   deck is connected, and installing is refused during deck transfers.
-6. Select **Install and close Open TouchDeck**. Windows starts the installer and the app
-   closes. Start Open TouchDeck again when the installer finishes.
+If preparation fails, shorten the animation, reduce its dimensions or use fewer animated Tiles. Resizing a Tile can require preparing its GIF again. Keep the original GIF for later edits and backups.
 
-An update keeps your per-user settings, command approvals, AI usage settings, and
-picture cache. It does not change layouts stored on the deck or touch the deck's
-software. After restarting, connect again.
+## Photo frame and idle screen
 
-The app update path needs a published release signed with the project's updater
-key. Source builds carry no updater key and say that release signing is not
-configured. The first installation always comes from the installer on GitHub
-Releases. Source and portable copies are replaced by hand: close the app, then
-rebuild or extract the new copy.
+Click the Device's name to open its panel. Turn on **Photo frame**, set **Start after** and use **Choose folder** in the desktop app. Pick a folder of pictures on this PC. Folder selection is not available in the browser.
 
-## Use Open TouchDeck from a browser
+When idle, the Device shows pictures sent by the Companion, one at a time. They are not kept on the Device. Without the Companion, the idle screen shows a clock. Touch the screen to return to the Layout. Change **Brightness** in the same panel. If a field says it needs newer Firmware, update before using it.
 
-Keep the Companion running on this PC. Choose **Open in browser** from its tray
-menu or the desktop window. The default browser opens and pairs automatically.
-If it asks for a code, enter the code from the tray notification within two minutes.
-To use another browser on this PC, open the same address and enter a fresh code.
+## Use the browser version
 
-Pairing survives a page refresh. After the Companion restarts, choose **Open in
-browser** again. Settings lists paired browsers; **Forget** immediately signs
-that browser out, including its other tabs. Other browsers stay paired. You can
-also forget this browser from its own Settings.
+Keep the Companion running on this PC. Choose **Open in browser** from the tray menu. The default browser opens and pairs automatically. If it asks for a code, enter the code shown on this PC within two minutes. For another browser, use the same address and a fresh pairing code.
 
-App update installation runs in the desktop window. Browser access is local to
-this PC; it does not expose the Companion to other computers on the network.
+Pairing survives refreshes. After the Companion restarts, choose **Open in browser** again. **Settings > Paired browsers > Forget** signs that browser out, including its other tabs. Other paired browsers stay connected.
+
+Browser access is local to this PC, not available to a phone or another PC on the network. Command and Firmware approvals still happen in a native dialog on this PC. Choose photo folders and install app updates from the desktop app.
+
+## Updates and Firmware rollback
+
+### Update the app
+
+1. Export any Layout drafts you want to keep.
+2. Open **Settings > About > Check for updates**, or the **Update available** icon beside navigation.
+3. Review the release notes and choose **Update**. You can keep working during the download.
+4. At **Ready to restart**, choose **Restart**. Wait for any Device transfer to finish first.
+
+The app verifies the update signature before running the installer. If verification fails, leave the current version installed and retry later. The update keeps user data and restarts Open TouchDeck. It does not update Device Firmware.
+
+### Update Firmware
+
+Click the Device's name in Layout. If newer Firmware is offered, choose **Update** in its panel. Keep USB connected through the restart and wait for the success message.
+
+To use a release's `.tdfw` bundle, open **Settings > Troubleshooting > Update from a file** and choose the file for the intended Device. Use a bundle for the supported board, not the desktop installer. A downgrade requires confirmation in the native dialog on this PC.
+
+Normal updates write the inactive Firmware slot. If the new Firmware fails to confirm a successful start, the Device can roll back to the previous slot. Read the result after the restart: reaching 100% transfer does not prove the new Firmware started. If the app reports rollback, the previous Firmware still runs; check **Details** before retrying.
+
+### Upgrading from 0.2
+
+Install the new app by hand from the release. There is no automatic bridge from 0.2, and its app Layout drafts and settings do not carry over. Export old Layouts and keep original Assets before replacing the old app. Load the Device's Layout or import an exported file, then set up Integrations again.
+
+**After updating, Volume and Media control Tiles respond only after you send their Layout from the app once. Choose Send to Device.** The Companion acts only on a Layout it pushed itself. Merely loading the Device's Layout does not authorize its controls. Repeat for each Device and orientation you use.
+
+App launches and file opens can now ask for command approval on this PC too.
+
+## Troubleshooting
+
+| What you see | What to do |
+| --- | --- |
+| No Device on Home | Use a USB data cable and the USB-Serial/JTAG port. Unplug and reconnect. Linux source builds also need serial permissions from the [setup guide](setup.md). |
+| In use by another program | Close serial monitors and flash tools. The Companion reconnects automatically. |
+| Not connected | Check USB, then open **Settings > Troubleshooting** for connection details and the last error. |
+| Couldn't send a Layout | Read **Details**, reconnect and retry. Check that its Tiles and Assets fit the Device's capabilities. |
+| Needs newer Firmware | Update from the Device panel. Older Firmware cannot draw every Live tile or animation. |
+| Volume or Media does not respond after an upgrade | Enable the Integration and choose **Send to Device** once. For Media, start a supported player; for Volume, check the default audio output. |
+| Waiting for approval on this PC | Find the native dialog. Check the exact command before approving. |
+| A Live tile is blank or grey | Keep the Companion running. Check the Integration's status, credentials and **Details**, then retry its check. |
+| Photo folder is missing | Choose an existing folder again in the desktop app. |
+| Pairing code is wrong or expired | Choose **Open in browser** from the tray again for a new code. |
+| Firmware update failed | Keep the Device plugged in until the result is known. Check whether it rolled back, then read **Details** before retrying. |
+
+**Settings > Troubleshooting** includes Device details and a Firmware console. Logs can contain personal data; remove it before sharing. If the Device's Layout prevents normal use, its ten-second touch hold starts the built-in Layout without removing stored files. See [Firmware recovery](firmware.md#recovery) before using it.
