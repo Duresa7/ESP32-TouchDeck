@@ -24,8 +24,8 @@ body {
   -webkit-font-smoothing: antialiased;
   font-optical-sizing: auto;
   transition:
-    background-color var(--duration-theme) ease,
-    color var(--duration-theme) ease;
+    background-color var(--duration-theme) var(--ease-color),
+    color var(--duration-theme) var(--ease-color);
 }
 
 /* The desk mat: a faint felt grain under everything. Desktop only; the Device never draws it. */
@@ -182,8 +182,8 @@ button {
   white-space: nowrap;
   cursor: pointer;
   transition:
-    background-color var(--duration-hover) ease,
-    color var(--duration-hover) ease,
+    background-color var(--duration-hover) var(--ease-color),
+    color var(--duration-hover) var(--ease-color),
     transform var(--duration-press) var(--ease-out);
 }
 
@@ -284,8 +284,8 @@ button {
   color: var(--ink-2);
   cursor: pointer;
   transition:
-    background-color var(--duration-hover) ease,
-    color var(--duration-hover) ease,
+    background-color var(--duration-hover) var(--ease-color),
+    color var(--duration-hover) var(--ease-color),
     transform var(--duration-press) var(--ease-out);
 }
 
@@ -344,7 +344,7 @@ button {
   width: 44px;
   height: 44px;
   color: var(--ink-2);
-  transition: color var(--duration-hover) ease;
+  transition: color var(--duration-hover) var(--ease-color);
 }
 
 .update-slot.is-expanded .update-icon {
@@ -369,7 +369,7 @@ button {
   font-weight: var(--weight-medium);
   font-variant-numeric: tabular-nums;
   opacity: 0;
-  transition: opacity var(--duration-exit) var(--ease-out);
+  transition: opacity var(--duration-label-out) var(--ease-out);
 }
 
 .update-slot.is-expanded .update-label {
@@ -455,7 +455,7 @@ button {
   inset: 0;
   background: var(--accent);
   transform-origin: 0 50%;
-  transition: transform 120ms linear;
+  transition: transform var(--duration-progress) var(--ease-progress);
 }
 
 .update-progress-meta {
@@ -500,19 +500,12 @@ button {
 .tooltip[data-starting-style],
 .tooltip[data-ending-style] {
   opacity: 0;
-  transform: scale(0.96);
+  transform: scale(var(--enter-scale-tooltip));
 }
 
 /* Later tooltips in the cluster open at once */
 .tooltip[data-instant] {
   transition-duration: 0ms;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .tooltip[data-starting-style],
-  .tooltip[data-ending-style] {
-    transform: none;
-  }
 }
 
 /* ---------- Dialogs ---------- */
@@ -561,23 +554,11 @@ button {
 .dialog[data-starting-style],
 .dialog[data-ending-style] {
   opacity: 0;
-  scale: 0.97;
+  scale: var(--enter-scale);
 }
 
 .dialog[data-ending-style] {
   transition-duration: var(--duration-exit);
-}
-
-/* Reduced motion: the dialog fades without growing */
-@media (prefers-reduced-motion: reduce) {
-  .dialog {
-    transition-property: opacity;
-  }
-
-  .dialog[data-starting-style],
-  .dialog[data-ending-style] {
-    scale: 1;
-  }
 }
 
 .dialog-settings {
@@ -732,7 +713,7 @@ button {
   background: transparent;
   text-align: start;
   cursor: pointer;
-  transition: background-color var(--duration-hover) ease;
+  transition: background-color var(--duration-hover) var(--ease-color);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -763,7 +744,7 @@ button {
   height: 100%;
   background: var(--accent);
   transform-origin: left center;
-  transition: transform 120ms linear;
+  transition: transform var(--duration-progress) var(--ease-progress);
 }
 
 .firmware-file .row-text {
@@ -805,7 +786,7 @@ button {
   border-radius: var(--radius-chip);
   background: var(--line-control);
   cursor: pointer;
-  transition: background-color var(--duration-hover) ease;
+  transition: background-color var(--duration-hover) var(--ease-color);
 }
 
 .settings-switch[data-checked] {
@@ -823,7 +804,7 @@ button {
   border-radius: 50%;
   background: var(--screen-ink);
   box-shadow: var(--shadow-float);
-  transition: translate var(--duration-popover) var(--ease-out);
+  transition: translate var(--duration-switch) var(--ease-out);
 }
 
 .settings-switch-thumb[data-checked] {
@@ -1050,8 +1031,8 @@ button {
   font-weight: var(--weight-medium);
   cursor: pointer;
   transition:
-    background-color var(--duration-hover) ease,
-    color var(--duration-hover) ease;
+    background-color var(--duration-hover) var(--ease-color),
+    color var(--duration-hover) var(--ease-color);
 }
 
 .segment[data-pressed] {
@@ -1135,7 +1116,7 @@ button {
   border-radius: var(--radius-chip);
   background: var(--line-control);
   cursor: pointer;
-  transition: background-color var(--duration-hover) ease;
+  transition: background-color var(--duration-hover) var(--ease-color);
 }
 
 .switch[data-checked] {
@@ -1148,7 +1129,7 @@ button {
   border-radius: 50%;
   background: var(--screen-ink);
   box-shadow: var(--shadow-float);
-  transition: translate var(--duration-press) var(--ease-out);
+  transition: translate var(--duration-switch) var(--ease-out);
 }
 
 .switch[data-checked] .switch-thumb {

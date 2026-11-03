@@ -84,19 +84,32 @@
   /* Motion */
   --duration-press: 120ms;
   --duration-hover: 150ms;
+  --duration-lift: 150ms;
   --duration-tooltip: 140ms;
   --duration-popover: 180ms;
+  --duration-chevron: 180ms;
+  --duration-switch: 180ms;
   --duration-dialog: 220ms;
   --duration-exit: 140ms; /* every exit is faster than its enter */
   --duration-theme: 240ms;
+  --duration-screen-light: 240ms;
   --duration-expand: 280ms; /* Update icon opens */
   --duration-collapse: 200ms; /* Update icon closes */
   --duration-label: 160ms; /* Update icon label fades in */
+  --duration-label-out: 140ms;
   --delay-label: 60ms;
+  --duration-tile-settle: 160ms;
+  --duration-progress: 120ms;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-color: ease;
+  --ease-progress: linear;
   --press-scale: 0.97;
+  --press-scale-device: 0.985;
+  --lift-device: -2px;
+  --enter-scale: 0.97;
+  --enter-scale-tooltip: 0.96;
 
   /*
    * The Device's screen. The same in both themes, because it's a backlit LCD.
@@ -303,16 +316,24 @@
   color-scheme: dark;
 }
 
-/* Reduced motion: movement and the Update icon's expansion jump to their end state. Fades stay. */
 @media (prefers-reduced-motion: reduce) {
   :root {
     --press-scale: 1;
+    --press-scale-device: 1;
+    --enter-scale: 1;
+    --enter-scale-tooltip: 1;
+    --duration-lift: 0ms;
     --duration-popover: 120ms;
     --duration-dialog: 140ms;
+    --duration-chevron: 0ms;
+    --duration-switch: 0ms;
     --duration-expand: 0ms;
     --duration-collapse: 0ms;
     --duration-label: 0ms;
+    --duration-label-out: 0ms;
     --delay-label: 0ms;
+    --duration-tile-settle: 0ms;
+    --duration-progress: 0ms;
   }
 }
 
