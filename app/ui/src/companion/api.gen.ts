@@ -48,6 +48,8 @@ export type ClientInfo = { id: string, kind: SessionKind, };
 export type CompanionStopping = { reason: string, };
 export type ConfigField = { name: string, kind: string, secret: boolean, };
 export type ConsoleLine = { line: string, };
+export type ControlLayout = { "state": "unavailable", reason: ControlLayoutUnavailable, } | { "state": "no-pushed-copy", orientation: Orientation, has_controls: boolean, } | { "state": "matches", orientation: Orientation, has_controls: boolean, } | { "state": "differs", orientation: Orientation, has_controls: boolean, };
+export type ControlLayoutUnavailable = "offline" | "checking" | "unsupported" | "read-failed";
 export type CreateAsset = { source: AssetSource, fit?: Fit, };
 export type DataStream = { id: string, kind: string, unit: string | null, 
 /**
@@ -91,7 +93,7 @@ export type DeviceSettingsPatch = { idle_timeout_s: number | null, orientation: 
  * A percentage, 0 to 100.
  */
 brightness: number | null, photo_frame: PhotoFramePatch | null, };
-export type DeviceSummary = { id: DeviceId, rev: number, name: string | null, setup: SetupState, link: LinkState, firmware: FirmwareInfo | null, diagnostics: DeviceDiagnostics | null, capabilities: Capabilities | null, orientation: string | null, layout: JsonValue | null, key_mirror: KeyMirrorState, stable_id: boolean, };
+export type DeviceSummary = { id: DeviceId, rev: number, name: string | null, setup: SetupState, link: LinkState, firmware: FirmwareInfo | null, diagnostics: DeviceDiagnostics | null, capabilities: Capabilities | null, orientation: string | null, layout: JsonValue | null, control_layout: ControlLayout, key_mirror: KeyMirrorState, stable_id: boolean, };
 export type DeviceUpdated = DeviceSummary;
 export type ErrorBody = { code: string, message: string, details: JsonValue | null, };
 export type FirmwareBuild = { version: string, build: string, };

@@ -1,4 +1,4 @@
-mod controls;
+pub(crate) mod controls;
 mod prompt;
 use crate::{
     api::{Clock, Event, Events},

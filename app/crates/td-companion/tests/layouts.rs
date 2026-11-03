@@ -325,3 +325,86 @@ async fn image_budget_is_checked_before_starting_a_push() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn control_layout_get_sync_and_updates_agree_after_push_and_reconnect() {
+    use td_companion::devices::ControlLayout;
+    use td_companion::features::devices::{DevicePath, Get as DeviceGet, List as Devices};
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let td = TestCompanion::start().await;
+    let id = td.plug_media_device("mock0001").await;
+    td.until(|td| {
+        matches!(
+            td.device(&id).unwrap().control_layout,
+            ControlLayout::NoPushedCopy {
+                has_controls: false,
+                ..
+            }
+        )
+    })
+    .await;
+    let mut events = td.events().await;
+    let layout = Layout::parse(include_bytes!("../../../../schema/examples/media.json")).unwrap();
+    td.deck(&id).corrupt_next_put();
+    let failed = push(&td, &id, &layout).await;
+    assert_eq!(td.wait(&failed).await.state, JobState::Failed);
+    td.until(|td| {
+        matches!(
+            td.device(&id).unwrap().control_layout,
+            ControlLayout::NoPushedCopy {
+                has_controls: false,
+                ..
+            }
+        )
+    })
+    .await;
+    let job = push(&td, &id, &layout).await;
+    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    let updated = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let message = events.next().await.unwrap().unwrap();
+            let frame: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+            if frame["type"] == "device.updated"
+                && frame["data"]["control_layout"]["state"] == "matches"
+            {
+                break frame["data"].clone();
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(updated["control_layout"]["has_controls"], true);
+    let get = td
+        .call::<DeviceGet>(DevicePath { device: id.clone() }, NoQuery, ())
+        .await
+        .unwrap();
+    assert_eq!(serde_json::to_value(&get).unwrap(), updated);
+    assert_eq!(td.call::<Devices>((), NoQuery, ()).await.unwrap()[0], get);
+    let mut request = format!("{}/api/v1/events", td.url.replace("http:", "ws:"))
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "sec-websocket-protocol",
+        format!("touchdeck.v1, touchdeck.bearer.{}", td.token)
+            .parse()
+            .unwrap(),
+    );
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    socket.next().await.unwrap().unwrap();
+    let sync = socket.next().await.unwrap().unwrap();
+    let sync: Value = serde_json::from_str(sync.to_text().unwrap()).unwrap();
+    assert_eq!(sync["data"]["devices"][0], updated);
+    td.unplug("mock0001").await;
+    assert!(matches!(
+        td.device(&id).unwrap().control_layout,
+        ControlLayout::Unavailable { .. }
+    ));
+    td.plug_media_device("mock0001").await;
+    td.until(|td| {
+        matches!(
+            td.device(&id).unwrap().control_layout,
+            ControlLayout::Matches { .. }
+        )
+    })
+    .await;
+}

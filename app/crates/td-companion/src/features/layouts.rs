@@ -409,10 +409,9 @@ fn push(
     ctx.live.layout_changed(device);
     let report = report??;
     let _ = ctx.layouts.put(device, layout);
-    ctx.layouts
-        .pushed()
-        .put(device, layout)
-        .map_err(|_| CommonError::Internal)?;
+    let stored = ctx.layouts.pushed().put(device, layout);
+    ctx.live.layout_changed(device);
+    stored.map_err(|_| CommonError::Internal)?;
     Ok(report)
 }
 fn send_missing_assets(

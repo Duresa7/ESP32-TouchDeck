@@ -332,6 +332,7 @@ pub struct DeviceSummary {
     pub capabilities: Option<Capabilities>,    // v2 hello: screen, storage_free, tile_kinds, live_hz, live_total_hz, series, text_bytes. None on v1
     pub orientation: Option<Orientation>,
     pub layout: Option<LayoutSummary>,         // what the Device shows
+    pub control_layout: ControlLayout,
     pub key_mirror: KeyMirrorState,            // {enabled, reason}
     pub stable_id: bool,
 }
@@ -348,6 +349,15 @@ Changes increment `rev` and publish `device.updated`. These strings, and the Fir
 and clients show control, format and line or paragraph separator characters as escapes.
 
 ### Rules for several Devices
+
+`control_layout` describes the active orientation's Control authorization. It is a union tagged by `state`:
+
+- `unavailable`, with `reason`: `checking`, `offline`, `unsupported`, or `read-failed`.
+- `no-pushed-copy`, `matches`, or `differs`, each with `orientation` and `has_controls`.
+
+Missing, unreadable, and invalid pushed copies produce `no-pushed-copy`. `has_controls` checks all Pages using the touch path's renderer parts and settable numeric bar input rules. The built-in Layout has no controls. `matches` compares canonical Layout bytes with this Companion's pushed copy; it does not promise an Integration is currently available. A touch still binds only against a pushed copy.
+
+Startup, link loss, a new session, and Layout/orientation replacement reset the assessment to `unavailable/checking`. Subsequent live rounds report offline or unsupported Devices, read failures, or the comparison after reading the active Layout. Pushed-store writes invalidate the assessment on success and failure, and subsequent assessments notice deleted or corrupt files. Changes increment the Device's `rev` and publish the full object through `device.updated`; GET Devices and `sync` expose that same object. Old sessions and rounds invalidated by a replacement cannot publish a stale assessment.
 
 - Each Device has its own link session, Layout, key mirror, action resolution and Job slot. Its actor thread owns them, and the API reads `DeviceSummary` from that owner.
 - A Job on one Device never blocks another Device.

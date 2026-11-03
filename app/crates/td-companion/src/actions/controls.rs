@@ -12,6 +12,16 @@ pub(crate) const ACT_TIMEOUT: Duration = Duration::from_secs(2);
 const UNAVAILABLE: &str = "This Tile's control isn't available.";
 const GESTURE_DONE: &str = "Volume changed.";
 
+pub(crate) fn takes_input(tile: &td_core::layout::Tile, stream: &str) -> bool {
+    tile.input
+        && tile.render == Some(TileRender::Bar)
+        && tile
+            .streams
+            .as_ref()
+            .and_then(|streams| streams.get(stream))
+            == Some(&StreamType::Number)
+}
+
 pub(crate) type Settable = Arc<dyn Fn(&StreamKey) -> bool + Send + Sync>;
 
 pub(super) struct Wiring {
@@ -30,6 +40,7 @@ impl Actions {
         layouts: crate::store::LayoutStore,
     ) {
         live.trust(layouts);
+        live.settable(settable.clone());
         let _ = self.0.controls.set(Wiring {
             live,
             controls,
@@ -104,13 +115,7 @@ impl Actions {
             Ok(tile) => tile?,
             Err(()) => return Some(Err(UNAVAILABLE.into())),
         };
-        let takes_input = tile.input
-            && tile.render == Some(TileRender::Bar)
-            && tile
-                .streams
-                .as_ref()
-                .and_then(|streams| streams.get(&input.stream))
-                == Some(&StreamType::Number);
+        let takes_input = takes_input(&tile, &input.stream);
         if !takes_input {
             return None;
         }

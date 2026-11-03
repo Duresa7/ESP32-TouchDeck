@@ -195,6 +195,7 @@ struct DeviceState {
     session: u64,
     caps: Option<LiveCaps>,
     active: Option<Active>,
+    read_failed: bool,
     tracks: HashMap<(String, String, String), Track>,
     next_n: u32,
     /// The cost of each request in the last second, oldest first.
@@ -281,6 +282,12 @@ impl Router {
         jobs
     }
 
+    pub(super) fn read_failed(&self, device: &str, session: u64) -> bool {
+        self.devices
+            .get(device)
+            .is_some_and(|state| state.session == session && state.read_failed)
+    }
+
     pub(super) fn shown(&self) -> HashMap<String, (u64, Arc<Layout>)> {
         self.devices
             .iter()
@@ -304,6 +311,7 @@ impl Router {
     pub fn layout_changed(&mut self, device: &str) {
         if let Some(state) = self.devices.get_mut(device) {
             state.active = None;
+            state.read_failed = false;
         }
     }
 
@@ -353,12 +361,14 @@ impl Router {
         if state.active.is_none() {
             match read_active(session) {
                 Ok(active) => {
+                    state.read_failed = false;
                     state.tracks.clear();
                     state.titles.clear();
                     state.covered.clear();
                     state.active = Some(active);
                 }
                 Err(_) => {
+                    state.read_failed = true;
                     state.blocked_until = Some(now + LAYOUT_RETRY);
                     return report;
                 }
@@ -680,6 +690,7 @@ fn send(
             ..
         }) => {
             state.active = None;
+            state.read_failed = false;
             Sent::Stop
         }
         Err(LiveError::Refused {
