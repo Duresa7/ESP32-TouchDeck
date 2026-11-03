@@ -4,6 +4,7 @@ use td_host::sources::network::{FetchError, GetRequest};
 #[test]
 fn custom_is_available_with_disabled_empty_config() {
     let mut registry = Registry::new(Environment {
+        volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
         secrets: Arc::new(MemorySecrets::default()),
         config_file: None,
         fetch: Arc::new(|| Box::new(td_host::sources::HttpFetch::new())),
@@ -35,6 +36,7 @@ impl td_host::sources::Fetch for Reply {
 }
 fn configured(body: &'static str) -> Registry {
     let mut r = Registry::new(Environment {
+        volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
         secrets: Arc::new(MemorySecrets::default()),
         config_file: None,
         fetch: Arc::new(move || Box::new(Reply(body))),
@@ -143,6 +145,7 @@ fn failures_have_safe_status_and_bounds_are_enforced() {
         ),
     ] {
         let mut r = Registry::new(Environment {
+            volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
             secrets: Arc::new(MemorySecrets::default()),
             config_file: None,
             fetch: Arc::new(move || Box::new(Failed(error))),
@@ -225,6 +228,7 @@ fn a_command_runs_only_when_its_exact_program_and_arguments_are_approved() {
         (Some(Grant(Some((program.clone(), args.clone())))), true),
     ] {
         let mut r = Registry::new(Environment {
+            volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
             secrets: Arc::new(MemorySecrets::default()),
             config_file: None,
             fetch: Arc::new(|| Box::new(Reply("{}"))),
@@ -252,6 +256,7 @@ fn a_command_runs_only_when_its_exact_program_and_arguments_are_approved() {
 
 fn shared_registry(secrets: Arc<MemorySecrets>) -> Registry {
     Registry::new(Environment {
+        volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
         secrets,
         config_file: None,
         fetch: Arc::new(|| Box::new(td_host::sources::HttpFetch::new())),

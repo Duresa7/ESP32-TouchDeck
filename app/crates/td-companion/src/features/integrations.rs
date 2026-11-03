@@ -17,6 +17,8 @@ pub struct Service(
     Arc<Mutex<Result<Registry, Error>>>,
     Arc<Mutex<Vec<IntegrationSummary>>>,
     Arc<Pending>,
+    #[cfg(any(test, feature = "test-hooks"))]
+    Option<td_host::integrations::volume::fake::FakeVolume>,
 );
 type Pending = Mutex<HashMap<(String, String), Delivery>>;
 impl Service {
@@ -28,8 +30,10 @@ impl Service {
         }
     }
     pub fn new(mock: bool, events: Events) -> Self {
+        let volume = mock.then(td_host::integrations::volume::fake::FakeVolume::default);
         let service = Self(
             Arc::new(Mutex::new(Registry::new(Environment {
+                volume: volume.as_ref().map(|fake| fake.factory()),
                 secrets: if mock {
                     Arc::new(MemorySecrets::default())
                 } else {
@@ -44,6 +48,8 @@ impl Service {
             }))),
             Arc::new(Mutex::new(Vec::new())),
             Arc::default(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            volume,
         );
         if let Ok(registry) = service.0.lock().unwrap().as_ref() {
             *service.1.lock().unwrap() = registry.list();
@@ -68,6 +74,10 @@ impl Service {
             }
         });
         service
+    }
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn mock_volume(&self) -> Option<td_host::integrations::volume::fake::FakeVolume> {
+        self.3.clone()
     }
     pub fn summaries(&self) -> Vec<IntegrationSummary> {
         self.1.lock().unwrap().clone()
