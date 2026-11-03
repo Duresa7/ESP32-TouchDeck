@@ -74,7 +74,7 @@
 .chev {
   flex: none;
   color: var(--ink-2);
-  transition: rotate var(--duration-popover) var(--ease-out);
+  transition: rotate var(--duration-chevron) var(--ease-out);
 }
 
 .device-switch[data-popup-open] {
@@ -174,22 +174,11 @@
 .menu[data-starting-style],
 .menu[data-ending-style] {
   opacity: 0;
-  scale: 0.97;
+  scale: var(--enter-scale);
 }
 
 .menu[data-ending-style] {
   transition-duration: var(--duration-exit);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .menu {
-    transition-property: opacity;
-  }
-
-  .menu[data-starting-style],
-  .menu[data-ending-style] {
-    scale: 1;
-  }
 }
 
 .menu-item {
@@ -260,26 +249,11 @@
 .popover[data-starting-style],
 .popover[data-ending-style] {
   opacity: 0;
-  scale: 0.97;
+  scale: var(--enter-scale);
 }
 
 .popover[data-ending-style] {
   transition-duration: var(--duration-exit);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .popover {
-    transition-property: opacity;
-  }
-
-  .popover[data-starting-style],
-  .popover[data-ending-style] {
-    scale: 1;
-  }
-
-  .chev {
-    transition: none;
-  }
 }
 
 .popover-title {
@@ -896,7 +870,7 @@
   outline: none;
   cursor: pointer;
   touch-action: none;
-  transition: transform 160ms var(--ease-out);
+  transition: transform var(--duration-tile-settle) var(--ease-out);
 }
 
 /* The Tile's face clips its label and icon to its corners, as the Device does; the corner dot sits outside it */
@@ -1050,12 +1024,6 @@
 .drag-ghost.is-blocked {
   border: 4px dashed var(--screen-danger);
   background: color-mix(in srgb, var(--screen-danger) 10%, transparent);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .tile {
-    transition: none;
-  }
 }
 
 /* ---------- Inspector ---------- */
@@ -1372,8 +1340,8 @@
   font: inherit;
   cursor: pointer;
   transition:
-    background-color var(--duration-hover) ease,
-    color var(--duration-hover) ease,
+    background-color var(--duration-hover) var(--ease-color),
+    color var(--duration-hover) var(--ease-color),
     transform var(--duration-press) var(--ease-out);
 }
 
@@ -1790,7 +1758,7 @@
   text-align: start;
   cursor: pointer;
   transition:
-    background-color var(--duration-hover) ease,
+    background-color var(--duration-hover) var(--ease-color),
     transform var(--duration-press) var(--ease-out);
 }
 
@@ -1860,7 +1828,7 @@
   text-align: start;
   cursor: pointer;
   transition:
-    background-color var(--duration-hover) ease,
+    background-color var(--duration-hover) var(--ease-color),
     transform var(--duration-press) var(--ease-out);
 }
 

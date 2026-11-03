@@ -35,11 +35,12 @@ describe('Home', () => {
     expect(before).toContain('Media');
     expect(before).toContain('Play/Pause');
     expect(before).toContain('is-off');
-    expect(before).not.toContain('device-spill');
+    expect(before).toContain('device-spill');
     const after = renderToStaticMarkup(<DevicePreview preview={previewOf(demoLayout(['work', 'media']))} live />);
     expect(after).toContain('Work');
     expect(after).toContain('Copy');
     expect(after).not.toContain('Play/Pause');
+    expect(after).not.toContain('is-off');
     expect(after).toContain('device-spill');
   });
   it('does not invent a Page or a last-seen time', () => {
