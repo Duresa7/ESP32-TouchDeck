@@ -36,7 +36,7 @@ class MediaParseTest(unittest.TestCase):
             command += ["/I" + str(p) for p in includes] + [str(p) for p in sources]
             command += ["/link", "/OUT:" + str(dll), "/EXPORT:host_layout", "/EXPORT:host_input", "/EXPORT:host_live", "/EXPORT:host_press"]
         else:
-            command = [os.environ.get("CC", "cc"), "-shared", "-fPIC", "-std=c11", "-Wall", "-Wextra", "-Werror"]
+            command = [os.environ.get("CC", "cc"), "-shared", "-fPIC", "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror"]
             command += ["-I" + str(p) for p in includes] + [str(p) for p in sources] + ["-lm", "-o", str(dll)]
         subprocess.run(command, cwd=out, check=True)
         cls.lib = ctypes.CDLL(str(dll))
