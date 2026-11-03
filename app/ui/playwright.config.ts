@@ -4,6 +4,7 @@ import { defineConfig, devices } from '@playwright/test';
 // On Windows they drive the installed Microsoft Edge, so no browser download is needed.
 export default defineConfig({
   testDir: './e2e',
+  globalSetup: './e2e/global-setup.ts',
   testIgnore: '**/*companion.spec.ts',
   fullyParallel: true,
   workers: process.env.CI ? 1 : undefined,
