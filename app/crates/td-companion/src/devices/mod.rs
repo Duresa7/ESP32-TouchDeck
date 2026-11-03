@@ -4,10 +4,12 @@
 //! probes run on the scan thread and requests on each Device's actor thread.
 mod actor;
 pub mod console;
+mod input;
 mod ports;
 mod scan;
 mod store;
 
+pub(crate) use input::Input;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use ports::{BoardKind, MockPorts};
 pub use ports::{PortInfo, PortSource, RealPorts};
@@ -355,6 +357,14 @@ impl Event for DeviceEvent {
 }
 
 pub(crate) type ActionHandler = Arc<dyn Fn(&DeviceId, &serde_json::Value) + Send + Sync>;
+/// Where a Device's drags go, once each session's hub has checked and coalesced them.
+pub(crate) trait InputHandler: Send + Sync {
+    fn generation(&self) -> u64;
+    /// Sets the Integration stream the drag's Tile binds. None when the drag binds nothing, so it is dropped.
+    fn set(&self, device: &DeviceId, input: &Input) -> Option<Result<(), String>>;
+    /// A gesture ended: its outcome, the first failed set if any. Called once per gesture.
+    fn gesture(&self, device: &DeviceId, input: &Input, outcome: Result<(), String>);
+}
 /// Makes the sink a Device's key mirror types into.
 pub type InputFactory = Arc<dyn Fn() -> Result<Box<dyn td_host::InputSink>, String> + Send + Sync>;
 /// How the manager reaches ports, PC input and storage. Tests swap in mocks.
@@ -457,6 +467,7 @@ struct Inner {
     input_gate: Mutex<()>,
     config: OnceLock<Config>,
     actions: OnceLock<ActionHandler>,
+    inputs: OnceLock<Arc<dyn InputHandler>>,
 }
 impl Inner {
     fn config(&self) -> &Config {
@@ -511,6 +522,9 @@ impl DeviceManager {
     pub(crate) fn action_handler(&self, handler: ActionHandler) {
         let _ = self.inner.actions.set(handler);
     }
+    pub(crate) fn input_handler(&self, handler: Arc<dyn InputHandler>) {
+        let _ = self.inner.inputs.set(handler);
+    }
     pub fn new(events: Events) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -522,6 +536,7 @@ impl DeviceManager {
                 input_gate: Mutex::new(()),
                 config: OnceLock::new(),
                 actions: OnceLock::new(),
+                inputs: OnceLock::new(),
             }),
         }
     }

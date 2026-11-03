@@ -25,6 +25,17 @@ pub struct TestCompanion {
     client: reqwest::Client,
 }
 impl TestCompanion {
+    pub fn control_fakes(
+        &self,
+    ) -> (
+        td_host::integrations::volume::fake::FakeVolume,
+        td_host::integrations::media::fake::FakeMedia,
+    ) {
+        (
+            self.ctx.integrations.mock_volume().unwrap(),
+            self.ctx.integrations.media_fake().unwrap(),
+        )
+    }
     pub async fn start() -> Self {
         Self::start_with(crate::Limits::default()).await
     }
@@ -144,6 +155,17 @@ impl TestCompanion {
     }
     /// Plugs in a mock Device with v2 Firmware under this USB serial and waits until it's
     /// connected.
+    pub async fn plug_media_device(&self, id: &str) -> DeviceId {
+        self.ports.plug(id, BoardKind::Device);
+        self.deck(id).set_media_capabilities(true);
+        let id = DeviceId::parse(id).unwrap();
+        self.until(|td| {
+            td.device(&id)
+                .is_some_and(|d| matches!(d.link, LinkState::Connected { .. }))
+        })
+        .await;
+        id
+    }
     pub async fn plug_device(&self, id: &str) -> DeviceId {
         self.plug(id, BoardKind::Device).await
     }

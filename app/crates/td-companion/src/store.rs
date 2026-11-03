@@ -20,6 +20,9 @@ impl LayoutStore {
     pub(crate) fn new(dir: PathBuf) -> Self {
         Self { dir }
     }
+    pub fn pushed(&self) -> Self {
+        Self::new(self.dir.join("pushed-v1"))
+    }
     fn path(&self, device: &str, orientation: Orientation) -> Option<PathBuf> {
         // Device ids are lowercase letters, digits and `-`, so they never leave the folder.
         let safe = !device.is_empty()

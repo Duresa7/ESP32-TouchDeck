@@ -8,7 +8,7 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use td_core::layout::{Action, Page, StreamType};
+use td_core::layout::{Action, Page, StreamType, Tile};
 use td_core::live::{ScreenSize, art_size, tile_rect};
 use td_core::{Layout, Orientation};
 use td_host::integrations::LiveSample;
@@ -80,20 +80,36 @@ pub fn bindings(layout: &Layout) -> Vec<Binding> {
                     tile: tile.id.clone(),
                     stream: stream.clone(),
                     kind: *kind,
-                    source: StreamKey {
-                        integration: source.clone(),
-                        account: account.clone(),
-                        stream: if stream == "value" {
-                            field.clone()
-                        } else {
-                            stream.clone()
-                        },
-                    },
+                    source: source_of(source, account, field, stream),
                 });
             }
         }
     }
     out
+}
+
+fn source_of(source: &str, account: &str, field: &str, stream: &str) -> StreamKey {
+    StreamKey {
+        integration: source.to_owned(),
+        account: account.to_owned(),
+        stream: if stream == "value" { field } else { stream }.to_owned(),
+    }
+}
+
+/// The Integration stream one stream of `tile` reads, if the Tile binds an Integration through its `widget` action.
+pub fn stream_source(tile: &Tile, stream: &str) -> Option<StreamKey> {
+    let Action::Widget {
+        source,
+        field,
+        account,
+    } = &tile.action
+    else {
+        return None;
+    };
+    tile.streams
+        .as_ref()?
+        .contains_key(stream)
+        .then(|| source_of(source, account, field, stream))
 }
 
 /// The live limits a Device advertised in `caps`.
@@ -169,7 +185,7 @@ struct Track {
 struct Active {
     reference: String,
     bindings: Vec<Binding>,
-    layout: Layout,
+    layout: Arc<Layout>,
 }
 
 type TileKey = (String, String);
@@ -263,6 +279,16 @@ impl Router {
             }
         }
         jobs
+    }
+
+    pub(super) fn shown(&self) -> HashMap<String, (u64, Arc<Layout>)> {
+        self.devices
+            .iter()
+            .filter_map(|(device, state)| {
+                let active = state.active.as_ref()?;
+                Some((device.clone(), (state.session, active.layout.clone())))
+            })
+            .collect()
     }
 
     /// The Integration streams some Device's active Layout binds. Only these are read from the Integrations.
@@ -729,6 +755,9 @@ fn read_active(session: &Session) -> Result<Active, String> {
     let state = session
         .layout_state(LAYOUT_STATE_TIMEOUT)
         .map_err(|error| error.to_string())?;
+    if !matches!(state.source.as_str(), "builtin" | "storage") {
+        return Err("Unknown Layout source".into());
+    }
     let (reference, layout) = if state.source == "builtin" {
         (live::BUILTIN.to_owned(), Layout::parse(BUILTIN))
     } else {
@@ -737,10 +766,13 @@ fn read_active(session: &Session) -> Result<Active, String> {
         (live::layout_ref(&report.data), Layout::parse(&report.data))
     };
     let layout = layout.map_err(|errors| format!("{} Layout problems", errors.len()))?;
+    if layout.orientation != state.orientation {
+        return Err("Layout orientation mismatch".into());
+    }
     Ok(Active {
         reference,
         bindings: bindings(&layout),
-        layout,
+        layout: Arc::new(layout),
     })
 }
 

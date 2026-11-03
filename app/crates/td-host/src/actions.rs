@@ -4,7 +4,7 @@
 use std::io;
 use std::process::{Command, ExitStatus, Stdio};
 
-use td_core::layout::{Action, Layout, Page, Tile};
+use td_core::layout::{Action, Layout, Page, Tile, TileRender};
 
 use crate::approval::CommandSpec;
 
@@ -22,6 +22,12 @@ pub enum Plan {
     Command(CommandSpec),
     /// The deck handles this action itself.
     Deck,
+    /// A renderer control on a Live tile: `action` runs on the Integration the Tile's widget action binds.
+    Integration {
+        source: String,
+        account: String,
+        action: String,
+    },
 }
 
 impl Plan {
@@ -48,6 +54,28 @@ impl Plan {
             }),
             _ => Plan::Deck,
         }
+    }
+
+    /// What a tap that lifted inside a renderer control asks of the PC. Only a `widget` action with a source
+    /// binds one, and only the parts its renderer draws: `previous`, `play_pause` and `next` on `now-playing`,
+    /// `mute` on a `bar` that declares `muted`. The part goes to the Integration unchanged.
+    pub fn part(tile: &Tile, part: &str) -> Option<Plan> {
+        let Action::Widget {
+            source, account, ..
+        } = &tile.action
+        else {
+            return None;
+        };
+        let drawn = match tile.render? {
+            TileRender::NowPlaying => ["previous", "play_pause", "next"].contains(&part),
+            TileRender::Bar => part == "mute" && tile.streams.as_ref()?.contains_key("muted"),
+            TileRender::Gif | TileRender::Graph => false,
+        };
+        (drawn && !source.is_empty()).then(|| Plan::Integration {
+            source: source.clone(),
+            account: account.clone(),
+            action: part.to_owned(),
+        })
     }
 }
 
@@ -271,6 +299,82 @@ mod tests {
         };
         assert!(run(&spec).unwrap().success());
         assert!(!marker.exists(), "an argument executed as shell source");
+    }
+
+    fn renderer(render: &str, streams: serde_json::Value, action: serde_json::Value) -> Tile {
+        serde_json::from_value(serde_json::json!({
+            "id": "media", "label": "Player", "row": 0, "col": 0, "rowSpan": 1, "colSpan": 1,
+            "render": render, "streams": streams, "action": action,
+        }))
+        .unwrap()
+    }
+
+    fn widget(source: &str, account: &str) -> serde_json::Value {
+        serde_json::json!({"type": "widget", "source": source, "account": account, "field": "state"})
+    }
+
+    fn now_playing() -> serde_json::Value {
+        serde_json::json!({"title": "text", "artist": "text", "cover": "image", "state": "number"})
+    }
+
+    fn integration(source: &str, account: &str, action: &str) -> Option<Plan> {
+        Some(Plan::Integration {
+            source: source.into(),
+            account: account.into(),
+            action: action.into(),
+        })
+    }
+
+    #[test]
+    fn a_now_playing_part_runs_on_the_widget_source_and_account() {
+        let tile = renderer("now-playing", now_playing(), widget("media", "chosen"));
+        for part in ["previous", "play_pause", "next"] {
+            assert_eq!(
+                Plan::part(&tile, part),
+                integration("media", "chosen", part)
+            );
+        }
+        for part in ["mute", "launch", "", "NEXT", "next ", "play_pause\u{0}"] {
+            assert_eq!(Plan::part(&tile, part), None, "{part:?}");
+        }
+    }
+
+    #[test]
+    fn a_bar_has_a_mute_part_only_when_it_declares_muted() {
+        let action = widget("volume", "");
+        let streams = serde_json::json!({"value": "number", "muted": "number"});
+        let muted = renderer("bar", streams, action.clone());
+        assert_eq!(
+            Plan::part(&muted, "mute"),
+            integration("volume", "", "mute")
+        );
+        assert_eq!(Plan::part(&muted, "next"), None);
+        let plain = renderer("bar", serde_json::json!({"value": "number"}), action);
+        assert_eq!(Plan::part(&plain, "mute"), None);
+    }
+
+    #[test]
+    fn a_part_never_reaches_a_tile_that_starts_a_process_or_lacks_a_source() {
+        let mut tile = renderer("now-playing", now_playing(), widget("", ""));
+        assert_eq!(Plan::part(&tile, "next"), None);
+        for action in [
+            serde_json::json!({"type": "launch", "path": "example.exe", "args": [], "cwd": ""}),
+            serde_json::json!({"type": "open", "target": "https://example.com"}),
+            serde_json::json!({"type": "command", "program": "cmd", "args": [], "cwd": "", "shell": true}),
+        ] {
+            tile.action = serde_json::from_value(action).unwrap();
+            assert_eq!(Plan::part(&tile, "next"), None);
+        }
+        let graph = renderer(
+            "graph",
+            serde_json::json!({"value": "series"}),
+            widget("media", ""),
+        );
+        assert_eq!(Plan::part(&graph, "next"), None);
+        let mut plain = graph;
+        plain.render = None;
+        plain.streams = None;
+        assert_eq!(Plan::part(&plain, "next"), None);
     }
 
     #[test]

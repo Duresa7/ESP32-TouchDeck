@@ -4,6 +4,7 @@
 //! only be open once.
 use super::{
     DeviceConsole, DeviceEvent, DeviceId, DeviceKeyMirror, Inner, InputFactory, KeyMirrorState,
+    input::{InputHub, PressGate},
 };
 use std::{
     sync::{
@@ -11,11 +12,14 @@ use std::{
         mpsc::{self, Receiver, Sender},
     },
     thread,
+    time::{Duration, Instant},
 };
 use td_host::{Mirror, Mirrored, Outcome};
 use td_link::{Incoming, Session};
 
 pub type Work = Box<dyn FnOnce(&Session) + Send>;
+
+const INPUT_PACE: Duration = Duration::from_millis(20);
 
 /// Dropping the handle ends the work thread, which closes the session and frees the port.
 pub(super) struct Handle {
@@ -44,7 +48,7 @@ pub(super) fn spawn(
     let (work, jobs) = mpsc::channel::<Work>();
     let session = Arc::new(session);
     let shared = session.clone();
-    let (presses, taps) = mpsc::sync_channel(16);
+    let (presses, taps) = mpsc::sync_channel::<serde_json::Value>(16);
     let action_inner = inner.clone();
     let action_id = id.clone();
     thread::spawn(move || {
@@ -54,6 +58,22 @@ pub(super) fn spawn(
             }
         }
     });
+    let (parts, part_taps) = mpsc::sync_channel::<serde_json::Value>(0);
+    let part_inner = inner.clone();
+    let part_id = id.clone();
+    thread::spawn(move || {
+        for event in part_taps {
+            if let Some(handler) = part_inner.actions.get() {
+                handler(&part_id, &event);
+            }
+        }
+    });
+    let (drags, inputs) = mpsc::sync_channel::<()>(1);
+    let hub = Arc::new(parking_lot::Mutex::new(InputHub::default()));
+    let input_hub = hub.clone();
+    let input_inner = inner.clone();
+    let input_id = id.clone();
+    thread::spawn(move || run_inputs(&input_inner, &input_id, &inputs, &input_hub));
     thread::Builder::new()
         .name(format!("td-device-{id}"))
         .spawn(move || {
@@ -65,7 +85,21 @@ pub(super) fn spawn(
         .expect("the Device thread starts");
     thread::Builder::new()
         .name(format!("td-device-{id}-in"))
-        .spawn(move || forward(&inner, &id, generation, incoming, mirror, presses))
+        .spawn(move || {
+            forward(
+                &inner,
+                &id,
+                generation,
+                incoming,
+                mirror,
+                Touches {
+                    presses,
+                    parts,
+                    drags,
+                    hub,
+                },
+            )
+        })
         .expect("the Device forwarder starts");
     Handle {
         generation,
@@ -105,14 +139,62 @@ pub(super) fn mirror(
     }
 }
 
+fn run_inputs(
+    inner: &Inner,
+    id: &DeviceId,
+    inputs: &Receiver<()>,
+    hub: &parking_lot::Mutex<InputHub>,
+) {
+    while inputs.recv().is_ok() {
+        thread::sleep(INPUT_PACE);
+        let _ = inputs.try_recv();
+        if let Some(handler) = inner.inputs.get() {
+            let generation = handler.generation();
+            let batch = {
+                let mut hub = hub.lock();
+                hub.reset(generation);
+                hub.take()
+            };
+            for input in batch {
+                if handler.generation() != generation {
+                    break;
+                }
+                let Some(result) = handler.set(id, &input) else {
+                    continue;
+                };
+                let outcome = {
+                    let mut hub = hub.lock();
+                    hub.reset(handler.generation());
+                    if handler.generation() != generation {
+                        break;
+                    }
+                    hub.settled(&input, result, Instant::now())
+                };
+                if let Some(outcome) = outcome {
+                    handler.gesture(id, &input, outcome);
+                }
+            }
+        }
+    }
+}
+
+struct Touches {
+    parts: mpsc::SyncSender<serde_json::Value>,
+    presses: mpsc::SyncSender<serde_json::Value>,
+    drags: mpsc::SyncSender<()>,
+    hub: Arc<parking_lot::Mutex<InputHub>>,
+}
+
 fn forward(
     inner: &Inner,
     id: &DeviceId,
     generation: u64,
     incoming: Receiver<Incoming>,
     mut mirror: Option<Mirror>,
-    presses: mpsc::SyncSender<serde_json::Value>,
+    touches: Touches,
 ) {
+    let mut gate = PressGate::default();
+    let mut dropped_parts = 0_u64;
     for item in incoming {
         match item {
             Incoming::Line(line) => inner.events.publish(&DeviceConsole {
@@ -121,7 +203,22 @@ fn forward(
             }),
             Incoming::Event(event) => {
                 if event["m"] == "press" {
-                    let _ = presses.try_send(event.clone());
+                    if event.get("part").is_some() {
+                        if !gate.accept(&event, Instant::now())
+                            || touches.parts.try_send(event.clone()).is_err()
+                        {
+                            dropped_parts = dropped_parts.saturating_add(1);
+                        }
+                    } else {
+                        let _ = touches.presses.try_send(event.clone());
+                    }
+                } else if event["m"] == "v2.input" {
+                    if let Some(handler) = inner.inputs.get() {
+                        let mut hub = touches.hub.lock();
+                        hub.reset(handler.generation());
+                        hub.push(&event);
+                    }
+                    let _ = touches.drags.try_send(());
                 }
                 if let Some(report) = Mirrored::parse(&event) {
                     key_report(inner, id, mirror.as_mut(), &report);
@@ -132,6 +229,12 @@ fn forward(
                 });
             }
             Incoming::Closed(reason) => {
+                if dropped_parts > 0 {
+                    inner.events.publish(&DeviceConsole {
+                        device: id.clone(),
+                        line: format!("Dropped control taps: {dropped_parts}"),
+                    });
+                }
                 if let Some(mirror) = mirror.as_mut() {
                     mirror.release_all();
                 }
