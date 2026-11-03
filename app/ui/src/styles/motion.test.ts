@@ -11,7 +11,7 @@ const components = sheets.filter((sheet) => sheet.file !== 'styles/tokens.css');
 
 const transitions = (text: string) => [...text.matchAll(/\btransition(?:-duration|-delay|-timing-function)?\s*:\s*([^;}]+)/g)].map((m) => m[1].trim());
 const reducedBlock = tokens.slice(tokens.indexOf('@media (prefers-reduced-motion: reduce)'), tokens.indexOf('}\n}', tokens.indexOf('@media (prefers-reduced-motion: reduce)')));
-const reducedValue = (name: string) => new RegExp(`${name}:\s*([^;]+);`).exec(reducedBlock)?.[1].trim();
+const reducedValue = (name: string) => new RegExp(`${name}:\\s*([^;]+);`).exec(reducedBlock)?.[1].trim();
 const defined = new Set([...tokens.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
 
 describe('motion tokens', () => {
