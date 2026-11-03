@@ -280,6 +280,10 @@ mod tests {
     }
 
     fn running(layout: Value, cached: bool) -> Running {
+        running_with_authority(layout, cached, cached)
+    }
+
+    fn running_with_authority(layout: Value, cached: bool, pushed: bool) -> Running {
         let events = Events::default();
         let devices = DeviceManager::new(events.clone());
         let config = Config::mock(None);
@@ -326,7 +330,7 @@ mod tests {
         );
         let data = tempfile::tempdir().unwrap();
         let layouts = crate::store::LayoutStore::new(data.path().join("layouts"));
-        if cached {
+        if pushed {
             layouts.put(DEVICE, &layout).unwrap();
         }
         actions.attach(
@@ -335,7 +339,7 @@ mod tests {
             Arc::new(|key: &StreamKey| key.integration == "volume" && key.stream == "level"),
             layouts,
         );
-        if cached {
+        if cached && pushed {
             wait("the router reads the Layout", || {
                 live.tile(DEVICE, session().unwrap(), "media", "volume")
                     .is_some()
@@ -543,6 +547,34 @@ mod tests {
         wait("the refused tap logs", || !td.log().is_empty());
         assert!(td.media.acts.lock().is_empty());
         assert_eq!(td.log(), [entry("playing", "failed", UNAVAILABLE)]);
+    }
+
+    #[test]
+    fn a_device_read_layout_without_a_pushed_copy_never_reaches_act_or_set() {
+        let td = running_with_authority(media(), true, false);
+        let id = DeviceId::parse(DEVICE).unwrap();
+        wait("the read Layout has no pushed copy", || {
+            matches!(
+                td.devices.get(&id).unwrap().control_layout,
+                crate::devices::ControlLayout::NoPushedCopy {
+                    has_controls: true,
+                    ..
+                }
+            )
+        });
+        td.deck
+            .emit_press_part("media", "playing", "widget", "next");
+        td.drag("volume", &[0.4, 0.5]);
+        wait("both touches finish", || td.log().len() == 2);
+        assert!(td.media.acts.lock().is_empty());
+        assert!(td.volume.sets.lock().is_empty());
+        assert_eq!(
+            td.log(),
+            [
+                entry("playing", "failed", UNAVAILABLE),
+                entry("volume", "failed", UNAVAILABLE)
+            ]
+        );
     }
 
     #[test]

@@ -233,7 +233,7 @@ fn control_layout_publication_rejects_a_round_before_invalidation() {
     live.0
         .shown
         .lock()
-        .insert(id.to_string(), (session, Arc::new(layout)));
+        .insert(id.to_string(), (session, Arc::new(layout.clone())));
     let old = live.generation();
     publish_status(&live.0, &devices, old);
     assert!(matches!(
@@ -244,6 +244,11 @@ fn control_layout_publication_rejects_a_round_before_invalidation() {
     publish_status(&live.0, &devices, old);
     assert_eq!(devices.get(&id).unwrap().rev, rev);
     live.layout_changed(&id);
+    live.0.changed.lock().clear();
+    live.0
+        .shown
+        .lock()
+        .insert(id.to_string(), (session, Arc::new(layout)));
     publish_status(&live.0, &devices, old);
     assert_eq!(
         devices.get(&id).unwrap().control_layout,
@@ -263,4 +268,50 @@ fn control_layout_publication_rejects_a_round_before_invalidation() {
         ControlLayout::default()
     );
     devices.stop();
+}
+
+#[test]
+fn control_layout_bar_uses_the_touch_settable_predicate() {
+    let live = Live(Arc::default());
+    live.settable(Arc::new(|key| {
+        key.integration == "volume" && key.stream == "level"
+    }));
+    let mut layout =
+        Layout::parse(include_bytes!("../../../../../schema/examples/media.json")).unwrap();
+    let td_core::layout::Page::Grid { tiles, .. } = &mut layout.pages[0] else {
+        panic!("grid")
+    };
+    tiles.retain(|tile| tile.id == "volume");
+    tiles[0].streams.as_mut().unwrap().remove("muted");
+    for (input, expected) in [(false, false), (true, true)] {
+        let td_core::layout::Page::Grid { tiles, .. } = &mut layout.pages[0] else {
+            panic!("grid")
+        };
+        tiles[0].input = input;
+        live.0
+            .shown
+            .lock()
+            .insert("d".into(), (1, Arc::new(layout.clone())));
+        assert_eq!(
+            live.0.assess("d", 1).0,
+            ControlLayout::NoPushedCopy {
+                orientation: layout.orientation,
+                has_controls: expected,
+            }
+        );
+    }
+    let readonly = Live(Arc::default());
+    readonly.settable(Arc::new(|_| false));
+    readonly
+        .0
+        .shown
+        .lock()
+        .insert("d".into(), (1, Arc::new(layout.clone())));
+    assert_eq!(
+        readonly.0.assess("d", 1).0,
+        ControlLayout::NoPushedCopy {
+            orientation: layout.orientation,
+            has_controls: false,
+        }
+    );
 }
