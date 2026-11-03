@@ -142,6 +142,9 @@ impl ApiError for JobError {
 struct Entry {
     job: Job,
     cancel: Arc<AtomicBool>,
+    holds_slot: bool,
+    turn: Option<&'static str>,
+    seq: u64,
 }
 struct InstallLease {
     id: String,
@@ -153,6 +156,7 @@ struct Table {
     lease: Option<InstallLease>,
     active: BTreeMap<String, Entry>,
     finished: VecDeque<(Instant, Job)>,
+    next_seq: u64,
 }
 impl Table {
     fn prune(&mut self, now: Instant) {
@@ -178,6 +182,7 @@ struct Gate {
 #[derive(Clone)]
 pub struct Jobs {
     table: Arc<Mutex<Table>>,
+    slot_freed: Arc<parking_lot::Condvar>,
     events: Events,
     clock: Clock,
     session_active: Arc<dyn Fn(&str) -> bool + Send + Sync>,
@@ -192,6 +197,7 @@ impl Jobs {
     ) -> Self {
         Self {
             table: Default::default(),
+            slot_freed: Default::default(),
             events,
             clock,
             session_active,
@@ -263,6 +269,7 @@ impl Jobs {
         match table.active.get(id) {
             Some(entry) if entry.job.cancellable => {
                 entry.cancel.store(true, Ordering::SeqCst);
+                self.slot_freed.notify_all();
                 Ok(entry.job.clone())
             }
             Some(_) => Err(JobError::NotCancellable),
@@ -291,28 +298,80 @@ impl Jobs {
         cancellable: bool,
         work: impl FnOnce(&JobHandle<K>) -> Result<K::Result, Stop> + Send + 'static,
     ) -> Result<Job, JobError> {
+        self.start_inner(scope, cancellable, None, work)
+    }
+    pub fn start_turn<K: JobKind>(
+        &self,
+        scope: JobScope,
+        cancellable: bool,
+        turn: &'static str,
+        work: impl FnOnce(&JobHandle<K>) -> Result<K::Result, Stop> + Send + 'static,
+    ) -> Result<Job, JobError> {
+        self.start_inner(scope, cancellable, Some(turn), work)
+    }
+    fn start_inner<K: JobKind>(
+        &self,
+        scope: JobScope,
+        cancellable: bool,
+        turn: Option<&'static str>,
+        work: impl FnOnce(&JobHandle<K>) -> Result<K::Result, Stop> + Send + 'static,
+    ) -> Result<Job, JobError> {
+        struct FinishOnDrop {
+            jobs: Jobs,
+            id: String,
+            armed: bool,
+        }
+        impl Drop for FinishOnDrop {
+            fn drop(&mut self) {
+                if self.armed {
+                    self.jobs
+                        .finish::<()>(&self.id, Err(CommonError::Internal.into()));
+                }
+            }
+        }
         let cancel = Arc::new(AtomicBool::new(false));
-        let job = {
+        let (job, holds_slot, seq) = {
             let mut table = self.table.lock();
             table.prune(self.clock.now());
             self.expire_lease(&mut table);
             if table.lease.is_some() {
                 return Err(CommonError::Installing.into());
             }
-            if scope == JobScope::Companion {
-                let running = table
+            let holds_slot = if scope == JobScope::Companion {
+                let slots = table
                     .active
                     .values()
-                    .filter(|e| e.job.kind == K::NAME)
+                    .filter(|e| e.job.kind == K::NAME && e.holds_slot)
                     .count();
-                if running >= K::COMPANION_LIMIT {
-                    return Err(
-                        CommonError::Limits("Too many Jobs of this kind are running.").into(),
-                    );
+                if let Some(turn_key) = turn {
+                    let turn_active = table
+                        .active
+                        .values()
+                        .filter(|e| e.job.kind == K::NAME && e.turn == Some(turn_key))
+                        .count();
+                    if turn_active >= K::COMPANION_LIMIT
+                        || (turn_active == 0 && slots >= K::COMPANION_LIMIT)
+                    {
+                        return Err(
+                            CommonError::Limits("Too many Jobs of this kind are running.").into(),
+                        );
+                    }
+                    turn_active == 0
+                } else {
+                    if slots >= K::COMPANION_LIMIT {
+                        return Err(
+                            CommonError::Limits("Too many Jobs of this kind are running.").into(),
+                        );
+                    }
+                    true
                 }
             } else if let Some(e) = table.active.values().find(|e| e.job.scope == scope) {
                 return Err(JobError::Busy(Box::new(e.job.clone())));
-            }
+            } else {
+                true
+            };
+            table.next_seq += 1;
+            let seq = table.next_seq;
             let job = Job {
                 id: new_id("job"),
                 kind: K::NAME.into(),
@@ -331,22 +390,38 @@ impl Jobs {
                 Entry {
                     job: job.clone(),
                     cancel: cancel.clone(),
+                    holds_slot,
+                    turn,
+                    seq,
                 },
             );
-            job
+            (job, holds_slot, seq)
         };
         self.events.publish(&JobUpdated(job.clone()));
         let handle = JobHandle::<K> {
             jobs: self.clone(),
             id: job.id.clone(),
             cancel,
+            turn,
+            seq,
             kind: PhantomData,
         };
         tokio::task::spawn_blocking(move || {
-            handle.update(|j| j.state = JobState::Running);
-            #[cfg(any(test, feature = "test-hooks"))]
-            handle.jobs.pass_gate();
-            let outcome = handle.check().and_then(|()| work(&handle));
+            let mut guard = FinishOnDrop {
+                jobs: handle.jobs.clone(),
+                id: handle.id.clone(),
+                armed: true,
+            };
+            if holds_slot {
+                handle.update(|j| j.state = JobState::Running);
+                #[cfg(any(test, feature = "test-hooks"))]
+                handle.jobs.pass_gate();
+            }
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                handle.check().and_then(|()| work(&handle))
+            }))
+            .unwrap_or_else(|_| Err(CommonError::Internal.into()));
+            guard.armed = false;
             handle.jobs.finish(&handle.id, outcome);
         });
         Ok(job)
@@ -369,6 +444,7 @@ impl Jobs {
             let Some(Entry { mut job, .. }) = table.active.remove(id) else {
                 return;
             };
+            self.slot_freed.notify_all();
             match outcome {
                 Ok(result) => {
                     job.state = JobState::Succeeded;
@@ -417,9 +493,54 @@ pub struct JobHandle<K: JobKind> {
     jobs: Jobs,
     id: String,
     cancel: Arc<AtomicBool>,
+    turn: Option<&'static str>,
+    seq: u64,
     kind: PhantomData<fn() -> K>,
 }
 impl<K: JobKind> JobHandle<K> {
+    pub fn acquire_slot(&self) -> Result<(), Stop> {
+        let started = {
+            let mut table = self.jobs.table.lock();
+            loop {
+                self.check()?;
+                if table
+                    .active
+                    .get(&self.id)
+                    .is_none_or(|entry| entry.holds_slot)
+                {
+                    break None;
+                }
+                let slots = table
+                    .active
+                    .values()
+                    .filter(|e| e.job.kind == K::NAME && e.holds_slot)
+                    .count();
+                let turn_ahead = self.turn.is_some_and(|turn_key| {
+                    table.active.values().any(|e| {
+                        e.job.kind == K::NAME
+                            && e.turn == Some(turn_key)
+                            && e.job.id != self.id
+                            && (e.holds_slot || e.seq < self.seq)
+                    })
+                });
+                if slots < K::COMPANION_LIMIT && !turn_ahead {
+                    let entry = table.active.get_mut(&self.id).unwrap();
+                    entry.holds_slot = true;
+                    entry.job.state = JobState::Running;
+                    entry.job.rev += 1;
+                    break Some(entry.job.clone());
+                }
+                self.jobs.slot_freed.wait(&mut table);
+            }
+        };
+        if let Some(job) = started {
+            self.jobs.events.publish(&JobUpdated(job));
+            #[cfg(any(test, feature = "test-hooks"))]
+            self.jobs.pass_gate();
+            self.check()?;
+        }
+        Ok(())
+    }
     pub fn waiting_for_confirmation(&self) {
         self.update(|j| j.state = JobState::WaitingForConfirmation);
     }
@@ -463,4 +584,63 @@ fn new_id(prefix: &str) -> String {
         .map(|b| ALPHABET[usize::from(*b) % ALPHABET.len()] as char)
         .collect();
     format!("{prefix}_{tail}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct PairJob;
+    impl JobKind for PairJob {
+        const NAME: &'static str = "test.pair";
+        const COMPANION_LIMIT: usize = 2;
+        type Progress = u32;
+        type Result = u32;
+    }
+
+    #[tokio::test]
+    async fn a_panicking_turn_holder_wakes_the_waiting_job() {
+        let jobs = Jobs::new(Events::default(), Clock::default(), Arc::new(|_| true));
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (panic_tx, panic_rx) = std::sync::mpsc::channel();
+
+        let first = jobs
+            .start_turn::<PairJob>(JobScope::Companion, true, "gif", move |_| {
+                entered_tx.send(()).unwrap();
+                panic_rx.recv().unwrap();
+                panic!("holder panicked");
+            })
+            .unwrap();
+        tokio::task::spawn_blocking(move || entered_rx.recv().unwrap())
+            .await
+            .unwrap();
+
+        let second = jobs
+            .start_turn::<PairJob>(JobScope::Companion, true, "gif", move |job| {
+                job.acquire_slot()?;
+                Ok(42)
+            })
+            .unwrap();
+        assert_eq!(jobs.get(&second.id).unwrap().state, JobState::Queued);
+
+        panic_tx.send(()).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !jobs.get(&second.id).unwrap().state.finished()
+                || !jobs.get(&first.id).unwrap().state.finished()
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let first_done = jobs.get(&first.id).unwrap();
+        assert_eq!(first_done.state, JobState::Failed);
+        assert_eq!(first_done.error.unwrap().code, "internal");
+
+        let second_done = jobs.get(&second.id).unwrap();
+        assert_eq!(second_done.state, JobState::Succeeded);
+        assert_eq!(second_done.result, Some(serde_json::json!(42)));
+    }
 }

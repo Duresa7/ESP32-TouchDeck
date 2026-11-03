@@ -253,7 +253,7 @@ describe('Preset tiles', () => {
   });
 
   const cpu = { id: 'cpu_pct', name: 'CPU usage', action: { type: 'widget', source: 'this_pc', field: 'cpu_pct', account: '' }, render: 'graph' as const };
-  const graph = { integration: 'this_pc', stream: 'cpu_pct' };
+  const graph = { render: 'graph', streams: { value: 'number' } } as const;
 
   test('a Preset placed as a graph is a schema 2 graph Tile bound to its stream', () => {
     const store = editor();
@@ -274,6 +274,74 @@ describe('Preset tiles', () => {
     expect(await store.addPreset(cpu, graph)).toMatchObject({ kind: 'ok', text: "Added to Desk's Layout" });
     expect(draft(store).schema).toBe(2);
     expect(tile(store, state(store).selected!)).toMatchObject({ render: 'graph', streams: { value: 'number' }, action: cpu.action });
+  });
+});
+
+describe('Volume and Media Preset tiles', () => {
+  const volumeBar = { id: 'volume_bar', name: 'Volume bar', action: { type: 'widget', source: 'volume', field: 'level', account: '' }, render: 'bar' as const, streams: { value: 'number', muted: 'number' } as const, input: true };
+  const bar = { render: 'bar', streams: { value: 'number', muted: 'number' }, input: true } as const;
+  const nowPlaying = { render: 'now-playing', streams: { title: 'text', artist: 'text', cover: 'image', state: 'number' } } as const;
+
+  function placedBar() {
+    const store = editor();
+    store.open(DESK);
+    store.startStarter();
+    store.setGrid(3, 3);
+    store.openAdd({ row: 2, col: 0 });
+    store.placePreset(volumeBar, bar);
+    return { store, id: state(store).selected! };
+  }
+
+  test('a Volume bar placed from Add Tile is a draggable bar Tile in a schema 2 Layout', () => {
+    const { store, id } = placedBar();
+    expect(draft(store).schema).toBe(2);
+    expect(tile(store, id)).toEqual(expect.objectContaining({ label: 'Volume bar', icon: null, render: 'bar', streams: bar.streams, input: true, action: volumeBar.action }));
+  });
+
+  test('Add to Layout puts a Now playing Tile in the first free cell', async () => {
+    const store = editor();
+    store.open(DESK);
+    store.startStarter();
+    store.setGrid(3, 3);
+    const preset = { id: 'now_playing', name: 'Now playing', action: { type: 'widget', source: 'media', field: 'title', account: '' }, render: 'now-playing' as const, streams: nowPlaying.streams };
+    expect(await store.addPreset(preset, nowPlaying)).toMatchObject({ kind: 'ok', text: "Added to Desk's Layout" });
+    expect(tile(store, state(store).selected!)).toMatchObject({ row: 2, col: 0, render: 'now-playing', streams: nowPlaying.streams, action: preset.action });
+    expect(tile(store, state(store).selected!)).not.toHaveProperty('input');
+  });
+
+  test('a bar Tile can stop taking drags and take them again, and only a bar takes input', () => {
+    const { store, id } = placedBar();
+    expect(store.setInput(id, false)).toBeNull();
+    expect(tile(store, id)).not.toHaveProperty('input');
+    expect(store.setInput(id, true)).toBeNull();
+    expect(tile(store, id)).toMatchObject({ input: true });
+    expect(store.setInput(page(store).tiles[0].id, true)).toMatch(/not a bar/);
+  });
+
+  test('a bar Tile can show its plain value or a graph instead, and become the bar again', () => {
+    const { store, id } = placedBar();
+    const action = { type: 'widget', source: 'volume', field: 'level', account: '' } as const;
+    expect(store.setLive(id, action, null)).toBeNull();
+    expect(tile(store, id)).toEqual(expect.objectContaining({ icon: null, action }));
+    expect(tile(store, id)).not.toHaveProperty('render');
+    expect(tile(store, id)).not.toHaveProperty('input');
+    expect(store.setGraph(id, { integration: 'volume', stream: 'level' })).toBeNull();
+    expect(tile(store, id)).toMatchObject({ render: 'graph' });
+    expect(tile(store, id)).not.toHaveProperty('input');
+    expect(store.setLive(id, action, bar)).toBeNull();
+    expect(tile(store, id)).toMatchObject({ render: 'bar', input: true, streams: bar.streams, action });
+  });
+
+  test('a bar Tile that plays a GIF instead takes no drags, and can become the bar again', () => {
+    const { store, id } = placedBar();
+    const action = { type: 'widget', source: 'volume', field: 'level', account: '' } as const;
+    expect(store.setGif(id, 'a'.repeat(64))).toBeNull();
+    expect(tile(store, id)).toMatchObject({ render: 'gif', asset: `sha256:${'a'.repeat(64)}`, action });
+    expect(tile(store, id)).not.toHaveProperty('input');
+    expect(tile(store, id)).not.toHaveProperty('streams');
+    expect(store.setLive(id, action, bar)).toBeNull();
+    expect(tile(store, id)).toMatchObject({ render: 'bar', input: true, streams: bar.streams, action });
+    expect(tile(store, id)).not.toHaveProperty('asset');
   });
 });
 

@@ -556,16 +556,50 @@ export interface GraphBinding {
   stream: string;
 }
 
+export type WidgetAction = Extract<Action, { type: 'widget' }>;
+
+/** How a Live tile draws its widget binding: its renderer, the streams it declares, and for a bar whether a drag sets it. */
+export type LiveLook =
+  | { render: 'graph'; streams: GraphStreams }
+  | { render: 'bar'; streams: BarStreams; input?: true }
+  | { render: 'now-playing'; streams: NowPlayingStreams };
+
+/** The Tile drawn by a Live tile renderer from the widget binding. A Live tile's action is its binding, and it shows no icon. */
+export function liveTile(tile: Tile, action: WidgetAction, look: LiveLook): Tile {
+  const { render: _render, streams: _streams, asset: _asset, input: _input, ...rest } = tile;
+  const base = { ...rest, icon: null, action: { ...action } };
+  switch (look.render) {
+    case 'graph':
+      return { ...base, render: 'graph', streams: { ...look.streams } };
+    case 'bar':
+      return look.input ? { ...base, render: 'bar', streams: { ...look.streams }, input: true } : { ...base, render: 'bar', streams: { ...look.streams } };
+    case 'now-playing':
+      return { ...base, render: 'now-playing', streams: { ...look.streams } };
+  }
+}
+
 /** The Tile drawn as a graph of the bound stream. A graph Tile's action is its binding, and it shows no icon. */
 export function graphTile(tile: Tile, binding: GraphBinding): Tile {
-  const { render: _render, streams: _streams, asset: _asset, input: _input, ...rest } = tile;
-  return {
-    ...rest,
-    icon: null,
-    render: 'graph',
-    streams: { value: 'number' },
-    action: { type: 'widget', source: binding.integration, field: binding.stream, account: '' },
-  };
+  return liveTile(tile, { type: 'widget', source: binding.integration, field: binding.stream, account: '' }, { render: 'graph', streams: { value: 'number' } });
+}
+
+/** Draws the Tile with a Live tile renderer bound through `action`, or, with null, as its label again. */
+export function setLive(layout: Layout, page: string, id: string, action: WidgetAction, look: LiveLook | null): Edit {
+  return redrawTile(layout, page, id, (tile) => {
+    const { render: _render, streams: _streams, asset: _asset, input: _input, ...rest } = tile;
+    return look ? liveTile(rest, action, look) : { ...rest, icon: null, action: { ...action } };
+  });
+}
+
+/** Lets a drag on a bar Tile set its value, or makes the bar read only. Only a bar Tile takes input. */
+export function setInput(layout: Layout, page: string, id: string, on: boolean): Edit {
+  return editTile(layout, page, id, (grid, index) => {
+    const tile = grid.tiles[index];
+    if (tile.render !== 'bar') return `tile ${id} is not a bar`;
+    const { input: _input, ...rest } = tile;
+    grid.tiles[index] = on ? { ...rest, input: true } : rest;
+    return null;
+  });
 }
 
 /** Draws the Tile as a graph of the bound stream, or, with null, as its label again. */

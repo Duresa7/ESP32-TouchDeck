@@ -3,6 +3,8 @@ import { assetOf } from '../editor/validate.ts';
 import { MONTSERRAT_14, MONTSERRAT_28, MONTSERRAT_48 } from './fonts.data.ts';
 import { dotX, truncDiv, tileRect, type Geometry, type Rect } from './geometry.ts';
 import { graphPoints, type GraphPoint } from './graph.ts';
+import { fitText, TEXT_BYTES } from './live-text.ts';
+import { barLayout, NOW_PLAYING, nowPlayingLayout, type Part } from './live-tiles.ts';
 import { font, layoutLabel, textSize, codepoints, type Align, type Font, type Label } from './text.ts';
 import { SYMBOLS, THEME } from './theme.ts';
 
@@ -40,6 +42,37 @@ export interface GraphView {
   stale: boolean;
 }
 
+/** Text the page draws in a box, cut with dots when it overflows. */
+export interface TextBox extends Rect {
+  text: string;
+}
+
+/** A bar Tile: the speaker glyph, its label and 0 to 100 value, and the track with its fill. */
+export interface LevelView {
+  glyph: Rect & { muted: boolean };
+  label: TextBox;
+  value: TextBox;
+  track: Rect & { radius: number };
+  /** Width of the fill in pixels. */
+  fill: number;
+  muted: boolean;
+  /** No fresh value: drawn at 60% with the unavailable marker, and it takes no drag. */
+  stale: boolean;
+  input: boolean;
+}
+
+export type ControlGlyph = 'prev' | 'play' | 'pause' | 'next';
+
+/** A now-playing Tile: the cover box, the title and artist, and the controls row. */
+export interface NowPlayingView {
+  art: { x: number; y: number; size: number } | null;
+  title: TextBox & { idle: boolean };
+  artist: TextBox | null;
+  controls: (Rect & { part: Part; glyph: ControlGlyph })[];
+  idle: boolean;
+  stale: boolean;
+}
+
 export interface TileView {
   id: string;
   rect: Rect;
@@ -50,6 +83,8 @@ export interface TileView {
   graph: GraphView | null;
   /** A GIF Tile's Asset, drawn at its own size in the middle of a box this big. */
   gif: { id: string; w: number; h: number } | null;
+  level: LevelView | null;
+  nowPlaying: NowPlayingView | null;
 }
 
 export interface RowView {
@@ -94,9 +129,26 @@ export interface GraphSample {
   stale: boolean;
 }
 
+/** What a bar Tile shows: its level from 0 to 1, whether it is muted, and whether the value is stale. */
+export interface LevelSample {
+  value: number;
+  muted: boolean;
+  stale: boolean;
+}
+
+/** What a now-playing Tile shows: the track, 0 nothing playing, 1 paused or 2 playing, and whether it is stale. */
+export interface NowPlayingSample {
+  title: string;
+  artist: string;
+  state: number;
+  stale: boolean;
+}
+
 export interface SceneOptions {
   widget?: (tile: Tile) => WidgetSample | null;
   graph?: (tile: Tile) => GraphSample | null;
+  level?: (tile: Tile) => LevelSample | null;
+  nowPlaying?: (tile: Tile) => NowPlayingSample | null;
   rows?: (page: Page) => RowSample[];
   hasImage?: (id: string) => boolean;
 }
@@ -147,6 +199,53 @@ function buildGraph(view: TileView, tile: Tile, sample: GraphSample | null) {
   view.graph = { x: pad, y: top, w, h, radius, points: points.length < 2 ? [] : points, stale: sample?.stale ?? false };
 }
 
+const UNAVAILABLE = '--';
+export const NOTHING_PLAYING = 'Nothing playing';
+
+function buildLevel(rect: Rect, tile: Tile, sample: LevelSample | null): LevelView {
+  const { gap, valueW, lineH, trackRadius } = THEME.level;
+  const declared = tile.streams?.muted !== undefined;
+  const { glyph, track } = barLayout(rect.w, rect.h, declared);
+  const muted = declared && sample !== null && sample.muted;
+  const level = sample ? Math.min(Math.max(sample.value, 0), 1) : 0;
+  const fresh = sample !== null && !sample.stale;
+  const valueX = rect.w - glyph.x - valueW;
+  const labelX = glyph.x + glyph.w + gap;
+  return {
+    glyph: { ...glyph, muted },
+    label: { x: labelX, y: glyph.y, w: Math.max(valueX - gap - labelX, 0), h: lineH, text: tile.label },
+    value: { x: valueX, y: glyph.y, w: valueW, h: lineH, text: fresh ? String(Math.round(level * 100)) : UNAVAILABLE },
+    track: { ...track, radius: trackRadius },
+    fill: sample ? Math.round(level * track.w) : 0,
+    muted,
+    stale: !fresh,
+    input: tile.input === true,
+  };
+}
+
+const GLYPHS: Record<Part, ControlGlyph> = { previous: 'prev', play_pause: 'pause', next: 'next' };
+
+function buildNowPlaying(rect: Rect, sample: NowPlayingSample | null): NowPlayingView {
+  const { titleH, artistH } = THEME.nowPlaying;
+  const layout = nowPlayingLayout(rect.w, rect.h);
+  const idle = sample !== null && sample.state === 0;
+  const named = sample !== null && !idle;
+  const controls = named && layout.controls ? layout.parts : [];
+  const block = named ? titleH + artistH : titleH;
+  const top = layout.art?.y ?? NOW_PLAYING.pad;
+  const row = controls[0]?.y ?? rect.h;
+  const y = !controls.length ? truncDiv(rect.h - block, 2) : top + block <= row ? top : NOW_PLAYING.pad + truncDiv(row - NOW_PLAYING.pad - block, 2);
+  const column = { x: layout.text.x, w: layout.text.w };
+  return {
+    art: layout.art,
+    title: { ...column, y: Math.max(y, 0), h: titleH, text: named ? fitText(sample.title, TEXT_BYTES) : idle ? NOTHING_PLAYING : UNAVAILABLE, idle },
+    artist: named ? { ...column, y: Math.max(y, 0) + titleH, h: artistH, text: fitText(sample.artist, TEXT_BYTES) } : null,
+    controls: controls.map((zone) => ({ ...zone, glyph: zone.part === 'play_pause' && sample?.state === 1 ? 'play' : GLYPHS[zone.part] })),
+    idle,
+    stale: sample === null || sample.stale,
+  };
+}
+
 function buildTile(page: Page & { kind: 'grid' }, tile: Tile, g: Geometry, options: SceneOptions): TileView {
   const rect = tileRect(page, tile, g.grid, g.gap);
   const view: TileView = {
@@ -158,6 +257,8 @@ function buildTile(page: Page & { kind: 'grid' }, tile: Tile, g: Geometry, optio
     bar: null,
     graph: null,
     gif: null,
+    level: null,
+    nowPlaying: null,
   };
   const { color, media, widget } = THEME;
   const gif = tile.render === 'gif' ? assetOf(tile) : null;
@@ -167,6 +268,14 @@ function buildTile(page: Page & { kind: 'grid' }, tile: Tile, g: Geometry, optio
   }
   if (tile.render === 'graph') {
     buildGraph(view, tile, options.graph?.(tile) ?? null);
+    return view;
+  }
+  if (tile.render === 'bar') {
+    view.level = buildLevel(rect, tile, options.level?.(tile) ?? null);
+    return view;
+  }
+  if (tile.render === 'now-playing') {
+    view.nowPlaying = buildNowPlaying(rect, options.nowPlaying?.(tile) ?? null);
     return view;
   }
   if (tile.action.type === 'widget') {

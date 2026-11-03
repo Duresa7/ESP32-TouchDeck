@@ -35,6 +35,14 @@ pub enum Grant {
     Always,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandDecision {
+    Approved,
+    Waiting,
+    Denied,
+    Expired,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Record {
     pub hash: String,
