@@ -331,7 +331,8 @@ async fn release_router_answers_no_approvals() {
 }
 
 #[tokio::test]
-async fn only_a_device_touch_reaches_an_integration_control_and_release_builds_have_no_route_to_one() {
+async fn only_a_device_touch_reaches_an_integration_control_and_release_builds_have_no_route_to_one()
+ {
     let part = json!({"events": [
         {"m": "press", "page": "media", "tile": "playing", "kind": "widget", "part": "next"},
         {"m": "v2.input", "page": "media", "tile": "volume", "stream": "value", "phase": "end", "value": 0.5},

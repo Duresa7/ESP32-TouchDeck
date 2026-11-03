@@ -68,9 +68,7 @@ impl Plan {
         };
         let drawn = match tile.render? {
             TileRender::NowPlaying => ["previous", "play_pause", "next"].contains(&part),
-            TileRender::Bar => {
-                part == "mute" && tile.streams.as_ref()?.contains_key("muted")
-            }
+            TileRender::Bar => part == "mute" && tile.streams.as_ref()?.contains_key("muted"),
             TileRender::Gif | TileRender::Graph => false,
         };
         (drawn && !source.is_empty()).then(|| Plan::Integration {
@@ -331,7 +329,10 @@ mod tests {
     fn a_now_playing_part_runs_on_the_widget_source_and_account() {
         let tile = renderer("now-playing", now_playing(), widget("media", "chosen"));
         for part in ["previous", "play_pause", "next"] {
-            assert_eq!(Plan::part(&tile, part), integration("media", "chosen", part));
+            assert_eq!(
+                Plan::part(&tile, part),
+                integration("media", "chosen", part)
+            );
         }
         for part in ["mute", "launch", "", "NEXT", "next ", "play_pause\u{0}"] {
             assert_eq!(Plan::part(&tile, part), None, "{part:?}");
@@ -343,7 +344,10 @@ mod tests {
         let action = widget("volume", "");
         let streams = serde_json::json!({"value": "number", "muted": "number"});
         let muted = renderer("bar", streams, action.clone());
-        assert_eq!(Plan::part(&muted, "mute"), integration("volume", "", "mute"));
+        assert_eq!(
+            Plan::part(&muted, "mute"),
+            integration("volume", "", "mute")
+        );
         assert_eq!(Plan::part(&muted, "next"), None);
         let plain = renderer("bar", serde_json::json!({"value": "number"}), action);
         assert_eq!(Plan::part(&plain, "mute"), None);
@@ -361,7 +365,11 @@ mod tests {
             tile.action = serde_json::from_value(action).unwrap();
             assert_eq!(Plan::part(&tile, "next"), None);
         }
-        let graph = renderer("graph", serde_json::json!({"value": "series"}), widget("media", ""));
+        let graph = renderer(
+            "graph",
+            serde_json::json!({"value": "series"}),
+            widget("media", ""),
+        );
         assert_eq!(Plan::part(&graph, "next"), None);
         let mut plain = graph;
         plain.render = None;
@@ -381,4 +389,3 @@ mod tests {
         assert!(launch("td-host-no-such-program", &[], "").is_err());
     }
 }
-

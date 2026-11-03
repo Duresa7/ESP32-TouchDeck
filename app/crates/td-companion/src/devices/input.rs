@@ -55,7 +55,6 @@ impl Input {
     }
 }
 
-/// A Layout id as the Layout schema allows it: `^[a-z0-9_]{1,15}$`.
 fn layout_id(text: &str) -> bool {
     (1..=15).contains(&text.len())
         && text
@@ -63,12 +62,10 @@ fn layout_id(text: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
-/// A renderer part as link-v2 allows it: `^[a-z_]{1,15}$`.
 fn part_name(text: &str) -> bool {
     (1..=15).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
 }
 
-/// At most `PER_SECOND` events in any one second.
 #[derive(Default)]
 struct Rate(VecDeque<Instant>);
 

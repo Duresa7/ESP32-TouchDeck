@@ -128,7 +128,6 @@ pub(super) fn mirror(
     }
 }
 
-/// Runs one session's drags: each batch takes what arrived since the last, newest per Tile stream, and sets it.
 fn run_inputs(inner: &Inner, id: &DeviceId, inputs: &Receiver<serde_json::Value>) {
     let mut hub = InputHub::default();
     while let Ok(first) = inputs.recv() {
@@ -151,7 +150,6 @@ fn run_inputs(inner: &Inner, id: &DeviceId, inputs: &Receiver<serde_json::Value>
     }
 }
 
-/// Where the forwarder hands a Device's touches. Both are bounded, and a full one drops the event.
 struct Touches {
     presses: mpsc::SyncSender<serde_json::Value>,
     drags: mpsc::SyncSender<serde_json::Value>,

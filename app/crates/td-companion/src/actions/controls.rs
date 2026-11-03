@@ -169,7 +169,6 @@ fn integration_request(device: &DeviceId, page: &str, tile: &str) -> ApprovalReq
     }
 }
 
-/// The action log's words for a part that ran, from `docs/copy.md`.
 fn done(action: &str) -> &'static str {
     match action {
         "mute" => "Mute changed.",
@@ -357,9 +356,10 @@ mod tests {
         wait("the gesture ends", || td.last_set() == Some(0.6));
         let sets = td.volume.sets.lock().clone();
         assert!(
-            sets.iter().all(|(account, stream, value)| account.is_empty()
-                && stream == "level"
-                && [0.2, 0.4, 0.5, 0.6].contains(value)),
+            sets.iter()
+                .all(|(account, stream, value)| account.is_empty()
+                    && stream == "level"
+                    && [0.2, 0.4, 0.5, 0.6].contains(value)),
             "{sets:?}"
         );
         wait("the gesture logs", || !td.log().is_empty());
@@ -372,7 +372,8 @@ mod tests {
         let mut layout = media();
         layout["pages"][0]["tiles"][2]["action"]["account"] = json!("chosen");
         let td = running(layout, true);
-        td.deck.emit_press_part("media", "playing", "widget", "next");
+        td.deck
+            .emit_press_part("media", "playing", "widget", "next");
         td.deck.emit_press_part("media", "volume", "widget", "mute");
         wait("both parts run", || td.log().len() == 2);
         assert_eq!(
@@ -396,14 +397,16 @@ mod tests {
     fn a_failed_control_logs_its_own_words_once() {
         let td = running(media(), true);
         *td.media.act_result.lock() = Some(ControlError::Unavailable("Nothing is playing.".into()));
-        *td.volume.set_result.lock() = Some(ControlError::Unavailable("No playback device.".into()));
+        *td.volume.set_result.lock() =
+            Some(ControlError::Unavailable("No playback device.".into()));
         td.deck
             .emit_press_part("media", "playing", "widget", "play_pause");
         wait("the tap logs", || td.log().len() == 1);
         td.drag("volume", &[0.3, 0.4, 0.5]);
         wait("the gesture logs", || td.log().len() == 2);
         *td.media.act_result.lock() = Some(ControlError::UnknownAccount);
-        td.deck.emit_press_part("media", "playing", "widget", "next");
+        td.deck
+            .emit_press_part("media", "playing", "widget", "next");
         wait("the refused tap logs", || td.log().len() == 3);
         std::thread::sleep(Duration::from_millis(200));
         assert_eq!(
@@ -444,8 +447,10 @@ mod tests {
             (4, "PLAY", "playing"),
             (5, "next", "nope"),
         ] {
-            send(json!({"m": "press", "page": "media", "tile": tile, "kind": "widget", "part": part,
-                "seq": 1_000_000 + seq, "t": 1}));
+            send(
+                json!({"m": "press", "page": "media", "tile": tile, "kind": "widget", "part": part,
+                "seq": 1_000_000 + seq, "t": 1}),
+            );
         }
         wait("the parts log", || td.log().len() == 5);
         std::thread::sleep(Duration::from_millis(200));
@@ -477,14 +482,18 @@ mod tests {
                 .emit_input("media", "volume", "value", InputPhase::Move, value);
         }
         for _ in 0..200 {
-            td.deck.emit_press_part("media", "playing", "widget", "next");
+            td.deck
+                .emit_press_part("media", "playing", "widget", "next");
         }
         let flooded = started.elapsed();
         std::thread::sleep(Duration::from_millis(300));
         let sets = td.volume.sets.lock().len();
         assert!(sets < 5_000 / 4, "{sets} sets for 5000 moves");
         let acts = td.media.acts.lock().len() as u64;
-        assert!(acts <= 10 * (flooded.as_secs() + 2), "{acts} acts in {flooded:?}");
+        assert!(
+            acts <= 10 * (flooded.as_secs() + 2),
+            "{acts} acts in {flooded:?}"
+        );
         assert!(td.log().len() as u64 <= acts);
 
         std::thread::sleep(Duration::from_secs(1));

@@ -69,7 +69,8 @@ fn review_corrupt_picture_is_requested_once_across_rounds() {
 #[test]
 fn a_tile_comes_from_the_shown_layout_of_the_same_session_and_never_from_a_replaced_one() {
     let live = Live(Arc::default());
-    let layout = Layout::parse(include_bytes!("../../../../../schema/examples/media.json")).unwrap();
+    let layout =
+        Layout::parse(include_bytes!("../../../../../schema/examples/media.json")).unwrap();
     live.0
         .shown
         .lock()

@@ -88,7 +88,6 @@ pub fn bindings(layout: &Layout) -> Vec<Binding> {
     out
 }
 
-/// The Integration stream a Tile stream reads, for a Tile whose `widget` action binds `source` and `account`.
 fn source_of(source: &str, account: &str, field: &str, stream: &str) -> StreamKey {
     StreamKey {
         integration: source.to_owned(),
@@ -282,7 +281,6 @@ impl Router {
         jobs
     }
 
-    /// The Layout each Device shows, with the link session it was read in.
     pub(super) fn shown(&self) -> HashMap<String, (u64, Arc<Layout>)> {
         self.devices
             .iter()

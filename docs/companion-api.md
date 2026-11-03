@@ -646,6 +646,24 @@ Limit actions to ten per Device per second and a two-second timeout. The action
 log gains `kind:"integration"`, status `ok` or `failed`, and copy.md detail.
 A completed gesture logs once, never per move. No new API endpoint is added.
 
+As built in step C, per Device link session, before anything binds:
+
+- Only a Device connected over link v2 reaches a Control. `page` and `tile`
+  must be Layout ids (`^[a-z0-9_]{1,15}$`), `part` must match `^[a-z_]{1,15}$`,
+  `seq` must be a u32 that rises (taps and drags count separately), and a drag's
+  `stream` must be `value`. Anything else is dropped without a log entry.
+- Taps with a `part` pass a gate of ten per second. Drags go through a bounded
+  queue of 64 events (a full queue drops the newest) into a hub that keeps the
+  newest snapshot of at most 64 Tile streams and runs a batch at most every
+  20 ms. Logged gestures are limited to ten per second.
+- A drag binds only a `bar` Tile with `input: true` that declares the stream as
+  a number, from the Layout the live router last read in this session. It never
+  reads the Layout over the link. A tap whose Tile the router hasn't read yet
+  (just after a push) reads it from the Device, as an approval press does.
+- A tap binds only a part its renderer draws: `previous`, `play_pause` or
+  `next` on `now-playing`, `mute` on a `bar` that declares `muted`, on a
+  `widget` action with a source. A part never runs any other action type.
+
 The Companion computes a Tile's pixel rect from the active Layout's grid,
 position/span and `fullScreen`, and the Device's screen size in the Layout's
 orientation, with `td_core::live::tile_rect`:
@@ -953,7 +971,7 @@ Feature module `test_hooks`, compiled only with the `test-hooks` Cargo feature a
 | `test.press` | `POST /test/devices/{device}/press` | `{page, tile, kind}` → `()` |
 | `test.sets` | `GET /test/devices/{device}/sets` | → `Value[]` |
 | `test.record` | `GET /test/devices/{device}/record` | → `{received, lines, settings, reboots, assets, layouts}` |
-| `test.emit` | `POST /test/devices/{device}/emit` | `{events, repeat?, every_ms?}` → `()` |
+| `test.emit` | `POST /test/devices/{device}/emit` | `{events, repeat?, every_ms?}` → `()`. Events: `key.report`, `key.resync`, `press` (with an optional renderer `part`), `v2.input` (`page`, `tile`, `stream`, `phase`, `value`) and `drop` |
 | `test.input_log` | `GET /test/input-log` | → `string[]` |
 | `test.ports` | `POST /test/ports` | `{plug: {id, kind: "device" \| "device-v1" \| "silent" \| "other-firmware" \| "busy"}}` or `{unplug: id}` → `()` |
 | `test.approvals_script` | `POST /test/approvals/script` | `{answers: ("once" \| "always" \| "deny" \| "fail" \| "never")[]}` → `()`. Sets what the `FakePrompter` answers next. `fail` acts as a dialog that can't be shown |
