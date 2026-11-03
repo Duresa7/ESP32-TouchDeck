@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCENARIOS = ["playback", "sleep", "release", "memory", "reused", "reload"]
+SCENARIOS = ["playback", "sleep", "release", "memory", "reused", "prefix", "reload"]
 
 
 class GifUiTest(unittest.TestCase):

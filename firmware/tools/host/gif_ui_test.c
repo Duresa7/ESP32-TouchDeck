@@ -20,6 +20,7 @@ static void (*worker_fn)(void *);
 static td_layout_t *stored;
 static unsigned first_image;
 static uint8_t *frame_one;
+static bool leave_last_unbound;
 
 static void raw_lock(portMUX_TYPE *lock)
 {
@@ -273,7 +274,8 @@ void host_load_locked(const td_layout_t *layout)
     for (unsigned p = 0; p < layout->page_count; p++) {
         for (unsigned t = 0; t < layout->pages[p].tile_count; t++) {
             const ui_tile_t *tile = &layout->pages[p].tiles[t];
-            if (tile->render == UI_RENDER_GIF) ui_gif_build(NULL, tile, (uint8_t)p);
+            const bool last = p + 1 == layout->page_count && t + 1 == layout->pages[p].tile_count;
+            if (tile->render == UI_RENDER_GIF && !(leave_last_unbound && last)) ui_gif_build(NULL, tile, (uint8_t)p);
         }
     }
     ui_gif_resume();
@@ -434,9 +436,21 @@ static void scenario_reused(void)
     assert(atomic_load(&fail_poster_allocations) == 0);
     assert(atomic_load(&image_count) == before + 1);
     assert(shown(before));
-    ui_tile_t bad = {.render = UI_RENDER_GIF, .icon = "x"};
+    unload();
+}
+
+static void scenario_prefix(void)
+{
+    leave_last_unbound = true;
+    const unsigned first = load(&layout_reused);
+    leave_last_unbound = false;
+    assert(atomic_load(&image_count) == first + 1);
+    static char unprefixed[7 + sizeof ASSET_ID] = "x";
+    memcpy(unprefixed + 7, ASSET_ID, sizeof ASSET_ID);
+    const ui_tile_t bad = {.render = UI_RENDER_GIF, .icon = unprefixed};
     lvgl_lock();
-    assert(!ui_gif_build(NULL, &bad, 0));
+    assert(!ui_gif_build(NULL, &bad, 0) && atomic_load(&image_count) == first + 1);
+    assert(ui_gif_build(NULL, &gif_tiles[0], 0) && atomic_load(&image_count) == first + 2);
     esp_lv_adapter_unlock();
     unload();
 }
@@ -479,7 +493,8 @@ int main(int argc, char **argv)
     read_fixture();
     static const struct { const char *name; void (*run)(void); } scenarios[] = {
         {"playback", scenario_playback}, {"sleep", scenario_sleep}, {"release", scenario_release},
-        {"memory", scenario_memory}, {"reused", scenario_reused}, {"reload", scenario_reload},
+        {"memory", scenario_memory}, {"reused", scenario_reused}, {"prefix", scenario_prefix},
+        {"reload", scenario_reload},
     };
     for (unsigned i = 0; i < sizeof scenarios / sizeof scenarios[0]; i++) {
         if (strcmp(argv[1], scenarios[i].name)) continue;
