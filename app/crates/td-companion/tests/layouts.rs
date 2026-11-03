@@ -296,3 +296,32 @@ async fn a_push_sends_the_assets_the_device_lacks() {
     let pushed = report(&td.wait(&push(&td, &a, &missing).await).await);
     assert_eq!(pushed.assets.unavailable, ["0123456789abcdef"]);
 }
+
+#[tokio::test]
+async fn image_budget_is_checked_before_starting_a_push() {
+    let td = TestCompanion::start().await;
+    let device = td.plug_device("mock0001").await;
+    let mut value = serde_json::to_value(layout("Media", Orientation::Landscape, None)).unwrap();
+    value["schema"] = json!(2);
+    let tile = &mut value["pages"][0]["tiles"][0];
+    tile["render"] = json!("now-playing");
+    tile["action"] = json!({"type":"widget","source":"media","account":"","field":"title"});
+    tile["streams"] = json!({"title":"text","artist":"text","state":"number","cover":"image"});
+    let layout = Layout::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let (status, error) = failure(td.request::<Push>(
+        path(device.as_str(), Orientation::Landscape),
+        NoQuery,
+        &LayoutBody::new(&layout),
+    ))
+    .await;
+    assert_eq!(
+        (status, error["code"].as_str()),
+        (422, Some("layout.live_image_limit"))
+    );
+    assert_eq!(error["details"], json!({"limit":0,"actual":1}));
+    assert!(
+        td.deck(device.as_str())
+            .layout(Orientation::Landscape)
+            .is_none()
+    );
+}

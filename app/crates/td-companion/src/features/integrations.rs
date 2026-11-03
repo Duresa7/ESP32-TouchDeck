@@ -5,24 +5,30 @@ use crate::live::StreamKey;
 use axum::http::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 use td_host::integrations::secrets::{MemorySecrets, OsSecrets};
-use td_host::integrations::{Delivery, Environment, Error, LiveSample, Registry};
+use td_host::integrations::{Control, Delivery, Environment, Error, LiveSample, Registry};
 pub use td_host::integrations::{IntegrationSummary, IntegrationView};
 use ts_rs::TS;
 
+/// The Integrations' Controls by Integration id, held outside the registry lock so a slow poll never holds them up.
+pub type Controls = Arc<BTreeMap<String, Arc<dyn Control>>>;
+
 #[derive(Clone)]
-pub struct Service(
-    Arc<Mutex<Result<Registry, Error>>>,
-    Arc<Mutex<Vec<IntegrationSummary>>>,
-    Arc<Pending>,
-    #[cfg(any(test, feature = "test-hooks"))] Option<td_host::integrations::media::fake::FakeMedia>,
-);
+pub struct Service {
+    registry: Arc<Mutex<Result<Registry, Error>>>,
+    summaries: Arc<Mutex<Vec<IntegrationSummary>>>,
+    pending: Arc<Pending>,
+    events: Events,
+    pub(crate) controls: Controls,
+    #[cfg(any(test, feature = "test-hooks"))]
+    media: Option<td_host::integrations::media::fake::FakeMedia>,
+}
 type Pending = Mutex<HashMap<(String, String), Delivery>>;
 impl Service {
     pub fn command_approval(&self, approval: Arc<dyn td_host::integrations::CommandApproval>) {
-        if let Ok(registry) = self.0.lock().unwrap().as_mut()
+        if let Ok(registry) = self.registry.lock().unwrap().as_mut()
             && let Ok(custom) = registry.get("custom")
         {
             custom.command_approval(approval);
@@ -30,42 +36,51 @@ impl Service {
     }
     pub fn new(mock: bool, events: Events) -> Self {
         let media = mock.then(td_host::integrations::media::fake::FakeMedia::default);
-        let service = Self(
-            Arc::new(Mutex::new(Registry::new(Environment {
-                media_provider: media.as_ref().map(|fake| {
-                    Arc::new(fake.clone()) as Arc<dyn td_host::integrations::media::MediaProvider>
-                }),
-                secrets: if mock {
-                    Arc::new(MemorySecrets::default())
-                } else {
-                    Arc::new(OsSecrets)
-                },
-                config_file: (!mock).then(|| td_core::app_dirs::Dirs::current().sources_config()),
-                fetch: if mock {
-                    Arc::new(|| Box::new(FakeFetch))
-                } else {
-                    Arc::new(|| Box::new(td_host::sources::HttpFetch::new()))
-                },
-            }))),
-            Arc::new(Mutex::new(Vec::new())),
-            Arc::default(),
+        let registry = Registry::new(Environment {
+            media_provider: media.as_ref().map(|fake| {
+                Arc::new(fake.clone()) as Arc<dyn td_host::integrations::media::MediaProvider>
+            }),
+            secrets: if mock {
+                Arc::new(MemorySecrets::default())
+            } else {
+                Arc::new(OsSecrets)
+            },
+            config_file: (!mock).then(|| td_core::app_dirs::Dirs::current().sources_config()),
+            fetch: if mock {
+                Arc::new(|| Box::new(FakeFetch))
+            } else {
+                Arc::new(|| Box::new(td_host::sources::HttpFetch::new()))
+            },
+        });
+        let controls = Arc::new(
+            registry
+                .as_ref()
+                .map(Registry::controls)
+                .unwrap_or_default(),
+        );
+        let service = Self {
+            registry: Arc::new(Mutex::new(registry)),
+            summaries: Arc::default(),
+            pending: Arc::default(),
+            events: events.clone(),
+            controls,
             #[cfg(any(test, feature = "test-hooks"))]
             media,
-        );
-        if let Ok(registry) = service.0.lock().unwrap().as_ref() {
-            *service.1.lock().unwrap() = registry.list();
+        };
+        if let Ok(registry) = service.registry.lock().unwrap().as_ref() {
+            *service.summaries.lock().unwrap() = registry.list();
         }
-        let cache = service.1.clone();
-        let pending = service.2.clone();
-        let weak = Arc::downgrade(&service.0);
+        let cache = service.summaries.clone();
+        let pending = service.pending.clone();
+        let weak = Arc::downgrade(&service.registry);
         std::thread::spawn(move || {
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 let Some(state) = weak.upgrade() else { break };
                 let mut state = state.lock().unwrap();
                 if let Ok(registry) = state.as_mut() {
-                    apply_pending(registry, &pending);
                     let before = serde_json::to_value(registry.list()).unwrap();
+                    apply_pending(registry, &pending);
                     registry.tick();
                     *cache.lock().unwrap() = registry.list();
                     if before != serde_json::to_value(registry.list()).unwrap() {
@@ -77,22 +92,26 @@ impl Service {
         service
     }
     pub fn summaries(&self) -> Vec<IntegrationSummary> {
-        self.1.lock().unwrap().clone()
+        self.summaries.lock().unwrap().clone()
     }
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn media_fake(&self) -> Option<td_host::integrations::media::fake::FakeMedia> {
-        self.3.clone()
+        self.media.clone()
     }
-    /// The newest samples of the wanted streams. None while an Integration is busy, such as during a poll.
+    /// The newest samples of the wanted streams that Integrations poll. None while an Integration is busy, such as
+    /// during a poll.
     pub fn live(&self, wanted: &BTreeSet<StreamKey>) -> Option<HashMap<StreamKey, LiveSample>> {
-        let state = self.0.try_lock().ok()?;
+        let state = self.registry.try_lock().ok()?;
         let Ok(registry) = state.as_ref() else {
             return Some(HashMap::new());
         };
         Some(
             registry
                 .live()
-                .filter(|(id, _)| wanted.iter().any(|key| key.integration == *id))
+                .filter(|(id, _)| {
+                    !self.controls.contains_key(*id)
+                        && wanted.iter().any(|key| key.integration == *id)
+                })
                 .flat_map(|(id, samples)| {
                     samples.into_iter().map(move |sample| {
                         let key = StreamKey {
@@ -107,17 +126,42 @@ impl Service {
                 .collect(),
         )
     }
+    /// The newest samples of the wanted streams that come from Controls. Never waits for the registry.
+    pub fn control_live(&self, wanted: &BTreeSet<StreamKey>) -> HashMap<StreamKey, LiveSample> {
+        self.controls
+            .iter()
+            .filter(|(id, _)| wanted.iter().any(|k| &k.integration == *id))
+            .flat_map(|(id, control)| {
+                control.live().into_iter().map(|sample| {
+                    (
+                        StreamKey {
+                            integration: id.clone(),
+                            account: sample.account.clone(),
+                            stream: sample.stream.clone(),
+                        },
+                        sample,
+                    )
+                })
+            })
+            .filter(|(key, _)| wanted.contains(key))
+            .collect()
+    }
     /// Records what the Companion delivered to a Device for an Integration. One that comes while the registry is busy
     /// is applied by the next caller that takes the registry.
     pub fn delivered(&self, integration: &str, delivery: Delivery) {
-        self.2
+        self.pending
             .lock()
             .unwrap()
             .insert((integration.to_owned(), delivery.device.clone()), delivery);
-        if let Ok(mut state) = self.0.try_lock()
+        if let Ok(mut state) = self.registry.try_lock()
             && let Ok(registry) = state.as_mut()
         {
-            apply_pending(registry, &self.2);
+            let before = serde_json::to_value(registry.list()).unwrap();
+            apply_pending(registry, &self.pending);
+            *self.summaries.lock().unwrap() = registry.list();
+            if before != serde_json::to_value(registry.list()).unwrap() {
+                publish(registry, &self.events);
+            }
         }
     }
     fn with_registry<T>(
@@ -125,12 +169,12 @@ impl Service {
         events: &Events,
         f: impl FnOnce(&mut Registry) -> Result<T, Error>,
     ) -> Result<T, IntegrationError> {
-        let mut guard = self.0.lock().unwrap();
+        let mut guard = self.registry.lock().unwrap();
         let registry = guard.as_mut().map_err(|_| IntegrationError::Credentials)?;
-        apply_pending(registry, &self.2);
         let before = serde_json::to_value(registry.list()).unwrap();
+        apply_pending(registry, &self.pending);
         let result = f(registry).map_err(IntegrationError::from);
-        *self.1.lock().unwrap() = registry.list();
+        *self.summaries.lock().unwrap() = registry.list();
         if before != serde_json::to_value(registry.list()).unwrap() {
             publish(registry, events);
         }
@@ -402,7 +446,7 @@ mod tests {
     fn a_delivery_reported_while_the_integrations_are_busy_still_shows() {
         let events = Events::default();
         let service = Service::new(true, events.clone());
-        let busy = service.0.lock().unwrap();
+        let busy = service.registry.lock().unwrap();
         for sent in 3..=4 {
             service.delivered(
                 "this_pc",
@@ -416,5 +460,183 @@ mod tests {
         drop(busy);
 
         assert_eq!(sent(&service, &events), [("mock0001".to_owned(), 4)]);
+    }
+}
+
+#[cfg(test)]
+mod control_tests {
+    use super::*;
+    use crate::devices::{BoardKind, Config, DeviceManager, LinkState};
+    use crate::link::Links;
+    use crate::live::Live;
+    use crate::live::fake::FakeControl;
+    use std::time::{Duration, Instant};
+    use td_core::live::LiveValue;
+
+    struct Running {
+        service: Service,
+        fake: Arc<FakeControl>,
+        deck: td_link::MockDeck,
+        devices: DeviceManager,
+        live: Option<Live>,
+    }
+
+    impl Drop for Running {
+        fn drop(&mut self) {
+            self.live.take();
+            self.devices.stop();
+        }
+    }
+
+    fn wait(what: &str, within: Duration, mut done: impl FnMut() -> bool) {
+        let deadline = Instant::now() + within;
+        while !done() {
+            assert!(Instant::now() < deadline, "{what}");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn running(integration: &str, layout: serde_json::Value) -> Running {
+        let events = Events::default();
+        let devices = DeviceManager::new(events.clone());
+        let config = Config::mock(None);
+        let ports = config.mock.as_ref().unwrap().0.clone();
+        ports.plug("mock0001", BoardKind::Device);
+        let deck = ports.deck("mock0001").unwrap();
+        deck.set_media_capabilities(true);
+        devices.start(config);
+        wait("the Device connects", Duration::from_secs(5), || {
+            devices
+                .summaries()
+                .iter()
+                .any(|d| matches!(d.link, LinkState::Connected { .. }))
+        });
+        let links = Links::new(devices.clone());
+        let layout = td_core::Layout::parse(&serde_json::to_vec(&layout).unwrap()).unwrap();
+        links
+            .with("mock0001", |s| {
+                td_link::xfer::put_layout(s, layout.orientation, &layout)
+            })
+            .unwrap()
+            .unwrap();
+        let mut service = Service::new(true, events);
+        let fake = Arc::new(FakeControl::default());
+        service.controls = Arc::new(BTreeMap::from([(
+            integration.to_owned(),
+            fake.clone() as Arc<dyn Control>,
+        )]));
+        let live = Live::start(devices.clone(), links, service.clone());
+        Running {
+            service,
+            fake,
+            deck,
+            devices,
+            live: Some(live),
+        }
+    }
+
+    fn graph() -> serde_json::Value {
+        let mut layout: serde_json::Value =
+            serde_json::from_slice(include_bytes!("../../../../../schema/examples/graph.json"))
+                .unwrap();
+        layout["pages"][0]["tiles"][0]["action"] =
+            serde_json::json!({"type":"widget","source":"test","account":"","field":"level"});
+        layout
+    }
+
+    fn shown(deck: &td_link::MockDeck) -> Option<serde_json::Value> {
+        deck.live_sets().last().map(|set| set["value"].clone())
+    }
+
+    #[test]
+    fn control_samples_are_read_while_the_registry_is_busy() {
+        let mut service = Service::new(true, Events::default());
+        let fake = Arc::new(FakeControl::default());
+        service.controls = Arc::new(BTreeMap::from([(
+            "test".to_owned(),
+            fake.clone() as Arc<dyn Control>,
+        )]));
+        let key = StreamKey {
+            integration: "test".into(),
+            account: String::new(),
+            stream: "level".into(),
+        };
+        let busy = service.registry.lock().unwrap();
+        fake.number(0.4);
+        assert_eq!(service.live(&BTreeSet::from([key.clone()])), None);
+        assert_eq!(
+            service.control_live(&BTreeSet::from([key.clone()]))[&key].value,
+            LiveValue::Number(0.4)
+        );
+        drop(busy);
+    }
+
+    #[test]
+    fn a_woken_sample_reaches_the_device_within_50_ms_while_a_poll_holds_the_registry_for_5_s() {
+        let run = running("test", graph());
+        run.fake.number(0.1);
+        wait("the first value arrives", Duration::from_secs(5), || {
+            shown(&run.deck) == Some(serde_json::json!(0.1))
+        });
+        let (held, holding) = std::sync::mpsc::channel();
+        let service = run.service.clone();
+        let poll = std::thread::spawn(move || {
+            let _registry = service.registry.lock().unwrap();
+            held.send(()).unwrap();
+            std::thread::sleep(Duration::from_secs(5));
+        });
+        holding.recv().unwrap();
+        let polling = Instant::now();
+        for value in [0.7, 0.3, 0.9] {
+            std::thread::sleep(Duration::from_millis(600));
+            let woken = Instant::now();
+            run.fake.number(value);
+            wait(
+                "the woken value arrives within 50 ms",
+                Duration::from_millis(50),
+                || shown(&run.deck) == Some(serde_json::json!(value)),
+            );
+            assert!(woken.elapsed() < Duration::from_millis(50));
+        }
+        assert!(
+            polling.elapsed() < Duration::from_secs(5),
+            "the poll still holds the registry"
+        );
+        poll.join().unwrap();
+    }
+
+    #[test]
+    fn a_track_reaches_the_device_with_its_cover_made_off_the_link() {
+        let run = running(
+            "media",
+            serde_json::json!({
+                "schema": 2, "name": "Media", "orientation": "landscape",
+                "pages": [{"kind": "grid", "id": "main", "title": "Media", "rows": 1, "cols": 1, "tiles": [{
+                    "id": "player", "icon": null, "label": "Player", "row": 0, "col": 0, "rowSpan": 1,
+                    "colSpan": 1, "render": "now-playing",
+                    "streams": {"title": "text", "artist": "text", "cover": "image", "state": "number"},
+                    "action": {"type": "widget", "source": "media", "account": "", "field": "title"}
+                }]}]
+            }),
+        );
+        run.fake.add_picture(
+            "sha256:art",
+            crate::photos::encode::tests::noise_png(640, 480, 5),
+        );
+        run.fake.publish(&[
+            ("title", LiveValue::Text("Ło\u{301}dź".into())),
+            ("artist", LiveValue::Text("Artist".into())),
+            ("state", LiveValue::Number(2.0)),
+            ("cover", LiveValue::Image(Some("sha256:art".into()))),
+        ]);
+        let value = |stream: &str| run.deck.live("main", "player", stream).map(|l| l.value);
+        wait("the cover arrives", Duration::from_secs(5), || {
+            value("cover").is_some_and(|v| v.is_string())
+        });
+        assert_eq!(value("title"), Some(serde_json::json!("Lódz")));
+        let cover = value("cover").unwrap();
+        let id = cover.as_str().unwrap().strip_prefix("sha256:").unwrap();
+        let picture = image::load_from_memory(&run.deck.assets()[id]).unwrap();
+        assert_eq!((picture.width(), picture.height()), (256, 256));
     }
 }

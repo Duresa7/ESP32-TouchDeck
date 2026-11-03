@@ -4,7 +4,7 @@ use image::{
 };
 use std::io::Cursor;
 
-const QUALITIES: [u8; 5] = [85, 75, 65, 55, 45];
+pub(crate) const QUALITIES: [u8; 5] = [85, 75, 65, 55, 45];
 const SHRINKS: u32 = 4;
 const DECODE_BYTES_MAX: u64 = 256 * 1024 * 1024;
 
