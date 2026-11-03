@@ -5,8 +5,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub use crate::approval::CommandDecision;
+
 pub trait CommandApproval: Send + Sync {
-    fn approved(&self, program: &str, args: &[String]) -> bool;
+    fn decision(&self, program: &str, args: &[String]) -> CommandDecision;
 }
 
 const TIMED_OUT: &str = "The command exceeded 10 s and was stopped.";
@@ -183,7 +185,6 @@ fn resume(process: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Instant;
     fn fixture() -> (tempfile::TempDir, String) {
         let dir = tempfile::tempdir().unwrap();
         let program = dir.path().join(if cfg!(windows) {
@@ -200,6 +201,14 @@ mod tests {
                 .arg(&program)
                 .status()
                 .unwrap()
+                .success()
+        );
+        assert!(
+            std::process::Command::new(&program)
+                .arg("ok")
+                .output()
+                .unwrap()
+                .status
                 .success()
         );
         let program = program.to_str().unwrap().to_owned();
@@ -232,34 +241,48 @@ mod tests {
     }
     #[test]
     fn an_endless_writer_is_cut_at_64_kib_without_waiting_for_the_timeout() {
-        let (_dir, program) = fixture();
-        let start = Instant::now();
+        let (dir, program) = fixture();
+        let overflow = dir.path().join("wrote-past-cap");
         assert_eq!(
-            capture(&program, &["endless".into()], Duration::from_secs(10)),
+            capture(
+                &program,
+                &["endless".into(), overflow.to_string_lossy().into()],
+                Duration::from_secs(30),
+            ),
             Err("Command output is over 64 KiB.")
         );
-        assert!(
-            start.elapsed() < Duration::from_secs(5),
-            "{:?}",
-            start.elapsed()
-        );
+        assert!(!overflow.exists());
     }
     #[test]
     fn a_timeout_stops_the_processes_the_command_started() {
         let (dir, program) = fixture();
         let marker = dir.path().join("grandchild-ran");
-        let start = Instant::now();
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let probe_addr = probe.local_addr().unwrap().to_string();
+        let grandchild = std::thread::spawn(move || {
+            let (mut stream, _) = probe.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(30)))
+                .unwrap();
+            let mut started = [0; 7];
+            stream.read_exact(&mut started).unwrap();
+            assert_eq!(&started, b"started");
+            let mut rest = [0; 1];
+            match stream.read(&mut rest) {
+                Ok(0) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {}
+                other => panic!("grandchild survived timeout: {other:?}"),
+            }
+        });
         assert_eq!(
             capture(
                 &program,
-                &["fork".into(), marker.to_string_lossy().into()],
-                Duration::from_secs(1)
+                &["fork".into(), marker.to_string_lossy().into(), probe_addr],
+                Duration::from_secs(2),
             ),
             Err(TIMED_OUT)
         );
-        let returned = start.elapsed();
-        std::thread::sleep(Duration::from_millis(4500).saturating_sub(start.elapsed()));
-        assert!(returned < Duration::from_secs(2), "{returned:?}");
+        grandchild.join().unwrap();
         assert!(!marker.exists());
     }
 }
