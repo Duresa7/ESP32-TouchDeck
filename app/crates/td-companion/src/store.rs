@@ -134,8 +134,22 @@ impl Drop for AssetPin {
     }
 }
 
+fn sweep_stale_temps(dir: &std::path::Path) {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = entry.file_name();
+        if name
+            .to_str()
+            .is_some_and(|n| n.starts_with('.') && n.ends_with(".tmp"))
+            && entry.file_type().is_ok_and(|t| t.is_file())
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 impl AssetStore {
     pub(crate) fn new(dir: PathBuf, layouts: LayoutStore, clock: Clock, quota: u64) -> Self {
+        sweep_stale_temps(&dir);
         Self {
             cache: td_host::icons::IconCache::new(dir.clone()),
             dir,
@@ -393,5 +407,44 @@ mod quota {
         again.put(&icon(3)).unwrap();
         assert!(again.get(&old).is_none());
         assert!(again.get(&used).is_some());
+    }
+
+    #[test]
+    fn startup_sweeps_stale_temp_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let assets_dir = dir.path().join("assets");
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        let stale_a = assets_dir.join(format!(".{}.bin.999.tmp", "a".repeat(64)));
+        let stale_b = assets_dir.join(format!(
+            ".{}.bin.{}.tmp",
+            "b".repeat(64),
+            std::process::id()
+        ));
+        let cached_icon = assets_dir.join("0123456789abcdef.bin");
+        let existing_bytes = icon(1);
+        let existing_id = td_link::asset::asset_id(&existing_bytes);
+        let existing_asset = assets_dir.join(format!("{existing_id}.bin"));
+        std::fs::write(&stale_a, vec![0u8; 3 * ICON as usize]).unwrap();
+        std::fs::write(&stale_b, vec![0u8; 2 * ICON as usize]).unwrap();
+        std::fs::write(&cached_icon, &existing_bytes).unwrap();
+        std::fs::write(&existing_asset, &existing_bytes).unwrap();
+
+        let layouts = LayoutStore::new(dir.path().join("layouts"));
+        let clock = Clock::default();
+        let assets = AssetStore::new(assets_dir.clone(), layouts, clock, 2 * ICON);
+
+        assert!(!stale_a.exists());
+        assert!(!stale_b.exists());
+        assert!(cached_icon.exists());
+        assert!(existing_asset.exists());
+
+        assets.put(&icon(2)).unwrap();
+        let asset_bytes_on_disk: u64 = std::fs::read_dir(&assets_dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path() != cached_icon)
+            .map(|e| e.metadata().unwrap().len())
+            .sum();
+        assert_eq!(asset_bytes_on_disk, 2 * ICON);
     }
 }

@@ -9,6 +9,7 @@ import { createDetailStore, refreshFloorText, type DetailStore } from '../../lib
 import { lineOf, statusOf, usageLine } from '../../lib/integrations/model.ts';
 import { button } from '../../shell/button.ts';
 import { ConfigForm } from './ConfigForm.tsx';
+import { usePresetNeeds } from './addToLayout.ts';
 import { IntegrationGlyph, PresetButton } from './PresetPreview.tsx';
 import { SecretField } from './SecretField.tsx';
 import { UsageTable } from './UsageTable.tsx';
@@ -101,6 +102,7 @@ function Outcome({ store }: { store: DetailStore }) {
 /** One Integration: its status, the settings its schema builds, its secrets, Refresh, its Preset tiles and usage. */
 export function IntegrationDetail({ summary, setUp, onBack, onAdd }: { summary: IntegrationSummary; setUp: boolean; onBack(): void; onAdd(preset: PresetTile): void }) {
   const companion = useCompanion();
+  const needs = usePresetNeeds();
   const [store] = useState(() => createDetailStore(summary.id, { companion }));
   const loaded = useStore(store, (s) => s.view !== null);
   const secretFields = useStore(store, (s) => s.secretFields);
@@ -151,7 +153,7 @@ export function IntegrationDetail({ summary, setUp, onBack, onAdd }: { summary: 
           </h2>
           <div className="preset-grid">
             {summary.presets.map((preset) => (
-              <PresetButton key={preset.id} preset={preset} streams={summary.streams} onAdd={onAdd} />
+              <PresetButton key={preset.id} preset={preset} streams={summary.streams} onAdd={onAdd} needs={needs(preset)} />
             ))}
           </div>
         </section>

@@ -8,6 +8,11 @@ use std::time::{Duration, Instant};
 use td_core::live::LiveValue;
 
 const WAITING: &str = "Waiting for approval on this PC.";
+const DENIED: &str = "Denied on this PC.";
+const EXPIRED: &str = "Approval expired.";
+const CORRUPT_CONFIG: &str =
+    "Couldn't read custom.json. Kept it as custom.corrupt.json and started empty.";
+const UNREADABLE_CONFIG: &str = "Couldn't read custom.json. Started empty.";
 const PIN_NEEDS_HTTPS: &str =
     "A certificate pin needs an https:// address. Change the address or clear the pin.";
 
@@ -170,6 +175,7 @@ struct Custom {
     approval: Option<Arc<dyn CommandApproval>>,
     settings: Settings,
     file: Option<PathBuf>,
+    load_error: Option<&'static str>,
     secrets: Arc<dyn secrets::SecretStore>,
     fetch: Box<dyn crate::sources::Fetch>,
     samples: BTreeMap<String, Sample>,
@@ -184,18 +190,32 @@ fn create(env: &Environment) -> Result<Box<dyn Integration>, Error> {
         .config_file
         .as_ref()
         .map(|p| p.with_file_name("custom.json"));
-    let settings = match file.as_ref().map(std::fs::read) {
-        Some(Ok(bytes)) => {
-            serde_json::from_slice::<Settings>(&bytes).map_err(|_| Error::ConfigInvalid)?
+    let (settings, load_error) = match file.as_ref().map(|path| (path, std::fs::read(path))) {
+        Some((path, Ok(bytes))) => match serde_json::from_slice::<Settings>(&bytes)
+            .ok()
+            .filter(|s| s.validate().is_ok())
+        {
+            Some(settings) => (settings, None),
+            None => {
+                let message =
+                    if std::fs::rename(path, path.with_file_name("custom.corrupt.json")).is_ok() {
+                        CORRUPT_CONFIG
+                    } else {
+                        UNREADABLE_CONFIG
+                    };
+                (Settings::default(), Some(message))
+            }
+        },
+        Some((_, Err(e))) if e.kind() != std::io::ErrorKind::NotFound => {
+            (Settings::default(), Some(UNREADABLE_CONFIG))
         }
-        Some(Err(e)) if e.kind() != std::io::ErrorKind::NotFound => return Err(Error::Storage),
-        _ => Settings::default(),
+        _ => (Settings::default(), None),
     };
-    settings.validate()?;
     Ok(Box::new(Custom {
         approval: None,
         settings,
         file,
+        load_error,
         secrets: env.secrets.clone(),
         fetch: (env.fetch)(),
         samples: BTreeMap::new(),
@@ -285,12 +305,16 @@ impl Custom {
                     })?
             }
             Input::Command { program, args, .. } => {
-                if !self
+                match self
                     .approval
                     .as_ref()
-                    .is_some_and(|a| a.approved(program, args))
-                {
-                    return Err(WAITING);
+                    .map_or(command::CommandDecision::Waiting, |a| {
+                        a.decision(program, args)
+                    }) {
+                    command::CommandDecision::Approved => {}
+                    command::CommandDecision::Waiting => return Err(WAITING),
+                    command::CommandDecision::Denied => return Err(DENIED),
+                    command::CommandDecision::Expired => return Err(EXPIRED),
                 }
                 command::capture(program, args, Duration::from_secs(10))?
             }
@@ -300,6 +324,11 @@ impl Custom {
         }
         parse_value(source, &body)
     }
+
+    fn status_message(&self) -> Option<&'static str> {
+        self.load_error
+            .or_else(|| self.samples.values().find_map(|s| s.error))
+    }
 }
 
 impl Integration for Custom {
@@ -307,11 +336,7 @@ impl Integration for Custom {
         self.approval = Some(approval);
     }
     fn summary(&self) -> IntegrationSummary {
-        let message = self
-            .samples
-            .values()
-            .find_map(|s| s.error)
-            .map(str::to_owned);
+        let message = self.status_message().map(str::to_owned);
         let mut config_schema = vec![
             ConfigField {
                 name: "enabled".into(),
@@ -364,7 +389,7 @@ impl Integration for Custom {
         let settings: Settings =
             serde_json::from_value(config).map_err(|_| Error::ConfigInvalid)?;
         settings.validate()?;
-        if settings == self.settings {
+        if settings == self.settings && self.load_error.is_none() {
             return self.view();
         }
         let next = settings.fields();
@@ -384,10 +409,14 @@ impl Integration for Custom {
             )
             .map_err(|_| Error::Storage)?;
         }
+        self.load_error = None;
         self.samples
             .retain(|id, _| settings.sources.iter().any(|s| s.id == *id));
         self.settings = settings;
+        let now = Instant::now();
         for sample in self.samples.values_mut() {
+            sample.next = now;
+            sample.failures = 0;
             sample.value = None;
             sample.error = None;
         }
@@ -421,6 +450,17 @@ impl Integration for Custom {
             .map_err(|_| Error::Credentials)
     }
     fn refresh(&mut self) {
+        if !self.settings.enabled
+            || self
+                .last_poll
+                .is_some_and(|at| at.elapsed() < Duration::from_secs(1))
+        {
+            return;
+        }
+        let now = Instant::now();
+        for sample in self.samples.values_mut() {
+            sample.next = now;
+        }
         self.tick();
     }
     fn tick(&mut self) {
@@ -431,6 +471,7 @@ impl Integration for Custom {
         {
             return;
         }
+        let before = self.status_message();
         self.last_poll = Some(Instant::now());
         for source in &self.settings.sources {
             if self
@@ -464,6 +505,7 @@ impl Integration for Custom {
                     Duration::from_secs(source.interval_s)
                 }
                 Err(WAITING) => {
+                    sample.failures = 0;
                     sample.error = Some(WAITING);
                     Duration::from_secs(1)
                 }
@@ -474,6 +516,8 @@ impl Integration for Custom {
                 }
             };
             sample.next = Instant::now() + delay;
+        }
+        if self.status_message() != before {
             self.revision += 1;
         }
     }

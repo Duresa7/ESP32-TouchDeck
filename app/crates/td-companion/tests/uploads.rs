@@ -592,3 +592,144 @@ async fn one_gif_prepares_at_a_time_and_the_next_waits_queued() {
     cancel(second).await.unwrap();
     assert_eq!(td.wait(second).await.state, JobState::Cancelled);
 }
+
+#[tokio::test]
+async fn an_icon_renders_while_one_gif_prepares_and_another_waits() {
+    let td = TestCompanion::start().await;
+    let device = gif_device(&td).await;
+    let source = slow_gif();
+    let mut gifs = Vec::new();
+    for _ in 0..2 {
+        let up = gif_upload(&td, source.clone()).await;
+        let job: td_companion::jobs::Job =
+            serde_json::from_value(prepare_request(&td, &up, &device).await).unwrap();
+        gifs.push(job);
+    }
+    let (first, second) = (&gifs[0], &gifs[1]);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while job_state(&td, second).await != JobState::Queued {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the second GIF waits while the first prepares");
+    assert_eq!(job_state(&td, first).await, JobState::Running);
+
+    td.hold_jobs();
+    let icon = upload(&td).await;
+    let icon_body: CreateAsset = serde_json::from_value(
+        json!({"source": {"kind": "upload", "upload": icon["id"]}, "fit": "contain"}),
+    )
+    .unwrap();
+    let icon_job = td.call::<Create>((), NoQuery, icon_body).await.unwrap();
+
+    let extra_icon = upload(&td).await;
+    let extra_refused = td
+        .raw()
+        .post("/api/v1/assets")
+        .bearer_auth(&td.token)
+        .json(&json!({"source": {"kind": "upload", "upload": extra_icon["id"]}, "fit": "contain"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(extra_refused.status(), 429);
+
+    td.release_jobs();
+    let icon_done = td.wait(&icon_job).await;
+    assert_eq!(icon_done.state, JobState::Succeeded, "{icon_done:?}");
+    assert_eq!(job_state(&td, first).await, JobState::Running);
+    assert_eq!(job_state(&td, second).await, JobState::Queued);
+
+    for job in &gifs {
+        td.call::<Cancel>(
+            JobPath {
+                job: job.id.clone(),
+            },
+            NoQuery,
+            (),
+        )
+        .await
+        .unwrap();
+        assert_eq!(td.wait(job).await.state, JobState::Cancelled);
+    }
+}
+
+#[tokio::test]
+async fn cancelling_a_waiting_gif_leaves_its_upload_usable_until_expiry() {
+    let td = TestCompanion::start().await;
+    let _events = td.events().await;
+    let device = gif_device(&td).await;
+    let slow = slow_gif();
+
+    let first_up = gif_upload(&td, slow.clone()).await;
+    let first: td_companion::jobs::Job =
+        serde_json::from_value(prepare_request(&td, &first_up, &device).await).unwrap();
+    let reused_up = gif_upload(&td, gif_bytes(8, &[10])).await;
+    let waiting: td_companion::jobs::Job =
+        serde_json::from_value(prepare_request(&td, &reused_up, &device).await).unwrap();
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while job_state(&td, &waiting).await != JobState::Queued {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the second GIF waits while the first prepares");
+
+    assert_eq!(
+        render(&td, &reused_up, "contain").await.error.unwrap().code,
+        "upload.not_found"
+    );
+
+    let cancel = |job: &td_companion::jobs::Job| {
+        td.call::<Cancel>(
+            JobPath {
+                job: job.id.clone(),
+            },
+            NoQuery,
+            (),
+        )
+    };
+    cancel(&waiting).await.unwrap();
+    assert_eq!(td.wait(&waiting).await.state, JobState::Cancelled);
+    cancel(&first).await.unwrap();
+    assert_eq!(td.wait(&first).await.state, JobState::Cancelled);
+
+    let retried: td_companion::jobs::Job =
+        serde_json::from_value(prepare_request(&td, &reused_up, &device).await).unwrap();
+    let done = td.wait(&retried).await;
+    assert_eq!(done.state, JobState::Succeeded, "{done:?}");
+
+    let consumed: td_companion::jobs::Job =
+        serde_json::from_value(prepare_request(&td, &reused_up, &device).await).unwrap();
+    assert_eq!(
+        td.wait(&consumed).await.error.unwrap().code,
+        "upload.not_found"
+    );
+
+    let blocker_up = gif_upload(&td, slow).await;
+    let blocker: td_companion::jobs::Job =
+        serde_json::from_value(prepare_request(&td, &blocker_up, &device).await).unwrap();
+    let expiring_up = gif_upload(&td, gif_bytes(8, &[10])).await;
+    let expiring: td_companion::jobs::Job =
+        serde_json::from_value(prepare_request(&td, &expiring_up, &device).await).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while job_state(&td, &expiring).await != JobState::Queued {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("waiting GIF enters queued");
+    cancel(&expiring).await.unwrap();
+    assert_eq!(td.wait(&expiring).await.state, JobState::Cancelled);
+    cancel(&blocker).await.unwrap();
+    assert_eq!(td.wait(&blocker).await.state, JobState::Cancelled);
+
+    td.clock().advance(std::time::Duration::from_secs(3601));
+    let expired: td_companion::jobs::Job =
+        serde_json::from_value(prepare_request(&td, &expiring_up, &device).await).unwrap();
+    assert_eq!(
+        td.wait(&expired).await.error.unwrap().code,
+        "upload.not_found"
+    );
+}

@@ -3,12 +3,14 @@ import type { IntegrationSummary, PresetTile } from '../../companion/api.ts';
 import { plural } from '../../lib/editor/messages.ts';
 import { lineOf, statusOf } from '../../lib/integrations/model.ts';
 import { button } from '../../shell/button.ts';
+import { usePresetNeeds } from './addToLayout.ts';
 import { IntegrationGlyph, PresetButton } from './PresetPreview.tsx';
 
 const ROW_PRESETS = 3;
 
 function Row({ integration, onOpen, onAdd }: { integration: IntegrationSummary; onOpen(id: string, setUp: boolean): void; onAdd(preset: PresetTile): void }) {
   const status = statusOf(integration);
+  const needs = usePresetNeeds();
   const shown = integration.presets.slice(0, ROW_PRESETS);
   const rest = integration.presets.length - shown.length;
   return (
@@ -28,7 +30,7 @@ function Row({ integration, onOpen, onAdd }: { integration: IntegrationSummary; 
       </button>
       <span className="integration-presets">
         {shown.map((preset) => (
-          <PresetButton key={preset.id} preset={preset} streams={integration.streams} onAdd={onAdd} />
+          <PresetButton key={preset.id} preset={preset} streams={integration.streams} onAdd={onAdd} needs={needs(preset)} />
         ))}
         {rest > 0 && (
           <button

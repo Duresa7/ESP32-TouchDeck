@@ -163,17 +163,17 @@ export function TileFields({ store, page, tile }: TileFieldsProps) {
   if (!layout || !device) return null;
   const action = refused?.value ?? tile.action;
   const name = device.name;
-  const graph = tile.render === 'graph';
+  const live = tile.render === 'graph' || tile.render === 'bar' || tile.render === 'now-playing';
   const gif = tile.render === 'gif' || working;
-  const showsGif = offersGif || gif ? { on: gif, choose: (file: File) => gifs.choose(tile.id, file), stop: () => gifs.cancel(tile.id) } : undefined;
+  const showsGif = tile.render !== 'now-playing' && (offersGif || gif) ? { on: gif, choose: (file: File) => gifs.choose(tile.id, file), stop: () => gifs.cancel(tile.id) } : undefined;
   return (
     <div className="tile-fields" data-testid="tile-fields" data-id={tile.id}>
       <LabelField key={`label-${tile.id}`} store={store} tile={tile} device={name} layout={layout} />
       <GraphField store={store} tile={tile} device={name} gif={showsGif} />
       {gif && <GifField store={store} gifs={gifs} tile={tile} device={name} />}
-      {!graph && !gif && <IconField store={store} tile={tile} kind={action.type} />}
+      {!live && !gif && <IconField store={store} tile={tile} kind={action.type} />}
       <SizeField store={store} tile={tile} layout={layout} device={name} />
-      {!graph && <ActionForm key={`action-${tile.id}`} store={store} page={page} tile={tile} layout={layout} device={name} />}
+      {!live && <ActionForm key={`action-${tile.id}`} store={store} page={page} tile={tile} layout={layout} device={name} />}
       {needsApproval(action) && <ApprovalNote action={action} />}
       {processOf(action) && <AllowedActions action={action} />}
       <More key={`position-${tile.id}`} title="Position and size" testId="tile-position">

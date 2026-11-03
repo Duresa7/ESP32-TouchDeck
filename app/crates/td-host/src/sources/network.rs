@@ -262,20 +262,44 @@ mod tests {
         );
     }
 
+    fn next_token() -> usize {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn read_request(socket: &mut TcpStream, expected: &str) -> bool {
+        let mut bytes = [0; 4096];
+        let mut filled = 0;
+        while filled < bytes.len() {
+            match socket.read(&mut bytes[filled..]) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    filled += n;
+                    if bytes[..filled].windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+            }
+        }
+        bytes[..filled].starts_with(expected.as_bytes())
+    }
+
     fn local(reply: impl FnOnce(TcpStream) + Send + 'static) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
+        let path = format!("/api2/json/cluster/resources/{}", next_token());
+        let expected = format!("GET {path} HTTP/1.1\r\n");
         thread::spawn(move || {
-            let (mut socket, _) = listener.accept().unwrap();
-            socket
-                .set_read_timeout(Some(Duration::from_secs(12)))
-                .unwrap();
-            let mut bytes = [0; 4096];
-            let n = socket.read(&mut bytes).unwrap();
-            assert!(bytes[..n].starts_with(b"GET /api2/json/cluster/resources HTTP/1.1"));
-            reply(socket);
+            for accepted in listener.incoming() {
+                let Ok(mut socket) = accepted else { break };
+                let _ = socket.set_read_timeout(Some(Duration::from_secs(12)));
+                if read_request(&mut socket, &expected) {
+                    reply(socket);
+                    return;
+                }
+            }
         });
-        format!("http://{address}/api2/json/cluster/resources")
+        format!("http://{address}{path}")
     }
     fn fetch(url: &str, timeout: Duration) -> Result<String, FetchError> {
         get(&GetRequest {
@@ -335,6 +359,8 @@ mod tests {
     fn a_redirect_is_not_followed() {
         let second = TcpListener::bind("127.0.0.1:0").unwrap();
         let target = second.local_addr().unwrap();
+        let target_path = format!("/redirect-target/{}", next_token());
+        let expected = format!("GET {target_path} HTTP/1.1\r\n");
         second.set_nonblocking(true).unwrap();
         let done = Arc::new(AtomicBool::new(false));
         let hit = thread::spawn({
@@ -342,23 +368,26 @@ mod tests {
             move || {
                 loop {
                     let finished = done.load(Ordering::SeqCst);
-                    if let Ok((mut socket, _)) = second.accept() {
-                        socket.set_nonblocking(false).unwrap();
-                        let _ = socket.read(&mut [0; 4096]);
-                        let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}");
-                        return true;
+                    match second.accept() {
+                        Ok((mut socket, _)) => {
+                            socket.set_nonblocking(false).unwrap();
+                            let _ = socket.set_read_timeout(Some(Duration::from_millis(200)));
+                            if read_request(&mut socket, &expected) {
+                                let _ = socket
+                                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}");
+                                return true;
+                            }
+                        }
+                        Err(_) if finished => return false,
+                        Err(_) => thread::sleep(Duration::from_millis(10)),
                     }
-                    if finished {
-                        return false;
-                    }
-                    thread::sleep(Duration::from_millis(10));
                 }
             }
         });
         let url = local(move |mut socket| {
             let _ = socket.write_all(
                 format!(
-                    "HTTP/1.1 302 Found\r\nLocation: http://{target}/\r\nContent-Length: 0\r\n\r\n"
+                    "HTTP/1.1 302 Found\r\nLocation: http://{target}{target_path}\r\nContent-Length: 0\r\n\r\n"
                 )
                 .as_bytes(),
             );

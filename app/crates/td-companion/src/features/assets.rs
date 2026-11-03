@@ -322,12 +322,18 @@ impl Endpoint for Create {
             )
             .into());
         }
+        let gif = matches!(source, AssetSource::Gif { .. });
         let work = ctx.clone();
-        Ok(ctx
-            .jobs
-            .start::<RenderJob>(JobScope::Companion, true, move |job| {
-                render(&work, &owner, source, fit.unwrap_or_default(), job)
-            })?)
+        let run = move |job: &JobHandle<RenderJob>| {
+            render(&work, &owner, source, fit.unwrap_or_default(), job)
+        };
+        Ok(if gif {
+            ctx.jobs
+                .start_turn::<RenderJob>(JobScope::Companion, true, "gif", run)?
+        } else {
+            ctx.jobs
+                .start::<RenderJob>(JobScope::Companion, true, run)?
+        })
     }
 }
 fn render(
@@ -348,13 +354,16 @@ fn render(
             device,
             target,
         } => {
-            let caps = gif_caps(ctx, &device)?;
-            let limits = gif_limits(&caps)?;
-            let bytes = ctx
+            let _ = gif_limits(&gif_caps(ctx, &device)?)?;
+            let claim = ctx
                 .uploads
-                .take(owner, &upload, ctx.clock.now())
+                .claim(owner, &upload, ctx.clock.now())
                 .ok_or(AssetError::UploadNotFound)?;
-            let _turn = gif_turn(ctx, job)?;
+            job.acquire_slot()?;
+            let limits = gif_limits(&gif_caps(ctx, &device)?)?;
+            let bytes = claim
+                .take(ctx.clock.now())
+                .ok_or(AssetError::UploadNotFound)?;
             let output = td_host::gif_normalize::normalize_gif_until(
                 &bytes,
                 td_host::gif_normalize::Target {
@@ -756,26 +765,6 @@ fn gif_error(error: td_host::gif_normalize::GifError) -> AssetError {
             reason: "timed_out",
         },
         E::Cancelled => JobError::Cancelled.into(),
-    }
-}
-
-fn gif_turn<'a>(
-    ctx: &'a Ctx,
-    job: &JobHandle<RenderJob>,
-) -> Result<parking_lot::MutexGuard<'a, ()>, Stop> {
-    if let Some(turn) = ctx.gif_turn.try_lock() {
-        return Ok(turn);
-    }
-    job.queued();
-    loop {
-        job.check()?;
-        if let Some(turn) = ctx
-            .gif_turn
-            .try_lock_for(std::time::Duration::from_millis(50))
-        {
-            job.running();
-            return Ok(turn);
-        }
     }
 }
 

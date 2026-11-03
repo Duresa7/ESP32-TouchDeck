@@ -781,6 +781,90 @@
   stroke-linejoin: round;
 }
 
+.scene-live {
+  position: absolute;
+  inset: 0;
+}
+
+.scene-live-glyph {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  color: var(--screen-ink);
+}
+
+.scene-level-label,
+.scene-level-value,
+.scene-np-title,
+.scene-np-artist {
+  position: absolute;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scene-level-label {
+  color: var(--screen-ink-2);
+  font-size: var(--screen-text-label);
+  font-weight: var(--screen-weight-medium);
+  line-height: 32px;
+}
+
+.scene-level-value {
+  color: var(--screen-ink);
+  font-size: var(--screen-text-value);
+  font-weight: var(--screen-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 32px;
+  text-align: right;
+}
+
+.scene-level-track {
+  position: absolute;
+  overflow: hidden;
+  background: var(--screen-track);
+}
+
+.scene-level-fill {
+  display: block;
+  height: 100%;
+  background: var(--screen-accent);
+}
+
+.scene-live.is-muted .scene-level-fill {
+  background: var(--screen-ink-2);
+}
+
+.scene-np-art {
+  position: absolute;
+  background: var(--screen-track);
+}
+
+.scene-np-art.is-stand-in {
+  background:
+    radial-gradient(circle at 70% 30%, var(--screen-signal) 0 14%, transparent 15%),
+    linear-gradient(160deg, var(--tile-accent-coral) 0%, var(--tile-color-red) 48%, var(--tile-color-violet) 100%);
+}
+
+.scene-np-title {
+  color: var(--screen-ink);
+  font-size: var(--screen-text-value);
+  font-weight: var(--screen-weight-semibold);
+  line-height: 38px;
+  letter-spacing: -0.012em;
+}
+
+.scene-np-title.is-idle {
+  color: var(--screen-ink-2);
+}
+
+.scene-np-artist {
+  color: var(--screen-ink-2);
+  font-size: var(--screen-text-sub);
+  font-weight: var(--screen-weight-medium);
+  line-height: 28px;
+}
+
 .scene-row {
   position: absolute;
   border-radius: 10px;
@@ -845,6 +929,21 @@
 
 .tile.needs-firmware .scene-text {
   color: var(--screen-ink-2);
+}
+
+.tile-needs-label {
+  position: absolute;
+  inset: 0 0 auto;
+  top: calc(50% - 32px);
+  padding: 0 16px;
+  overflow: hidden;
+  color: var(--screen-ink-2);
+  font-size: var(--screen-text-label);
+  font-weight: var(--screen-weight-medium);
+  line-height: 32px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tile-needs {
