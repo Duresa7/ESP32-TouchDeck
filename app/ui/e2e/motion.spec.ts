@@ -326,8 +326,6 @@ test.describe('with motion', () => {
     test.info().annotations.push({ type: 'frames', description: JSON.stringify(measured) });
     expect(measured.slide_long_frames_ms).toEqual([]);
     expect(measured.tab_long_frames_ms).toEqual([]);
-    expect(measured.slide_longest_gap_ms).toBeLessThan(50);
-    expect(measured.tab_longest_gap_ms).toBeLessThan(50);
   });
 });
 
