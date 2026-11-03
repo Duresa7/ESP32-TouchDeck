@@ -715,6 +715,18 @@ field level, render bar, streams `{value:"number",muted:"number"}`, input true.
 Publish actual OS readback, including our own changes, and heartbeat every 10 s
 with ttl_ms 30000. No playback endpoint is an error; non-Windows reports
 "Volume needs Windows." Disabling stops collection and clears samples.
+Settings persist in `volume.json` beside `sources.json`. Pending level writes
+coalesce to the newest value; a default-endpoint change discards queued writes
+for the previous endpoint. Mute requests expire after at most two seconds.
+
+With `test-hooks` and `--mock-devices`, `test.volume_write`
+(`POST /test-hooks/volume`) accepts
+`{level,muted}` to script an external change (finite level in 0..1).
+`test.volume_read` (`GET /test-hooks/volume`) returns `{level,muted,sets}`; `sets` counts provider
+level writes. These hooks never control real audio and are absent from the
+release router. Run `cargo test -p td-host real_os_volume_smoke -- --ignored
+--nocapture` on Windows to check Core Audio callbacks; it briefly changes the
+level by 1% and restores the original level and mute state.
 
 #### Media
 

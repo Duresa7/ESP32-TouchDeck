@@ -18,6 +18,7 @@ impl Fetch for Recorder {
 }
 fn registry(recorder: Recorder, file: Option<std::path::PathBuf>) -> Registry {
     Registry::new(Environment {
+        volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
         secrets: Arc::new(MemorySecrets::default()),
         config_file: file,
         fetch: Arc::new(move || Box::new(recorder.clone())),
@@ -100,6 +101,7 @@ fn saved_unknown_integration_config_and_credentials_do_not_block_registry_startu
         let calls = Recorder::default();
         let fetch = calls.clone();
         let mut loaded = Registry::new(Environment {
+            volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
             secrets: store.clone(),
             config_file: Some(file.clone()),
             fetch: Arc::new(move || Box::new(fetch.clone())),

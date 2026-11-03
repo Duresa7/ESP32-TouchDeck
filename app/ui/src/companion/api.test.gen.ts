@@ -21,6 +21,7 @@ export type MockRecord = { received: Array<JsonValue>, lines: Array<string>, set
 export type NoQuery = null;
 export type PlugBoard = { id: DeviceId, kind: BoardKind, };
 export type ScriptAnswer = "once" | "always" | "deny" | "fail" | "never";
+export type VolumeInput = { level: number, muted: boolean, };
 export const testEndpoints = {
   'test.approvals_script': { method: 'POST', path: '/test/approvals/script', access: 'session' },
   'test.clock': { method: 'POST', path: '/test/clock', access: 'session' },
@@ -34,4 +35,6 @@ export const testEndpoints = {
   'test.press': { method: 'POST', path: '/test/devices/{device}/press', access: 'session' },
   'test.record': { method: 'GET', path: '/test/devices/{device}/record', access: 'session' },
   'test.sets': { method: 'GET', path: '/test/devices/{device}/sets', access: 'session' },
+  'test.volume_read': { method: 'GET', path: '/test-hooks/volume', access: 'session' },
+  'test.volume_write': { method: 'POST', path: '/test-hooks/volume', access: 'session' },
 } as const;
