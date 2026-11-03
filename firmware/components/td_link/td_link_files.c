@@ -317,7 +317,11 @@ static void finish_put(cJSON *reply)
     td_layout_error_t err;
     if (!td_layout_parse((const char *)s.buf, s.fill, &parsed, &err)) {
         snprintf(message, sizeof message, "%s: %s", err.key, err.message);
-        td_link_fail(reply, message);
+        if (strcmp(err.key, "layout.live_image_limit") == 0) {
+            if (td_link_v2_selected()) td_link_v2_fail(reply, "size", message);
+            else td_link_fail(reply, "schema 2 requires v2 negotiation");
+        }
+        else td_link_fail(reply, message);
         return;
     }
     if (parsed->schema == 2 && !td_link_v2_selected()) {
@@ -782,7 +786,7 @@ void td_link_asset_put(const cJSON *request, cJSON *reply)
         return;
     }
 #endif
-    if (bytes > (format == TD_ASSET_FMT_GIF ? TD_GIF_MAX_BYTES : TD_ASSET_MAX_BYTES)) {
+    if (bytes > (format == TD_ASSET_FMT_GIF ? TD_GIF_MAX_BYTES : format == TD_ASSET_FMT_JPEG ? TD_ASSET_JPEG_MAX_BYTES : TD_ASSET_MAX_BYTES)) {
         td_link_v2_fail(reply, "size", "Asset too large");
         return;
     }
@@ -918,8 +922,9 @@ void td_link_asset_delete(const cJSON *request, cJSON *reply)
     bool deleted = false;
     td_store_lock();
     const char *reason = asset_in_use(id);
-    if (reason == NULL && td_asset_delete(id, &deleted) != TD_ASSET_OK) {
-        reason = "storage";
+    if (reason == NULL) {
+        td_asset_result_t result = td_asset_delete(id, &deleted);
+        if (result != TD_ASSET_OK) reason = td_asset_result_reason(result);
     }
     td_store_unlock();
     if (reason != NULL) {

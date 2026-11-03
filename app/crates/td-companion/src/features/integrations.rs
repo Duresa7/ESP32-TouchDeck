@@ -24,6 +24,8 @@ pub struct Service {
     pub(crate) controls: Controls,
     #[cfg(any(test, feature = "test-hooks"))]
     media: Option<td_host::integrations::media::fake::FakeMedia>,
+    #[cfg(any(test, feature = "test-hooks"))]
+    volume: Option<td_host::integrations::volume::fake::FakeVolume>,
 }
 type Pending = Mutex<HashMap<(String, String), Delivery>>;
 impl Service {
@@ -36,10 +38,12 @@ impl Service {
     }
     pub fn new(mock: bool, events: Events) -> Self {
         let media = mock.then(td_host::integrations::media::fake::FakeMedia::default);
+        let volume = mock.then(td_host::integrations::volume::fake::FakeVolume::default);
         let registry = Registry::new(Environment {
             media_provider: media.as_ref().map(|fake| {
                 Arc::new(fake.clone()) as Arc<dyn td_host::integrations::media::MediaProvider>
             }),
+            volume: volume.as_ref().map(|fake| fake.factory()),
             secrets: if mock {
                 Arc::new(MemorySecrets::default())
             } else {
@@ -66,6 +70,8 @@ impl Service {
             controls,
             #[cfg(any(test, feature = "test-hooks"))]
             media,
+            #[cfg(any(test, feature = "test-hooks"))]
+            volume,
         };
         if let Ok(registry) = service.registry.lock().unwrap().as_ref() {
             *service.summaries.lock().unwrap() = registry.list();
@@ -90,6 +96,10 @@ impl Service {
             }
         });
         service
+    }
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn mock_volume(&self) -> Option<td_host::integrations::volume::fake::FakeVolume> {
+        self.volume.clone()
     }
     pub fn summaries(&self) -> Vec<IntegrationSummary> {
         self.summaries.lock().unwrap().clone()

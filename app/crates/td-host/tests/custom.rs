@@ -7,6 +7,7 @@ fn custom_is_available_with_disabled_empty_config() {
         media_provider: Some(std::sync::Arc::new(
             td_host::integrations::media::fake::FakeMedia::default(),
         )),
+        volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
         secrets: Arc::new(MemorySecrets::default()),
         config_file: None,
         fetch: Arc::new(|| Box::new(td_host::sources::HttpFetch::new())),
@@ -41,6 +42,7 @@ fn configured(body: &'static str) -> Registry {
         media_provider: Some(std::sync::Arc::new(
             td_host::integrations::media::fake::FakeMedia::default(),
         )),
+        volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
         secrets: Arc::new(MemorySecrets::default()),
         config_file: None,
         fetch: Arc::new(move || Box::new(Reply(body))),
@@ -152,6 +154,7 @@ fn failures_have_safe_status_and_bounds_are_enforced() {
             media_provider: Some(std::sync::Arc::new(
                 td_host::integrations::media::fake::FakeMedia::default(),
             )),
+            volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
             secrets: Arc::new(MemorySecrets::default()),
             config_file: None,
             fetch: Arc::new(move || Box::new(Failed(error))),
@@ -243,6 +246,7 @@ fn a_command_runs_only_when_its_exact_program_and_arguments_are_approved() {
             media_provider: Some(std::sync::Arc::new(
                 td_host::integrations::media::fake::FakeMedia::default(),
             )),
+            volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
             secrets: Arc::new(MemorySecrets::default()),
             config_file: None,
             fetch: Arc::new(|| Box::new(Reply("{}"))),
@@ -273,6 +277,7 @@ fn shared_registry(secrets: Arc<MemorySecrets>) -> Registry {
         media_provider: Some(std::sync::Arc::new(
             td_host::integrations::media::fake::FakeMedia::default(),
         )),
+        volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
         secrets,
         config_file: None,
         fetch: Arc::new(|| Box::new(td_host::sources::HttpFetch::new())),
@@ -708,6 +713,7 @@ fn corrupt_or_unreadable_custom_json_recovers_without_blocking_other_integration
 
         let mut r = Registry::new(Environment {
             media_provider: Some(Arc::new(td_host::integrations::media::fake::FakeMedia::default())),
+            volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
             secrets: Arc::new(MemorySecrets::default()),
             config_file: Some(sources_file),
             fetch: Arc::new(|| Box::new(Reply("{}"))),
@@ -746,6 +752,7 @@ fn corrupt_or_unreadable_custom_json_recovers_without_blocking_other_integration
         media_provider: Some(Arc::new(
             td_host::integrations::media::fake::FakeMedia::default(),
         )),
+        volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
         secrets: Arc::new(MemorySecrets::default()),
         config_file: Some(sources_file),
         fetch: Arc::new(|| Box::new(Reply("{}"))),

@@ -679,7 +679,7 @@ clears a cover that Tile shows. The clear obeys cover pacing; the Tile's title,
 artist and state wait for it. It sends a Control's sample, or a cover made
 from one, only while the Control still reports that sample.
 Decode at most 4 MiB source, 4096 by 4096 pixels and 64 MiB decoded memory;
-center-crop to the shared Tile art box and encode baseline JPEG at most 32 KiB
+center-crop to the shared Tile art box and encode baseline 8-bit three-component JPEG (no grayscale) at most 32 KiB
 using the photo quality ladder. Cache decode failures by source and art-box size. Upload by SHA-256 with put_asset before sending
 the image reference. Text goes first; encoding stays outside the link lock.
 Keep at most four cover Assets per Device/session, deleting oldest unreferenced
@@ -715,6 +715,18 @@ field level, render bar, streams `{value:"number",muted:"number"}`, input true.
 Publish actual OS readback, including our own changes, and heartbeat every 10 s
 with ttl_ms 30000. No playback endpoint is an error; non-Windows reports
 "Volume needs Windows." Disabling stops collection and clears samples.
+Settings persist in `volume.json` beside `sources.json`. Pending level writes
+coalesce to the newest value; a default-endpoint change discards queued writes
+for the previous endpoint. Mute requests expire after at most two seconds.
+
+With `test-hooks` and `--mock-devices`, `test.volume_write`
+(`POST /test-hooks/volume`) accepts
+`{level,muted}` to script an external change (finite level in 0..1).
+`test.volume_read` (`GET /test-hooks/volume`) returns `{level,muted,sets}`; `sets` counts provider
+level writes. These hooks never control real audio and are absent from the
+release router. Run `cargo test -p td-host real_os_volume_smoke -- --ignored
+--nocapture` on Windows to check Core Audio callbacks; it briefly changes the
+level by 1% and restores the original level and mute state.
 
 #### Media
 

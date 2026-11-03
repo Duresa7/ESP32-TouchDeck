@@ -306,6 +306,8 @@ impl Endpoint for Clock {
 
 fn feature() -> Feature {
     Feature::new("test")
+        .endpoint::<VolumeRead>()
+        .endpoint::<VolumeWrite>()
         .endpoint::<Console>()
         .endpoint::<Mock>()
         .endpoint::<Press>()
@@ -436,5 +438,55 @@ impl Endpoint for MediaScript {
             fake.idle();
         }
         Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct VolumeInput {
+    pub level: f64,
+    pub muted: bool,
+}
+pub struct VolumeWrite;
+impl Endpoint for VolumeWrite {
+    const NAME: &'static str = "test.volume_write";
+    const METHOD: Method = Method::POST;
+    const PATH: &'static str = "/test-hooks/volume";
+    const STATUS: StatusCode = StatusCode::NO_CONTENT;
+    type Path = ();
+    type Query = NoQuery;
+    type Body = VolumeInput;
+    type Ok = ();
+    type Error = CommonError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<(), CommonError> {
+        ctx.devices.mock().ok_or(CommonError::NotFound)?;
+        ctx.integrations
+            .mock_volume()
+            .ok_or(CommonError::NotFound)?
+            .publish(Some(td_host::integrations::volume::Snapshot {
+                level: req.body.level,
+                muted: req.body.muted,
+            }))
+            .map_err(|_| CommonError::invalid("level", "Expected a number from 0 to 1."))
+    }
+}
+pub struct VolumeRead;
+impl Endpoint for VolumeRead {
+    const NAME: &'static str = "test.volume_read";
+    const METHOD: Method = Method::GET;
+    const PATH: &'static str = "/test-hooks/volume";
+    type Path = ();
+    type Query = NoQuery;
+    type Body = ();
+    type Ok = Value;
+    type Error = CommonError;
+    async fn handle(ctx: Ctx, _: Req<Self>) -> Result<Value, CommonError> {
+        ctx.devices.mock().ok_or(CommonError::NotFound)?;
+        let fake = ctx
+            .integrations
+            .mock_volume()
+            .ok_or(CommonError::NotFound)?;
+        let snapshot = fake.snapshot().ok_or(CommonError::NotFound)?;
+        Ok(json!({"level":snapshot.level,"muted":snapshot.muted,"sets":fake.sets()}))
     }
 }

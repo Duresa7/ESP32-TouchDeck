@@ -69,6 +69,8 @@ typedef enum {
     UI_RENDER_STATIC = 0,
     UI_RENDER_GIF,
     UI_RENDER_GRAPH,
+    UI_RENDER_BAR,
+    UI_RENDER_NOW_PLAYING,
 } ui_render_t;
 
 /* The value type of a Live tile's stream, as the layout declares it and `v2.live.set` sends it. */
@@ -100,6 +102,7 @@ typedef struct {
     const char *icon;
     td_action_t action;
     ui_render_t render;
+    bool input;
     uint8_t stream_count;
     const ui_stream_t *streams;
 } ui_tile_t;

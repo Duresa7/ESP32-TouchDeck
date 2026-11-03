@@ -27,8 +27,9 @@ extern "C" {
 #define TD_ASSET_PAGE 4
 /* Room the volume keeps for Layouts, settings and LittleFS metadata. An upload that would cut into it is `full`. */
 #define TD_ASSET_HEADROOM_BYTES 65536
-/* The default advertised Asset limit while GIF capabilities are disabled. */
 #define TD_ASSET_MAX_BYTES 12300
+#define TD_ASSET_JPEG_MAX_BYTES 32768
+#define TD_ASSET_IMAGE_MAX 256
 
 typedef enum {
     TD_ASSET_OK,
@@ -40,12 +41,14 @@ typedef enum {
     TD_ASSET_FORMAT,
     TD_ASSET_STATE,
     TD_ASSET_INCOMPLETE,
+    TD_ASSET_IN_USE,
 } td_asset_result_t;
 
 typedef enum {
     TD_ASSET_FMT_NONE,
     TD_ASSET_FMT_TDI1,
     TD_ASSET_FMT_GIF,
+    TD_ASSET_FMT_JPEG,
 } td_asset_format_t;
 
 typedef struct {
@@ -78,8 +81,8 @@ td_asset_result_t td_asset_space(td_asset_space_t *out);
 /* The bytes an Asset of this size may take on the volume, with its blocks and metadata, rounded up. */
 uint32_t td_asset_cost(uint32_t bytes);
 
-/* True when <id>.bin is committed and its bytes still hash to id and pass format validation. Fills bytes and format
- * when they are not NULL. */
+/* Checks committed Assets. JPEG uses header and size checks; other formats also verify the hash and format.
+ * JPEG full decode runs at upload finish. Fills bytes and format when they are not NULL. */
 bool td_asset_present(const char *id, uint32_t *bytes, td_asset_format_t *format);
 
 /* Bounded canvas metadata for an already validated GIF Asset. */
@@ -89,7 +92,12 @@ bool td_asset_gif_canvas(const char *id, uint16_t *width, uint16_t *height);
  * *more tells whether any remain after the last one. TD_ASSET_STORAGE when the volume is not mounted. */
 td_asset_result_t td_asset_list(const char *after, td_asset_item_t items[TD_ASSET_PAGE], size_t *count, bool *more);
 
-/* Removes <id>.bin. *deleted is false when it was not there, which is still TD_ASSET_OK. */
+/* Pins a validated JPEG against deletion. Pair each successful pin with unpin after the UI releases it.
+ * Safe across tasks; pin, unpin and delete use the recursive storage lock. */
+td_asset_result_t td_asset_pin(const char *id);
+void td_asset_unpin(const char *id);
+
+/* Removes <id>.bin unless pinned. An absent Asset succeeds with *deleted false. */
 td_asset_result_t td_asset_delete(const char *id, bool *deleted);
 
 /* Opens the upload of `bytes` bytes that must hash to id. TD_ASSET_FULL when td_asset_cost(bytes) exceeds the free
