@@ -178,6 +178,7 @@ static void show_page(uint8_t index)
     atomic_store(&s.page, index);
     if (changed) {
         ui_tile_keys_page_changed();
+        ui_gif_page(index, true);
     }
     for (uint8_t i = 0; i < s.page_count && s.dots[i] != NULL; i++) {
         if (i == index) {
@@ -211,6 +212,7 @@ static void slide_done(bool cut)
         atomic_store(&s.last_frames, frames);
     }
     atomic_store(&s.animating, false);
+    ui_gif_page((uint8_t)atomic_load(&s.page), false);
     ESP_LOGI(TAG, "%s page=%u ms=%u frames=%u", cut ? "slide cut" : s.slide_changes_page ? "page shown" : "bounce done",
              (unsigned)atomic_load(&s.page), (unsigned)ms, (unsigned)frames);
 }
@@ -227,6 +229,7 @@ static void begin_slide(lv_anim_t *anim, bool changes_page)
     s.slide_start_ms = lv_tick_get();
     s.slide_start_frames = display_frame_count();
     atomic_store(&s.animating, true);
+    ui_gif_page((uint8_t)atomic_load(&s.page), true);
     lv_anim_set_var(anim, s.track);
     lv_anim_set_exec_cb(anim, set_track_x);
     lv_anim_set_path_cb(anim, lv_anim_path_ease_out);
@@ -234,6 +237,7 @@ static void begin_slide(lv_anim_t *anim, bool changes_page)
     if (lv_anim_start(anim) == NULL) {
         set_track_x(s.track, ui_pager_rest_x(&s.pager));
         atomic_store(&s.animating, false);
+        ui_gif_page((uint8_t)atomic_load(&s.page), false);
     }
 }
 
@@ -241,6 +245,7 @@ static void start_slide(void)
 {
     const int32_t to = ui_pager_rest_x(&s.pager);
     if (s.track_x == to) {
+        ui_gif_page((uint8_t)atomic_load(&s.page), false);
         return;
     }
     lv_anim_t anim;
@@ -476,6 +481,10 @@ static void build_tile(lv_obj_t *parent, const ui_page_t *page, const ui_tile_t 
         ui_live_build(obj, tile, r);
         return;
     }
+    if (tile->render == UI_RENDER_GIF && ui_gif_build(obj, tile, (uint8_t)(page - s.pages))) {
+        ui_tile_keys_dress(obj, tile);
+        return;
+    }
     if (tile->action.type == TD_ACTION_WIDGET) {
         ui_widget_build(obj, tile, r);
         return;
@@ -648,6 +657,7 @@ static void build_objects(bool full_screen)
  */
 static void load_locked(const td_layout_t *layout, const ui_layout_info_t *info, int64_t started_us)
 {
+    ui_gif_begin();
     set_up_screen();
     tear_down();
     ui_tile_keys_start();
@@ -670,6 +680,7 @@ static void load_locked(const td_layout_t *layout, const ui_layout_info_t *info,
     ui_pager_init(&s.pager, &cfg, count > 0 ? count : 1);
     if (count > 0) {
         build_objects(layout->full_screen);
+        ui_gif_resume();
         show_page(0);
     }
     td_layout_free(old);
@@ -744,6 +755,7 @@ void ui_layout_boot(const char *orientation)
         return;
     }
     const ui_icon_counts_t icons = ui_icon_prepare(s.boot, NULL);
+    ui_gif_prepare(s.boot);
     fill_info(&s.boot_info, s.boot, stored != NULL, bytes, icons);
     snprintf(s.boot_info.error, sizeof s.boot_info.error, "%s", reason);
     s_boot_prepare_us = esp_timer_get_time() - started;
@@ -789,6 +801,7 @@ void ui_build(void)
             return;
         }
         fill_info(&s.boot_info, s.boot, false, 0, ui_icon_prepare(s.boot, NULL));
+        ui_gif_prepare(s.boot);
         s_boot_prepare_us = esp_timer_get_time() - started;
     }
     xSemaphoreTake(s.reload_lock, portMAX_DELAY);
@@ -832,7 +845,9 @@ bool ui_layout_reload(bool use_builtin, td_layout_error_t *err)
 
     ui_layout_info_t info;
     fill_info(&info, next, stored != NULL, bytes, ui_icon_prepare(next, s.layout));
+    ui_gif_prepare(next);
     if (esp_lv_adapter_lock(LOCK_TIMEOUT_MS) != ESP_OK) {
+        ui_gif_discard();
         td_layout_free(stored);
         snprintf(err->key, sizeof err->key, "display.busy");
         snprintf(err->message, sizeof err->message, "the display stayed busy for %d ms", LOCK_TIMEOUT_MS);
