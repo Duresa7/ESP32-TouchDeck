@@ -1206,6 +1206,10 @@ tile. A stale graph keeps its last line at 60% opacity, as on the Device.
 | Invalid JSON | Enter valid JSON. |
 | Number Presets, in source order | {name} value, {name} graph |
 | Approval | Waiting for approval on this PC. |
+| Approval denied | Denied on this PC. |
+| Approval expired | Approval expired. |
+| Corrupt settings file | Couldn't read custom.json. Kept it as custom.corrupt.json and started empty. |
+| Unreadable settings file | Couldn't read custom.json. Started empty. |
 | Missing headers | Enter the secret headers. |
 | Vault failure | Credential store unavailable. |
 | Transport | Use HTTPS for secret headers. |
