@@ -22,8 +22,6 @@ static int type_of(const cJSON *item)
     return -1;
 }
 
-/* Reads the value of a number or a series into values. A text or image value is only checked for its JSON type: no
- * stream this Firmware draws takes one, so the type check refuses it. False for a value of the wrong shape. */
 static bool read_value(const cJSON *value, ui_stream_type_t type, double values[UI_LIVE_SERIES_MAX + 1], size_t *count)
 {
     *count = 0;
@@ -82,10 +80,15 @@ void td_link_live_set(const cJSON *request, cJSON *reply)
     set.ttl_ms = (uint32_t)ttl->valuedouble;
     set.type = (ui_stream_type_t)type;
     set.values = values;
+    const cJSON *value = cJSON_GetObjectItemCaseSensitive(request, "value");
+    if (set.type == UI_STREAM_TEXT) {
+        set.text = value->valuestring;
+    }
+    if (set.type == UI_STREAM_IMAGE && !cJSON_IsNull(value)) set.image = value->valuestring;
     uint32_t retry_ms = 0;
     const ui_live_result_t result = ui_live_update(&set, &retry_ms);
     if (result != UI_LIVE_OK) {
-        td_link_v2_fail(reply, ui_live_reason(result), "Request refused");
+        td_link_v2_fail(reply, (result == UI_LIVE_ASSET ? "asset" : ui_live_reason(result)), "Request refused");
         if (result == UI_LIVE_RATE) {
             cJSON_AddNumberToObject(reply, "retry_ms", retry_ms);
         }

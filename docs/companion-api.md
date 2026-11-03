@@ -679,7 +679,7 @@ clears a cover that Tile shows. The clear obeys cover pacing; the Tile's title,
 artist and state wait for it. It sends a Control's sample, or a cover made
 from one, only while the Control still reports that sample.
 Decode at most 4 MiB source, 4096 by 4096 pixels and 64 MiB decoded memory;
-center-crop to the shared Tile art box and encode baseline JPEG at most 32 KiB
+center-crop to the shared Tile art box and encode baseline 8-bit three-component JPEG (no grayscale) at most 32 KiB
 using the photo quality ladder. Cache decode failures by source and art-box size. Upload by SHA-256 with put_asset before sending
 the image reference. Text goes first; encoding stays outside the link lock.
 Keep at most four cover Assets per Device/session, deleting oldest unreferenced

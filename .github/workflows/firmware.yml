@@ -57,6 +57,7 @@ jobs:
           python -m pip install -q Pillow==13.0.0
           python -B firmware/tools/test_gif.py
           python -B firmware/tools/test_asset.py
+          python -B firmware/tools/test_media.py
           python -B firmware/tools/test_key_sink.py
           python -B firmware/tools/test_file_loaders.py
           python -B firmware/tools/test_tile_geometry.py
