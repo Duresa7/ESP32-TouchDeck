@@ -82,6 +82,9 @@ uint32_t td_asset_cost(uint32_t bytes);
  * when they are not NULL. */
 bool td_asset_present(const char *id, uint32_t *bytes, td_asset_format_t *format);
 
+/* Bounded canvas metadata for an already validated GIF Asset. */
+bool td_asset_gif_canvas(const char *id, uint16_t *width, uint16_t *height);
+
 /* Up to TD_ASSET_PAGE committed Assets with an id strictly after `after` (NULL for the start), ordered by id.
  * *more tells whether any remain after the last one. TD_ASSET_STORAGE when the volume is not mounted. */
 td_asset_result_t td_asset_list(const char *after, td_asset_item_t items[TD_ASSET_PAGE], size_t *count, bool *more);
