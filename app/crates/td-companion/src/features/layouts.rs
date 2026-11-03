@@ -64,6 +64,8 @@ fn issues(errors: Vec<td_core::layout::LayoutError>) -> Vec<LayoutIssue> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum LayoutError {
+    #[error("This Layout has too many Now playing Tiles. Remove one, then send it again.")]
+    LiveImageLimit { limit: u32, actual: usize },
     #[error("This Page has too many animations. Remove an animated Tile.")]
     AnimationLimit {
         page: String,
@@ -90,6 +92,7 @@ pub enum LayoutError {
 }
 impl ApiError for LayoutError {
     const CODES: &'static [&'static str] = &[
+        "layout.live_image_limit",
         "layout.animation_limit",
         "layout.invalid",
         "layout.orientation_mismatch",
@@ -104,7 +107,9 @@ impl ApiError for LayoutError {
     ];
     fn status(&self) -> StatusCode {
         match self {
-            Self::AnimationLimit { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::LiveImageLimit { .. } | Self::AnimationLimit { .. } => {
+                StatusCode::UNPROCESSABLE_ENTITY
+            }
             Self::Invalid(_) | Self::OrientationMismatch => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Changed { .. } => StatusCode::PRECONDITION_FAILED,
             Self::NotFound => StatusCode::NOT_FOUND,
@@ -116,6 +121,7 @@ impl ApiError for LayoutError {
     }
     fn code(&self) -> &'static str {
         match self {
+            Self::LiveImageLimit { .. } => "layout.live_image_limit",
             Self::AnimationLimit { .. } => "layout.animation_limit",
             Self::Invalid(_) => "layout.invalid",
             Self::OrientationMismatch => "layout.orientation_mismatch",
@@ -129,6 +135,9 @@ impl ApiError for LayoutError {
     }
     fn details(&self) -> Option<serde_json::Value> {
         match self {
+            Self::LiveImageLimit { limit, actual } => {
+                Some(serde_json::json!({"limit":limit,"actual":actual}))
+            }
             Self::AnimationLimit {
                 page,
                 field,
@@ -305,6 +314,7 @@ impl Endpoint for Push {
             return Err(LayoutError::OrientationMismatch);
         }
         ctx.links.connected(&device)?;
+        check_live_images(&ctx, &device, &layout)?;
         let scope = JobScope::Device(device.clone());
         if let Some(job) = ctx.jobs.holding(&scope) {
             return Err(JobError::Busy(Box::new(job)).into());
@@ -535,6 +545,32 @@ fn check_animations(ctx: &Ctx, device: &str, layout: &Layout) -> Result<(), Stop
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// Refuses a Layout with more Tiles that declare an `image` stream than the Device's `live_images`, across every
+/// Page, because the Device builds every Page when it shows the Layout.
+fn check_live_images(ctx: &Ctx, device: &str, layout: &Layout) -> Result<(), LayoutError> {
+    let (device, _) = ctx.links.connected(device)?;
+    let limit = device.capabilities.map_or(0, |caps| caps.live_images);
+    let actual = layout
+        .pages
+        .iter()
+        .filter_map(|page| match page {
+            td_core::layout::Page::Grid { tiles, .. } => Some(tiles),
+            _ => None,
+        })
+        .flatten()
+        .filter(|tile| {
+            tile.streams
+                .iter()
+                .flatten()
+                .any(|(_, kind)| *kind == td_core::layout::StreamType::Image)
+        })
+        .count();
+    if actual > limit as usize {
+        return Err(LayoutError::LiveImageLimit { limit, actual });
     }
     Ok(())
 }

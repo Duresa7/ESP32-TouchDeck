@@ -1,5 +1,5 @@
 {
-  "about": "Tile pixel rects from ui_geometry.c and ui_pages.c ui_tile_rect in firmware/components/td_ui_core, compared with app/ui/src/lib/deck/geometry.ts. Coordinates are screen pixels; screen is already oriented, grid is the Layout Page rows/cols, and tile is its cell position/span. C integer division truncates; each edge is n * (area_length + gap) / cells. An invalid grid/span returns the empty rect. fullScreen uses the whole screen. Otherwise scale dimensions by min(screen.w, screen.h)/600, truncating each dimension: title 56, margin x 28, margin y 20, gap 16. Firmware pager strip is 36; app pager strip is 40. Neither result is selected as canonical: step B must resolve the mismatch with Firmware/app owners before implementing td_core::live::tile_rect. The app test checks app_rect and records whether it matches firmware_rect.",
+  "about": "Tile pixel rects as the Firmware draws them: ui_geometry.c and ui_tile_rect in ui_pages.c (firmware/components/td_ui_core). td_core::live::cell_rect, the app's geometry.ts and the Firmware host test (firmware/tools/test_tile_geometry.py) each reproduce every case. Coordinates are screen pixels; screen is already oriented, grid is the Page's rows/cols, and tile is its cell position and span. fullScreen uses the whole screen. Otherwise each design length is scaled by min(screen.w, screen.h)/600, truncating: title strip 56, pager strip 36, margin x 28, margin y 20, gap 16. The grid is the band between the strips, inset by the margins. Each cell edge is n * (grid_length + gap) / cells, truncating, and a Tile ends one gap before its far edge. An invalid grid (outside 1 to 8) or span gives the empty rect.",
   "cases": [
     {
       "name": "landscape full grid",
@@ -18,19 +18,12 @@
         "rowSpan": 3,
         "colSpan": 4
       },
-      "firmware_rect": {
+      "rect": {
         "x": 28,
         "y": 76,
         "w": 968,
         "h": 468
-      },
-      "app_rect": {
-        "x": 28,
-        "y": 76,
-        "w": 968,
-        "h": 464
-      },
-      "agree": false
+      }
     },
     {
       "name": "landscape last cell",
@@ -49,19 +42,12 @@
         "rowSpan": 1,
         "colSpan": 1
       },
-      "firmware_rect": {
+      "rect": {
         "x": 766,
         "y": 398,
         "w": 230,
         "h": 146
-      },
-      "app_rect": {
-        "x": 766,
-        "y": 396,
-        "w": 230,
-        "h": 144
-      },
-      "agree": false
+      }
     },
     {
       "name": "landscape spanning Tile",
@@ -80,19 +66,12 @@
         "rowSpan": 2,
         "colSpan": 2
       },
-      "firmware_rect": {
+      "rect": {
         "x": 274,
         "y": 237,
         "w": 476,
         "h": 307
-      },
-      "app_rect": {
-        "x": 274,
-        "y": 236,
-        "w": 476,
-        "h": 304
-      },
-      "agree": false
+      }
     },
     {
       "name": "portrait first cell",
@@ -111,19 +90,12 @@
         "rowSpan": 1,
         "colSpan": 1
       },
-      "firmware_rect": {
+      "rect": {
         "x": 28,
         "y": 76,
         "w": 170,
         "h": 211
-      },
-      "app_rect": {
-        "x": 28,
-        "y": 76,
-        "w": 170,
-        "h": 210
-      },
-      "agree": false
+      }
     },
     {
       "name": "portrait last span",
@@ -142,19 +114,12 @@
         "rowSpan": 2,
         "colSpan": 2
       },
-      "firmware_rect": {
+      "rect": {
         "x": 214,
         "y": 530,
         "w": 358,
         "h": 438
-      },
-      "app_rect": {
-        "x": 214,
-        "y": 528,
-        "w": 358,
-        "h": 436
-      },
-      "agree": false
+      }
     },
     {
       "name": "full-screen landscape",
@@ -173,19 +138,12 @@
         "rowSpan": 2,
         "colSpan": 3
       },
-      "firmware_rect": {
+      "rect": {
         "x": 260,
         "y": 205,
         "w": 764,
         "h": 395
-      },
-      "app_rect": {
-        "x": 260,
-        "y": 205,
-        "w": 764,
-        "h": 395
-      },
-      "agree": true
+      }
     },
     {
       "name": "full-screen portrait",
@@ -204,19 +162,12 @@
         "rowSpan": 3,
         "colSpan": 2
       },
-      "firmware_rect": {
+      "rect": {
         "x": 205,
         "y": 260,
         "w": 395,
         "h": 764
-      },
-      "app_rect": {
-        "x": 205,
-        "y": 260,
-        "w": 395,
-        "h": 764
-      },
-      "agree": true
+      }
     },
     {
       "name": "scaled short side",
@@ -235,19 +186,12 @@
         "rowSpan": 2,
         "colSpan": 2
       },
-      "firmware_rect": {
+      "rect": {
         "x": 278,
         "y": 189,
         "w": 500,
         "h": 247
-      },
-      "app_rect": {
-        "x": 278,
-        "y": 188,
-        "w": 500,
-        "h": 244
-      },
-      "agree": false
+      }
     },
     {
       "name": "odd scaled dimensions",
@@ -266,19 +210,12 @@
         "rowSpan": 1,
         "colSpan": 1
       },
-      "firmware_rect": {
+      "rect": {
         "x": 510,
         "y": 294,
         "w": 115,
         "h": 33
-      },
-      "app_rect": {
-        "x": 510,
-        "y": 292,
-        "w": 115,
-        "h": 33
-      },
-      "agree": false
+      }
     },
     {
       "name": "invalid span",
@@ -297,19 +234,12 @@
         "rowSpan": 2,
         "colSpan": 1
       },
-      "firmware_rect": {
+      "rect": {
         "x": 0,
         "y": 0,
         "w": 0,
         "h": 0
-      },
-      "app_rect": {
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0
-      },
-      "agree": true
+      }
     }
   ]
 }
