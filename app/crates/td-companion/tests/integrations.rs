@@ -284,7 +284,17 @@ async fn local_stub_accounts_revision_and_wire_outputs_are_safe() {
     assert!(before.detail.is_none());
     let mut events = td.events().await;
     td.call::<Refresh>(path(), NoQuery, ()).await.unwrap();
-    let after = td.call::<Get>(path(), NoQuery, ()).await.unwrap();
+    let after = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let view = td.call::<Get>(path(), NoQuery, ()).await.unwrap();
+            if view.detail.is_some() {
+                break view;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
     let detail = after.detail.as_ref().unwrap();
     assert!(after.summary.revision > before.summary.revision);
     assert_eq!(

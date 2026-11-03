@@ -140,6 +140,9 @@ impl ThisPc {
     }
 }
 impl Integration for ThisPc {
+    fn request_refresh(&mut self) {
+        self.next = None;
+    }
     fn prepare_poll(&mut self) -> Option<Poll> {
         if !self.settings.enabled || self.next.is_some_and(|next| Instant::now() < next) {
             return None;

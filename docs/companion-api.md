@@ -580,6 +580,8 @@ Requests carrying a credential never follow a redirect to another origin. They s
 | `integrations.secret_delete` | `DELETE /integrations/{integration}/secrets/{field}` | → `()` |
 | `integrations.refresh` | `POST /integrations/{integration}/refresh` | → `()` |
 
+Polling Integrations run upstream work outside the shared registry lock, with at most one poll in flight per Integration. `integrations.refresh` schedules a poll and returns before its result is available; clients observe completion through `integration.status` and subsequent reads. Disabled or edited configurations discard results from earlier polls. The last Integrations service owner stops scheduling and joins all workers; shutdown waits for active upstream calls to finish.
+
 CLIProxyAPI config is `{enabled: boolean, url: string, interval_s: integer}`. The URL is trimmed and the interval has a 60-second floor. Unknown fields, including `management_key`, are rejected in config. Its write-only secret field is `management_key`; the secret-write hint is the constant `Set`, including for short keys. Identical config writes preserve the polling deadline. Background polls, manual refreshes, config resets and secret writes share a 15-second minimum spacing between polling attempts.
 
 `IntegrationSummary` also includes `streams: {id, kind, unit, settable}[]` (`DataStream.settable` defaults to false) and `actions: string[]`. Its `status` is `{state: "ok" | "error" | "not_configured", message, delivery: {device, sent, error}[]}`. Delivery entries are supplied by the Device scheduler; an Integration without a bound Device has an empty delivery list. Presets contain `{id, name, action}` with the existing Layout action shape. Live tile readings stay inside the Companion.

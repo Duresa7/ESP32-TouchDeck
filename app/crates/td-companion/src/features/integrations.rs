@@ -758,7 +758,9 @@ mod poll_isolation_tests {
         let count = Arc::new(AtomicUsize::new(0));
         let fetch = count.clone();
         let mut registry = Registry::new(Environment {
-            media_provider: Some(Arc::new(td_host::integrations::media::fake::FakeMedia::default())),
+            media_provider: Some(Arc::new(
+                td_host::integrations::media::fake::FakeMedia::default(),
+            )),
             volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
             secrets: Arc::new(MemorySecrets::default()),
             config_file: None,
@@ -785,19 +787,51 @@ mod poll_isolation_tests {
     #[test]
     fn slow_poll_does_not_block_registry_calls() {
         let (service, _) = start();
-        let at = Instant::now();
-        service
-            .with_registry(&service.events, |r| {
+        type Operation = fn(&mut Registry) -> Result<(), Error>;
+        let operations: [Operation; 6] = [
+            |r| {
+                r.list();
+                Ok(())
+            },
+            |r| {
                 r.get("custom")?.view()?;
-                Ok(r.list())
-            })
-            .unwrap();
-        assert!(
-            at.elapsed() < Duration::from_millis(200),
-            "registry call took {:?}",
-            at.elapsed()
-        );
+                Ok(())
+            },
+            |r| {
+                r.get("custom")?.request_refresh();
+                Ok(())
+            },
+            |r| {
+                r.get("cliproxyapi")?
+                    .secret_put("management_key", "fixture-private-value")
+            },
+            |r| r.get("cliproxyapi")?.secret_delete("management_key"),
+            |r| {
+                r.get("custom")?.configure(config(true, "new"))?;
+                Ok(())
+            },
+        ];
+        for operation in operations {
+            let at = Instant::now();
+            service.with_registry(&service.events, operation).unwrap();
+            assert!(
+                at.elapsed() < Duration::from_millis(200),
+                "registry call took {:?}",
+                at.elapsed()
+            );
+        }
     }
+    #[test]
+    fn dropping_service_joins_in_flight_workers() {
+        let (service, _) = start();
+        let stop = service.runtime.stop.clone();
+        let at = Instant::now();
+        drop(service);
+        assert!(stop.load(std::sync::atomic::Ordering::Acquire));
+        assert!(at.elapsed() >= Duration::from_secs(2));
+        assert!(at.elapsed() < Duration::from_secs(5));
+    }
+
     #[test]
     fn slow_poll_does_not_delay_other_live_values() {
         let (service, count) = start();
@@ -853,12 +887,17 @@ mod poll_isolation_tests {
     fn only_one_poll_is_in_flight() {
         let (service, count) = start();
         for _ in 0..2 {
+            let at = Instant::now();
             service
                 .with_registry(&service.events, |r| {
                     r.get("custom")?.request_refresh();
                     Ok(())
                 })
                 .unwrap();
+            assert!(
+                at.elapsed() < Duration::from_millis(200),
+                "refresh must return while one poll is in flight"
+            );
             std::thread::sleep(Duration::from_millis(1100));
             assert_eq!(count.load(Ordering::SeqCst), 1);
         }
