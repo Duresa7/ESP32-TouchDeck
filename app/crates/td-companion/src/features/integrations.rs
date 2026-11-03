@@ -720,6 +720,15 @@ mod poll_isolation_tests {
             Ok("42".into())
         }
     }
+    struct Counter;
+    impl td_host::integrations::this_pc::CounterSource for Counter {
+        fn collect(&mut self) -> td_host::integrations::this_pc::CounterSample {
+            td_host::integrations::this_pc::CounterSample {
+                values: BTreeMap::from([("cpu_pct".into(), 42.0)]),
+                ..Default::default()
+            }
+        }
+    }
     fn config(enabled: bool, path: &str) -> Value {
         serde_json::json!({"enabled": enabled, "sources": [{"id":"value", "name":"Value", "interval_s":3600, "kind":"number", "input":{"type":"http", "url":format!("https://example.invalid/{path}"), "value_path":"$"}}]})
     }
@@ -737,6 +746,9 @@ mod poll_isolation_tests {
             .unwrap()
             .configure(config(true, "old"))
             .unwrap();
+        *registry.get("this_pc").unwrap() = Box::new(td_host::integrations::this_pc::ThisPc::new(
+            Box::new(Counter),
+        ));
         let service = Service::new(true, Events::default());
         *service.registry.lock().unwrap() = Ok(registry);
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -762,6 +774,27 @@ mod poll_isolation_tests {
             at.elapsed()
         );
     }
+    #[test]
+    fn slow_poll_does_not_delay_other_live_values() {
+        let (service, count) = start();
+        let key = StreamKey {
+            integration: "this_pc".into(),
+            account: String::new(),
+            stream: "cpu_pct".into(),
+        };
+        let wanted = BTreeSet::from([key.clone()]);
+        let mut previous = 0;
+        for _ in 0..2 {
+            std::thread::sleep(Duration::from_millis(1100));
+            let values = service
+                .live(&wanted)
+                .expect("registry remains available during poll");
+            let sample = values.get(&key).expect("other Integration has live values");
+            assert!(sample.sample > previous);
+            previous = sample.sample;
+            assert_eq!(count.load(Ordering::SeqCst), 1);
+        }
+    }
     fn change_during_poll(enabled: bool) {
         let (service, _) = start();
         let at = Instant::now();
@@ -776,7 +809,7 @@ mod poll_isolation_tests {
             "config change took {:?}",
             at.elapsed()
         );
-        std::thread::sleep(Duration::from_millis(3100));
+        std::thread::sleep(Duration::from_millis(4200));
         service
             .with_registry(&service.events, |r| {
                 assert!(r.get("custom")?.live().is_empty());
@@ -794,8 +827,16 @@ mod poll_isolation_tests {
     }
     #[test]
     fn only_one_poll_is_in_flight() {
-        let (_service, count) = start();
-        std::thread::sleep(Duration::from_millis(2100));
-        assert_eq!(count.load(Ordering::SeqCst), 1);
+        let (service, count) = start();
+        for _ in 0..2 {
+            service
+                .with_registry(&service.events, |r| {
+                    r.get("custom")?.request_refresh();
+                    Ok(())
+                })
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(1100));
+            assert_eq!(count.load(Ordering::SeqCst), 1);
+        }
     }
 }

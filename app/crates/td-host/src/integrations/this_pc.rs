@@ -145,9 +145,10 @@ impl Integration for ThisPc {
             return None;
         }
         let mut snapshot = self.clone();
-        self.next = Some(Instant::now() + Duration::from_secs(1));
+        let now = Instant::now();
+        self.next = Some(now + Duration::from_secs(1));
         Some(Box::new(move || {
-            snapshot.tick();
+            snapshot.sample_at(now);
             Box::new(snapshot)
         }))
     }
