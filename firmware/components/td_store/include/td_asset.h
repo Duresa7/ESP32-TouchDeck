@@ -29,6 +29,8 @@ extern "C" {
 #define TD_ASSET_HEADROOM_BYTES 65536
 /* The default advertised Asset limit while GIF capabilities are disabled. */
 #define TD_ASSET_MAX_BYTES 12300
+#define TD_ASSET_JPEG_MAX_BYTES 32768
+#define TD_ASSET_IMAGE_MAX 256
 
 typedef enum {
     TD_ASSET_OK,
@@ -40,12 +42,14 @@ typedef enum {
     TD_ASSET_FORMAT,
     TD_ASSET_STATE,
     TD_ASSET_INCOMPLETE,
+    TD_ASSET_IN_USE,
 } td_asset_result_t;
 
 typedef enum {
     TD_ASSET_FMT_NONE,
     TD_ASSET_FMT_TDI1,
     TD_ASSET_FMT_GIF,
+    TD_ASSET_FMT_JPEG,
 } td_asset_format_t;
 
 typedef struct {
@@ -87,6 +91,11 @@ bool td_asset_present(const char *id, uint32_t *bytes, td_asset_format_t *format
 td_asset_result_t td_asset_list(const char *after, td_asset_item_t items[TD_ASSET_PAGE], size_t *count, bool *more);
 
 /* Removes <id>.bin. *deleted is false when it was not there, which is still TD_ASSET_OK. */
+/* Pins a validated JPEG against deletion. Pair each successful pin with unpin after the UI releases it.
+ * Safe across tasks; pin, unpin and delete use the recursive storage lock. */
+td_asset_result_t td_asset_pin(const char *id);
+void td_asset_unpin(const char *id);
+
 td_asset_result_t td_asset_delete(const char *id, bool *deleted);
 
 /* Opens the upload of `bytes` bytes that must hash to id. TD_ASSET_FULL when td_asset_cost(bytes) exceeds the free

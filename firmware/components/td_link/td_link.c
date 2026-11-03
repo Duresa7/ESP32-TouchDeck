@@ -4,6 +4,7 @@
 #include "td_frame.h"
 #include "td_v2_json.h"
 #include "td_rx_sync.h"
+#include "td_input.h"
 #include <stdio.h>
 #include <string.h>
 #include "esp_timer.h"
@@ -26,6 +27,7 @@ static td_link_state_t s_state;
 static uint8_t s_rx_packet[2 + TD_FRAME_BODY_MAX];
 static QueueHandle_t s_presses;
 static uint32_t s_press_seq;
+static td_input_mailbox_t s_input;
 
 typedef struct {
     uint32_t seq;
@@ -33,6 +35,7 @@ typedef struct {
     char page[TD_LINK_ID_MAX];
     char tile[TD_LINK_ID_MAX];
     char kind[12];
+    char part[16];
 } press_t;
 
 td_link_state_t td_link_state(void)
@@ -195,6 +198,11 @@ static void handle_frame(TickType_t wait)
 
 void td_link_press(const char *page, const char *tile, const char *kind)
 {
+    td_link_press_part(page, tile, kind, NULL);
+}
+
+void td_link_press_part(const char *page, const char *tile, const char *kind, const char *part)
+{
     if (!s_presses) {
         return;
     }
@@ -203,7 +211,44 @@ void td_link_press(const char *page, const char *tile, const char *kind)
     snprintf(press.page, sizeof press.page, "%s", page);
     snprintf(press.tile, sizeof press.tile, "%s", tile);
     snprintf(press.kind, sizeof press.kind, "%s", kind);
+    if (part) {
+        if (!td_link_v2_selected() || !*part || strlen(part) >= sizeof press.part) return;
+        for (const char *c = part; *c; c++) if ((*c < 'a' || *c > 'z') && *c != '_') return;
+        strcpy(press.part, part);
+    }
     xQueueSend(s_presses, &press, 0);
+}
+
+void td_link_input_cancel(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    td_input_cancel(&s_input);
+    portEXIT_CRITICAL(&s_lock);
+}
+
+void td_link_input(const char *page, const char *tile, double value, bool end)
+{
+    if (!td_link_v2_selected()) { td_link_input_cancel(); return; }
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    portENTER_CRITICAL(&s_lock);
+    td_input_put(&s_input, page, tile, value, end, now);
+    portEXIT_CRITICAL(&s_lock);
+}
+
+static void send_input(void)
+{
+    if (!td_link_v2_selected()) { td_link_input_cancel(); return; }
+    td_input_event_t event;
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    portENTER_CRITICAL(&s_lock);
+    bool ready = td_input_take(&s_input, now, &event);
+    portEXIT_CRITICAL(&s_lock);
+    if (!ready) return;
+    char json[256];
+    int len = snprintf(json, sizeof json,
+        "{\"m\":\"v2.input\",\"page\":\"%s\",\"tile\":\"%s\",\"stream\":\"value\",\"phase\":\"%s\",\"value\":%.4f,\"seq\":%u,\"t\":%u}",
+        event.page, event.tile, event.end ? "end" : "move", event.value, (unsigned)event.seq, (unsigned)event.t);
+    if (len > 0 && (size_t)len < sizeof json) td_link_send(TD_FRAME_MESSAGE, 0, TD_FRAME_EVENT, (const uint8_t *)json, (size_t)len);
 }
 
 /* Events go out only while the app is connected. Otherwise they are thrown away, and their seq leaves a gap. */
@@ -213,11 +258,16 @@ static void send_events(void)
     const bool online = td_link_state().online;
     press_t press;
     for (int turn = 0; turn < TD_LINK_EVENTS_PER_TURN && xQueueReceive(s_presses, &press, 0) == pdTRUE; turn++) {
-        if (online) {
+        if (online && (!press.part[0] || td_link_v2_selected())) {
             int len = snprintf(json, sizeof json,
                                "{\"m\":\"press\",\"page\":\"%s\",\"tile\":\"%s\",\"kind\":\"%s\",\"seq\":%u,\"t\":%u}",
                                press.page, press.tile, press.kind, (unsigned)press.seq, (unsigned)press.t);
-            td_link_send(TD_FRAME_MESSAGE, 0, TD_FRAME_EVENT, (const uint8_t *)json, (size_t)len);
+            if (press.part[0] && len > 0 && (size_t)len < sizeof json) {
+                int tail = snprintf(json + len - 1, sizeof json - (size_t)len + 1, ",\"part\":\"%s\"}", press.part);
+                len = tail < 0 ? -1 : len - 1 + tail;
+            }
+            if (len > 0 && (size_t)len < sizeof json)
+                td_link_send(TD_FRAME_MESSAGE, 0, TD_FRAME_EVENT, (const uint8_t *)json, (size_t)len);
         }
     }
     if (!online) {
@@ -239,6 +289,7 @@ static void link_task(void *arg)
     for (;;) {
         handle_frame(pdMS_TO_TICKS(TD_LINK_POLL_MS));
         td_link_files_service((uint32_t)(esp_timer_get_time() / 1000));
+        send_input();
         send_events();
     }
 }

@@ -5,6 +5,7 @@
 #include <string.h>
 #include "cJSON.h"
 #include "td_layout.h"
+#include "ui_live.h"
 
 #ifdef ESP_PLATFORM
 #include "esp_heap_caps.h"
@@ -657,16 +658,56 @@ static int stream_type(const cJSON *v)
     return -1;
 }
 
+typedef struct {
+    const char *render;
+    const char *id;
+    unsigned types;
+    bool required;
+} stream_rule_t;
+
+static const stream_rule_t k_streams[] = {
+    { "graph", "value", (1u << UI_STREAM_NUMBER) | (1u << UI_STREAM_SERIES), true },
+    { "bar", "value", 1u << UI_STREAM_NUMBER, true },
+    { "bar", "muted", 1u << UI_STREAM_NUMBER, false },
+    { "now-playing", "title", 1u << UI_STREAM_TEXT, true },
+    { "now-playing", "artist", 1u << UI_STREAM_TEXT, true },
+    { "now-playing", "cover", 1u << UI_STREAM_IMAGE, true },
+    { "now-playing", "state", 1u << UI_STREAM_NUMBER, true },
+};
+
+static bool check_streams(const cJSON *tile, td_layout_error_t *err)
+{
+    const char *render = cJSON_GetStringValue(member(tile, "render"));
+    const cJSON *streams = member(tile, "streams");
+    for (const cJSON *s = streams ? streams->child : NULL; s; s = s->next) {
+        bool valid = false;
+        for (size_t i = 0; render && i < sizeof k_streams / sizeof k_streams[0]; i++) {
+            const stream_rule_t *rule = &k_streams[i];
+            if (strcmp(render, rule->render) == 0 && strcmp(s->string, rule->id) == 0) {
+                valid = (rule->types & (1u << stream_type(s))) != 0;
+            }
+        }
+        if (!valid) return fail(err, "tile.streams", "renderer cannot bind stream %s", s->string);
+    }
+    for (size_t i = 0; render && i < sizeof k_streams / sizeof k_streams[0]; i++) {
+        const stream_rule_t *rule = &k_streams[i];
+        if (strcmp(render, rule->render) == 0 && rule->required && !member(streams, rule->id)) {
+            return fail(err, "tile.streams", "renderer needs stream %s", rule->id);
+        }
+    }
+    return true;
+}
+
 static bool check_tile(const cJSON *t, int page, int index, bool v2, td_layout_error_t *err)
 {
-    static const char *const members[] = { "id", "label", "row", "col", "rowSpan", "colSpan", "icon", "action", "asset", "render", "streams" };
+    static const char *const members[] = { "id", "label", "row", "col", "rowSpan", "colSpan", "icon", "action", "asset", "render", "streams", "input" };
     char where[48];
     char field[64];
     snprintf(where, sizeof where, "/pages/%d/tiles/%d", page, index);
     if (!cJSON_IsObject(t)) {
         return fail(err, "shape.type", "%s must be object", where);
     }
-    if (!check_some_members(t, where, members, v2 ? 11 : 8, 8, err)) {
+    if (!check_some_members(t, where, members, v2 ? 12 : 8, 8, err)) {
         return false;
     }
 #define FIELD(name) (snprintf(field, sizeof field, "%s/%s", where, name), field)
@@ -703,8 +744,18 @@ static bool check_tile(const cJSON *t, int page, int index, bool v2, td_layout_e
     const cJSON *render = member(t, "render");
     const bool gif = cJSON_IsString(render) && strcmp(render->valuestring, "gif") == 0;
     const bool graph = cJSON_IsString(render) && strcmp(render->valuestring, "graph") == 0;
-    if (render && !graph && (!gif || !cJSON_IsString(asset))) {
+    const bool bar = cJSON_IsString(render) && strcmp(render->valuestring, "bar") == 0;
+    const bool media = cJSON_IsString(render) && strcmp(render->valuestring, "now-playing") == 0;
+    if (render && !graph && !bar && !media && (!gif || !cJSON_IsString(asset))) {
         return fail(err, "icon.format", "%s/render must be graph, or gif with an Asset reference", where);
+    }
+    if ((bar || media) && asset && !cJSON_IsNull(asset)) {
+        return fail(err, "icon.format", "%s/render cannot use a static Asset", where);
+    }
+    const cJSON *input = member(t, "input");
+    const char *action_type = cJSON_GetStringValue(member(member(t, "action"), "type"));
+    if (input && (!cJSON_IsTrue(input) || !bar || !action_type || strcmp(action_type, "widget") != 0)) {
+        return fail(err, "tile.input", "%s/input requires true on a bar with a widget action", where);
     }
     const cJSON *streams = member(t, "streams");
     if (streams != NULL) {
@@ -915,6 +966,7 @@ static bool check_semantics(const cJSON *root, td_layout_error_t *err)
         return fail(err, "internal.no-memory", "no memory for the id check");
     }
     size_t count = 0;
+    size_t live_images = 0;
     bool ok = true;
     int pi = 0;
     for (const cJSON *p = pages->child; ok && p != NULL; p = p->next, pi++) {
@@ -943,18 +995,14 @@ static bool check_semantics(const cJSON *root, td_layout_error_t *err)
                     break;
                 }
             }
-            const cJSON *render = member(t, "render");
-            const bool graph = cJSON_IsString(render) && strcmp(render->valuestring, "graph") == 0;
+            ok = check_streams(t, err);
             const cJSON *streams = member(t, "streams");
-            for (const cJSON *s = streams != NULL ? streams->child : NULL; ok && s != NULL; s = s->next) {
-                const int type = stream_type(s);
-                if (!graph || strcmp(s->string, "value") != 0 || (type != UI_STREAM_NUMBER && type != UI_STREAM_SERIES)) {
-                    ok = fail(err, "tile.streams", "page \"%s\" tile \"%s\" cannot bind stream \"%s\" as \"%s\"", page_id,
-                              id, s->string, s->valuestring);
-                }
+            bool image = false;
+            for (const cJSON *s = streams ? streams->child : NULL; s; s = s->next) {
+                image |= stream_type(s) == UI_STREAM_IMAGE;
             }
-            if (ok && graph && member(streams, "value") == NULL) {
-                ok = fail(err, "tile.streams", "page \"%s\" tile \"%s\" needs stream \"value\"", page_id, id);
+            if (ok && image && ++live_images > UI_LIVE_IMAGES_MAX) {
+                ok = fail(err, "layout.live_image_limit", "Layout exceeds the live image budget");
             }
             if (!ok) {
                 break;
@@ -1112,8 +1160,11 @@ static bool build(const cJSON *root, td_layout_t **out, td_layout_error_t *err)
             const cJSON *render = member(t, "render");
             tile_out->render = !cJSON_IsString(render)                   ? UI_RENDER_STATIC
                                : strcmp(render->valuestring, "gif") == 0 ? UI_RENDER_GIF
+                               : strcmp(render->valuestring, "bar") == 0 ? UI_RENDER_BAR
+                               : strcmp(render->valuestring, "now-playing") == 0 ? UI_RENDER_NOW_PLAYING
                                                                           : UI_RENDER_GRAPH;
             const cJSON *streams = member(t, "streams");
+            tile_out->input = cJSON_IsTrue(member(t, "input"));
             tile_out->streams = stream_out;
             for (const cJSON *s = streams != NULL ? streams->child : NULL; s != NULL; s = s->next, stream_out++) {
                 const size_t n = strlen(s->string) + 1;

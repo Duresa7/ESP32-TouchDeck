@@ -15,11 +15,13 @@
 
 cJSON *td_link_capabilities(void)
 {
-    cJSON *caps = cJSON_Parse("{\"screen\":[1024,600],\"grid\":[8,8],\"pages\":8,\"tiles\":64,\"layout_bytes\":32768,\"layout_schemas\":[1,2],\"tile_kinds\":[\"static\",\"graph\",\"photo-frame\",\"clock\"],\"asset_bytes\":12300,\"formats\":[\"tdi1\"],\"image\":[64,64],\"gif_frames\":0,\"gif_pixels\":0,\"photo_bytes\":131072,\"live_hz\":0,\"live_total_hz\":0,\"series\":0,\"text_bytes\":0,\"streams\":0}");
+    cJSON *caps = cJSON_Parse("{\"screen\":[1024,600],\"grid\":[8,8],\"pages\":8,\"tiles\":64,\"layout_bytes\":32768,\"layout_schemas\":[1,2],\"tile_kinds\":[\"static\",\"graph\",\"photo-frame\",\"clock\",\"bar\",\"now-playing\"],\"asset_bytes\":32768,\"formats\":[\"tdi1\",\"jpeg\"],\"image\":[256,256],\"gif_frames\":0,\"gif_pixels\":0,\"photo_bytes\":131072,\"live_hz\":0,\"live_total_hz\":0,\"series\":0,\"text_bytes\":0,\"streams\":0}");
     cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "live_hz"), UI_LIVE_HZ);
     cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "live_total_hz"), UI_LIVE_TOTAL_HZ);
     cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "series"), UI_LIVE_SERIES_MAX);
     cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "streams"), UI_LIVE_TILE_STREAMS);
+    cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "text_bytes"), UI_LIVE_TEXT_MAX);
+    cJSON_AddNumberToObject(caps, "live_images", UI_LIVE_IMAGES_MAX);
 #if CONFIG_TD_GIF_CAPS
     const td_link_animation_caps_t anim = { .image = {128, 128}, .min_delay_ms = 100, .page_tiles = 4, .page_pixels = 65536 };
     cJSON *object = cJSON_AddObjectToObject(caps, "anim");
@@ -27,10 +29,10 @@ cJSON *td_link_capabilities(void)
     cJSON_AddNumberToObject(object, "min_delay_ms", anim.min_delay_ms);
     cJSON_AddNumberToObject(object, "page_tiles", anim.page_tiles);
     cJSON_AddNumberToObject(object, "page_pixels", anim.page_pixels);
-    const char *formats[] = {"tdi1", "gif"};
-    const char *kinds[] = {"static", "graph", "gif", "photo-frame", "clock"};
-    cJSON_ReplaceItemInObjectCaseSensitive(caps, "formats", cJSON_CreateStringArray(formats, 2));
-    cJSON_ReplaceItemInObjectCaseSensitive(caps, "tile_kinds", cJSON_CreateStringArray(kinds, 5));
+    const char *formats[] = {"tdi1", "gif", "jpeg"};
+    const char *kinds[] = {"static", "graph", "gif", "photo-frame", "clock", "bar", "now-playing"};
+    cJSON_ReplaceItemInObjectCaseSensitive(caps, "formats", cJSON_CreateStringArray(formats, 3));
+    cJSON_ReplaceItemInObjectCaseSensitive(caps, "tile_kinds", cJSON_CreateStringArray(kinds, 7));
     cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "asset_bytes"), 262144);
     cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "gif_frames"), 60);
     cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(caps, "gif_pixels"), 983040);
@@ -93,6 +95,7 @@ static void hello(const cJSON *request, cJSON *reply)
         v2_fail(reply, "storage", "Device name unavailable");
         return;
     }
+    td_link_input_cancel();
     td_link_files_select();
     ui_live_select();
     s_v2 = v2;

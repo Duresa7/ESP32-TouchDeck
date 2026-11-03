@@ -47,6 +47,23 @@ class AssetTest(unittest.TestCase):
         includes = [host / "include", ROOT / "components/td_store/include", ROOT / "components/td_update/include"]
         sources = [ROOT / "components/td_store/td_asset.c", ROOT / "components/td_store/td_gif.c",
                    ROOT / "components/td_update/td_update_state.c", host / "asset_host.c"]
+        decoder = ROOT / "managed_components/lvgl__lvgl/src/libs/tjpgd"
+        for name in ["tjpgd.c", "tjpgd.h", "tjpgdcnf.h"]:
+            text = (decoder / name).read_text()
+            text = text.replace('#include "../../lvgl_public.h"', '#include <stdint.h>\n#define LV_USE_TJPGD 1\n#define LV_STDINT_INCLUDE <stdint.h>')
+            if name == "tjpgd.c":
+                text = text.replace("unsigned int n, i, ofs;", "unsigned int n, i; size_t ofs;")
+            (cls.dir / name).write_text(text, newline="\n")
+        shim = cls.dir / "esp32s3/rom"
+        shim.mkdir(parents=True)
+        (shim / "tjpgd.h").write_text(
+            '#include "../../tjpgd.h"\n'
+            'typedef size_t UINT;\ntypedef uint8_t BYTE;\n#define TD_JPEG_OUTPUT int\n'
+            'static inline JRESULT host_prepare(JDEC *d, size_t (*f)(JDEC *, uint8_t *, size_t), void *p, size_t n, void *c) { '
+            'JRESULT r = jd_prepare(d, f, p, n, c); return r == JDR_OK && d->ncomp != 3 ? JDR_FMT3 : r; }\n'
+            '#define jd_prepare host_prepare\n', newline="\n")
+        includes.insert(0, cls.dir)
+        sources.append(cls.dir / "tjpgd.c")
         if cls.littlefs:
             lfs = ROOT / "managed_components/joltwallet__littlefs/src/littlefs"
             if not (lfs / "lfs.c").exists():
@@ -66,7 +83,7 @@ class AssetTest(unittest.TestCase):
                     source = wrapper
                 sources.append(source)
         exports = ["td_asset_upload_begin", "td_asset_upload_write", "td_asset_upload_finish",
-                   "td_asset_upload_abort", "td_asset_present", "td_asset_delete", "td_asset_result_reason", "host_interrupt"]
+                   "td_asset_upload_abort", "td_asset_present", "td_asset_delete", "td_asset_result_reason", "host_interrupt", "td_asset_pin", "td_asset_unpin"]
         if cls.littlefs:
             exports += ["host_lfs_init", "host_lfs_done", "host_handles", "host_exists", "host_fail_sync", "host_fail_close"]
         if os.name == "nt":
@@ -101,6 +118,47 @@ class AssetTest(unittest.TestCase):
         self.assertEqual(self.lib.td_asset_delete(key, ctypes.byref(deleted)), 0)
         self.assertTrue(deleted.value)
         self.assertFalse(self.lib.td_asset_present(key, None, None))
+
+    def test_jpeg_commit_requires_complete_bounded_decode(self):
+        from io import BytesIO
+        from PIL import Image
+        def jpeg(size=(64, 64), mode="RGB", progressive=False):
+            out = BytesIO()
+            Image.new(mode, size).save(out, format="JPEG", progressive=progressive)
+            return out.getvalue()
+        data = jpeg()
+        key, result = upload(self.lib, data, fmt=3)
+        self.assertEqual(result, 0)
+        size, fmt = ctypes.c_uint32(), ctypes.c_int()
+        self.assertTrue(self.lib.td_asset_present(key, ctypes.byref(size), ctypes.byref(fmt)))
+        self.assertEqual((size.value, fmt.value), (len(data), 3))
+        for bad, reason in [(data[:-2], b"format"), (data[:650], b"format"),
+                            (jpeg((257, 64)), b"size"), (jpeg((64, 257)), b"size"),
+                            (jpeg(mode="L"), b"format"), (jpeg(progressive=True), b"format")]:
+            bad_key, result = upload(self.lib, bad, fmt=3)
+            self.assertEqual(self.lib.td_asset_result_reason(result), reason)
+            self.assertFalse(self.lib.td_asset_present(bad_key, None, None))
+            self.assertTrue(self.lib.td_asset_present(key, None, None))
+        self.assertEqual(upload(self.lib, jpeg((256, 256)), fmt=3)[1], 0)
+
+    def test_live_pins_block_delete_until_last_release(self):
+        from io import BytesIO
+        from PIL import Image
+        out = BytesIO()
+        Image.new("RGB", (32, 32)).save(out, format="JPEG")
+        key, result = upload(self.lib, out.getvalue(), fmt=3)
+        self.assertEqual(result, 0)
+        self.assertEqual(self.lib.td_asset_pin(key), 0)
+        self.assertEqual(self.lib.td_asset_pin(key), 0)
+        deleted = ctypes.c_bool()
+        self.assertEqual(self.lib.td_asset_result_reason(self.lib.td_asset_delete(key, ctypes.byref(deleted))), b"in-use")
+        self.assertFalse(deleted.value)
+        self.lib.td_asset_unpin(key)
+        self.assertEqual(self.lib.td_asset_result_reason(self.lib.td_asset_delete(key, ctypes.byref(deleted))), b"in-use")
+        self.lib.td_asset_unpin(key)
+        self.assertEqual(self.lib.td_asset_delete(key, ctypes.byref(deleted)), 0)
+        self.assertTrue(deleted.value)
+        self.assertNotEqual(self.lib.td_asset_pin(key), 0)
 
     def test_static_asset_remains_static(self):
         import struct
