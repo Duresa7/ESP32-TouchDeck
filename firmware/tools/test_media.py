@@ -59,6 +59,8 @@ class MediaParseTest(unittest.TestCase):
             return self.lib.host_live(json.dumps(request, ensure_ascii=False).encode()).decode()
         self.assertEqual(send("text", 'Beyoncé "live"'), 'Beyoncé "live"')
         self.assertEqual(send("text", ""), "")
+        self.assertEqual(send("text", "é" * 64), "é" * 64)
+        self.assertEqual(send("text", "é" * 65), "size")
         self.assertEqual(send("image", "sha256:" + "a" * 64), "sha256:" + "a" * 64)
         self.assertEqual(send("image", None), "clear")
         self.assertEqual(send("text", 1), "args")
