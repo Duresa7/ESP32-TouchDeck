@@ -1,3 +1,4 @@
+use super::worker::WorkerState;
 use super::*;
 use ::windows::{
     Foundation::TypedEventHandler,
@@ -34,14 +35,14 @@ pub struct WindowsMedia;
 struct Running {
     tx: SyncSender<Message>,
     stop: Arc<AtomicBool>,
-    feed: Feed,
+    identity: Arc<AtomicU64>,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 enum Message {
     Wake,
     Command {
         command: MediaCommand,
-        generation: u64,
+        session_identity: u64,
         deadline: Instant,
         reply: SyncSender<Result<bool, String>>,
     },
@@ -50,6 +51,8 @@ impl MediaProvider for WindowsMedia {
     fn start(&self, feed: Feed) -> Result<Arc<dyn MediaSession>, String> {
         let (tx, rx) = mpsc::sync_channel(32);
         let stop = Arc::new(AtomicBool::new(false));
+        let identity = Arc::new(AtomicU64::new(1));
+        let worker_identity = identity.clone();
         let worker_stop = stop.clone();
         let worker_feed = feed.clone();
         let worker_tx = tx.clone();
@@ -73,17 +76,18 @@ impl MediaProvider for WindowsMedia {
                         feed: worker_feed.clone(),
                         tx: worker_tx,
                     });
-                    let mut worker = Worker::new(manager, signals, worker_feed.clone())?;
+                    let mut worker =
+                        Worker::new(manager, signals, worker_feed.clone(), worker_identity)?;
                     while !worker_stop.load(Ordering::SeqCst) {
                         worker.advance();
                         if let Ok(Message::Command {
                             command,
-                            generation,
+                            session_identity,
                             deadline,
                             reply,
                         }) = rx.recv_timeout(Duration::from_millis(20))
                         {
-                            worker.command(command, generation, deadline, reply);
+                            worker.command(command, session_identity, deadline, reply);
                         }
                     }
                     Ok(())
@@ -96,7 +100,7 @@ impl MediaProvider for WindowsMedia {
         Ok(Arc::new(Running {
             tx,
             stop,
-            feed,
+            identity,
             thread: Mutex::new(Some(thread)),
         }))
     }
@@ -106,7 +110,7 @@ impl MediaSession for Running {
         let (reply, rx) = mpsc::sync_channel(1);
         let _ = self.tx.try_send(Message::Command {
             command,
-            generation: self.feed.generation(),
+            session_identity: self.identity.load(Ordering::SeqCst),
             deadline,
             reply,
         });
@@ -269,7 +273,7 @@ enum Fetch {
 }
 struct PendingCommand {
     job: Job<bool>,
-    generation: u64,
+    session_identity: u64,
     reply: SyncSender<Result<bool, String>>,
 }
 struct Worker {
@@ -284,15 +288,21 @@ struct Worker {
     title: String,
     artist: String,
     playback: Playback,
-    rechecks: VecDeque<Instant>,
+    state: WorkerState,
 }
 impl Worker {
-    fn new(manager: Manager, signals: Arc<Signals>, feed: Feed) -> ::windows::core::Result<Self> {
+    fn new(
+        manager: Manager,
+        signals: Arc<Signals>,
+        feed: Feed,
+        identity: Arc<AtomicU64>,
+    ) -> ::windows::core::Result<Self> {
         let mut worker = Self {
             manager,
             manager_tokens: [None, None],
             signals,
             generation: feed.generation(),
+            state: WorkerState::new(feed.clone(), identity),
             feed,
             session: None,
             fetch: None,
@@ -300,7 +310,6 @@ impl Worker {
             title: String::new(),
             artist: String::new(),
             playback: Playback::Idle,
-            rechecks: VecDeque::new(),
         };
         let dirty = worker.signals.clone();
         worker.manager_tokens[0] = Some(worker.manager.CurrentSessionChanged(
@@ -328,6 +337,7 @@ impl Worker {
                         .as_ref()
                         .is_none_or(|old| old.session != session)
                     {
+                        self.state.session_changed();
                         self.fetch = None;
                         self.commands.clear();
                         self.session = None;
@@ -348,7 +358,7 @@ impl Worker {
                     self.fetch = None;
                     self.commands.clear();
                     self.session = None;
-                    self.rechecks.clear();
+                    self.state.session_changed();
                     self.title.clear();
                     self.artist.clear();
                     self.playback = Playback::Idle;
@@ -363,19 +373,13 @@ impl Worker {
         if flags & (SESSION | PROPERTIES) != 0 {
             self.fetch = None;
             self.generation = self.feed.generation();
-            self.rechecks.clear();
+            self.state.properties_event(Instant::now());
             self.request_properties();
         }
         if flags & PLAYBACK != 0 {
             self.update_playback();
         }
-        if self.fetch.is_none()
-            && self
-                .rechecks
-                .front()
-                .is_some_and(|due| Instant::now() >= *due)
-        {
-            self.rechecks.pop_front();
+        if self.fetch.is_none() && self.state.retry_due(Instant::now()) {
             self.request_properties();
         }
         if !self.feed.current(self.generation) {
@@ -383,7 +387,7 @@ impl Worker {
         }
         self.poll_fetch();
         self.commands.retain_mut(|command| {
-            if !self.feed.current(command.generation) {
+            if !self.state.command_current(command.session_identity) {
                 let _ = command.reply.try_send(Err(NO_RESPONSE.into()));
                 return false;
             }
@@ -457,7 +461,7 @@ impl Worker {
                 };
                 if self.title != title || self.artist != artist {
                     self.feed.clear_cover(self.generation);
-                    self.rechecks = recheck_times(Instant::now());
+                    self.state.metadata_changed(Instant::now());
                 }
                 self.title = title;
                 self.artist = artist;
@@ -520,11 +524,13 @@ impl Worker {
     fn command(
         &mut self,
         command: MediaCommand,
-        generation: u64,
+        session_identity: u64,
         deadline: Instant,
         reply: SyncSender<Result<bool, String>>,
     ) {
-        if Instant::now() >= deadline || !self.feed.current(generation) || self.commands.len() >= 8
+        if Instant::now() >= deadline
+            || !self.state.command_current(session_identity)
+            || self.commands.len() >= 8
         {
             return;
         }
@@ -543,7 +549,7 @@ impl Worker {
                 job.deadline = deadline;
                 self.commands.push(PendingCommand {
                     job,
-                    generation,
+                    session_identity,
                     reply,
                 });
             }
@@ -575,26 +581,9 @@ fn bounded_hstring(text: HSTRING) -> String {
     }
     result
 }
-fn recheck_times(now: Instant) -> VecDeque<Instant> {
-    [300, 1000, 3000]
-        .map(|ms| now + Duration::from_millis(ms))
-        .into()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn thumbnail_rechecks_follow_the_track_change_not_the_previous_read() {
-        let now = Instant::now();
-        assert_eq!(
-            recheck_times(now)
-                .into_iter()
-                .map(|due| due.duration_since(now).as_millis())
-                .collect::<Vec<_>>(),
-            [300, 1000, 3000]
-        );
-    }
     #[test]
     #[ignore = "requires a real Windows media session"]
     fn media_os_smoke() {

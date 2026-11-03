@@ -18,6 +18,8 @@ use td_core::{
 pub mod fake;
 #[cfg(windows)]
 mod windows;
+#[cfg(any(windows, test))]
+mod worker;
 
 pub const MAX_THUMBNAIL_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TEXT_BYTES: usize = 4096;
