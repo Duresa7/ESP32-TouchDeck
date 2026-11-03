@@ -88,7 +88,7 @@ void td_link_live_set(const cJSON *request, cJSON *reply)
     uint32_t retry_ms = 0;
     const ui_live_result_t result = ui_live_update(&set, &retry_ms);
     if (result != UI_LIVE_OK) {
-        td_link_v2_fail(reply, (result == UI_LIVE_ASSET ? "asset" : ui_live_reason(result)), "Request refused");
+        td_link_v2_fail(reply, ui_live_reason(result), "Request refused");
         if (result == UI_LIVE_RATE) {
             cJSON_AddNumberToObject(reply, "retry_ms", retry_ms);
         }

@@ -63,6 +63,17 @@ void ui_leave_recovery(const char *why);
 typedef void (*ui_press_hook_t)(const char *page, const char *tile, const char *kind);
 void ui_set_press_hook(ui_press_hook_t hook);
 
+/* Called on the LVGL task instead of the press hook for a tap on a part of a bar or now-playing Tile, with the part's
+ * wire name: "previous", "play_pause", "next" or "mute". The hook must not block. */
+typedef void (*ui_part_hook_t)(const char *page, const char *tile, const char *kind, const char *part);
+void ui_set_part_hook(ui_part_hook_t hook);
+
+/* Called on the LVGL task while a finger drags a bar Tile that takes input: `input` with the value it sets, 0 to 1,
+ * on each move past the slop, then once with `end` when it lifts or the press is lost. `cancel` drops what has not
+ * gone out, on a Layout or session change or when the value goes stale. Neither may block. */
+void ui_set_input_hooks(void (*input)(const char *page, const char *tile, double value, bool end),
+                        void (*cancel)(void));
+
 /* Tells the deck how to ask whether the app is connected. Until a source is set the deck counts as offline. While
  * it is offline, every app and widget tile draws at the theme's dim_opa and a tap on one sends nothing. The deck asks
  * on its widget redraw timer, so a change shows within one redraw. */

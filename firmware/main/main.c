@@ -187,6 +187,8 @@ void app_main(void)
     BOOT_MARK("update");
 
     ui_set_press_hook(td_link_press);
+    ui_set_part_hook(td_link_press_part);
+    ui_set_input_hooks(td_link_input, td_link_input_cancel);
     ui_layout_boot(td_settings_orientation_name(settings.orientation));
     BOOT_MARK("layout");
     esp_err_t display_err = display_start(settings.orientation == TD_ORIENTATION_PORTRAIT, ui_build);

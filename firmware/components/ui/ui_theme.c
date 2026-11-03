@@ -77,6 +77,17 @@ const ui_theme_t ui_theme = {
         .line_w = 4,
         .area_mix = 36,
     },
+    .level = {
+        .gap = 12,
+        .value_w = 84,
+        .line_h = 32,
+        .track_radius = 10,
+    },
+    .now_playing = {
+        .title_h = 38,
+        .artist_h = 28,
+        .art_radius = 12,
+    },
     .anim_settle_ms = 260,
     .anim_bounce_out_ms = 110,
     .anim_bounce_back_ms = 150,
@@ -89,6 +100,7 @@ const ui_theme_t ui_theme = {
     .font_big = &ui_font_semibold_40,
     .font_title = &ui_font_nameplate_26,
     .font_icon = &lv_font_montserrat_48,
+    .font_glyph = &lv_font_montserrat_32,
 };
 
 static const lv_style_prop_t k_tile_transition_props[] = {

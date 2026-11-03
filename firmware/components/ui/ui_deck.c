@@ -55,6 +55,8 @@ static struct {
     ui_rect_t dot_from[UI_PAGES_MAX];
     uint8_t dot_page;
     lv_obj_t *pressed_obj;
+    bool held;
+    ui_rect_t held_rect;
     bool slide_changes_page;
     uint32_t slide_start_ms;
     uint32_t slide_start_frames;
@@ -288,6 +290,13 @@ static lv_point_t pointer_point(void)
     return p;
 }
 
+static ui_rect_t tile_screen_rect(const ui_tile_t *tile)
+{
+    const int ref = tile_ref(tile);
+    const ui_geometry_t *g = ui_geo();
+    return ref >= 0 ? ui_tile_rect(&s.pages[ref / 256], tile, g->grid, g->gap) : (ui_rect_t){ 0 };
+}
+
 /* A touch that lands on a moving page stops it, but never counts as a tap, because the tile under the finger is
  * not where it will end up. It can still swipe. */
 static void on_press(lv_event_t *e)
@@ -311,6 +320,15 @@ static void on_press(lv_event_t *e)
         lv_obj_remove_state(target, LV_STATE_PRESSED);
         return;
     }
+    if (tile->render == UI_RENDER_BAR) {
+        const ui_rect_t r = tile_screen_rect(tile);
+        if (ui_live_capture(tile, (int16_t)(p.x - r.x), (int16_t)(p.y - r.y))) {
+            lv_obj_remove_state(target, LV_STATE_PRESSED);
+            s.held = true;
+            s.held_rect = r;
+            return;
+        }
+    }
     s.pressed_obj = target;
     atomic_store(&s.pressed, tile_ref(tile));
 }
@@ -325,6 +343,10 @@ static void on_pressing(lv_event_t *e)
         return;
     }
     const lv_point_t p = pointer_point();
+    if (s.held) {
+        ui_live_drag((int16_t)(p.x - s.held_rect.x), (int16_t)(p.y - s.held_rect.y));
+        return;
+    }
     const ui_press_t before = s.pager.press;
     const ui_pager_move_t m = ui_pager_move(&s.pager, (int16_t)p.x, (int16_t)p.y);
     if (before == UI_PRESS_TAP && m.press != UI_PRESS_TAP) {
@@ -348,6 +370,11 @@ static void on_release(lv_event_t *e)
     lv_obj_t *tile_obj = s.pressed_obj;
     const bool tap = ui_pager_release(&s.pager);
     clear_pressed();
+    if (s.held) {
+        s.held = false;
+        ui_live_drop();
+        return;
+    }
     if (!tap || tile_obj == NULL || lv_event_get_code(e) != LV_EVENT_RELEASED) {
         return;
     }
@@ -359,7 +386,14 @@ static void on_release(lv_event_t *e)
         return;
     }
     const int ref = tile_ref(tile);
-    ui_tile_keys_click(ref >= 0 ? &s.pages[ref / 256] : NULL, tile);
+    const ui_page_t *page = ref >= 0 ? &s.pages[ref / 256] : NULL;
+    const ui_rect_t r = tile_screen_rect(tile);
+    const char *part = ui_live_part(tile, (int16_t)(s.pager.x0 - r.x), (int16_t)(s.pager.y0 - r.y));
+    if (part != NULL) {
+        ui_tile_keys_press_part(page, tile, part);
+    } else {
+        ui_tile_keys_click(page, tile);
+    }
 }
 
 /* The band covers the screen as the last child of the active screen, above whichever page shows: the screen's own
@@ -477,7 +511,7 @@ static void build_tile(lv_obj_t *parent, const ui_page_t *page, const ui_tile_t 
     lv_obj_set_event_bubble(obj, true);
     lv_obj_set_user_data(obj, (void *)tile);
     ui_widget_track(obj, tile);
-    if (tile->render == UI_RENDER_GRAPH) {
+    if (tile->render == UI_RENDER_GRAPH || tile->render == UI_RENDER_BAR || tile->render == UI_RENDER_NOW_PLAYING) {
         ui_live_build(obj, tile, r);
         return;
     }
@@ -594,6 +628,7 @@ static void tear_down(void)
     }
     atomic_store(&s.animating, false);
     s.pressed_obj = NULL;
+    s.held = false;
     lv_indev_reset(NULL, NULL);
     lv_obj_clean(screen);
     s.track = NULL;
@@ -856,6 +891,7 @@ bool ui_layout_reload(bool use_builtin, td_layout_error_t *err)
     }
     load_locked(next, &info, started);
     esp_lv_adapter_unlock();
+    ui_live_unpin_dropped();
     xSemaphoreGive(s.reload_lock);
     return true;
 }
