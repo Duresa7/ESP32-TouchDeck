@@ -613,7 +613,8 @@ impl MockDeck {
         self.state().sets.clone()
     }
 
-    /// Queues refusals for the next matching Asset requests.
+    /// Queues `count` refusals with `reason`. The oldest queued refusal answers the next Asset request when that
+    /// request uses its `method`.
     pub fn refuse_assets(&self, method: &str, reason: &str, count: usize) {
         self.state()
             .asset_refusals
@@ -625,7 +626,7 @@ impl MockDeck {
         self.state().live_time = Some(milliseconds);
     }
 
-    /// Every accepted `v2.live.set`, in arrival order.
+    /// Every `v2.live.set` the deck accepted, in order, each with the `at_ms` it arrived.
     pub fn live_sets(&self) -> Vec<Value> {
         self.state().live_sets.clone()
     }

@@ -1538,6 +1538,7 @@ mod tests {
         assert!(m.shown("cover").is_null());
         assert_eq!(m.shown("title"), "Second");
         assert_eq!(m.shown("artist"), "New artist");
+        assert_eq!(m.router.devices["d"].rate_strikes, 0);
     }
     #[test]
     fn review_disabled_media_streams_are_not_fitted() {
