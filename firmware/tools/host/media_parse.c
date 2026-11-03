@@ -30,6 +30,9 @@ int host_input(void)
     if (td_input_take(&box, 100, &event)) return 6;
     if (td_input_put(&box, "p", "t", 1.1, false, 101)) return 7;
     if (td_input_put(&box, "p\"", "t", 0.1, false, 101)) return 8;
+    td_input_put(&box, "p", "t", 0.8, true, 102);
+    td_input_put(&box, "p", "other", 0.2, false, 103);
+    if (!td_input_take(&box, 103, &event) || !event.end || strcmp(event.tile, "t")) return 9;
     return 0;
 }
 
@@ -47,10 +50,17 @@ void td_link_v2_fail(cJSON *reply, const char *reason, const char *error)
     (void)error;
     cJSON_AddStringToObject(reply, "reason", reason);
 }
-const char *ui_live_reason(ui_live_result_t result) { (void)result; return "args"; }
 ui_live_result_t ui_live_update(const ui_live_set_t *set, uint32_t *retry)
 {
     (void)retry;
+    if (!strcmp(set->tile, "unknown") || (set->type == UI_STREAM_TEXT && strlen(set->text) > UI_LIVE_TEXT_MAX)) {
+        const ui_stream_t stream = {.id = "s", .type = UI_STREAM_TEXT};
+        const ui_tile_t tile = {.id = "t", .streams = &stream, .stream_count = 1};
+        const ui_page_t page = {.id = "p", .tiles = &tile, .tile_count = 1};
+        ui_live_table_t table = {0};
+        ui_live_bind(&table, NULL, 0, "builtin", &page, 1);
+        return ui_live_set(&table, set, 0, retry);
+    }
     const char *value = set->type == UI_STREAM_TEXT ? set->text : set->image;
     if (value && !strcmp(value, "refuse-asset")) return UI_LIVE_ASSET;
     if (!value) value = "clear";
@@ -68,4 +78,27 @@ const char *host_live(const char *json)
     cJSON_Delete(request);
     cJSON_Delete(reply);
     return received;
+}
+
+#include <stdio.h>
+typedef struct { char page[16], tile[16], kind[16], part[16]; uint32_t seq, t; } press_t;
+static int s_presses = 1;
+static uint32_t s_press_seq, sent_seq;
+static bool selected;
+static bool td_link_v2_selected(void) { return selected; }
+static int64_t esp_timer_get_time(void) { return 0; }
+#define __atomic_add_fetch(p, n, order) (*(p) += (n))
+static void xQueueSend(int queue, const press_t *press, int wait)
+{ (void)queue; (void)wait; sent_seq = press->seq; }
+#include "press_part.c"
+int host_press(void)
+{
+    s_press_seq = sent_seq = 0;
+    selected = false;
+    td_link_press_part("p", "t", "widget", "mute");
+    selected = true;
+    td_link_press_part("p", "t", "widget", "invalid!");
+    td_link_press_part("p", "t", "widget", "");
+    td_link_press_part("p", "t", "widget", "mute");
+    return sent_seq == 1 ? 0 : 1;
 }

@@ -121,6 +121,7 @@ static int lf_fseek(lf_stream *f, long offset, int whence)
 { return posix_result(lfs_file_seek(&fs, &files[f->fd], (lfs_soff_t)offset, whence)) < 0 ? -1 : 0; }
 #define fgetc lf_fgetc
 #define fseek lf_fseek
+#define ftell(f) ((long)lfs_file_tell(&fs, &files[(f)->fd]))
 #undef open
 #undef close
 #undef fsync

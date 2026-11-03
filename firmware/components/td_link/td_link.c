@@ -206,8 +206,7 @@ void td_link_press_part(const char *page, const char *tile, const char *kind, co
     if (!s_presses) {
         return;
     }
-    press_t press = { .seq = __atomic_add_fetch(&s_press_seq, 1, __ATOMIC_RELAXED),
-                      .t = (uint32_t)(esp_timer_get_time() / 1000) };
+    press_t press = { .t = (uint32_t)(esp_timer_get_time() / 1000) };
     snprintf(press.page, sizeof press.page, "%s", page);
     snprintf(press.tile, sizeof press.tile, "%s", tile);
     snprintf(press.kind, sizeof press.kind, "%s", kind);
@@ -216,6 +215,7 @@ void td_link_press_part(const char *page, const char *tile, const char *kind, co
         for (const char *c = part; *c; c++) if ((*c < 'a' || *c > 'z') && *c != '_') return;
         strcpy(press.part, part);
     }
+    press.seq = __atomic_add_fetch(&s_press_seq, 1, __ATOMIC_RELAXED);
     xQueueSend(s_presses, &press, 0);
 }
 

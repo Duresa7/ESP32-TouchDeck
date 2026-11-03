@@ -95,10 +95,10 @@ static void hello(const cJSON *request, cJSON *reply)
         v2_fail(reply, "storage", "Device name unavailable");
         return;
     }
+    s_v2 = v2;
     td_link_input_cancel();
     td_link_files_select();
     ui_live_select();
-    s_v2 = v2;
     const esp_app_desc_t *app = esp_app_get_description();
     const esp_partition_t *running = esp_ota_get_running_partition();
     char sha[2 * sizeof app->app_elf_sha256 + 1];

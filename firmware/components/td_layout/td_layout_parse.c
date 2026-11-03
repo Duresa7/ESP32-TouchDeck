@@ -1001,9 +1001,7 @@ static bool check_semantics(const cJSON *root, td_layout_error_t *err)
             for (const cJSON *s = streams ? streams->child : NULL; s; s = s->next) {
                 image |= stream_type(s) == UI_STREAM_IMAGE;
             }
-            if (ok && image && ++live_images > UI_LIVE_IMAGES_MAX) {
-                ok = fail(err, "layout.live_image_limit", "Layout exceeds the live image budget");
-            }
+            if (image) live_images++;
             if (!ok) {
                 break;
             }
@@ -1028,6 +1026,9 @@ static bool check_semantics(const cJSON *root, td_layout_error_t *err)
         }
     }
     free(seen);
+    if (ok && live_images > UI_LIVE_IMAGES_MAX) {
+        return fail(err, "layout.live_image_limit", "Layout exceeds the live image budget");
+    }
     return ok;
 }
 

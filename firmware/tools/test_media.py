@@ -24,14 +24,17 @@ class MediaParseTest(unittest.TestCase):
         out = Path(cls.tmp.name)
         host = ROOT / "tools/host"
         cjson = ROOT / "managed_components/espressif__cjson/cJSON"
-        includes = [host / "include", cjson]
+        includes = [out, host / "include", cjson]
         includes += [ROOT / "components" / c / "include" for c in ["td_layout", "td_ui_core", "keys", "td_link_core", "td_link", "td_console", "ui"]]
-        sources = [host / "media_parse.c", ROOT / "components/td_link/td_link_live.c", ROOT / "components/td_link_core/td_input.c", ROOT / "components/td_layout/td_layout_parse.c", cjson / "cJSON.c"]
+        link = (ROOT / "components/td_link/td_link.c").read_text()
+        start = link.index("void td_link_press_part(")
+        (out / "press_part.c").write_text(link[start:link.index("\nvoid td_link_input_cancel", start)], newline="\n")
+        sources = [ROOT / "components/td_ui_core/ui_live.c", ROOT / "components/td_ui_core/ui_pages.c", host / "media_parse.c", ROOT / "components/td_link/td_link_live.c", ROOT / "components/td_link_core/td_input.c", ROOT / "components/td_layout/td_layout_parse.c", cjson / "cJSON.c"]
         dll = out / ("media.dll" if os.name == "nt" else "media.so")
         if os.name == "nt":
             command = ["cl", "/nologo", "/LD", "/std:clatest", "/W3", "/WX", "/D_CRT_SECURE_NO_WARNINGS"]
             command += ["/I" + str(p) for p in includes] + [str(p) for p in sources]
-            command += ["/link", "/OUT:" + str(dll), "/EXPORT:host_layout", "/EXPORT:host_input", "/EXPORT:host_live"]
+            command += ["/link", "/OUT:" + str(dll), "/EXPORT:host_layout", "/EXPORT:host_input", "/EXPORT:host_live", "/EXPORT:host_press"]
         else:
             command = [os.environ.get("CC", "cc"), "-shared", "-fPIC", "-std=c11", "-Wall", "-Wextra", "-Werror"]
             command += ["-I" + str(p) for p in includes] + [str(p) for p in sources] + ["-lm", "-o", str(dll)]
@@ -67,6 +70,14 @@ class MediaParseTest(unittest.TestCase):
         self.assertEqual(send("image", []), "args")
         self.assertEqual(send("text", "refuse-asset"), "asset")
 
+    def test_unknown_tile_precedes_text_size(self):
+        request = dict(m="v2.live.set", layout="builtin", page="p", tile="unknown", stream="s",
+                       n=1, ttl_ms=1000, type="text", value="x" * 129)
+        self.assertEqual(self.lib.host_live(json.dumps(request).encode()), b"tile")
+
+    def test_invalid_parts_do_not_consume_sequence(self):
+        self.assertEqual(self.lib.host_press(), 0)
+
     def test_input_coalesces_paces_ends_and_cancels(self):
         self.assertEqual(self.lib.host_input(), 0)
 
@@ -97,6 +108,13 @@ class MediaParseTest(unittest.TestCase):
             page["tiles"][0]["id"] = f"t{i}"
             pages.append(page)
             self.assertEqual(self.parse(value), "ok" if i < 4 else "layout.live_image_limit")
+
+        pages[-1]["tiles"][0]["row"] = 1
+        self.assertEqual(self.parse(value), "tile.bounds")
+        pages[-1]["tiles"][0]["row"] = 0
+        duplicate = dict(pages[-1]["tiles"][0], id="overlap")
+        pages[-1]["tiles"].append(duplicate)
+        self.assertEqual(self.parse(value), "tile.overlap")
 
 
 if __name__ == "__main__":

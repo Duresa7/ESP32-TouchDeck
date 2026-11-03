@@ -317,7 +317,10 @@ static void finish_put(cJSON *reply)
     td_layout_error_t err;
     if (!td_layout_parse((const char *)s.buf, s.fill, &parsed, &err)) {
         snprintf(message, sizeof message, "%s: %s", err.key, err.message);
-        if (strcmp(err.key, "layout.live_image_limit") == 0) td_link_v2_fail(reply, "size", message);
+        if (strcmp(err.key, "layout.live_image_limit") == 0) {
+            if (td_link_v2_selected()) td_link_v2_fail(reply, "size", message);
+            else td_link_fail(reply, "schema 2 requires v2 negotiation");
+        }
         else td_link_fail(reply, message);
         return;
     }

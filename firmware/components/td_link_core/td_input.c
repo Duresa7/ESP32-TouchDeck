@@ -16,6 +16,7 @@ static bool id_valid(const char *s)
 bool td_input_put(td_input_mailbox_t *box, const char *page, const char *tile, double value, bool end, uint32_t now)
 {
     if (!id_valid(page) || !id_valid(tile) || !isfinite(value) || value < 0 || value > 1) return false;
+    if (box->pending && box->event.end) return false;
     strcpy(box->event.page, page);
     strcpy(box->event.tile, tile);
     box->event.value = round(value * 10000) / 10000;

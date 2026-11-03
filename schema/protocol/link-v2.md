@@ -196,7 +196,7 @@ most one transparent index. Every frame delay is at least `anim.min_delay_ms`.
 NETSCAPE2.0 specifies an infinite loop. Other GIF encodings return `format`.
 Canvas dimensions obey `anim.image`, frame count obeys `gif_frames` and the sum
 of full-canvas pixels over all frames obeys `gif_pixels`.
-JPEG requires baseline sequential 8-bit grayscale or three-component JPEG,
+JPEG requires baseline sequential 8-bit three-component JPEG,
 no progressive or arithmetic coding, dimensions within `caps.image`. Firmware
 validates complete decoding before commit and never trusts claimed dimensions.
 The Companion resizes media before upload. Encoded byte limits do not replace

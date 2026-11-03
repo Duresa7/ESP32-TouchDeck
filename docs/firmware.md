@@ -706,7 +706,9 @@ both native files and LittleFS. Host JPEG tests use the pinned LVGL TJpgDec with
 ROM-compatible format restrictions; the ESP32-S3 build uses ROM TJpgDec.
 
 JPEG uploads are at most 32768 bytes and 256 by 256 pixels. The store syncs the
-upload before full decode to a null sink, then commits it atomically. JPEG is
+upload before full decode to a null sink without per-block sleeps, then commits it
+atomically. The decoder unread-byte count locates EOI; trailing data is refused.
+Presence and pin checks read only the stored JPEG header and size. JPEG is
 for live images; static Tile Assets remain tdi1. The Layout parser accepts bar
 and now-playing streams, with at most four image Tiles across all Pages.
 

@@ -677,7 +677,7 @@ Image samples name source pictures owned by Control, never arbitrary URLs.
 On a track change publish cover null at once with new metadata. Discard stale
 metadata, thumbnail and encoding completions by session/track generation.
 Decode at most 4 MiB source, 4096 by 4096 pixels and 64 MiB decoded memory;
-center-crop to the shared Tile art box and encode baseline JPEG at most 32 KiB
+center-crop to the shared Tile art box and encode baseline 8-bit three-component JPEG (no grayscale) at most 32 KiB
 using the photo quality ladder. Upload by SHA-256 with put_asset before sending
 the image reference. Text goes first; encoding stays outside the link lock.
 Keep at most four cover Assets per Device/session, deleting oldest unreferenced

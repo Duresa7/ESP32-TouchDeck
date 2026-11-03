@@ -81,8 +81,8 @@ td_asset_result_t td_asset_space(td_asset_space_t *out);
 /* The bytes an Asset of this size may take on the volume, with its blocks and metadata, rounded up. */
 uint32_t td_asset_cost(uint32_t bytes);
 
-/* True when <id>.bin is committed and its bytes still hash to id and pass format validation. Fills bytes and format
- * when they are not NULL. */
+/* Checks committed Assets. JPEG uses header and size checks; other formats also verify the hash and format.
+ * JPEG full decode runs at upload finish. Fills bytes and format when they are not NULL. */
 bool td_asset_present(const char *id, uint32_t *bytes, td_asset_format_t *format);
 
 /* Bounded canvas metadata for an already validated GIF Asset. */

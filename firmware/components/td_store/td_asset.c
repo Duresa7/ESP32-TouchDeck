@@ -156,7 +156,6 @@ static TD_JPEG_OUTPUT jpeg_sink(JDEC *decoder, void *pixels, JRECT *rect)
     (void)decoder;
     (void)pixels;
     (void)rect;
-    vTaskDelay(1);
     return 1;
 }
 
@@ -164,7 +163,7 @@ static td_asset_result_t validate_jpeg(const char *path)
 {
     FILE *file = fopen(path, "rb");
     if (!file) return TD_ASSET_STORAGE;
-    void *work = malloc(4096);
+    void *work = calloc(1, 4096);
     if (!work) { fclose(file); return TD_ASSET_MEMORY; }
     JDEC decoder;
     JRESULT decoded = jd_prepare(&decoder, jpeg_read, work, 4096, file);
@@ -173,7 +172,15 @@ static td_asset_result_t validate_jpeg(const char *path)
         if (!decoder.width || !decoder.height || decoder.width > TD_ASSET_IMAGE_MAX || decoder.height > TD_ASSET_IMAGE_MAX) {
             result = TD_ASSET_SIZE;
         } else if (jd_decomp(&decoder, jpeg_sink, 0) == JDR_OK) {
-            if (fseek(file, -2, SEEK_END) == 0 && fgetc(file) == 0xff && fgetc(file) == 0xd9) result = TD_ASSET_OK;
+            const long read_end = ftell(file);
+            if (read_end >= 0 && (unsigned long)read_end >= decoder.dctr &&
+                fseek(file, read_end - (long)decoder.dctr, SEEK_SET) == 0) {
+                int marker = fgetc(file);
+                if (marker == 0xff) {
+                    do { marker = fgetc(file); } while (marker == 0xff);
+                    if (marker == 0xd9 && fgetc(file) == EOF) result = TD_ASSET_OK;
+                }
+            }
         }
     }
     if (ferror(file)) result = TD_ASSET_STORAGE;
@@ -294,19 +301,26 @@ bool td_asset_present(const char *id, uint32_t *bytes, td_asset_format_t *format
     char got[TD_ASSET_ID_LEN + 1];
     struct stat st;
     td_store_lock();
-    bool ok = stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0 && st.st_size <= TD_GIF_MAX_BYTES
-        && hash_file(path, (uint32_t)st.st_size, digest, head);
+    bool ok = stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0 && st.st_size <= TD_GIF_MAX_BYTES;
+    bool jpeg = false;
+    if (ok) {
+        FILE *file = fopen(path, "rb");
+        memset(head, 0, sizeof head);
+        ok = file && fread(head, 1, sizeof head, file) >= 4;
+        if (file) fclose(file);
+        jpeg = ok && detect(head, (uint32_t)st.st_size) == TD_ASSET_FMT_JPEG;
+        if (ok && !jpeg) ok = hash_file(path, (uint32_t)st.st_size, digest, head);
+    }
     if (ok && detect(head, (uint32_t)st.st_size) == TD_ASSET_FMT_GIF) {
         ok = validate_gif(path, (uint32_t)st.st_size) == TD_ASSET_OK;
     }
-    if (ok && detect(head, (uint32_t)st.st_size) == TD_ASSET_FMT_JPEG) ok = validate_jpeg(path) == TD_ASSET_OK;
     td_store_unlock();
     if (!ok) {
         return false;
     }
-    hex(digest, got);
+    if (!jpeg) hex(digest, got);
     const td_asset_format_t detected = detect(head, (uint32_t)st.st_size);
-    if (strcmp(got, id) != 0 || detected == TD_ASSET_FMT_NONE) {
+    if ((!jpeg && strcmp(got, id) != 0) || detected == TD_ASSET_FMT_NONE) {
         ESP_LOGW(TAG, "%.12s does not validate", id);
         return false;
     }

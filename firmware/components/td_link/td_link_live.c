@@ -83,10 +83,6 @@ void td_link_live_set(const cJSON *request, cJSON *reply)
     const cJSON *value = cJSON_GetObjectItemCaseSensitive(request, "value");
     if (set.type == UI_STREAM_TEXT) {
         set.text = value->valuestring;
-        if (strlen(set.text) > UI_LIVE_TEXT_MAX) {
-            td_link_v2_fail(reply, "size", "Text exceeds the live byte limit");
-            return;
-        }
     }
     if (set.type == UI_STREAM_IMAGE && !cJSON_IsNull(value)) set.image = value->valuestring;
     uint32_t retry_ms = 0;
