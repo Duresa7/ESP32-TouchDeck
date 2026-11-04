@@ -5,7 +5,7 @@ import { createDevicesStore } from '../../companion/devices.ts';
 import { openEvents } from '../../companion/events.ts';
 import { createFakeCompanion } from '../../companion/fake.ts';
 import { createJobsStore, waitForJob } from '../../companion/jobs.ts';
-import { sampleDevice } from '../../companion/samples.ts';
+import { GIF_CAPS, sampleDevice } from '../../companion/samples.ts';
 import { windowSession } from '../../companion/session.ts';
 import { watchSends } from '../../screens/layout/editor.ts';
 import { createEditorStore } from '../editor/store.ts';
@@ -149,7 +149,7 @@ describe('a Send through the editor on the fake Companion', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   test('asks, checks after the Send, and clears when the Companion reports matches', async () => {
-    const fake = createFakeCompanion({ devices: [desk(CHECKING)], layouts: { mock0001: media }, jobMs: 5 });
+    const fake = createFakeCompanion({ devices: [{ ...desk(CHECKING), capabilities: GIF_CAPS }], layouts: { mock0001: media }, jobMs: 5 });
     vi.stubGlobal('fetch', fake.fetch);
     const companion = createClient('http://127.0.0.1:51234', windowSession(fake.bridge));
     const devices = createDevicesStore();
