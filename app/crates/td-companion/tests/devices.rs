@@ -396,10 +396,17 @@ async fn a_restart_the_device_starts_itself_brings_a_fresh_hello() {
 async fn the_console_allowlist_is_enforced_before_the_device() {
     let td = TestCompanion::start().await;
     td.plug_device("mock0001").await;
+    let console_lines = || {
+        td.deck("mock0001")
+            .lines()
+            .into_iter()
+            .filter(|line| line != "layout state")
+            .collect::<Vec<_>>()
+    };
     let route = "/api/v1/devices/mock0001/console";
     assert_eq!(console(&td, route, "version").await.0, 204);
     assert_eq!(console(&td, route, "link state").await.0, 204);
-    td.until(|td| td.deck("mock0001").lines() == ["version", "link state"])
+    td.until(|_| console_lines() == ["version", "link state"])
         .await;
     let long = format!("store get /{}", "a".repeat(300));
     for line in [
@@ -420,24 +427,23 @@ async fn the_console_allowlist_is_enforced_before_the_device() {
             "{line:?}"
         );
     }
-    // Nothing forbidden reached the Device, and the input sink typed nothing.
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(td.deck("mock0001").lines(), ["version", "link state"]);
+    td.let_live_rounds_run(1).await;
+    assert!(
+        td.deck("mock0001")
+            .lines()
+            .iter()
+            .any(|l| l == "layout state")
+    );
+    assert_eq!(console_lines(), ["version", "link state"]);
     assert!(td.input_log().is_empty());
-    // The e2e harness gets the full console through the test route.
     assert_eq!(
         console(&td, "/api/v1/test/devices/mock0001/console", "keys a")
             .await
             .0,
         204
     );
-    td.until(|td| {
-        td.deck("mock0001")
-            .lines()
-            .last()
-            .is_some_and(|l| l == "keys a")
-    })
-    .await;
+    td.until(|_| console_lines() == ["version", "link state", "keys a"])
+        .await;
 }
 
 #[tokio::test]
