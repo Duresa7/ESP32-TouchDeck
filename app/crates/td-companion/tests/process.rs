@@ -451,3 +451,19 @@ async fn pairing_codes_reach_only_the_delivery_capture() {
         assert_eq!(leaked, None, "a pairing code or link leaked");
     }
 }
+
+#[tokio::test]
+async fn the_real_device_console_flag_refuses_to_start_without_a_data_folder() {
+    let child = Process(
+        Command::new(env!("CARGO_BIN_EXE_td-companion"))
+            .arg("--test-real-device-console")
+            .env_remove("TOUCHDECK_APP_DATA_DIR")
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let (status, stderr) = refused(child).await;
+    assert!(!status.success());
+    assert!(stderr.contains("TOUCHDECK_APP_DATA_DIR"), "{stderr}");
+}

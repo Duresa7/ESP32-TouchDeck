@@ -86,6 +86,15 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => return Err("Unknown Companion argument.".into()),
     };
+    #[cfg(feature = "test-hooks")]
+    if args == ["--test-real-device-console"]
+        && std::env::var_os("TOUCHDECK_APP_DATA_DIR").is_none()
+    {
+        return Err(
+            "--test-real-device-console needs TOUCHDECK_APP_DATA_DIR, so a test Companion never uses your real data folder."
+                .into(),
+        );
+    }
     let root = root()?;
     std::fs::create_dir_all(&root)?;
     #[cfg(windows)]
