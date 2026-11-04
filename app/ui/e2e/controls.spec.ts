@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Capabilities, ControlLayout } from '../src/companion/api.ts';
-import type { Layout, Tile } from '../src/lib/editor/validate.ts';
+import type { GridPage, Layout, Tile } from '../src/lib/editor/validate.ts';
 import { consoleErrors, sideScroll, spills } from './break-helpers.ts';
 import { layoutOf, waitEvent } from './layout-helpers.ts';
 
@@ -18,16 +18,13 @@ const volume: Tile = { ...at('volume', 'Volume', 0, 0, 2), icon: null, render: '
 const playing: Tile = { ...at('playing', 'Now playing', 0, 2, 2), icon: null, render: 'now-playing', streams: { title: 'text', artist: 'text', cover: 'image', state: 'number' }, action: widget('media', 'title') };
 const forged: Tile = { ...at('forged', 'Volume', 0, 0, 2), icon: null, render: 'bar', streams: { value: 'number' }, input: true, action: widget('forged', 'level', 'other PC') };
 const play: Tile = { ...at('play', 'Play', 1, 0), icon: null, action: { type: 'consumer', usage: 205 } };
+const gif: Tile = { ...at('gif', 'GIF', 1, 1), icon: null, render: 'gif', asset: `sha256:${'1'.repeat(64)}`, action: { type: 'none' } };
 
-const RECOVERED: Layout = {
-  schema: 2,
-  name: 'Upgraded',
-  orientation: 'landscape',
-  pages: [
-    { kind: 'grid', id: 'media', title: 'Media', rows: 2, cols: 4, tiles: [volume, playing, play] },
-    { kind: 'grid', id: 'more', title: 'More', rows: 2, cols: 4, tiles: [forged] },
-  ],
-};
+const MEDIA: GridPage = { kind: 'grid', id: 'media', title: 'Media', rows: 2, cols: 4, tiles: [volume, playing, play] };
+const MORE: GridPage = { kind: 'grid', id: 'more', title: 'More', rows: 2, cols: 4, tiles: [forged] };
+
+const RECOVERED: Layout = { schema: 2, name: 'Upgraded', orientation: 'landscape', pages: [MEDIA, MORE] };
+const REFUSED: Layout = { ...RECOVERED, pages: [{ ...MEDIA, tiles: [...MEDIA.tiles, gif] }, MORE] };
 
 const LIVE_CAPS: Capabilities = {
   screen: [1024, 600],
@@ -153,6 +150,21 @@ test('Review Layout goes through the load flow and keeps an unsent draft until t
   await page.getByTestId('replace').click();
   await expect(page.getByTestId('page-tab')).toHaveCount(2);
   await expect(page.getByTestId('control-binding')).toHaveCount(3);
+});
+
+test('a Send that fails keeps the guidance and the details', async ({ page }) => {
+  await home(page);
+  await onDevice(page, REFUSED, NO_COPY);
+  await card(page, 'Desk').getByTestId('controls-review').click();
+  await waitEvent(page, 'pulled');
+  await page.getByTestId('push').click();
+  await waitEvent(page, 'push-failed');
+  await expect(page.getByTestId('status-detail')).toContainText('asset.unsupported');
+  await expect(notice(page)).toHaveAttribute('data-state', 'no-pushed-copy');
+  await expect(page.getByTestId('controls-notice-body')).toHaveText("These Tiles show live values, but their controls aren't set up on this PC. Review the Layout, then choose Send to Device.");
+  await expect(page.getByTestId('control-binding')).toHaveCount(3);
+  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await expect(card(page, 'Desk').getByTestId('controls-notice')).toHaveAttribute('data-state', 'no-pushed-copy');
 });
 
 test('a Layout that differs from the one this PC sent says so', async ({ page }) => {

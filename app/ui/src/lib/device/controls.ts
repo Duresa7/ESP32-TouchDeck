@@ -42,7 +42,7 @@ export function observe(watch: ControlWatch, device: Pick<DeviceSummary, 'link' 
     case 'differs': {
       const needs = status.has_controls ? { reason: status.state, orientation: status.orientation } : null;
       const stale = watch.send !== null && !watch.send.reset && sameAssessment(watch.send.before, status);
-      return { needs, send: null };
+      return { needs, send: stale ? watch.send : null };
     }
     default: {
       const exhaustive: never = status;
