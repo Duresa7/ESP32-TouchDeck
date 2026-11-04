@@ -23,11 +23,13 @@ pub(crate) fn takes_input(tile: &td_core::layout::Tile, stream: &str) -> bool {
 }
 
 pub(crate) type Settable = Arc<dyn Fn(&StreamKey) -> bool + Send + Sync>;
+pub(crate) type TurnedOn = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 pub(super) struct Wiring {
     live: Live,
     controls: Controls,
     settable: Settable,
+    turned_on: TurnedOn,
     active: Arc<parking_lot::Mutex<std::collections::BTreeSet<String>>>,
 }
 
@@ -37,6 +39,7 @@ impl Actions {
         live: Live,
         controls: Controls,
         settable: Settable,
+        turned_on: TurnedOn,
         layouts: crate::store::LayoutStore,
     ) {
         live.trust(layouts);
@@ -45,6 +48,7 @@ impl Actions {
             live,
             controls,
             settable,
+            turned_on,
             active: Arc::default(),
         });
         self.0
@@ -120,6 +124,9 @@ impl Actions {
             return None;
         }
         let source = stream_source(&tile, &input.stream)?;
+        if !(wiring.turned_on)(&source.integration) {
+            return None;
+        }
         let control = wiring.controls.get(&source.integration);
         let Some(control) = control.filter(|_| (wiring.settable)(&source)) else {
             return Some(Err(UNAVAILABLE.into()));
@@ -229,6 +236,7 @@ mod tests {
         live: Option<Live>,
         volume: Arc<FakeControl>,
         media: Arc<FakeControl>,
+        volume_on: Arc<std::sync::atomic::AtomicBool>,
         _data: tempfile::TempDir,
     }
 
@@ -328,6 +336,8 @@ mod tests {
             Arc::new(NoGrants),
             true,
         );
+        let volume_on = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let turned_on = volume_on.clone();
         let data = tempfile::tempdir().unwrap();
         let layouts = crate::store::LayoutStore::new(data.path().join("layouts"));
         if pushed {
@@ -337,6 +347,9 @@ mod tests {
             live.clone(),
             controls,
             Arc::new(|key: &StreamKey| key.integration == "volume" && key.stream == "level"),
+            Arc::new(move |id| {
+                id != "volume" || turned_on.load(std::sync::atomic::Ordering::SeqCst)
+            }),
             layouts,
         );
         if cached && pushed {
@@ -353,6 +366,7 @@ mod tests {
             _data: data,
             volume,
             media,
+            volume_on,
         }
     }
 
@@ -380,6 +394,37 @@ mod tests {
         );
         wait("the gesture logs", || !td.log().is_empty());
         std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(td.log(), [entry("volume", "ok", GESTURE_DONE)]);
+    }
+
+    #[test]
+    fn a_drag_in_progress_stops_when_its_integration_is_turned_off_and_logs_no_failure() {
+        let td = running(media(), true);
+        td.deck
+            .emit_input("media", "volume", "value", InputPhase::Move, 0.3);
+        wait("the first move is set", || td.last_set() == Some(0.3));
+        *td.volume.set_result.lock() =
+            Some(ControlError::Unavailable("Volume is unavailable.".into()));
+        td.deck
+            .emit_input("media", "volume", "value", InputPhase::Move, 0.4);
+        wait("the next move fails", || {
+            td.volume.sets.lock().last().map(|set| set.2) == Some(0.4)
+        });
+
+        td.volume_on
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        td.drag("volume", &[0.5, 0.6, 0.7]);
+        std::thread::sleep(Duration::from_millis(400));
+        let values: Vec<f64> = td.volume.sets.lock().iter().map(|s| s.2).collect();
+        assert_eq!(values, [0.3, 0.4], "the cancelled drag was still acted on");
+        assert_eq!(td.log(), []);
+
+        *td.volume.set_result.lock() = None;
+        td.volume_on
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        td.drag("volume", &[0.2, 0.25]);
+        wait("a later gesture is set", || td.last_set() == Some(0.25));
+        wait("it logs", || !td.log().is_empty());
         assert_eq!(td.log(), [entry("volume", "ok", GESTURE_DONE)]);
     }
 

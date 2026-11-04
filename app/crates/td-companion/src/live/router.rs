@@ -179,6 +179,10 @@ struct Track {
     /// A send whose reply never came: its `n`, sample and value, so the same value goes again as an identical retry.
     unanswered: Option<(u32, u64, LiveValue)>,
     last_sent: Option<Instant>,
+    /// The sample and value the Device last accepted, so the Device can be told it is no longer current.
+    held: Option<(u64, LiveValue)>,
+    /// The Device was told the held value is no longer current, so it shows it stale.
+    expired: bool,
 }
 
 /// The Layout a Device shows and its bindings.
@@ -234,6 +238,7 @@ pub struct Router {
     devices: HashMap<String, DeviceState>,
     controls: Controls,
     covers: Prepared,
+    off: BTreeSet<String>,
 }
 
 enum Sent {
@@ -251,6 +256,12 @@ impl Router {
 
     pub(super) fn set_covers(&mut self, covers: Prepared) {
         self.covers = covers;
+    }
+
+    /// The Integrations that are turned off. A stream of one that reports no sample is no longer current, so its
+    /// Devices are told to show the last value stale.
+    pub(super) fn set_off(&mut self, off: BTreeSet<String>) {
+        self.off = off;
     }
 
     pub(super) fn cover_jobs(&self, samples: &HashMap<StreamKey, LiveSample>) -> Vec<CoverJob> {
@@ -423,6 +434,50 @@ impl Router {
                 report
                     .errors
                     .insert(binding.source.integration.clone(), error.clone());
+            }
+        }
+        for binding in &bindings {
+            if binding.kind == StreamType::Image
+                || samples.contains_key(&binding.source)
+                || !self.off.contains(&binding.source.integration)
+            {
+                continue;
+            }
+            let Some(track) = state.tracks.get(&key(binding)) else {
+                continue;
+            };
+            let Some((sample, value)) = track.held.clone().filter(|_| !track.expired) else {
+                continue;
+            };
+            let gap = caps.gap(self.controls.contains_key(&binding.source.integration));
+            if track
+                .last_sent
+                .is_some_and(|at| now.duration_since(at) < gap)
+            {
+                continue;
+            }
+            let out = Outgoing {
+                binding,
+                sample,
+                ttl_ms: live::TTL_MIN_MS,
+                value: &value,
+                delivered: None,
+            };
+            match send(
+                state,
+                session,
+                &reference,
+                out,
+                now,
+                &mut budget,
+                &mut report,
+            ) {
+                Sent::Stop => return report,
+                Sent::Accepted | Sent::AssetRefused | Sent::Refused => {
+                    if let Some(track) = state.tracks.get_mut(&key(binding)) {
+                        track.expired = true;
+                    }
+                }
             }
         }
         let mut due: Vec<(&Binding, &LiveSample)> = bindings
@@ -688,6 +743,8 @@ fn send(
         Ok(_) => {
             track.delivered = delivered;
             track.unanswered = None;
+            track.held = Some((sample, value.clone()));
+            track.expired = false;
             state.rate_strikes = 0;
             *report.sent.entry(integration).or_default() += 1;
             Sent::Accepted
@@ -1024,6 +1081,95 @@ mod tests {
         let cpu = device.live("page", "cpu", "value").unwrap();
         assert_eq!(cpu.samples, [25.0, 25.0]);
         assert_eq!(device.live_sets()[0]["ttl_ms"], 5_000);
+    }
+
+    #[test]
+    fn a_stream_of_an_integration_turned_off_is_told_stale_once_and_fresh_again_when_it_returns() {
+        let device = MockDeck::v2();
+        let session = open(&device);
+        show(&session, &Layout::parse(GRAPH).unwrap());
+        let mut router = Router::default();
+        let t0 = Instant::now();
+        let flowing = numbers(&[("cpu_pct", 1, 25.0)]);
+        router.deliver("d", 1, &session, CAPS, &flowing, t0);
+        assert_eq!(device.live_sets().len(), 1);
+
+        router.set_off(BTreeSet::from(["this_pc".to_owned()]));
+        let gone = HashMap::new();
+        let report = router.deliver(
+            "d",
+            1,
+            &session,
+            CAPS,
+            &gone,
+            t0 + Duration::from_millis(100),
+        );
+        assert_eq!(
+            report.sent,
+            HashMap::new(),
+            "the Device was just sent a value"
+        );
+        let report = router.deliver("d", 1, &session, CAPS, &gone, t0 + Duration::from_secs(1));
+        assert_eq!(report.sent, HashMap::from([("this_pc".to_owned(), 1)]));
+        let sets = device.live_sets();
+        assert_eq!(sets.len(), 2);
+        assert_eq!(sets[1]["ttl_ms"], 1_000);
+        assert_eq!(sets[1]["value"].as_f64(), Some(25.0));
+        std::thread::sleep(Duration::from_millis(1_100));
+        assert!(device.live("page", "cpu", "value").unwrap().stale);
+
+        for second in 2..6 {
+            router.deliver(
+                "d",
+                1,
+                &session,
+                CAPS,
+                &gone,
+                t0 + Duration::from_secs(second),
+            );
+        }
+        assert_eq!(
+            device.live_sets().len(),
+            2,
+            "nothing more is sent while off"
+        );
+
+        router.set_off(BTreeSet::new());
+        let back = numbers(&[("cpu_pct", 2, 40.0)]);
+        router.deliver("d", 1, &session, CAPS, &back, t0 + Duration::from_secs(6));
+        let shown = device.live("page", "cpu", "value").unwrap();
+        assert_eq!(
+            (shown.stale, shown.samples.last().copied()),
+            (false, Some(40.0))
+        );
+    }
+
+    #[test]
+    fn a_stream_missing_while_its_integration_is_on_is_left_to_expire_on_its_own() {
+        let device = MockDeck::v2();
+        let session = open(&device);
+        show(&session, &Layout::parse(GRAPH).unwrap());
+        let mut router = Router::default();
+        let t0 = Instant::now();
+        router.deliver(
+            "d",
+            1,
+            &session,
+            CAPS,
+            &numbers(&[("cpu_pct", 1, 25.0)]),
+            t0,
+        );
+        for second in 1..4 {
+            router.deliver(
+                "d",
+                1,
+                &session,
+                CAPS,
+                &HashMap::new(),
+                t0 + Duration::from_secs(second),
+            );
+        }
+        assert_eq!(device.live_sets().len(), 1);
     }
 
     #[test]
