@@ -50,6 +50,8 @@ struct Shared {
     sent: Mutex<HashMap<(String, String), u64>>,
     #[cfg(any(test, feature = "test-hooks"))]
     injected: Mutex<HashMap<StreamKey, LiveSample>>,
+    #[cfg(any(test, feature = "test-hooks"))]
+    rounds: std::sync::atomic::AtomicU64,
 }
 
 impl Shared {
@@ -205,6 +207,12 @@ impl Live {
         self.0.injected.lock().insert(key, sample);
         self.0.wake();
     }
+
+    /// How many live rounds have finished.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn rounds(&self) -> u64 {
+        self.0.rounds.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 fn run(
@@ -226,6 +234,10 @@ fn run(
             *wake = false;
         }
         let covers = round(&shared, &devices, &links, &integrations);
+        #[cfg(any(test, feature = "test-hooks"))]
+        shared
+            .rounds
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let _ = jobs.try_send(covers);
     }
 }

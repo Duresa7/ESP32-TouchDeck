@@ -27,6 +27,7 @@ const STREAM_GAP: Duration = Duration::from_millis(900);
 const CONTROL_GAP: Duration = Duration::from_millis(500);
 /// How long the router waits to read a Device's active Layout again after a failed read.
 const LAYOUT_RETRY: Duration = Duration::from_secs(5);
+const LAYOUT_CHECK: Duration = Duration::from_secs(5);
 /// The longest wait after repeated `rate` refusals.
 const BACKOFF_MAX: Duration = Duration::from_secs(8);
 const TITLE_STREAM: &str = "title";
@@ -186,6 +187,7 @@ struct Active {
     reference: String,
     bindings: Vec<Binding>,
     layout: Arc<Layout>,
+    slots: Vec<(Orientation, Option<String>)>,
 }
 
 type TileKey = (String, String);
@@ -195,6 +197,7 @@ struct DeviceState {
     session: u64,
     caps: Option<LiveCaps>,
     active: Option<Active>,
+    checked_at: Option<Instant>,
     read_failed: bool,
     tracks: HashMap<(String, String, String), Track>,
     next_n: u32,
@@ -311,7 +314,9 @@ impl Router {
     pub fn layout_changed(&mut self, device: &str) {
         if let Some(state) = self.devices.get_mut(device) {
             state.active = None;
-            state.read_failed = false;
+            if std::mem::take(&mut state.read_failed) {
+                state.blocked_until = None;
+            }
         }
     }
 
@@ -358,16 +363,35 @@ impl Router {
                 }
             }
         }
-        if state.active.is_none() {
+        let stale = match &state.active {
+            Some(active)
+                if state
+                    .checked_at
+                    .is_none_or(|at| now.duration_since(at) >= LAYOUT_CHECK) =>
+            {
+                state.checked_at = Some(now);
+                !slots_unchanged(session, active)
+            }
+            _ => false,
+        };
+        if state.active.is_none() || stale {
             match read_active(session) {
                 Ok(active) => {
                     state.read_failed = false;
-                    state.tracks.clear();
-                    state.titles.clear();
-                    state.covered.clear();
+                    state.checked_at = Some(now);
+                    if state
+                        .active
+                        .as_ref()
+                        .is_none_or(|shown| shown.reference != active.reference)
+                    {
+                        state.tracks.clear();
+                        state.titles.clear();
+                        state.covered.clear();
+                    }
                     state.active = Some(active);
                 }
                 Err(_) => {
+                    state.active = None;
                     state.read_failed = true;
                     state.blocked_until = Some(now + LAYOUT_RETRY);
                     return report;
@@ -769,12 +793,17 @@ fn read_active(session: &Session) -> Result<Active, String> {
     if !matches!(state.source.as_str(), "builtin" | "storage") {
         return Err("Unknown Layout source".into());
     }
-    let (reference, layout) = if state.source == "builtin" {
-        (live::BUILTIN.to_owned(), Layout::parse(BUILTIN))
+    let (reference, layout, slots) = if state.source == "builtin" {
+        let slots = [Orientation::Landscape, Orientation::Portrait]
+            .map(|orientation| (orientation, stored(session, orientation)))
+            .to_vec();
+        (live::BUILTIN.to_owned(), Layout::parse(BUILTIN), slots)
     } else {
         let orientation: Orientation = state.orientation;
         let report = xfer::get_layout(session, orientation).map_err(|error| error.to_string())?;
-        (live::layout_ref(&report.data), Layout::parse(&report.data))
+        let reference = live::layout_ref(&report.data);
+        let slots = vec![(orientation, Some(reference.clone()))];
+        (reference, Layout::parse(&report.data), slots)
     };
     let layout = layout.map_err(|errors| format!("{} Layout problems", errors.len()))?;
     if layout.orientation != state.orientation {
@@ -784,7 +813,21 @@ fn read_active(session: &Session) -> Result<Active, String> {
         reference,
         bindings: bindings(&layout),
         layout: Arc::new(layout),
+        slots,
     })
+}
+
+fn stored(session: &Session, orientation: Orientation) -> Option<String> {
+    xfer::get_layout(session, orientation)
+        .ok()
+        .map(|report| live::layout_ref(&report.data))
+}
+
+fn slots_unchanged(session: &Session, active: &Active) -> bool {
+    active
+        .slots
+        .iter()
+        .all(|(orientation, reference)| stored(session, *orientation) == *reference)
 }
 
 #[cfg(test)]
@@ -1786,5 +1829,143 @@ mod tests {
             deck.live("main", "player0", "cover").unwrap().value,
             format!("sha256:{}", cover.id)
         );
+    }
+
+    fn layout_gets(device: &MockDeck) -> usize {
+        device
+            .received()
+            .iter()
+            .filter(|request| request["m"] == "layout.get")
+            .count()
+    }
+
+    #[test]
+    fn a_layout_changed_behind_the_routers_back_is_read_again_without_samples() {
+        let device = MockDeck::v2();
+        let session = open(&device);
+        let graph = Layout::parse(GRAPH).unwrap();
+        show(&session, &graph);
+        let mut router = Router::default();
+        let t0 = Instant::now();
+        let none = HashMap::new();
+        router.deliver("d", 1, &session, CAPS, &none, t0);
+        assert_eq!(router.shown()["d"].1.name, graph.name);
+        let mut renamed = graph.clone();
+        renamed.name = "Graph 2".into();
+        show(&session, &renamed);
+        let gets = layout_gets(&device);
+        router.deliver(
+            "d",
+            1,
+            &session,
+            CAPS,
+            &none,
+            t0 + Duration::from_millis(4_900),
+        );
+        assert_eq!(router.shown()["d"].1.name, graph.name);
+        assert_eq!(layout_gets(&device), gets);
+        router.deliver("d", 1, &session, CAPS, &none, t0 + Duration::from_secs(5));
+        assert_eq!(router.shown()["d"].1.name, "Graph 2");
+    }
+
+    #[test]
+    fn checking_an_unchanged_layout_costs_one_layout_get_and_sends_nothing_again() {
+        let device = MockDeck::v2();
+        let session = open(&device);
+        show(&session, &Layout::parse(GRAPH).unwrap());
+        let mut router = Router::default();
+        let t0 = Instant::now();
+        let samples = numbers(&[("cpu_pct", 1, 7.0)]);
+        router.deliver("d", 1, &session, CAPS, &samples, t0);
+        assert_eq!(device.live_sets().len(), 1);
+        let (gets, lines) = (layout_gets(&device), device.lines().len());
+        router.deliver(
+            "d",
+            1,
+            &session,
+            CAPS,
+            &samples,
+            t0 + Duration::from_secs(5),
+        );
+        assert_eq!(layout_gets(&device), gets + 1);
+        assert_eq!(device.lines().len(), lines);
+        assert_eq!(device.live_sets().len(), 1);
+    }
+
+    #[test]
+    fn a_device_on_the_builtin_layout_is_checked_without_a_console_line() {
+        let device = MockDeck::v2();
+        let session = open(&device);
+        let mut router = Router::default();
+        let t0 = Instant::now();
+        let none = HashMap::new();
+        router.deliver("d", 1, &session, CAPS, &none, t0);
+        let builtin = Layout::parse(BUILTIN).unwrap();
+        assert_eq!(router.shown()["d"].1.name, builtin.name);
+        let lines = device.lines().len();
+        router.deliver("d", 1, &session, CAPS, &none, t0 + Duration::from_secs(5));
+        assert_eq!(device.lines().len(), lines);
+        show(&session, &Layout::parse(GRAPH).unwrap());
+        router.deliver("d", 1, &session, CAPS, &none, t0 + Duration::from_secs(10));
+        assert_eq!(router.shown()["d"].1.name, "Graph");
+    }
+
+    #[test]
+    fn a_new_layout_ends_the_wait_after_a_failed_read() {
+        let device = MockDeck::v2();
+        let session = open(&device);
+        show(&session, &Layout::parse(GRAPH).unwrap());
+        let mut router = Router::default();
+        let t0 = Instant::now();
+        let samples = numbers(&[("cpu_pct", 1, 7.0)]);
+        device.lose_sent_chunks([0; 5]);
+        router.deliver("d", 1, &session, CAPS, &samples, t0);
+        assert!(router.read_failed("d", 1));
+        router.layout_changed("d");
+        router.deliver(
+            "d",
+            1,
+            &session,
+            CAPS,
+            &samples,
+            t0 + Duration::from_secs(1),
+        );
+        assert!(!router.read_failed("d", 1));
+        assert_eq!(device.live("page", "cpu", "value").unwrap().samples, [7.0]);
+    }
+
+    #[test]
+    fn a_new_layout_keeps_a_rate_backoff_the_device_asked_for() {
+        let device = MockDeck::v2();
+        let session = open(&device);
+        let fields: Vec<String> = (0..20).map(|i| format!("s{i}")).collect();
+        let streams: Vec<(&str, StreamType)> = fields
+            .iter()
+            .map(|f| (f.as_str(), StreamType::Number))
+            .collect();
+        show(&session, &graphs(&streams));
+        let generous = LiveCaps {
+            live_total_hz: 64,
+            ..CAPS
+        };
+        let samples: HashMap<_, _> = fields
+            .iter()
+            .map(|f| (key("test", f), sample(1, LiveValue::Number(1.0))))
+            .collect();
+        let mut router = Router::default();
+        let t0 = Instant::now();
+        router.deliver("d", 1, &session, generous, &samples, t0);
+        let lines = device.lines().len();
+        router.layout_changed("d");
+        let held = router.deliver(
+            "d",
+            1,
+            &session,
+            generous,
+            &samples,
+            t0 + Duration::from_millis(1),
+        );
+        assert!(held.sent.is_empty());
+        assert_eq!(device.lines().len(), lines);
     }
 }

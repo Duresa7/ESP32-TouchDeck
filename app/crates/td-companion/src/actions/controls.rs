@@ -689,4 +689,27 @@ mod tests {
         wait("new gesture completes", || !td.log().is_empty());
         assert_eq!(td.log(), [entry("volume", "ok", GESTURE_DONE)]);
     }
+
+    #[test]
+    fn an_external_layout_change_without_samples_updates_the_status() {
+        use crate::devices::ControlLayout;
+        let td = running(media(), true);
+        let id = DeviceId::parse(DEVICE).unwrap();
+        let status = || td.devices.get(&id).unwrap().control_layout;
+        wait("initial matches", || {
+            matches!(status(), ControlLayout::Matches { .. })
+        });
+        let mut changed = media();
+        changed["pages"][0]["tiles"][2]["action"]["account"] = json!("other-account");
+        let layout = td_core::Layout::parse(&serde_json::to_vec(&changed).unwrap()).unwrap();
+        Links::new(td.devices.clone())
+            .with(DEVICE, |session| {
+                td_link::xfer::put_layout(session, layout.orientation, &layout)
+            })
+            .unwrap()
+            .unwrap();
+        wait("the changed Layout is reported", || {
+            matches!(status(), ControlLayout::Differs { .. })
+        });
+    }
 }

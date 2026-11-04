@@ -235,6 +235,31 @@ impl TestCompanion {
         };
         self.ctx.live.inject(key, sample);
     }
+    /// The points in Device writes a test can hold.
+    pub fn checkpoints(&self) -> &crate::checkpoints::Checkpoints {
+        &self.ctx.checkpoints
+    }
+    /// Waits until `count` more live rounds have finished.
+    pub async fn let_live_rounds_run(&self, count: u64) {
+        let target = self.ctx.live.rounds() + count;
+        self.until(|td| td.ctx.live.rounds() >= target).await;
+    }
+    /// Writes `layout` to the Device over the Companion's link without telling the live router, as a writer the
+    /// Companion doesn't know about would.
+    pub async fn write_layout_unseen(&self, id: &DeviceId, layout: &td_core::Layout) {
+        let links = self.ctx.links.clone();
+        let (id, layout) = (id.clone(), layout.clone());
+        tokio::task::spawn_blocking(move || {
+            links
+                .with(id.as_str(), |session| {
+                    td_link::xfer::put_layout(session, layout.orientation, &layout)
+                })
+                .unwrap()
+                .unwrap();
+        })
+        .await
+        .unwrap();
+    }
     /// The mock behind a USB serial, to drive it or read what it received.
     pub fn deck(&self, id: &str) -> td_link::MockDeck {
         self.ports.deck(id).expect("a plugged mock")

@@ -52,6 +52,8 @@ pub struct Ctx {
     /// Counts requests that reached a handler, so tests can show a rejection never did.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) handler_hits: Arc<std::sync::atomic::AtomicUsize>,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) checkpoints: crate::checkpoints::Checkpoints,
 }
 impl Ctx {
     pub(crate) fn new(
@@ -129,6 +131,8 @@ impl Ctx {
             started_ms: crate::now_ms(),
             #[cfg(any(test, feature = "test-hooks"))]
             handler_hits: Default::default(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            checkpoints: Default::default(),
         }
     }
     #[cfg(windows)]
