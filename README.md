@@ -35,11 +35,11 @@ Keep the Companion running and USB connected for actions on this PC and live rea
 
 ## Device screen examples
 
-These captures show the built-in Layout on a Device running Firmware v0.2.0-495-g2fab801. The app screenshots above and in the guide use the current UI with demo data.
+These captures show the built-in Layout on a real Device. The app screenshots above and in the guide use the current UI with demo data.
 
 <p>
   <img src="docs/images/deck-media.png" width="49%" alt="Media Page with playback and Volume controls">
-  <img src="docs/images/deck-fkeys.png" width="49%" alt="Function-key Page with F1–F12 and modifiers">
+  <img src="docs/images/deck-fkeys.png" width="49%" alt="Function-key Page with F1 to F12 and modifiers">
 </p>
 
 ## Build from source
