@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "app"
 ELECTRON = APP / "electron"
 TARGET = "x86_64-pc-windows-msvc"
-FEED = "https://github.com/Duresa7/ESP32-TouchDeck/releases/download"
+FEED = "https://github.com/Duresa7/OpenTouchDeck/releases/download"
 TEST_HOOK_MARKERS = (b"/test/pairing-delivery", b"/test/devices/", b"--emit-ts")
 
 

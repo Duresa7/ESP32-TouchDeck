@@ -16,8 +16,8 @@ Built with Electron, React, and a Rust Companion, the app discovers USB decks an
 ## Install a published build
 
 The Windows installer is available as
-[OpenTouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe)
-on [the latest GitHub release](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest).
+[OpenTouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/OpenTouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe)
+on [the latest GitHub release](https://github.com/Duresa7/OpenTouchDeck/releases/latest).
 It installs Open TouchDeck (the Electron window, the Companion and the matching
 Firmware bundle) per user under `%LOCALAPPDATA%\Programs\Open TouchDeck` and needs
 no admin rights, Node, pnpm, Rust, or ESP-IDF. Linux has no installer.

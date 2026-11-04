@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { compareVersions, verifyInstaller } from './signature';
 import type { UpdateCheck, UpdateDownload, UpdateInstall, UpdateProgress } from './types';
 
-export const UPDATE_FEED = 'https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/latest.json';
+export const UPDATE_FEED = 'https://github.com/Duresa7/OpenTouchDeck/releases/latest/download/latest.json';
 export const INSTALLER_ARGS = ['/S', '--updated', '--force-run'];
 const MAX_DOWNLOAD = 256 * 1024 * 1024;
 class InvalidDownload extends Error {}

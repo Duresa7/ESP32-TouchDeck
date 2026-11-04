@@ -2,7 +2,7 @@
 
 A customizable touchscreen Device for your desk. Design its Layout in the app, then use its Tiles for shortcuts, live readings and controls on this PC.
 
-[**Download for Windows**](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe) · [**User guide**](docs/usage.md) · [**Releases**](https://github.com/Duresa7/ESP32-TouchDeck/releases)
+[**Download for Windows**](https://github.com/Duresa7/OpenTouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe) · [**User guide**](docs/usage.md) · [**Releases**](https://github.com/Duresa7/OpenTouchDeck/releases)
 
 ![Layout editor in light mode, with demo data](docs/images/app-layout-light.png)
 
