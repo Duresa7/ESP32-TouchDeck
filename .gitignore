@@ -29,6 +29,7 @@ GEMINI.md
 build/
 build-crash/
 build-perf/
+build-newer/
 out/
 dist/
 
