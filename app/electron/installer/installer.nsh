@@ -85,7 +85,7 @@ Var pid
     ${GetParameters} $0
     ${GetOptions} $0 "--delete-app-data" $1
     ${if} ${Errors}
-      MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "Also delete your Open TouchDeck Layouts, settings and Integration settings from this PC?" /SD IDNO IDNO touchdeck_keep_data
+      MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "Also delete your Open TouchDeck Layouts and settings, including Integration settings, from this PC? Integration secrets such as API keys stay in Windows Credential Manager. Use Forget in Open TouchDeck to remove them first." /SD IDNO IDNO touchdeck_keep_data
     ${endif}
     RMDir /r "$LOCALAPPDATA\${TOUCHDECK_DATA}"
     RMDir /r "$APPDATA\${TOUCHDECK_DATA}"
