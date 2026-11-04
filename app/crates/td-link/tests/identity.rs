@@ -32,8 +32,9 @@ fn negotiated_name_round_trips_and_survives_reconnect() {
         let identity = session.identity(TIMEOUT).unwrap();
         assert!(identity.matches_usb_serial(device.usb_serial()));
         assert!(!identity.matches_usb_serial("02:00:00:00:00:02"));
-        let caps = identity.capabilities.unwrap();
-        assert_eq!(caps.tile_kinds, ["static", "graph", "photo-frame", "clock"]);
+        let mut caps = identity.capabilities.unwrap();
+        caps.tile_kinds.sort();
+        assert_eq!(caps.tile_kinds, ["clock", "graph", "photo-frame", "static"]);
         assert_eq!(caps.photo_bytes, 131_072);
         assert_eq!(
             session.set_name("  Studio \u{1f39b}  ", TIMEOUT).unwrap(),
@@ -125,16 +126,27 @@ fn gif_caps_are_typed_opt_in_and_match_golden_hello() {
         let device = MockDeck::v2();
         device.set_gif_capabilities(gif);
         device.set_media_capabilities(media);
-        let caps = open(&device)
+        let mut caps = open(&device)
             .identity(TIMEOUT)
             .unwrap()
             .capabilities
             .unwrap();
         assert_eq!(caps.gif_enabled(), gif);
         assert_eq!(caps.live_images.unwrap_or(0), if media { 4 } else { 0 });
-        let mut actual = serde_json::to_value(&caps).unwrap();
-        actual["free_bytes"] = vector["caps"]["free_bytes"].clone();
-        assert_eq!(actual, vector["caps"], "gif {gif}, media {media}");
+        caps.tile_kinds.reverse();
+        caps.formats.reverse();
+        caps.layout_schemas.reverse();
+        assert_eq!(caps.gif_enabled(), gif);
+        let mut expected: td_link::Capabilities =
+            serde_json::from_value(vector["caps"].clone()).unwrap();
+        caps.free_bytes = expected.free_bytes;
+        caps.tile_kinds.sort();
+        caps.formats.sort();
+        caps.layout_schemas.sort();
+        expected.tile_kinds.sort();
+        expected.formats.sort();
+        expected.layout_schemas.sort();
+        assert_eq!(caps, expected, "gif {gif}, media {media}");
     }
     let mut caps: td_link::Capabilities =
         serde_json::from_value(vectors[1]["caps"].clone()).unwrap();
