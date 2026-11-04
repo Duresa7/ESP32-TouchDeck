@@ -21,8 +21,7 @@ const MAX_RETRY: Duration = Duration::from_secs(10);
 /// A board that just appeared may still be booting. Until this passes, silence only means
 /// "try again", so a Device being plugged in isn't shown as unresponsive or as a New board.
 const BOOT_GRACE: Duration = Duration::from_secs(3);
-/// A link that stays up this long resets the reconnect backoff.
-const STEADY: Duration = Duration::from_secs(30);
+const STEADY_LINK: Duration = Duration::from_secs(30);
 
 pub(super) fn run(inner: Arc<Inner>) {
     let source = inner.config().source.clone();
@@ -458,7 +457,9 @@ impl Inner {
         }
         let actor = entry.actor.take();
         entry.quick_drops = match actor.as_ref() {
-            Some(actor) if actor.opened.elapsed() < STEADY => entry.quick_drops.saturating_add(1),
+            Some(actor) if actor.opened.elapsed() < STEADY_LINK => {
+                entry.quick_drops.saturating_add(1)
+            }
             _ => 0,
         };
         let wait = relink_wait(entry.quick_drops);
@@ -481,7 +482,6 @@ impl Inner {
         self.wake.kick();
     }
 }
-/// How long to wait before probing again after `quick_drops` short-lived links in a row.
 fn relink_wait(quick_drops: u32) -> Duration {
     match quick_drops {
         0 => Duration::ZERO,
