@@ -45,6 +45,7 @@ export function freshDevice({ id, port, firmware }: { id: string; port: string; 
     diagnostics: null,
     orientation: 'landscape',
     layout: null,
+    control_layout: { state: 'unavailable', reason: 'checking' },
     key_mirror: { enabled: true, reason: null },
     stable_id: true,
   };

@@ -340,7 +340,7 @@ fn push(
 ) -> Result<PushReport, Stop> {
     let link = |e: XferError| Stop::from(DeviceLinkError::from_xfer(e));
     let _pin = ctx.assets.pin(td_host::icons::asset_ids(layout));
-    let report = ctx.links.with(device, |session| {
+    ctx.links.with(device, |session| {
         // The Device may have changed between the request's check and this Job.
         if let Some(expected) = &expected {
             expected.check(read(session, layout.orientation)?.map(|(_, r)| r))?;
@@ -394,6 +394,15 @@ fn push(
         job.set_cancellable(false);
         ctx.live.layout_changed(device);
         let put = xfer::put_layout(session, layout.orientation, layout).map_err(link)?;
+        #[cfg(any(test, feature = "test-hooks"))]
+        let _ = ctx
+            .checkpoints
+            .pass(crate::checkpoints::Checkpoint::LayoutPut);
+        let _ = ctx.layouts.put(device, layout);
+        ctx.layouts
+            .pushed()
+            .put(device, layout)
+            .map_err(|_| CommonError::Internal)?;
         let state = serde_json::from_value(serde_json::to_value(&put.state).unwrap())
             .map_err(|_| CommonError::Internal)?;
         Ok::<_, Stop>(PushReport {
@@ -405,15 +414,7 @@ fn push(
             assets,
             revision: revision(xfer::crc32(&layout.to_canonical_json())),
         })
-    });
-    ctx.live.layout_changed(device);
-    let report = report??;
-    let _ = ctx.layouts.put(device, layout);
-    ctx.layouts
-        .pushed()
-        .put(device, layout)
-        .map_err(|_| CommonError::Internal)?;
-    Ok(report)
+    })?
 }
 fn send_missing_assets(
     ctx: &Ctx,

@@ -422,6 +422,8 @@ impl Endpoint for SettingsPatch {
         let device = id.clone();
         let idle_frame = frame.clone();
         let live = ctx.live.clone();
+        #[cfg(any(test, feature = "test-hooks"))]
+        let checkpoints = ctx.checkpoints.clone();
         let (settings, restart_required, idle) = ctx
             .devices
             .call(&id, move |s| -> Result<_, DeviceError> {
@@ -437,10 +439,25 @@ impl Endpoint for SettingsPatch {
                     if orientation.is_some() {
                         live.layout_changed(device.as_str());
                     }
-                    let reply = s.request(&Request::SettingsPut(settings), SETTINGS_TIMEOUT)?;
+                    #[cfg(any(test, feature = "test-hooks"))]
+                    if orientation.is_some() {
+                        let _ =
+                            checkpoints.pass(crate::checkpoints::Checkpoint::BeforeOrientationPut);
+                    }
+                    let reply = s.request(&Request::SettingsPut(settings), SETTINGS_TIMEOUT);
+                    if orientation.is_some() {
+                        live.layout_changed(device.as_str());
+                    }
+                    let reply = reply?;
                     let fields = serde_json::Value::Object(reply.fields.clone());
                     restart = fields["reboot_required"].as_bool().unwrap_or(false);
                     settings = Settings::from_value(&fields);
+                    #[cfg(any(test, feature = "test-hooks"))]
+                    if orientation.is_some() {
+                        checkpoints
+                            .pass(crate::checkpoints::Checkpoint::AfterOrientationPut)
+                            .map_err(|()| LinkError::Timeout(SETTINGS_TIMEOUT))?;
+                    }
                 }
                 if let Some(name) = patch.name {
                     let name = s.set_name(&name, SETTINGS_TIMEOUT)?;
@@ -457,9 +474,6 @@ impl Endpoint for SettingsPatch {
                 Ok((settings, restart, idle))
             })
             .await??;
-        if orientation.is_some() {
-            ctx.live.layout_changed(id.as_str());
-        }
         if let Some(folder) = frame.and_then(|f| f.folder) {
             let photos = ctx.photos.clone();
             let device = id.clone();

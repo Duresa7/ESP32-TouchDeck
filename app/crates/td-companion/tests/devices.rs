@@ -102,12 +102,13 @@ async fn a_connected_device_is_probed_once_and_keeps_its_link_across_scans() {
         received.iter().filter(|m| m["m"] == "hello").count()
     };
     let probed = hellos();
+    let link = td.device(&id).unwrap().link;
     // Longer than two 1 s polls: a scan never reprobes a connected port.
     tokio::time::sleep(Duration::from_millis(2500)).await;
     td.call::<PortsRescan>((), NoQuery, ()).await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(hellos(), probed);
-    assert_eq!(td.device(&id).unwrap().rev, 1, "the link never changed");
+    assert_eq!(td.device(&id).unwrap().link, link);
 }
 
 #[tokio::test]
