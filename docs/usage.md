@@ -16,6 +16,12 @@ Windows SmartScreen may warn because the installer has no Authenticode signature
 
 The [packaging guide](packaging.md) lists installed files and uninstall behavior. Developers and Linux users should follow [setup](setup.md) and [app development](../app/README.md).
 
+### Uninstall
+
+Uninstall from Windows **Installed apps**. The uninstaller keeps Layouts and settings unless you choose to delete them. Its prompt asks: “Also delete your Open TouchDeck Layouts and settings, including Integration settings, from this PC?” Choosing **Yes** removes the app's local data. It does not erase the Layout or Assets on the Device, or exported files you saved elsewhere.
+
+Integration secrets, including API keys, stay in Windows Credential Manager either way. Before uninstalling, use **Forget** beside each saved secret in **Integrations** if you want to remove it too. A later reinstall turns **Start at sign-in** back on.
+
 ## First run and connection
 
 1. Plug the Device's USB-Serial/JTAG port into this PC with a data cable. Close any serial monitor or flash tool using it.
@@ -57,6 +63,20 @@ The orientation buttons in the editor choose which Layout to edit. They do not t
 
 Choose **Preview** or press **P** to try Page swipes, Tile presses and Page jumps. Arrow keys change Pages. **Actual size** shows Device pixels at their original size. Preview does not run commands on this PC.
 
+### When controls need Send to Device
+
+![Controls review in light mode with a demo Volume and Media Layout](images/app-controls-light.png)
+
+After an upgrade, reinstall or move to another PC, a Device can show live values while its Volume and Media controls do not respond. Home keeps **Connected** and adds **Controls need Send to Device**. The same notice appears in the editor if this PC has no sent copy, or the Device's Layout differs from that copy.
+
+1. Choose **Review Layout**. If the editor shows the other orientation, use **Switch to Landscape** or **Switch to Portrait** first.
+2. If you have an unsent draft, choose whether to replace it with the Device's Layout or **Keep mine**. Export a draft first if you need both.
+3. Click away from a Tile to see **Controls** in the Page inspector. It lists control Tiles on every Page, their Integration and account and what each control does. Select a row to edit that Tile. Resolve any **Unknown Integration** or **Unknown account** before sending.
+4. Choose **Send to Device** when the Layout is the one you want. Sending replaces the Layout on the Device and lets its Tiles control the Integrations shown here.
+5. Wait through **Checking controls…**. The notice clears after the Companion checks the Device's Layout, not just when the transfer finishes. If it cannot check, follow the message to reconnect the Device or update its Firmware. A failed send keeps the guidance and shows **Details**.
+
+Loading or reviewing a Layout does not authorize its controls. Repeat for each Device and orientation you use.
+
 ### Actions and approvals
 
 Under **When tapped**, choose a key or shortcut, media key, modifier, app launch, file or website open, command, Page jump or no action. **When held** gives an action a separate hold behavior where offered.
@@ -81,7 +101,9 @@ A Layout JSON file contains Asset references, not the image files, Integration s
 
 ![Integrations in dark mode with demo data](images/app-integrations-dark.png)
 
-Open **Integrations**, select one and turn it on. Choose **Save** for configuration changes. Secrets have their own **Save** and **Forget** controls. Use **Check now** when available, then inspect **Details** if it cannot connect.
+Open **Integrations**, select one and turn it on. Choose **Save** for configuration changes. Secrets have their own **Save** and **Forget** controls. Use **Check now** when available. **Check started** means the request was queued; wait for the status or readings to change, then inspect **Details** if it cannot connect. A slow Integration does not hold up checks for the others.
+
+Turning an Integration off makes its Live tile readings on a connected Device stale within about a second. The last reading can remain visible, dimmed with an unavailable marker. Volume drags stop changing this PC while Volume is off. Turn the Integration on again and wait for fresh readings to restore the Tiles.
 
 Choose a Preset tile's **Add to Layout**, select its destination when asked, then open Layout and **Send to Device**. Adding a Preset tile edits the Layout; it does not send it automatically.
 
@@ -154,7 +176,7 @@ Save and check the Integration. Approve the command in the native dialog on this
 
 ### Volume
 
-Turn on **Volume**, save and add **Volume bar**. Send the Layout, then drag along the bar on the Device to change this PC's default output volume. Its live level follows changes made on this PC too. It needs an available audio output and current Firmware.
+Turn on **Volume**, save and add **Volume bar**. Send the Layout, then drag along the bar on the Device to change this PC's default output volume. Tap the mute glyph to mute or unmute. Its live level follows changes made on this PC too. Controls wait for a fresh reading after reconnection; taps from the previous connection are discarded. It needs an available audio output and current Firmware.
 
 ### Media
 
@@ -195,7 +217,15 @@ The app verifies the update signature before running the installer. If verificat
 
 ### Update Firmware
 
-Click the Device's name in Layout. If newer Firmware is offered, choose **Update** in its panel. Keep USB connected through the restart and wait for the success message.
+Click the Device's name in Layout. If newer Firmware is offered, choose **Update** in its panel. Keep USB connected until the result is known. The panel shows these phases:
+
+1. **Checking the file…** validates the bundle.
+2. **Updating…** with a percentage sends the Firmware.
+3. **Restarting…** waits for the Device to restart.
+4. **Checking that it started…** checks the Firmware that came back.
+5. **Updated to** the version confirms success. A rollback or failure shows its own result instead.
+
+If the same Firmware is already installed, the result says **Already on Firmware** with its version. No transfer or restart is needed.
 
 To use a release's `.tdfw` bundle, open **Settings > Troubleshooting > Update from a file** and choose the file for the intended Device. Use a bundle for the supported board, not the desktop installer. A downgrade requires confirmation in the native dialog on this PC.
 
@@ -205,7 +235,7 @@ Normal updates write the inactive Firmware slot. If the new Firmware fails to co
 
 Install the new app by hand from the release. There is no automatic bridge from 0.2, and its app Layout drafts and settings do not carry over. Export old Layouts and keep original Assets before replacing the old app. Load the Device's Layout or import an exported file, then set up Integrations again.
 
-**After updating, Volume and Media control Tiles respond only after you send their Layout from the app once. Choose Send to Device.** The Companion acts only on a Layout it pushed itself. Merely loading the Device's Layout does not authorize its controls. Repeat for each Device and orientation you use.
+**After updating, Volume and Media control Tiles respond only after you send their Layout from the app once. Choose Send to Device.** The Companion acts only on a Layout it pushed itself. Follow [When controls need Send to Device](#when-controls-need-send-to-device) to review the Tiles before sending. Repeat for each Device and orientation you use.
 
 App launches and file opens can now ask for command approval on this PC too.
 
@@ -215,14 +245,15 @@ App launches and file opens can now ask for command approval on this PC too.
 | --- | --- |
 | No Device on Home | Use a USB data cable and the USB-Serial/JTAG port. Unplug and reconnect. Linux source builds also need serial permissions from the [setup guide](setup.md). |
 | In use by another program | Close serial monitors and flash tools. The Companion reconnects automatically. |
-| Not connected | Check USB, then open **Settings > Troubleshooting** for connection details and the last error. |
-| Couldn't send a Layout | Read **Details**, reconnect and retry. Check that its Tiles and Assets fit the Device's capabilities. |
+| Not connected after the Device drops the link | The Companion reconnects automatically after the Device drops its session, even if USB stays plugged in. Controls wait for the new connection and fresh readings. Repeated drops make retries less frequent. If it stays disconnected, check USB and open **Settings > Troubleshooting** for the last error. |
+| Couldn't send a Layout, or an Asset operation failed | Read **Details**, reconnect and retry. A stalled transfer or an unreadable Asset list shows an error. Check that Tiles and Assets fit the Device's capabilities. |
 | Needs newer Firmware | Update from the Device panel. Older Firmware cannot draw every Live tile or animation. |
-| Volume or Media does not respond after an upgrade | Enable the Integration and choose **Send to Device** once. For Media, start a supported player; for Volume, check the default audio output. |
+| Controls need Send to Device | Choose **Review Layout**, check the Controls list and **Send to Device**. See [the recovery steps](#when-controls-need-send-to-device). |
+| Volume or Media does not respond | Enable the Integration and check the control notice. For Media, start a supported player; for Volume, check the default audio output. After reconnection, wait for fresh readings. |
 | Waiting for approval on this PC | Find the native dialog. Check the exact command before approving. |
 | A Live tile is blank or grey | Keep the Companion running. Check the Integration's status, credentials and **Details**, then retry its check. |
 | Photo folder is missing | Choose an existing folder again in the desktop app. |
 | Pairing code is wrong or expired | Choose **Open in browser** from the tray again for a new code. |
 | Firmware update failed | Keep the Device plugged in until the result is known. Check whether it rolled back, then read **Details** before retrying. |
 
-**Settings > Troubleshooting** includes Device details and a Firmware console. Logs can contain personal data; remove it before sharing. If the Device's Layout prevents normal use, its ten-second touch hold starts the built-in Layout without removing stored files. See [Firmware recovery](firmware.md#recovery) before using it.
+**Settings > Troubleshooting** includes Device details and a Firmware console. Overlong console lines are truncated and heavy output can drop lines so Device replies keep flowing. Logs can contain personal data; remove it before sharing. If the Device's Layout prevents normal use, its ten-second touch hold starts the built-in Layout without removing stored files. See [Firmware recovery](firmware.md#recovery) before using it.
