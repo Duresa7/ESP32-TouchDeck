@@ -9,7 +9,7 @@ import { button } from '../shell/button.ts';
 import { useUi } from '../state/ui.ts';
 import { DevicePreview } from './DevicePreview.tsx';
 import { useDeviceLayout } from './home-layouts.ts';
-import { deviceWidth, firmwareUpdate, lastSeen, orientationOf, previewOf, statusOf } from './home-model.ts';
+import { CHECKING_CONTROLS, deviceWidth, firmwareUpdate, lastSeen, NEEDS_SEND, orientationOf, previewOf, statusOf, uncheckedText } from './home-model.ts';
 import { boardCards, boardInstallFor, boardsUi, useBoardsUi } from './new-boards.ts';
 import { IgnoredBoards, NewBoardCard } from './NewBoardCard.tsx';
 import './home.css';
@@ -21,8 +21,15 @@ function ControlsNotice({ device, name }: { device: DeviceSummary; name: string 
   if (notice.kind === 'none') return null;
   if (notice.kind === 'checking') {
     return (
-      <span className="device-controls" data-testid="controls-notice" data-state="checking">
-        <span className="status"><i className="led" aria-hidden />Checking controls…</span>
+      <span className="device-controls" role="status" data-testid="controls-notice" data-state="checking">
+        <span className="status"><i className="led" aria-hidden />{CHECKING_CONTROLS}</span>
+      </span>
+    );
+  }
+  if (notice.kind === 'unchecked') {
+    return (
+      <span className="device-controls" role="status" data-testid="controls-notice" data-state="unchecked" data-reason={notice.reason}>
+        <span className="status is-waiting"><i className="led" aria-hidden />{uncheckedText(notice.reason, name)}</span>
       </span>
     );
   }
@@ -34,7 +41,7 @@ function ControlsNotice({ device, name }: { device: DeviceSummary; name: string 
   };
   return (
     <span className="device-controls" data-testid="controls-notice" data-state={notice.reason}>
-      <span className="status is-waiting"><i className="led" aria-hidden />Controls need a Send</span>
+      <span className="status is-waiting"><i className="led" aria-hidden />{NEEDS_SEND}</span>
       <button type="button" className={button({ size: 'small' })} aria-label={`Review Layout for ${name}`} onClick={() => void review()} data-testid="controls-review">
         Review Layout
       </button>

@@ -49,7 +49,7 @@ function unavailable(watch: ControlWatch, status: Extract<ControlLayout, { state
       return send && send.check.kind !== 'fresh' ? { ...watch, send: { ...send, check: { kind: 'fresh' } } } : watch;
     case 'read-failed':
     case 'unsupported':
-      return send ? { needs: null, send: { ...send, check: { kind: 'unread', reason: status.reason } } } : QUIET;
+      return send ? { ...watch, send: { ...send, check: { kind: 'unread', reason: status.reason } } } : QUIET;
     default: {
       const exhaustive: never = status.reason;
       return exhaustive;

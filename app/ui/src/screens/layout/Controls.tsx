@@ -2,12 +2,13 @@ import { useId, useMemo } from 'react';
 import { useStore } from 'zustand';
 import { useDevices } from '../../companion/devices.ts';
 import { useIntegrations } from '../../companion/integrations.ts';
-import { controlsStore, noticeOf, type ControlNotice, type NeedsSend, type Unchecked } from '../../lib/device/controls.ts';
+import { controlsStore, noticeOf, type ControlNotice, type NeedsSend } from '../../lib/device/controls.ts';
 import { controlBindings, controlWords, type ControlBinding } from '../../lib/editor/control-bindings.ts';
 import { plural } from '../../lib/editor/messages.ts';
 import type { EditorStore } from '../../lib/editor/store.ts';
 import type { Layout, Orientation } from '../../lib/editor/validate.ts';
 import { button } from '../../shell/button.ts';
+import { CHECKING_CONTROLS, NEEDS_SEND, uncheckedText } from '../home-model.ts';
 import { reviewLayout, useEditorState } from './editor.ts';
 
 const NAMES: Record<Orientation, string> = { landscape: 'Landscape', portrait: 'Portrait' };
@@ -32,19 +33,6 @@ function needsText(reason: NeedsSend, device: string) {
   }
 }
 
-export function uncheckedText(reason: Unchecked, device: string) {
-  switch (reason) {
-    case 'read-failed':
-      return `Couldn't check controls. Unplug ${device} and plug it back in.`;
-    case 'unsupported':
-      return `Couldn't check controls. Update the Firmware on ${device}.`;
-    default: {
-      const exhaustive: never = reason;
-      return exhaustive;
-    }
-  }
-}
-
 export function ControlNoticeBar({ store, device }: { store: EditorStore; device: string }) {
   const notice = useEditorControlNotice(store);
   const shown = useEditorState(store, (s) => s.orientation);
@@ -57,7 +45,7 @@ export function ControlNoticeBar({ store, device }: { store: EditorStore; device
       <section className="controls-notice is-checking" role="status" data-testid="controls-notice" data-state="checking">
         <p className="controls-notice-title">
           <i className="led" aria-hidden />
-          Checking controls…
+          {CHECKING_CONTROLS}
         </p>
       </section>
     );
@@ -93,7 +81,7 @@ export function ControlNoticeBar({ store, device }: { store: EditorStore; device
       <div className="controls-notice-head">
         <h2 className="controls-notice-title" id={titleId}>
           <i className="led" aria-hidden />
-          Controls need Send to Device
+          {NEEDS_SEND}
         </h2>
         {action}
       </div>

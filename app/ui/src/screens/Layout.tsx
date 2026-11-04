@@ -71,7 +71,8 @@ function useDeviceLong(canvas: RefObject<HTMLDivElement | null>, { head, foot }:
       const style = getComputedStyle(el);
       const aspect = deviceAspect();
       const gap = Number.parseFloat(style.rowGap);
-      const taken = (part: HTMLDivElement | null) => (part?.offsetHeight ? part.offsetHeight + gap : 0);
+      const wanted = (part: HTMLDivElement) => Math.max(part.offsetHeight, ...Array.from(part.children, (child) => child.scrollHeight));
+      const taken = (part: HTMLDivElement | null) => (part?.offsetHeight ? wanted(part) + gap : 0);
       const w = el.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
       const h = el.clientHeight - Number.parseFloat(style.paddingTop) - Number.parseFloat(style.paddingBottom) - taken(head.current) - taken(foot.current);
       const fitted = portrait ? Math.min(h, w / aspect) : Math.min(w, h / aspect);

@@ -1273,27 +1273,29 @@ Add Tile still offers the Volume bar and Now playing Presets with Needs Firmware
 {x.y} where their art goes, and places them; the Tile shows its label and the
 badge until the Device can draw it.
 
-## Controls need a Send
+## Controls need Send to Device
 
-A connected Device whose Companion reports `control_layout` as `no-pushed-copy` or `differs`, with `has_controls`, shows these. `matches`, a Layout without controls, a Device that isn't connected and `unavailable` show nothing new. A Send that fails keeps the notice and shows the Send to Device failure with Details.
+A connected Device whose Companion reports `control_layout` as `no-pushed-copy` or `differs`, with `has_controls`, shows these. `matches`, a Layout without controls, a Device that isn't connected and `unavailable` show nothing new. The notices name the action by its button, **Send to Device**, never as "a Send". A Send to Device that fails keeps the notice and shows the failure with Details. After one that succeeds, Checking controls… stays until a fresh assessment arrives: `matches` or a Layout without controls ends it quietly, `no-pushed-copy` or `differs` brings the notice back, and `read-failed` or `unsupported` shows "Couldn't check" until a later assessment decides, so a Send to Device never looks confirmed when nothing was checked.
 
 | Element | String |
 | --- | --- |
-| Home, under the status | Controls need a Send |
+| Home, under the status | Controls need Send to Device |
 | Home button | Review Layout |
 | Home button, accessible name | Review Layout for {device} |
-| Editor notice title | Controls need a Send |
-| Editor notice, no copy on this PC | These Tiles show live values, but their controls aren't set up on this PC. Review the Layout, then choose Send to Device. |
-| Editor notice, the Layout differs | The Layout on {device} differs from the one this PC sent. Review the Layout, then choose Send to Device. |
-| Editor notice, second line | Sending replaces the Layout on {device} and lets its Tiles control the Integrations shown here. |
+| Editor notice title | Controls need Send to Device |
+| Editor notice, no copy on this PC | These Tiles show live values, but their controls aren't set up on this PC. |
+| Editor notice, the Layout differs | The Layout on {device} differs from the one this PC sent. |
+| Editor notice, after either line | Sending replaces the Layout on {device} and lets its Tiles control the Integrations shown here. |
 | Editor notice, the editor shows the other orientation | {device} shows its {orientation} Layout. Switch to {Orientation} to review it. |
 | Editor notice button | Review Layout |
 | Editor notice button, while loading | Loading… |
 | Editor notice button, the other orientation | Switch to {Orientation} |
-| After a Send, until the Companion reports a match | Checking controls… |
+| After Send to Device, until the Companion reports a match | Checking controls… |
+| After Send to Device, the Companion couldn't read the Layout (`read-failed`) | Couldn't check {device}'s controls. Unplug it and plug it back in. |
+| After Send to Device, the Firmware can't report its Layout (`unsupported`) | Couldn't check {device}'s controls. Update its Firmware. |
 | Inspector section | Controls |
 | Inspector count | {n} Tiles |
-| Inspector hint | Tiles on every Page that control an Integration on this PC. Select one to change it. |
+| Inspector hint | Tiles on every Page that control an Integration. Select one to change it. |
 | Inspector, no control Tiles | No Tile on this Layout controls an Integration. |
 | Row, where | {page} Page |
 | Row, the Integration's own account | Default account |

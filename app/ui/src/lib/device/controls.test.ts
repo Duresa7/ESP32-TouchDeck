@@ -100,7 +100,8 @@ describe('Checking controls after a Send', () => {
       const ended = walk([send, see(CHECKING), (w) => sent(w, 'succeeded'), unread], asked);
       expect(noticeOf(ended, desk(CHECKING)), reason).toEqual({ kind: 'unchecked', reason, orientation: 'landscape' });
       expect(notice(walk([send, see(CHECKING), unread, (w) => sent(w, 'succeeded')], asked)), `${reason} while the Job runs`).toBe('unchecked');
-      expect(notice(walk([send, unread, (w) => sent(w, 'failed')], asked)), `${reason} and a failed Send`).toBe('none');
+      expect(notice(walk([send, unread], asked)), `${reason} while the Job runs keeps the guidance`).toBe('needs-send');
+      expect(notice(walk([send, unread, (w) => sent(w, 'failed')], asked)), `${reason} and a failed Send keep the guidance`).toBe('needs-send');
       expect(notice(walk([see(CHECKING)], ended))).toBe('checking');
       expect(notice(walk([see(MATCHES)], ended))).toBe('none');
       expect(notice(walk([see(NO_COPY)], ended))).toBe('needs-send');

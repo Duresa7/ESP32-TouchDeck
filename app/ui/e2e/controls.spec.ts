@@ -9,6 +9,10 @@ import { layoutOf, waitEvent } from './layout-helpers.ts';
 const shots = process.env.TD_SHOTS;
 
 const NO_COPY: ControlLayout = { state: 'no-pushed-copy', orientation: 'landscape', has_controls: true };
+const READ_FAILED: ControlLayout = { state: 'unavailable', reason: 'read-failed' };
+const CHECKING: ControlLayout = { state: 'unavailable', reason: 'checking' };
+const NO_COPY_TEXT = "These Tiles show live values, but their controls aren't set up on this PC.";
+const UNREAD_TEXT = "Couldn't check Desk's controls. Unplug it and plug it back in.";
 const DIFFERS: ControlLayout = { state: 'differs', orientation: 'landscape', has_controls: true };
 
 const widget = (source: string, field: string, account = '') => ({ type: 'widget' as const, source, field, account });
@@ -90,14 +94,15 @@ test('a Device that needs a Send: Home notice, Review Layout, Send, Checking con
   const desk = card(page, 'Desk');
   await expect(desk.locator('.device-meta .status')).toHaveText('Connected');
   await expect(desk.getByTestId('controls-notice')).toHaveAttribute('data-state', 'no-pushed-copy');
-  await expect(desk.getByTestId('controls-notice')).toContainText('Controls need a Send');
+  await expect(desk.getByTestId('controls-notice')).toContainText('Controls need Send to Device');
   await expect(card(page, 'Studio').getByTestId('controls-notice')).toHaveCount(0);
 
   await desk.getByRole('button', { name: 'Review Layout for Desk' }).click();
   await expect(page.getByTestId('editor')).toHaveAttribute('data-device-id', 'mock0001');
   await waitEvent(page, 'pulled');
   await expect(notice(page)).toHaveAttribute('data-state', 'no-pushed-copy');
-  await expect(page.getByTestId('controls-notice-body')).toHaveText("These Tiles show live values, but their controls aren't set up on this PC. Review the Layout, then choose Send to Device.");
+  await expect(notice(page).getByRole('heading')).toHaveText('Controls need Send to Device');
+  await expect(page.getByTestId('controls-notice-body')).toHaveText(NO_COPY_TEXT);
   await expect(notice(page)).toContainText('Sending replaces the Layout on Desk and lets its Tiles control the Integrations shown here.');
 
   const rows = page.getByTestId('control-binding');
@@ -162,10 +167,35 @@ test('a Send that fails keeps the guidance and the details', async ({ page }) =>
   await waitEvent(page, 'push-failed');
   await expect(page.getByTestId('status-detail')).toContainText('asset.unsupported');
   await expect(notice(page)).toHaveAttribute('data-state', 'no-pushed-copy');
-  await expect(page.getByTestId('controls-notice-body')).toHaveText("These Tiles show live values, but their controls aren't set up on this PC. Review the Layout, then choose Send to Device.");
+  await expect(page.getByTestId('controls-notice-body')).toHaveText(NO_COPY_TEXT);
   await expect(page.getByTestId('control-binding')).toHaveCount(3);
   await page.getByRole('button', { name: 'Home', exact: true }).click();
   await expect(card(page, 'Desk').getByTestId('controls-notice')).toHaveAttribute('data-state', 'no-pushed-copy');
+});
+
+test('a check that ends unread says so on Home and in the editor, and Home announces it', async ({ page }) => {
+  await home(page);
+  await onDevice(page, RECOVERED, NO_COPY);
+  await card(page, 'Desk').getByTestId('controls-review').click();
+  await waitEvent(page, 'pulled');
+  await page.evaluate(() => window.touchdeckDemo?.controls.hold('mock0001'));
+  await page.getByTestId('push').click();
+  await waitEvent(page, 'pushed');
+  await expect(notice(page)).toHaveAttribute('data-state', 'checking');
+  await page.evaluate((status) => window.touchdeckDemo?.controls.set('mock0001', status), READ_FAILED);
+  await expect(notice(page)).toHaveAttribute('data-state', 'unchecked');
+  await expect(notice(page)).toHaveAttribute('role', 'status');
+  await expect(notice(page)).toHaveText(UNREAD_TEXT);
+  await expect(page.getByTestId('status')).toHaveText('Sent to Desk');
+
+  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  const desk = card(page, 'Desk');
+  await expect(desk.getByRole('status')).toHaveText(UNREAD_TEXT);
+  await expect(desk.getByTestId('controls-review')).toHaveCount(0);
+  await page.evaluate((status) => window.touchdeckDemo?.controls.set('mock0001', status), CHECKING);
+  await expect(desk.getByRole('status')).toHaveText('Checking controls…');
+  await page.evaluate(() => window.touchdeckDemo?.controls.release('mock0001'));
+  await expect(desk.getByTestId('controls-notice')).toHaveCount(0);
 });
 
 test('a Layout that differs from the one this PC sent says so', async ({ page }) => {
@@ -174,7 +204,7 @@ test('a Layout that differs from the one this PC sent says so', async ({ page })
   await expect(card(page, 'Desk').getByTestId('controls-notice')).toHaveAttribute('data-state', 'differs');
   await card(page, 'Desk').getByTestId('controls-review').click();
   await waitEvent(page, 'pulled');
-  await expect(page.getByTestId('controls-notice-body')).toHaveText('The Layout on Desk differs from the one this PC sent. Review the Layout, then choose Send to Device.');
+  await expect(page.getByTestId('controls-notice-body')).toHaveText('The Layout on Desk differs from the one this PC sent.');
 });
 
 test('the editor on the other orientation names the one that needs review and switches to it', async ({ page }) => {
@@ -246,6 +276,14 @@ for (const theme of ['light', 'dark'] as const) {
         await expect(notice(page)).toHaveAttribute('data-state', 'checking');
         await noSpill(page, `checking-${size}-${theme}`);
         await shot(page, `checking-${size}-${theme}`);
+        await page.evaluate((status) => window.touchdeckDemo?.controls.set('mock0001', status), READ_FAILED);
+        await expect(notice(page)).toHaveAttribute('data-state', 'unchecked');
+        await noSpill(page, `unchecked-${size}-${theme}`);
+        await shot(page, `unchecked-${size}-${theme}`);
+        await page.getByRole('button', { name: 'Home', exact: true }).click();
+        await expect(card(page, 'Desk').getByRole('status')).toHaveText(UNREAD_TEXT);
+        await noSpill(page, `home-unchecked-${size}-${theme}`);
+        await shot(page, `home-unchecked-${size}-${theme}`);
         await page.evaluate(() => window.touchdeckDemo?.controls.release('mock0001'));
         await expect(notice(page)).toHaveCount(0);
       });
@@ -257,11 +295,15 @@ for (const theme of ['light', 'dark'] as const) {
         await waitEvent(page, 'pulled');
         await page.getByTestId('push').click();
         await waitEvent(page, 'push-failed');
-        await page.getByTestId('status').getByText('Details').click();
-        await expect(page.getByTestId('status-detail')).toBeVisible();
         await expect(notice(page)).toHaveAttribute('data-state', 'no-pushed-copy');
         await noSpill(page, `failed-${size}-${theme}`);
         await shot(page, `failed-${size}-${theme}`);
+
+        await page.getByTestId('status').getByText('Details').click();
+        await expect(page.getByTestId('status-detail')).toBeVisible();
+        await page.locator('.canvas').evaluate((canvas) => canvas.scrollTo(0, canvas.scrollHeight));
+        await noSpill(page, `failed-details-${size}-${theme}`);
+        await shot(page, `failed-details-${size}-${theme}`);
       });
     });
   }
