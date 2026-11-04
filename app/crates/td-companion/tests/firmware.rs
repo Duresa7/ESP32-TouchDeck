@@ -399,6 +399,62 @@ async fn same_or_newer_bundle_needs_no_prompt_and_emits_progress() {
 }
 
 #[tokio::test]
+async fn the_job_stays_restarting_until_the_device_goes_away() {
+    use futures_util::StreamExt;
+    let td = TestCompanion::start().await;
+    let id = td.plug_device("mocka").await;
+    let prompt = Arc::new(Prompt::default());
+    prompt.answer(true);
+    td.firmware_prompter(prompt);
+    let deck = td.deck("mocka");
+    deck.restart_after(Duration::from_millis(600), Duration::from_millis(400));
+    let mut events = td.events().await;
+    let job = td
+        .call::<Update>(FirmwareTarget { device: id }, NoQuery, request())
+        .await
+        .unwrap();
+    let mut phases: Vec<String> = Vec::new();
+    let mut confirming_at = None;
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while let Some(Ok(message)) = events.next().await {
+            let Ok(text) = message.to_text() else {
+                continue;
+            };
+            let frame: serde_json::Value = serde_json::from_str(text).unwrap();
+            if frame["type"] != "job.updated" || frame["data"]["id"] != job.id {
+                continue;
+            }
+            if let Some(phase) = frame["data"]["progress"]["phase"].as_str()
+                && phases.last().map(String::as_str) != Some(phase)
+            {
+                if phase == "confirming" {
+                    confirming_at = Some(Instant::now());
+                }
+                phases.push(phase.into());
+            }
+            if frame["data"]["state"] == "succeeded" {
+                break;
+            }
+            if frame["data"]["state"] == "failed" {
+                panic!("{frame}");
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        phases,
+        ["checking", "sending", "rebooting", "confirming"],
+        "the Job did not report each phase once, in order"
+    );
+    let dropped = deck.port_drops_at().expect("the update sent a restart");
+    assert!(
+        confirming_at.is_some_and(|at| at >= dropped),
+        "the Job reported confirming before the Device went away"
+    );
+}
+
+#[tokio::test]
 async fn ending_or_revoking_lock_owner_allows_new_jobs() {
     use serde_json::{Value, json};
     for action in ["end", "revoke", "reset"] {
