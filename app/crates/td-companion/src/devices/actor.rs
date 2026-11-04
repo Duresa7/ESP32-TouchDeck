@@ -42,7 +42,7 @@ pub(super) fn spawn(
     id: DeviceId,
     generation: u64,
     session: Session,
-    incoming: Receiver<Incoming>,
+    incoming: td_link::IncomingReceiver,
     mirror: Option<Mirror>,
 ) -> Handle {
     let (work, jobs) = mpsc::channel::<Work>();
@@ -189,7 +189,7 @@ fn forward(
     inner: &Inner,
     id: &DeviceId,
     generation: u64,
-    incoming: Receiver<Incoming>,
+    incoming: td_link::IncomingReceiver,
     mut mirror: Option<Mirror>,
     touches: Touches,
 ) {

@@ -16,7 +16,9 @@ pub use asset::{AssetError, AssetFormat, AssetReason};
 pub use discover::{Candidate, Probe, discover, probe_transport};
 pub use live::{LiveError, LiveReason, LiveSet, LiveValue};
 pub use mock::MockDeck;
-pub use session::{Incoming, LinkError, Session, SessionConfig, Transfer, XferFrame};
+pub use session::{
+    Incoming, IncomingReceiver, LinkError, Session, SessionConfig, Transfer, XferFrame,
+};
 
 pub const VID: u16 = 0x303A;
 pub const PID: u16 = 0x1001;

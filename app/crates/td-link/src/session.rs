@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::io::{self, ErrorKind, Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -12,6 +12,16 @@ use td_core::{Body, Frame, Hello, Item, Pong, Reply, ReplyError, Request, Role, 
 
 use crate::Transport;
 use crate::xfer::LayoutState;
+
+const CONSOLE_LINE_MAX: usize = 16 * 1024;
+const INCOMING_CAPACITY: usize = 256;
+const TRANSFER_CAPACITY: usize = 64;
+
+#[derive(Default)]
+struct ConsoleLine {
+    bytes: Vec<u8>,
+    discarding: bool,
+}
 
 const WRITE_DEADLINE: Duration = Duration::from_secs(2);
 const LAYOUT_REPLY_GRACE: Duration = Duration::from_secs(3);
@@ -58,6 +68,39 @@ pub enum Incoming {
     Closed(String),
 }
 
+/// Bounded unsolicited traffic. Excess lines and events are dropped; session closure has a reserved slot.
+pub struct IncomingReceiver {
+    receiver: Receiver<Incoming>,
+    queued: Arc<AtomicUsize>,
+}
+
+impl IncomingReceiver {
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<Incoming, RecvTimeoutError> {
+        self.receiver.recv_timeout(timeout).inspect(|_| {
+            self.queued.fetch_sub(1, Ordering::AcqRel);
+        })
+    }
+
+    pub fn try_recv(&self) -> Result<Incoming, mpsc::TryRecvError> {
+        self.receiver.try_recv().inspect(|_| {
+            self.queued.fetch_sub(1, Ordering::AcqRel);
+        })
+    }
+
+    pub fn try_iter(&self) -> impl Iterator<Item = Incoming> + '_ {
+        std::iter::from_fn(|| self.try_recv().ok())
+    }
+}
+
+impl Iterator for IncomingReceiver {
+    type Item = Incoming;
+    fn next(&mut self) -> Option<Incoming> {
+        self.receiver.recv().ok().inspect(|_| {
+            self.queued.fetch_sub(1, Ordering::AcqRel);
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinkError {
     Timeout(Duration),
@@ -100,8 +143,9 @@ struct Shared {
     pending: Mutex<Pending>,
     open: AtomicBool,
     reason: Mutex<String>,
-    incoming: Sender<Incoming>,
-    xfer: Mutex<Option<Sender<XferFrame>>>,
+    incoming: SyncSender<Incoming>,
+    queued: Arc<AtomicUsize>,
+    xfer: Mutex<Option<SyncSender<XferFrame>>>,
     layout_reply: Mutex<Option<LayoutReply>>,
 }
 
@@ -111,7 +155,22 @@ impl Shared {
             *self.reason.lock().unwrap() = reason.to_owned();
             self.pending.lock().unwrap().waiting.clear();
             self.layout_reply.lock().unwrap().take();
-            let _ = self.incoming.send(Incoming::Closed(reason.to_owned()));
+            self.queued.fetch_add(1, Ordering::AcqRel);
+            if self
+                .incoming
+                .try_send(Incoming::Closed(reason.to_owned()))
+                .is_err()
+            {
+                self.queued.fetch_sub(1, Ordering::AcqRel);
+            }
+        }
+    }
+
+    fn publish(&self, item: Incoming) {
+        if self.queued.fetch_add(1, Ordering::AcqRel) >= INCOMING_CAPACITY
+            || self.incoming.try_send(item).is_err()
+        {
+            self.queued.fetch_sub(1, Ordering::AcqRel);
         }
     }
 
@@ -182,10 +241,18 @@ impl Shared {
         }
     }
 
-    fn route(&self, item: Item, line: &mut Vec<u8>) {
+    fn route(&self, item: Item, buffer: &mut ConsoleLine) {
         match item {
             Item::Text(bytes) => {
                 for byte in bytes {
+                    if buffer.discarding {
+                        if byte == b'\n' {
+                            buffer.discarding = false;
+                            self.publish(Incoming::Line("[console line truncated]".into()));
+                        }
+                        continue;
+                    }
+                    let line = &mut buffer.bytes;
                     if byte == b'\n' {
                         let text =
                             String::from_utf8_lossy(line.strip_suffix(b"\r").unwrap_or(line))
@@ -202,9 +269,14 @@ impl Shared {
                         {
                             let _ = waiting.waiting.send(reply);
                         }
-                        let _ = self.incoming.send(Incoming::Line(text));
+                        self.publish(Incoming::Line(text));
                     } else {
-                        line.push(byte);
+                        if line.len() == CONSOLE_LINE_MAX {
+                            line.clear();
+                            buffer.discarding = true;
+                        } else {
+                            line.push(byte);
+                        }
                     }
                 }
             }
@@ -223,7 +295,7 @@ impl Shared {
                 body: Body::Message(payload),
             }) => {
                 if let Ok(event @ Value::Object(_)) = serde_json::from_slice::<Value>(&payload) {
-                    let _ = self.incoming.send(Incoming::Event(event));
+                    self.publish(Incoming::Event(event));
                 }
             }
             Item::Frame(Frame {
@@ -245,7 +317,7 @@ impl Shared {
 
     fn to_xfer(&self, frame: XferFrame) {
         if let Some(sink) = self.xfer.lock().unwrap().as_ref() {
-            let _ = sink.send(frame);
+            let _ = sink.try_send(frame);
         }
     }
 }
@@ -315,9 +387,14 @@ impl Session {
     pub fn open(
         transport: Box<dyn Transport>,
         config: SessionConfig,
-    ) -> io::Result<(Session, Receiver<Incoming>)> {
+    ) -> io::Result<(Session, IncomingReceiver)> {
         let (reader, writer) = transport.split()?;
-        let (incoming, events) = mpsc::channel();
+        let (incoming, events) = mpsc::sync_channel(INCOMING_CAPACITY + 1);
+        let queued = Arc::new(AtomicUsize::new(0));
+        let events = IncomingReceiver {
+            receiver: events,
+            queued: queued.clone(),
+        };
         let shared = Arc::new(Shared {
             writer: Mutex::new(writer),
             pending: Mutex::new(Pending {
@@ -327,6 +404,7 @@ impl Session {
             open: AtomicBool::new(true),
             reason: Mutex::new(String::new()),
             incoming,
+            queued,
             xfer: Mutex::new(None),
             layout_reply: Mutex::new(None),
         });
@@ -382,7 +460,7 @@ impl Session {
         if slot.is_some() {
             return Err(LinkError::TransferBusy);
         }
-        let (sink, frames) = mpsc::channel();
+        let (sink, frames) = mpsc::sync_channel(TRANSFER_CAPACITY);
         *slot = Some(sink);
         Ok(Transfer {
             session: self,
@@ -477,7 +555,7 @@ impl Drop for Session {
 
 fn read_loop(shared: &Shared, mut reader: Box<dyn Read + Send>) {
     let mut decoder = StreamDecoder::default();
-    let mut line = Vec::new();
+    let mut line = ConsoleLine::default();
     let mut buf = [0u8; 4096];
     while shared.open.load(Ordering::Acquire) {
         match reader.read(&mut buf) {
@@ -540,7 +618,7 @@ mod tests {
         }
     }
 
-    fn until<T>(events: &Receiver<Incoming>, mut pick: impl FnMut(Incoming) -> Option<T>) -> T {
+    fn until<T>(events: &IncomingReceiver, mut pick: impl FnMut(Incoming) -> Option<T>) -> T {
         let deadline = Instant::now() + Duration::from_secs(5);
         while let Some(left) = deadline.checked_duration_since(Instant::now()) {
             if let Ok(item) = events.recv_timeout(left)
@@ -863,7 +941,7 @@ mod tests {
             Item::Text(
                 b"@td {\"cmd\":\"console\",\"ok\":false,\"error\":\"input overflow\"}\r\n".to_vec(),
             ),
-            &mut Vec::new(),
+            &mut ConsoleLine::default(),
         );
         assert_eq!(
             session.layout_state(Duration::from_secs(1)).unwrap(),

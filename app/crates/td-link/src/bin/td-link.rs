@@ -1,5 +1,4 @@
 use std::process::ExitCode;
-use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -131,7 +130,10 @@ fn transport(args: &Args) -> Result<Box<dyn Transport>, String> {
         .map_err(|error| format!("{port}: {error}"))
 }
 
-fn open(args: &Args, config: SessionConfig) -> Result<(Session, Receiver<Incoming>), String> {
+fn open(
+    args: &Args,
+    config: SessionConfig,
+) -> Result<(Session, td_link::IncomingReceiver), String> {
     Session::open(transport(args)?, config).map_err(|error| error.to_string())
 }
 

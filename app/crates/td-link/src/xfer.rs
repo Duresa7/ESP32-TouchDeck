@@ -31,6 +31,52 @@ const END_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long a receiver waits for the next chunk before it gives up on the sender.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(2);
 
+pub(crate) const LIST_ITEMS_MAX: usize = 4096;
+const LIST_PAGES_MAX: usize = 4096;
+const LIST_TIMEOUT: Duration = Duration::from_secs(30);
+
+pub(crate) struct ListingBudget {
+    deadline: Instant,
+    pages: usize,
+    items: usize,
+}
+
+pub(crate) fn listing_error(reason: &str) -> LinkError {
+    LinkError::Reply(ReplyError::Fields(format!("Device listing {reason}")))
+}
+
+impl ListingBudget {
+    pub(crate) fn new() -> Self {
+        Self {
+            deadline: Instant::now() + LIST_TIMEOUT,
+            pages: 0,
+            items: 0,
+        }
+    }
+
+    pub(crate) fn timeout(&self) -> Result<Duration, LinkError> {
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(LinkError::Timeout(LIST_TIMEOUT));
+        }
+        Ok(left.min(REQUEST_TIMEOUT))
+    }
+
+    pub(crate) fn page(&mut self, items: usize) -> Result<(), LinkError> {
+        self.timeout()?;
+        self.pages += 1;
+        self.items += items;
+        if self.pages > LIST_PAGES_MAX || self.items > LIST_ITEMS_MAX {
+            return Err(listing_error("exceeds page or item limit"));
+        }
+        Ok(())
+    }
+}
+
+fn transfer_deadline(bytes: usize) -> Instant {
+    Instant::now() + Duration::from_secs(5 + (bytes as u64).div_ceil(4096))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum XferError {
     Link(LinkError),
@@ -237,6 +283,8 @@ pub(crate) fn send_chunks(
     xfer: u8,
     data: &[u8],
 ) -> Result<(u16, u32), XferError> {
+    let deadline = transfer_deadline(data.len());
+    let mut progress = Instant::now();
     let count = chunk_count(data.len());
     let chunk = |idx: u16| {
         let start = usize::from(idx) * CHUNK_DATA_MAX;
@@ -246,6 +294,12 @@ pub(crate) fn send_chunks(
     let mut sent: HashMap<u16, (Instant, u32)> = HashMap::new();
     let mut retransmits = 0;
     while base < count {
+        if Instant::now() >= deadline || progress.elapsed() >= IDLE_TIMEOUT {
+            return Err(XferError::Stalled {
+                received: usize::from(base) * CHUNK_DATA_MAX,
+                bytes: data.len(),
+            });
+        }
         while ahead < count && ahead < base + WINDOW {
             transfer.send_chunk(xfer, ahead, chunk(ahead))?;
             sent.insert(ahead, (Instant::now(), 1));
@@ -255,38 +309,41 @@ pub(crate) fn send_chunks(
             .filter_map(|idx| sent.get(&idx).map(|(at, _)| *at + RETRY_AFTER))
             .min()
             .expect("an unacked chunk is in flight");
-        let wait = due.saturating_duration_since(Instant::now());
+        let wait = due
+            .min(deadline)
+            .min(progress + IDLE_TIMEOUT)
+            .saturating_duration_since(Instant::now());
         match transfer.frames.recv_timeout(wait) {
             Ok(XferFrame::Ack { xfer: id, next }) if id == xfer => {
-                if next > base {
+                if next > base && next <= ahead {
                     base = next.min(ahead);
                     sent.retain(|idx, _| *idx >= base);
+                    progress = Instant::now();
                 }
             }
             Ok(_) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                let now = Instant::now();
-                for idx in base..ahead {
-                    let Some((at, times)) = sent.get_mut(&idx) else {
-                        continue;
-                    };
-                    if *at + RETRY_AFTER > now {
-                        continue;
-                    }
-                    if *times >= TRANSMISSIONS {
-                        return Err(XferError::Aborted { idx });
-                    }
-                    transfer.send_chunk(xfer, idx, chunk(idx))?;
-                    *at = now;
-                    *times += 1;
-                    retransmits += 1;
-                }
-            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 return Err(XferError::Link(LinkError::Closed(
                     "the transfer channel closed".into(),
                 )));
             }
+        }
+        let now = Instant::now();
+        for idx in base..ahead {
+            let Some((at, times)) = sent.get_mut(&idx) else {
+                continue;
+            };
+            if *at + RETRY_AFTER > now {
+                continue;
+            }
+            if *times >= TRANSMISSIONS {
+                return Err(XferError::Aborted { idx });
+            }
+            transfer.send_chunk(xfer, idx, chunk(idx))?;
+            *at = now;
+            *times += 1;
+            retransmits += 1;
         }
     }
     Ok((count, retransmits))
@@ -314,10 +371,19 @@ pub fn get_layout(session: &Session, orientation: Orientation) -> Result<GetRepo
     let count = chunk_count(bytes);
     let mut data = Vec::with_capacity(bytes);
     let mut next = 0u16;
+    let deadline = transfer_deadline(bytes);
+    let mut progress = Instant::now();
     while next < count {
+        let until = deadline.min(progress + IDLE_TIMEOUT);
+        if Instant::now() >= until {
+            return Err(XferError::Stalled {
+                received: data.len(),
+                bytes,
+            });
+        }
         let frame = transfer
             .frames
-            .recv_timeout(IDLE_TIMEOUT)
+            .recv_timeout(until.saturating_duration_since(Instant::now()))
             .map_err(|_| XferError::Stalled {
                 received: data.len(),
                 bytes,
@@ -334,7 +400,7 @@ pub fn get_layout(session: &Session, orientation: Orientation) -> Result<GetRepo
         if xfer != opened.xfer {
             continue;
         }
-        if idx == next {
+        if idx == next && !chunk.is_empty() {
             if data.len() + chunk.len() > bytes {
                 return Err(XferError::Size {
                     expected: bytes,
@@ -343,6 +409,7 @@ pub fn get_layout(session: &Session, orientation: Orientation) -> Result<GetRepo
             }
             data.extend_from_slice(&chunk);
             next += 1;
+            progress = Instant::now();
         }
         transfer.send_ack(seq, xfer, next)?;
     }
@@ -386,14 +453,26 @@ pub struct IconSync {
 pub fn list_icons(session: &Session) -> Result<BTreeSet<String>, XferError> {
     let mut ids = BTreeSet::new();
     let mut cursor = None;
+    let mut seen = BTreeSet::new();
+    let mut budget = ListingBudget::new();
     loop {
         let page: IconPage = session
-            .request(&Request::IconList { cursor }, REQUEST_TIMEOUT)?
+            .request(&Request::IconList { cursor }, budget.timeout()?)?
             .fields()?;
-        ids.extend(page.ids);
+        budget.page(page.ids.len())?;
+        for id in page.ids {
+            if !ids.insert(id) {
+                return Err(listing_error("repeated an item").into());
+            }
+        }
         match page.next {
-            Some(next) if Some(next) != cursor => cursor = Some(next),
-            _ => return Ok(ids),
+            Some(next) => {
+                if !seen.insert(next) {
+                    return Err(listing_error("repeated a cursor").into());
+                }
+                cursor = Some(next);
+            }
+            None => return Ok(ids),
         }
     }
 }
@@ -456,6 +535,22 @@ pub fn prune_icons(session: &Session, keep: &BTreeSet<String>) -> Result<Vec<Str
 mod tests {
     use super::*;
     use crate::{MockDeck, SessionConfig};
+
+    #[test]
+    fn listing_budget_bounds_empty_pages_items_and_elapsed_time() {
+        let mut pages = ListingBudget::new();
+        for _ in 0..LIST_PAGES_MAX {
+            pages.page(0).unwrap();
+        }
+        assert!(pages.page(0).is_err());
+        let mut items = ListingBudget::new();
+        items.page(LIST_ITEMS_MAX).unwrap();
+        assert!(items.page(1).is_err());
+        let mut expired = ListingBudget::new();
+        expired.deadline = Instant::now();
+        assert!(expired.timeout().is_err());
+        assert!(expired.page(0).is_err());
+    }
 
     fn dev() -> Layout {
         let bytes = std::fs::read(
