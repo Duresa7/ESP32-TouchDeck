@@ -150,7 +150,7 @@ test('Check now asks the hub once, then waits out the floor politely', async ({ 
   await expect(refresh).toHaveText('Check now');
   await refresh.click();
   await expect(outcome(page)).toHaveAttribute('data-event', 'refreshed');
-  await expect(outcome(page)).toHaveText('Checked');
+  await expect(outcome(page)).toHaveText('Check started');
   await expect(refresh).toHaveAttribute('data-waiting', 'true');
   await expect(refresh).toHaveAttribute('aria-disabled', 'true');
   await refresh.click({ force: true });
