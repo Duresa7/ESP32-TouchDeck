@@ -655,9 +655,11 @@ impl Drop for FakeServer {
 }
 
 fn serve(key: &'static str, body: String) -> FakeServer {
+    static NEXT: AtomicUsize = AtomicUsize::new(1);
+    let prefix = format!("/hub-{}", NEXT.fetch_add(1, Ordering::Relaxed));
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
+    let url = format!("http://{}{prefix}", listener.local_addr().unwrap());
     let requests: RequestLog = Arc::new(Mutex::new(Vec::new()));
     let stop = Arc::new(AtomicBool::new(false));
     let (log, halt) = (requests.clone(), stop.clone());
@@ -668,7 +670,8 @@ fn serve(key: &'static str, body: String) -> FakeServer {
                 continue;
             };
             stream.set_nonblocking(false).unwrap();
-            answer(stream, key, &body, &log);
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+            answer(stream, &prefix, key, &body, &log);
         }
     });
     FakeServer {
@@ -680,6 +683,7 @@ fn serve(key: &'static str, body: String) -> FakeServer {
 
 fn answer(
     mut stream: TcpStream,
+    prefix: &str,
     key: &str,
     body: &str,
     log: &Mutex<Vec<(Instant, String, Option<String>)>>,
@@ -689,6 +693,13 @@ fn answer(
     if reader.read_line(&mut request_line).unwrap_or(0) == 0 {
         return;
     }
+    let Some((method, target_and_version)) = request_line.trim().split_once(' ') else {
+        return;
+    };
+    let Some(stripped) = target_and_version.strip_prefix(prefix) else {
+        return;
+    };
+    let normalized = format!("{method} {stripped}");
     let mut auth = None;
     let mut length = 0;
     loop {
@@ -704,20 +715,25 @@ fn answer(
         if let Some((name, value)) = line.split_once(':')
             && name.eq_ignore_ascii_case("content-length")
         {
-            length = value.trim().parse().unwrap();
+            let Ok(parsed) = value.trim().parse() else {
+                return;
+            };
+            length = parsed;
         }
     }
     let mut request_body = vec![0; length];
-    reader.read_exact(&mut request_body).unwrap();
+    if reader.read_exact(&mut request_body).is_err() {
+        return;
+    }
     log.lock()
         .unwrap()
-        .push((Instant::now(), request_line.trim().to_owned(), auth.clone()));
+        .push((Instant::now(), normalized.clone(), auth.clone()));
     let api = serde_json::json!({"status_code": 200, "body": "{\"five_hour\":null,\"seven_day\":null,\"rate_limit\":null}"}).to_string();
     let (status, payload) = if auth.as_deref() != Some(&format!("Bearer {key}")) {
         ("401 Unauthorized", "{\"error\":\"missing management key\"}")
-    } else if request_line.starts_with(&format!("GET {AUTH_FILES} ")) {
+    } else if normalized.starts_with(&format!("GET {AUTH_FILES} ")) {
         ("200 OK", body)
-    } else if request_line.starts_with(&format!("POST {API_CALL} ")) {
+    } else if normalized.starts_with(&format!("POST {API_CALL} ")) {
         ("200 OK", api.as_str())
     } else {
         ("404 Not Found", "{}")

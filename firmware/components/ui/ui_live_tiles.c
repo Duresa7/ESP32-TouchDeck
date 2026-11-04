@@ -856,6 +856,18 @@ void ui_live_drop(void)
     }
 }
 
+static uint32_t s_tap_generation;
+
+uint32_t ui_live_generation(void)
+{
+    return s.lock != NULL ? table_generation() : s.table.generation;
+}
+
+uint32_t ui_live_tap_generation(void)
+{
+    return s_tap_generation;
+}
+
 const char *ui_live_part(const ui_tile_t *tile, int16_t x, int16_t y)
 {
     const view_t *v = view_of(tile);
@@ -863,13 +875,19 @@ const char *ui_live_part(const ui_tile_t *tile, int16_t x, int16_t y)
         return NULL;
     }
     const uint32_t generation = table_generation();
-    return ui_part_name(v->kind == VIEW_BAR ? ui_live_bar_part(&v->bar.live, generation, &v->bar.layout, x, y)
-                                            : ui_live_np_part(&v->np.tap, generation, &v->np.layout, x, y));
+    const char *part =
+        ui_part_name(v->kind == VIEW_BAR ? ui_live_bar_part(&v->bar.live, generation, &v->bar.layout, x, y)
+                                         : ui_live_np_part(&v->np.tap, generation, &v->np.layout, x, y));
+    if (part != NULL) {
+        s_tap_generation = generation;
+    }
+    return part;
 }
 
 void ui_live_select(void)
 {
     if (s.lock == NULL) {
+        s.table.generation++;
         return;
     }
     xSemaphoreTake(s.lock, portMAX_DELAY);

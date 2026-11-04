@@ -86,6 +86,10 @@ ui_live_result_t ui_live_update(const ui_live_set_t *set, uint32_t *retry_ms);
 /* A new protocol 2 selection: clears every live value and counter and restarts the rate windows. */
 void ui_live_select(void);
 
+/* The live-table generation now, or the generation the last ui_live_part() tap matched. */
+uint32_t ui_live_generation(void);
+uint32_t ui_live_tap_generation(void);
+
 /* True when the online source says the app is connected. */
 bool ui_link_online(void);
 

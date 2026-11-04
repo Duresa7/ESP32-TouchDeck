@@ -5,6 +5,7 @@
 #include "td_v2_json.h"
 #include "td_rx_sync.h"
 #include "td_input.h"
+#include "ui.h"
 #include <stdio.h>
 #include <string.h>
 #include "esp_timer.h"
@@ -29,14 +30,7 @@ static QueueHandle_t s_presses;
 static uint32_t s_press_seq;
 static td_input_mailbox_t s_input;
 
-typedef struct {
-    uint32_t seq;
-    uint32_t t;
-    char page[TD_LINK_ID_MAX];
-    char tile[TD_LINK_ID_MAX];
-    char kind[12];
-    char part[16];
-} press_t;
+typedef td_press_t press_t;
 
 td_link_state_t td_link_state(void)
 {
@@ -53,6 +47,9 @@ void td_link_hello(void)
     portENTER_CRITICAL(&s_lock);
     s_state.online = true;
     portEXIT_CRITICAL(&s_lock);
+    if (s_presses) {
+        xQueueReset(s_presses);
+    }
 }
 
 void td_link_count_drop(void)
@@ -206,14 +203,11 @@ void td_link_press_part(const char *page, const char *tile, const char *kind, co
     if (!s_presses) {
         return;
     }
-    press_t press = { .t = (uint32_t)(esp_timer_get_time() / 1000) };
-    snprintf(press.page, sizeof press.page, "%s", page);
-    snprintf(press.tile, sizeof press.tile, "%s", tile);
-    snprintf(press.kind, sizeof press.kind, "%s", kind);
-    if (part) {
-        if (!td_link_v2_selected() || !*part || strlen(part) >= sizeof press.part) return;
-        for (const char *c = part; *c; c++) if ((*c < 'a' || *c > 'z') && *c != '_') return;
-        strcpy(press.part, part);
+    press_t press;
+    const uint32_t generation = part ? ui_live_tap_generation() : ui_live_generation();
+    if (!td_press_init(&press, page, tile, kind, part, td_link_v2_selected(), generation,
+                       (uint32_t)(esp_timer_get_time() / 1000))) {
+        return;
     }
     press.seq = __atomic_add_fetch(&s_press_seq, 1, __ATOMIC_RELAXED);
     xQueueSend(s_presses, &press, 0);
@@ -258,7 +252,7 @@ static void send_events(void)
     const bool online = td_link_state().online;
     press_t press;
     for (int turn = 0; turn < TD_LINK_EVENTS_PER_TURN && xQueueReceive(s_presses, &press, 0) == pdTRUE; turn++) {
-        if (online && (!press.part[0] || td_link_v2_selected())) {
+        if (td_press_ready(&press, online, td_link_v2_selected(), ui_live_generation())) {
             int len = snprintf(json, sizeof json,
                                "{\"m\":\"press\",\"page\":\"%s\",\"tile\":\"%s\",\"kind\":\"%s\",\"seq\":%u,\"t\":%u}",
                                press.page, press.tile, press.kind, (unsigned)press.seq, (unsigned)press.t);

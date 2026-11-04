@@ -1,5 +1,6 @@
 #include "td_input.h"
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 static bool id_valid(const char *s)
@@ -41,4 +42,27 @@ void td_input_cancel(td_input_mailbox_t *box)
 {
     box->pending = false;
     box->sent = false;
+}
+
+bool td_press_init(td_press_t *out, const char *page, const char *tile, const char *kind, const char *part,
+                   bool v2_selected, uint32_t generation, uint32_t now)
+{
+    if (!out || !page || !tile || !kind) return false;
+    *out = (td_press_t){ .t = now, .generation = generation };
+    snprintf(out->page, sizeof out->page, "%s", page);
+    snprintf(out->tile, sizeof out->tile, "%s", tile);
+    snprintf(out->kind, sizeof out->kind, "%s", kind);
+    if (part) {
+        if (!v2_selected || !*part || strlen(part) >= sizeof out->part) return false;
+        for (const char *c = part; *c; c++) {
+            if ((*c < 'a' || *c > 'z') && *c != '_') return false;
+        }
+        strcpy(out->part, part);
+    }
+    return true;
+}
+
+bool td_press_ready(const td_press_t *press, bool online, bool v2_selected, uint32_t generation)
+{
+    return press && online && press->generation == generation && (!press->part[0] || v2_selected);
 }
