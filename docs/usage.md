@@ -8,7 +8,7 @@ This guide covers the 1.0 app. App screenshots use demo data at the default 1100
 
 You need a Waveshare ESP32-S3-Touch-LCD-5B, a USB data cable and Windows x64.
 
-1. Download [OpenTouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe) from the project's [releases](https://github.com/Duresa7/ESP32-TouchDeck/releases/latest).
+1. Download [OpenTouchDeck-windows-x64-setup.exe](https://github.com/Duresa7/OpenTouchDeck/releases/latest/download/OpenTouchDeck-windows-x64-setup.exe) from the project's [releases](https://github.com/Duresa7/OpenTouchDeck/releases/latest).
 2. Run the installer. It installs for the current user, without administrator rights. No development tools are needed.
 3. Open **Open TouchDeck** from the Start menu.
 

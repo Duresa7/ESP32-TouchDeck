@@ -126,7 +126,7 @@
           "icon": null,
           "action": {
             "type": "open",
-            "target": "https://github.com/Duresa7/ESP32-TouchDeck"
+            "target": "https://github.com/Duresa7/OpenTouchDeck"
           }
         },
         {

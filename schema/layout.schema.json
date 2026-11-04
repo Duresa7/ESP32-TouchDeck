@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Duresa7/ESP32-TouchDeck/schema/layout.schema.json",
+  "$id": "https://github.com/Duresa7/OpenTouchDeck/schema/layout.schema.json",
   "title": "TouchDeck layout versions 1 and 2",
   "type": "object",
   "additionalProperties": false,
