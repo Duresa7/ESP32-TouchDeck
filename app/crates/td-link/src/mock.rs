@@ -171,6 +171,8 @@ struct State {
     input_seq: u32,
     update_sha: Option<String>,
     update_pending: Option<(String, String)>,
+    restart: Option<(Duration, Duration)>,
+    restart_window: Option<(Instant, Instant)>,
     update_mode: String,
     update_aborted: bool,
     assets: BTreeMap<String, Vec<u8>>,
@@ -325,6 +327,8 @@ impl MockDeck {
                 input_seq: 0,
                 update_sha: None,
                 update_pending: None,
+                restart: None,
+                restart_window: None,
                 update_mode: String::new(),
                 update_aborted: false,
                 assets: BTreeMap::new(),
@@ -398,11 +402,40 @@ impl MockDeck {
     pub fn update_mode(&self, mode: &str) {
         self.state().update_mode = mode.into();
     }
-    /// Plugs a host into the deck. A later connect replaces the earlier one.
+    /// Makes the next Firmware update restart like a real Device: after `update.end` the deck keeps
+    /// answering as the old build for `drop_after`, then its port is gone for `down_for`, then it
+    /// comes back on the new build.
+    pub fn restart_after(&self, drop_after: Duration, down_for: Duration) {
+        self.state().restart = Some((drop_after, down_for));
+    }
+    /// When the port of the restarting deck goes away, once an update has been sent.
+    pub fn port_drops_at(&self) -> Option<Instant> {
+        self.state().restart_window.map(|(drop_at, _)| drop_at)
+    }
+    /// Plugs a host into the deck. A later connect replaces the earlier one. While the port is
+    /// gone the transport reads end-of-file at once.
     pub fn connect(&self) -> MockTransport {
+        self.try_connect().unwrap_or_else(|_| {
+            let (to_deck, _) = mpsc::channel::<Vec<u8>>();
+            let (_, from_deck) = mpsc::channel::<Vec<u8>>();
+            MockTransport { from_deck, to_deck }
+        })
+    }
+    /// Like [`MockDeck::connect`], but fails the way opening a vanished port does.
+    pub fn try_connect(&self) -> io::Result<MockTransport> {
         {
             let mut state = self.state();
-            if let Some((hash, slot)) = state.update_pending.take() {
+            let now = Instant::now();
+            let window = state
+                .restart_window
+                .filter(|_| state.update_pending.is_some());
+            let still_up = window.is_some_and(|(drop_at, _)| now < drop_at);
+            if let Some((drop_at, back_at)) = window
+                && (drop_at..back_at).contains(&now)
+            {
+                return Err(io::Error::from(ErrorKind::NotFound));
+            }
+            if !still_up && let Some((hash, slot)) = state.update_pending.take() {
                 state.reboots += 1;
                 if state.update_mode == "rollback" {
                     state.update_aborted = true;
@@ -424,7 +457,7 @@ impl MockDeck {
         };
         let deck = self.clone();
         thread::spawn(move || deck.run(&from_host, &to_host, generation));
-        MockTransport { from_deck, to_deck }
+        Ok(MockTransport { from_deck, to_deck })
     }
 
     /// Stops answering anything for good, as a deck that hung or lost its cable without an error.
@@ -1484,6 +1517,10 @@ impl MockDeck {
                     "ota_0"
                 };
                 state.update_pending = Some((hash, slot.into()));
+                if let Some((drop_after, down_for)) = state.restart {
+                    let drop_at = Instant::now() + drop_after;
+                    state.restart_window = Some((drop_at, drop_at + down_for));
+                }
                 Ok(object(json!({"slot":slot})))
             }
             "layout.put" => self.layout_put(request),

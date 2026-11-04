@@ -239,7 +239,7 @@ impl PortSource for MockPorts {
                 io::ErrorKind::PermissionDenied,
                 "Access is denied.",
             )),
-            (_, deck) => Ok(Box::new(deck.connect())),
+            (_, deck) => Ok(Box::new(deck.try_connect()?)),
         }
     }
     fn watch(&self, changed: Changed) {
