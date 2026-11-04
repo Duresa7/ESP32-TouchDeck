@@ -36,6 +36,7 @@ export function sampleDevice(id: string, name: string | null, link: LinkState = 
     capabilities: null,
     orientation: 'landscape',
     layout: null,
+    control_layout: { state: 'unavailable', reason: 'checking' },
     key_mirror: { enabled: true, reason: null },
     stable_id: true,
   };

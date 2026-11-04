@@ -1,6 +1,6 @@
 # Icon sources for the icon picker
 
-Research for [#70](https://github.com/Duresa7/ESP32-TouchDeck/issues/70), under the overhaul spec [#63](https://github.com/Duresa7/ESP32-TouchDeck/issues/63). It tells the icon-search tickets what Open TouchDeck may use from Simple Icons, selfh.st icons, Brandfetch and Flaticon, and how.
+Research for [#70](https://github.com/Duresa7/OpenTouchDeck/issues/70), under the overhaul spec [#63](https://github.com/Duresa7/OpenTouchDeck/issues/63). It tells the icon-search tickets what Open TouchDeck may use from Simple Icons, selfh.st icons, Brandfetch and Flaticon, and how.
 
 Researched on 2026-10-28. Figures come from the files and docs as they stood that day: Simple Icons `simple-icons@16.36.0`, selfh.st `selfhst/icons` at `main` (last commit 2026-10-28), Brandfetch docs as published.
 

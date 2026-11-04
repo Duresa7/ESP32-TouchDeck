@@ -206,6 +206,40 @@ pub struct DeviceDiagnostics {
     pub current_layout: String,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "state", rename_all = "kebab-case")]
+pub enum ControlLayout {
+    Unavailable {
+        reason: ControlLayoutUnavailable,
+    },
+    NoPushedCopy {
+        orientation: td_core::Orientation,
+        has_controls: bool,
+    },
+    Matches {
+        orientation: td_core::Orientation,
+        has_controls: bool,
+    },
+    Differs {
+        orientation: td_core::Orientation,
+        has_controls: bool,
+    },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum ControlLayoutUnavailable {
+    Offline,
+    Checking,
+    Unsupported,
+    ReadFailed,
+}
+impl Default for ControlLayout {
+    fn default() -> Self {
+        Self::Unavailable {
+            reason: ControlLayoutUnavailable::Checking,
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct DeviceSummary {
     pub id: DeviceId,
     pub rev: u64,
@@ -217,6 +251,7 @@ pub struct DeviceSummary {
     pub capabilities: Option<Capabilities>,
     pub orientation: Option<String>,
     pub layout: Option<serde_json::Value>,
+    pub control_layout: ControlLayout,
     pub key_mirror: KeyMirrorState,
     pub stable_id: bool,
 }
@@ -419,6 +454,7 @@ struct Entry {
     actor: Option<actor::Handle>,
     /// Off after Disconnect, until replug or Connect.
     auto: bool,
+    quick_drops: u32,
 }
 struct PortRecord {
     info: PortInfo,
@@ -480,6 +516,9 @@ impl Inner {
         };
         let mut next = entry.summary.clone();
         change(&mut next);
+        if next.link != entry.summary.link {
+            next.control_layout = ControlLayout::default();
+        }
         if next == entry.summary {
             return;
         }
@@ -519,6 +558,11 @@ pub struct DeviceManager {
     inner: Arc<Inner>,
 }
 impl DeviceManager {
+    #[cfg(test)]
+    pub(crate) fn pause_key_reports(&self) -> parking_lot::MutexGuard<'_, ()> {
+        self.inner.input_gate.lock()
+    }
+
     pub(crate) fn action_handler(&self, handler: ActionHandler) {
         let _ = self.inner.actions.set(handler);
     }
@@ -559,6 +603,7 @@ impl DeviceManager {
                     capabilities: None,
                     orientation: None,
                     layout: None,
+                    control_layout: ControlLayout::default(),
                     key_mirror: KeyMirrorState {
                         enabled: false,
                         reason: None,
@@ -571,6 +616,7 @@ impl DeviceManager {
                         summary,
                         actor: None,
                         auto: true,
+                        quick_drops: 0,
                     },
                 );
             }
@@ -585,6 +631,21 @@ impl DeviceManager {
     pub fn stop(&self) {
         self.inner.stop.store(true, Ordering::SeqCst);
         self.inner.wake.kick();
+    }
+    pub(crate) fn control_layout(&self, device: &str, session: Option<u64>, status: ControlLayout) {
+        let Some(id) = DeviceId::parse(device) else {
+            return;
+        };
+        let mut reg = self.inner.reg.lock();
+        self.inner.update(&mut reg, &id, |d| {
+            let current = match d.link {
+                LinkState::Connected { since_ms, .. } => Some(since_ms),
+                _ => None,
+            };
+            if current == session {
+                d.control_layout = status;
+            }
+        });
     }
     pub fn summaries(&self) -> Vec<DeviceSummary> {
         let reg = self.inner.reg.lock();
@@ -814,9 +875,7 @@ struct FirmwareConnector {
     port: String,
 }
 impl td_link::update::Connector for FirmwareConnector {
-    fn connect(
-        &mut self,
-    ) -> Result<(Session, std::sync::mpsc::Receiver<td_link::Incoming>), String> {
+    fn connect(&mut self) -> Result<(Session, td_link::IncomingReceiver), String> {
         Session::open(
             self.source.open(&self.port).map_err(|e| e.to_string())?,
             td_link::SessionConfig {

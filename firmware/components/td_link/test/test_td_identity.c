@@ -42,6 +42,26 @@ TEST_CASE("Device name persists through repeated NVS opens and refused writes", 
 
 extern const char golden_hello_start[] asm("_binary_golden_hello_json_start");
 
+static void assert_capability_set(cJSON *actual, cJSON *expected, const char *field)
+{
+    const cJSON *values = cJSON_GetObjectItemCaseSensitive(actual, field);
+    const cJSON *wanted = cJSON_GetObjectItemCaseSensitive(expected, field);
+    TEST_ASSERT_TRUE_MESSAGE(cJSON_IsArray(values), field);
+    TEST_ASSERT_TRUE_MESSAGE(cJSON_IsArray(wanted), field);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(cJSON_GetArraySize(wanted), cJSON_GetArraySize(values), field);
+    const cJSON *item;
+    cJSON_ArrayForEach(item, wanted) {
+        unsigned matches = 0;
+        const cJSON *value;
+        cJSON_ArrayForEach(value, values) {
+            matches += cJSON_Compare(item, value, true) != 0;
+        }
+        TEST_ASSERT_EQUAL_UINT_MESSAGE(1, matches, field);
+    }
+    cJSON_DeleteItemFromObjectCaseSensitive(actual, field);
+    cJSON_DeleteItemFromObjectCaseSensitive(expected, field);
+}
+
 TEST_CASE("hello golden vectors bound escaped fields and match advertised capabilities", "[td_link]")
 {
     cJSON *vectors = cJSON_Parse(golden_hello_start);
@@ -55,13 +75,17 @@ TEST_CASE("hello golden vectors bound escaped fields and match advertised capabi
 #endif
     cJSON *expected = cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(vectors, selected), "caps"), true);
     cJSON_DeleteItemFromObjectCaseSensitive(expected, "free_bytes");
+    TEST_ASSERT_NOT_NULL(expected);
+    assert_capability_set(caps, expected, "tile_kinds");
+    assert_capability_set(caps, expected, "formats");
+    assert_capability_set(caps, expected, "layout_schemas");
     TEST_ASSERT_TRUE(cJSON_Compare(caps, expected, true));
     cJSON_Delete(expected);
     cJSON_Delete(caps);
     char name[49], version[33];
     memset(name, '"', 48);
     name[48] = 0;
-    memset(version, 1, 32);
+    memset(version, '"', 32);
     version[32] = 0;
     cJSON *hello;
     cJSON_ArrayForEach(hello, vectors) {

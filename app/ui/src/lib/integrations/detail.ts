@@ -186,7 +186,7 @@ export function createDetailStore(id: string, deps: DetailDeps) {
       }
     },
 
-    /** Asks the hub now, at most once per floor, then reads the view again. */
+    /** Starts a check, at most once per floor. The Companion answers before the check ends. */
     async refresh(): Promise<void> {
       if (state().busy) return;
       if (now() < state().refreshAfter) {
@@ -197,7 +197,7 @@ export function createDetailStore(id: string, deps: DetailDeps) {
       try {
         await call.refresh({ integration: id });
         take(await call.get({ integration: id }), { typed: 'keep' });
-        set({ notice: { kind: 'ok', text: 'Checked', event: 'refreshed' } });
+        set({ notice: { kind: 'ok', text: 'Check started', event: 'refreshed' } });
       } catch (thrown) {
         const error = toApiError(thrown);
         set({

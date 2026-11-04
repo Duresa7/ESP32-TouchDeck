@@ -14,7 +14,7 @@ const demo = (page: Page) => ({
   },
   confirming: () => page.evaluate((id) => window.touchdeckDemo?.newBoards.confirming(id) ?? false, ID),
   fail: (fail: boolean) => page.evaluate(({ id, fail }) => window.touchdeckDemo?.newBoards.fail(id, fail), { id: ID, fail }),
-  hold: (pct: number) => page.evaluate(({ id, pct }) => window.touchdeckDemo?.newBoards.hold(id, pct), { id: ID, pct }),
+  hold: (at: number | 'done') => page.evaluate(({ id, at }) => window.touchdeckDemo?.newBoards.hold(id, at), { id: ID, at }),
   release: () => page.evaluate((id) => window.touchdeckDemo?.newBoards.release(id), ID),
 });
 
@@ -53,11 +53,14 @@ test('a New board installs only after the click, with progress, then sets up as 
 
 test('the installed card says what comes next while the board restarts', async ({ page }) => {
   await found(page);
+  await demo(page).hold('done');
   await card(page).getByTestId('board-install').click();
   await demo(page).answer('accept');
   await expect(card(page)).toHaveAttribute('data-step', 'done', { timeout: 10_000 });
   await expect(card(page)).toContainText('Firmware installed');
   await expect(status(page)).toHaveText('Next, name your Device.');
+  await demo(page).release();
+  await expect(dialog(page)).toHaveAttribute('data-device-id', ID, { timeout: 10_000 });
 });
 
 test('a declined install is explained and leaves the board as it was', async ({ page }) => {

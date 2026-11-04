@@ -1,4 +1,5 @@
 import type { DeviceSummary, Layout, Orientation } from '../companion/api.ts';
+import type { Unchecked } from '../lib/device/controls.ts';
 
 export function statusOf(state: string) {
   switch (state) {
@@ -8,6 +9,20 @@ export function statusOf(state: string) {
     case 'updating': return { words: 'Updating…', live: false };
     case 'restarting': return { words: 'Restarting…', live: false };
     default: return { words: 'Not connected', live: false };
+  }
+}
+
+export const NEEDS_SEND = 'Controls need Send to Device';
+export const CHECKING_CONTROLS = 'Checking controls…';
+
+export function uncheckedText(reason: Unchecked, device: string) {
+  switch (reason) {
+    case 'read-failed': return `Couldn't check ${device}'s controls. Unplug it and plug it back in.`;
+    case 'unsupported': return `Couldn't check ${device}'s controls. Update its Firmware.`;
+    default: {
+      const exhaustive: never = reason;
+      return exhaustive;
+    }
   }
 }
 

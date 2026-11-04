@@ -308,7 +308,7 @@ How the Device manager (#74) moves between them:
 | `connecting`, `lost` | `hello` answers | `connected` |
 | `connecting` | Still silent 3 s after the port appeared (the boot grace), or answers as other Firmware | `unresponsive` |
 | `connecting`, `unresponsive` | The port is held by another program | `busy` |
-| `connected` | The session ends on its own: missed pings, an I/O error, a closed stream, or a ping that shows the Device restarted | `lost` with `timeout`, `io-error` or `closed`. The Companion keeps probing; silence keeps it `lost` |
+| `connected` | The session ends on its own: missed pings, an I/O error, a closed stream, a ping that shows the Device restarted, or the Device dropping the session (a heartbeat `link.state` reads `online: false`, or a v2 request is refused `not-negotiated`) | `lost` with `timeout`, `io-error` or `closed`. The Companion keeps probing; silence keeps it `lost`. A probe that answers starts a new session with a fresh `hello`. After a link that lasted under 30 s, the next probe waits 250 ms, doubling for each such link in a row up to 10 s |
 | `connected` | `devices.restart` | `connecting`, then `connected` with a fresh `hello` once it boots |
 | `connected`, `lost` | Its port leaves | `lost` with `unplugged`, until replug or restart |
 | `connecting`, `busy`, `unresponsive`, `disconnected` | Its port leaves | `offline`. Unplugging also ends a Disconnect |
@@ -332,6 +332,7 @@ pub struct DeviceSummary {
     pub capabilities: Option<Capabilities>,    // v2 hello: screen, storage_free, tile_kinds, live_hz, live_total_hz, series, text_bytes. None on v1
     pub orientation: Option<Orientation>,
     pub layout: Option<LayoutSummary>,         // what the Device shows
+    pub control_layout: ControlLayout,
     pub key_mirror: KeyMirrorState,            // {enabled, reason}
     pub stable_id: bool,
 }
@@ -348,6 +349,15 @@ Changes increment `rev` and publish `device.updated`. These strings, and the Fir
 and clients show control, format and line or paragraph separator characters as escapes.
 
 ### Rules for several Devices
+
+`control_layout` describes the active orientation's Control authorization. It is a union tagged by `state`:
+
+- `unavailable`, with `reason`: `checking`, `offline`, `unsupported`, or `read-failed`.
+- `no-pushed-copy`, `matches`, or `differs`, each with `orientation` and `has_controls`.
+
+Missing, unreadable, and invalid pushed copies produce `no-pushed-copy`. `has_controls` checks all Pages using the touch path's renderer parts and settable numeric bar input rules. The built-in Layout has no controls. `matches` compares canonical Layout bytes with this Companion's pushed copy; it does not promise an Integration is currently available. A touch still binds only against a pushed copy.
+
+Startup, link loss, a new session, and Layout/orientation replacement reset the assessment to `unavailable/checking`. A push writes the pushed copy before it releases the link, so a successful push goes from `checking` straight to `matches`, and a failed push leaves the pushed copy as it was and ends in a fresh assessment. An orientation change resets the assessment before `SettingsPut` and again once it is sent, even when a later step of the change fails. Subsequent live rounds report offline or unsupported Devices, read failures, or the comparison after reading the active Layout. A failed read is retried after 5 seconds, or at once after a push or orientation change. Every 5 seconds the Companion also checks the active Layout, with or without live values: one `layout.get` of the stored Layout the Device shows, or of both stored Layouts while it shows the built-in one. It reads the active Layout again only when a stored Layout changed, so a change made outside this Companion shows within about 5 seconds. Every assessment rereads the pushed copy, so a deleted or corrupt file is noticed at the next one. Changes increment the Device's `rev` and publish the full object through `device.updated`; GET Devices and `sync` expose that same object. Old sessions and rounds invalidated by a replacement cannot publish a stale assessment.
 
 - Each Device has its own link session, Layout, key mirror, action resolution and Job slot. Its actor thread owns them, and the API reads `DeviceSummary` from that owner.
 - A Job on one Device never blocks another Device.
@@ -493,7 +503,7 @@ The Companion owns this exact allowlist, derived from registrations and handlers
 | `settings get`, `store stat`, `store stat <path>`, `store ls <path>`, `store get <path>` | `td_store/td_store_cmds.c` |
 | `backlight` (no arguments), `screenshot`, `screenshot 1`, `screenshot 2`, `screenshot 4` | `display/display_cmds.c` |
 
-Each placeholder is one unquoted token. `<path>` is validated as a storage path by the Firmware; `<id>`, `<tile>` and `<page>` name existing Tiles or Pages. Only these read-only forms pass; the allowlist never grants an entire command family. All `keys`, `touch` and `perf` commands, mutating `ui` subcommands, storage and NVS writes, Layout changes and reboot commands are excluded. New Firmware commands are denied until explicitly reviewed and added here. The e2e harness uses `test.console` for the full console, only under `test-hooks` on mock ports.
+Each placeholder is one unquoted token. `<path>` is validated as a storage path by the Firmware; `<id>`, `<tile>` and `<page>` name existing Tiles or Pages. Only these read-only forms pass; the allowlist never grants an entire command family. All `keys`, `touch` and `perf` commands, mutating `ui` subcommands, storage and NVS writes, Layout changes and reboot commands are excluded. New Firmware commands are denied until explicitly reviewed and added here. The e2e harness uses `test.console` for the full console, only under `test-hooks`, on mock ports or with `--test-real-device-console`.
 
 ### Layouts
 
@@ -580,6 +590,8 @@ Requests carrying a credential never follow a redirect to another origin. They s
 | `integrations.secret_delete` | `DELETE /integrations/{integration}/secrets/{field}` | → `()` |
 | `integrations.refresh` | `POST /integrations/{integration}/refresh` | → `()` |
 
+Polling Integrations run upstream work outside the shared registry lock, with at most one poll in flight per Integration. `integrations.refresh` schedules a poll and returns before its result is available, so the next `integrations.get` may still show the earlier result. A refresh sent while a poll runs starts one more poll as soon as that one ends; CLIProxyAPI still keeps its 15-second spacing. There is no completion event for a refresh. A finished CLIProxyAPI poll sets a new `detail.polled_ms`, increases `summary.revision` and publishes `integration.status`, so a client waits for that event or re-reads `integrations.get` until `detail.polled_ms` changes. Custom and This PC polls change Live tile values; their summary changes, and `integration.status` fires, only when the status message changes. Disabled or edited configurations, and credential changes, discard results from earlier polls. A poll that panics is dropped and runs again when due. When the last Integrations service owner is dropped, it stops scheduling and waits for active upstream calls to finish. This in-process drop can take about 160 seconds for Custom; CLIProxyAPI depends on its account count and request deadlines. Normal process exit does not join these workers, but a last-owner drop on the shutdown path can still wait for them.
+
 CLIProxyAPI config is `{enabled: boolean, url: string, interval_s: integer}`. The URL is trimmed and the interval has a 60-second floor. Unknown fields, including `management_key`, are rejected in config. Its write-only secret field is `management_key`; the secret-write hint is the constant `Set`, including for short keys. Identical config writes preserve the polling deadline. Background polls, manual refreshes, config resets and secret writes share a 15-second minimum spacing between polling attempts.
 
 `IntegrationSummary` also includes `streams: {id, kind, unit, settable}[]` (`DataStream.settable` defaults to false) and `actions: string[]`. Its `status` is `{state: "ok" | "error" | "not_configured", message, delivery: {device, sent, error}[]}`. Delivery entries are supplied by the Device scheduler; an Integration without a bound Device has an empty delivery list. Presets contain `{id, name, action}` with the existing Layout action shape. Live tile readings stay inside the Companion.
@@ -617,6 +629,7 @@ The Companion's live router (`td_companion::live`) reads each connected v2 Devic
 - **`rate`.** The router waits `retry_ms` before it sends the Device anything else, and doubles the wait for each further `rate` in a row, up to 8 seconds.
 - **Sequence.** `n` rises for every new value sent to a Device. A send whose reply never came goes again with the same `n` and value, so a value the Device already took isn't added twice.
 - **Resend.** A new link session, a Layout push or an orientation change sends every bound value again. A `layout`, `page`, `tile`, `stream` or `type` refusal makes the router read the Device's Layout again.
+- **Turned off.** A stream whose Integration is turned off and reports no sample is sent once more with its last value and the shortest `ttl_ms` (1000), so the Device draws it stale within a second instead of waiting out the original `ttl_ms`. Nothing more is sent for it while the Integration is off, and the first new sample after it is turned on goes as usual. A drag on a bar whose Integration is turned off is dropped and logs nothing; the Device keeps sending the rest of that drag until its lift.
 - **Values a Tile can't take.** A series is cut to its newest `series` numbers and text to `text_bytes`. A value of the wrong type, or a number outside ±1e9, is never sent.
 
 Each Integration's `status.delivery` counts the values each Device accepted and carries the last refusal.
@@ -1009,11 +1022,13 @@ The auth module mounts these itself. Features can't import it.
 
 ### Test hooks
 
-Feature module `test_hooks`, compiled only with the `test-hooks` Cargo feature and mounted only when the Companion runs on mock ports (`--mock-devices N`). Release builds don't contain it. Its types go into a separate `api.test.gen.ts`, so the product UI can't import them.
+Feature module `test_hooks`, compiled only with the `test-hooks` Cargo feature and mounted only when the Companion runs on mock ports (`--mock-devices N`). Release builds don't contain it: `package_windows.py` builds `td-companion` without features and refuses a binary that holds a test route or test argument. Its types go into a separate `api.test.gen.ts`, so the product UI can't import them.
+
+One exception lets a board pass drive the real Device while the Companion owns its port. A `test-hooks` Companion started with `--test-real-device-console` (the only argument) also serves `test.console` for Devices on real ports. Every other test route stays `route.not_found` there, and without the argument `test.console` is `route.not_found` for real ports too. A release build rejects the argument as unknown.
 
 | Name | Method and path | Request → Response |
 |---|---|---|
-| `test.console` | `POST /test/devices/{device}/console` | `{line}` → `()`. Full console for the e2e harness |
+| `test.console` | `POST /test/devices/{device}/console` | `{line, wait_ms?}` → `{reply, lines}`. Full console for the e2e harness and board pass. Waits up to `wait_ms` (default 3000, at most 15000, else 400 `request.invalid`) for the `@td` reply whose `cmd` is the line's first word. `reply` is that JSON or `null`; `lines` holds the Device's console lines from the send to the reply or the deadline, at most 256 |
 | `test.mock` | `POST /test/devices/{device}/mock` | `{action: "no-confirm" \| "rollback" \| "normal-update" \| "stop" \| "hang-up"}` → `()` |
 | `test.press` | `POST /test/devices/{device}/press` | `{page, tile, kind}` → `()` |
 | `test.sets` | `GET /test/devices/{device}/sets` | → `Value[]` |
@@ -1329,7 +1344,7 @@ Required integration tests in `crates/td-companion/tests/`:
 8. **Runtime file**, Windows only (`#[cfg(windows)]`). After start the DACL is protected, has one entry, and the owner is the user. A junction planted at `runtime\` makes start fail. The file is gone after a clean shutdown.
 9. **Contract.** `api_bindings_are_current`, `api_contract_is_documented` and `test_registry_is_consistent`.
 
-10. **Console and input.** Each allowlisted form passes; `keys`, `touch tap`, `ui hold`, state changes, unknown commands, extra arguments, control bytes and lines over 256 bytes get `console.forbidden` and never reach the Device. None inject PC input or answer an approval. While a native dialog shows, input from every mock Device is dropped with key-mirror `outcome: "suppressed"`, never replayed. Full console works only through `test.console`; the release router lacks it.
+10. **Console and input.** Each allowlisted form passes; `keys`, `touch tap`, `ui hold`, state changes, unknown commands, extra arguments, control bytes and lines over 256 bytes get `console.forbidden` and never reach the Device. None inject PC input or answer an approval. While a native dialog shows, input from every mock Device is dropped with key-mirror `outcome: "suppressed"`, never replayed. Full console works only through `test.console`; the release router lacks it, and a Companion on real ports serves it only with `--test-real-device-console`.
 11. **Integration origins.** Changing scheme, host or effective port clears the old secret and reports `set: false`; same-origin path changes keep it. No credential reaches the new destination before re-entry, including concurrent refresh. Cross-origin redirects and public plain-HTTP destinations receive no credential. Explicit loopback/private-address HTTP destinations work; a hostname resolving privately does not gain the exception.
 12. **Pairing delivery.** `auth.pair_code` returns only `{expires_ms}`, with no code or URL in any API response. Fake native browser and tray adapters capture delivery for tests. A new code invalidates the previous one, Reset pairing invalidates the pending code, and the Electron renderer gets no code to display or copy.
 13. **Firmware consent.** Install, repair and downgrade stay `waiting_for_confirmation` with no writes until the fake native dialog accepts the exact target and bundle. Decline, or 5 minutes of test clock without an answer, gives `firmware.declined`; cancelling while waiting closes the fake dialog and writes nothing. Same-or-newer bundled updates need no confirmation. A picked bundle fails on another target, on reuse and after 10 minutes.

@@ -84,6 +84,7 @@ impl Rate {
 pub(crate) struct InputHub {
     generation: u64,
     completed: Vec<Input>,
+    cancelled_through: Option<u32>,
     last_seq: Option<u32>,
     pending: BTreeMap<StreamOf, Input>,
     failed: HashMap<StreamOf, String>,
@@ -91,6 +92,22 @@ pub(crate) struct InputHub {
 }
 
 impl InputHub {
+    pub fn cancel(&mut self) {
+        self.pending.clear();
+        self.completed.clear();
+        self.failed.clear();
+        self.cancelled_through = self.last_seq;
+    }
+
+    /// The input binds nothing now, so a failure kept for its gesture is no longer reported.
+    pub fn dropped(&mut self, input: &Input) {
+        self.failed.remove(&input.key());
+    }
+
+    pub fn is_current(&self, input: &Input) -> bool {
+        self.cancelled_through.is_none_or(|seq| input.seq > seq)
+    }
+
     pub fn reset(&mut self, generation: u64) {
         if self.generation != generation {
             self.pending.clear();
@@ -136,6 +153,9 @@ impl InputHub {
         result: Result<(), String>,
         now: Instant,
     ) -> Option<Result<(), String>> {
+        if !self.is_current(input) {
+            return None;
+        }
         let key = input.key();
         if let Err(detail) = result
             && (self.failed.len() < PENDING_MAX || self.failed.contains_key(&key))
@@ -197,6 +217,22 @@ mod tests {
     fn press(seq: u64, part: &str) -> Value {
         json!({"m": "press", "page": "main", "tile": "media", "kind": "widget", "part": part, "seq": seq,
             "t": 1})
+    }
+
+    #[test]
+    fn overflow_discards_unfinished_gestures_and_late_failures() {
+        let mut hub = InputHub::default();
+        let now = Instant::now();
+        hub.push(&input(1, 0.2));
+        let moved = hub.take().remove(0);
+        hub.settled(&moved, Err("old failure".into()), now);
+        hub.push(&end(2, 0.3));
+        hub.cancel();
+        assert!(hub.take().is_empty());
+        assert_eq!(hub.settled(&moved, Err("late failure".into()), now), None);
+        hub.push(&end(3, 0.7));
+        let ended = hub.take().remove(0);
+        assert_eq!(hub.settled(&ended, Ok(()), now), Some(Ok(())));
     }
 
     #[test]

@@ -229,6 +229,7 @@ Home has no headline. The Devices are the content, centered on the mat.
 - **The Device is the button.** Clicking it opens its Layout. On a fine pointer it lifts 2px with `--shadow-device-lifted`.
 - **Connected:** the lit screen and, in dark mode, the light spill on the mat.
 - **Not connected:** the saved Page stays visible through the offline preview tokens, with no spill. The status light is `--led-off`, and both the status and last-seen words stay.
+- **Controls need Send to Device:** a connected Device whose controls wait for **Send to Device** keeps its status row and adds a second row under it: a `--signal-led` light with its words, then a small secondary **Review Layout** button. After Send to Device it shows a `--led-off` light with "Checking controls…" until the Companion reports a match, or a `--signal-led` light with "Couldn't check…" when the Companion can't read the Layout. Both are polite live regions, and the light sits on the first line when the words wrap.
 - **No Devices:** a switched-off Device silhouette, 360px at 55% opacity, then a nameplate title, a 16px body in `--ink-2` that asks for a USB data cable, a 14px line about New boards, and a secondary **Connection help** button. No promise about how long detection takes. Max width 440.
 
 ### Layout editor
@@ -244,6 +245,8 @@ On the canvas, the editor adds marks the Device never draws, in screen pixels:
 - **Selected Tile:** `--screen-tile-raised` with a 5px `--screen-accent` ring 6px outside it.
 - **Empty cell:** a 3px dashed `--screen-pager-idle` outline at `--radius-tile` with a 44px plus in `--screen-ink-2`. Clicking one opens Add Tile for that cell.
 - **Add Tile target:** the cell gets a 5px solid `--screen-accent` outline, a `--screen-tile` fill and an accent plus.
+
+**Controls notice.** Above the Device on the canvas, at most 680 wide, while the open Device's controls wait for **Send to Device**: `--signal-tint` with a `--line` ring and `--radius-group`, a 14/620 `--signal-ink` title led by a `--signal-led` light, one 12px paragraph in `--ink` whose last sentence is `--ink-2`, and one small secondary button on the right. The canvas counts the notice's full height when it fits the Device. Below 700 tall, the canvas over the Device pads 16 on top and spaces its parts 16 apart while any notice shows, and the notice pads 8 × 12. When the Device is already at its 420 minimum, the notice gives up height before anything else and scrolls inside itself, never below its title and one line, so the Page tabs and the status line stay above the nav. While Checking it's one `--surface-raised` line with a `--led-off` light. When the check can't read the Device it's the same line in `--ink` with a `--signal-led` light. The inspector's Page details then start with a **Controls** list in a `--surface-inset` group: each row names the Tile, its Page, the Integration and account, and its controls, and selects the Tile. Unknown names use `--danger-ink`.
 
 **Inspector.** `--surface` with a 1px `--line` left edge, 20px padding and 20px between fields. The head has a 44px Tile thumbnail in screen colors, the Tile's name at 16/620 and a 12px line saying what it is and where. The footer stays pinned to the bottom while the fields scroll: Duplicate on the left, Clear Tile (quiet danger) on the right.
 

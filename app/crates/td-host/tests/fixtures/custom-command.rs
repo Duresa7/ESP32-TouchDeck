@@ -21,7 +21,8 @@ fn main() {
         }
         "late" => {
             let mut probe = std::net::TcpStream::connect(&args[3]).unwrap();
-            probe.write_all(b"started").unwrap();
+            let token = args.get(4).map_or("started", String::as_str);
+            probe.write_all(token.as_bytes()).unwrap();
             std::thread::sleep(std::time::Duration::from_secs(60));
             std::fs::write(&args[2], "ran").unwrap();
             drop(probe);

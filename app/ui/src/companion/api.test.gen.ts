@@ -4,7 +4,15 @@ export type BoardKind = "device" | "device-v1" | "silent" | "other-firmware" | "
 export type ClockAdvance = { advance_ms: number, };
 export type ConsentAnswer = "accept" | "decline";
 export type ConsentScript = { answers: Array<ConsentAnswer>, };
-export type ConsoleLine = { line: string, };
+export type ConsoleReply = { 
+/**
+ * The `@td` JSON whose `cmd` is the line's first word, or null when none came in time.
+ */
+reply: JsonValue | null, 
+/**
+ * The Device's console lines from the send until the reply or the deadline, at most 256.
+ */
+lines: Array<string>, };
 export type Delivery = { url: string | null, notification: string | null, };
 export type DeviceId = string;
 export type DevicePath = { device: DeviceId, };
@@ -23,6 +31,12 @@ export type MockRecord = { received: Array<JsonValue>, lines: Array<string>, set
 export type NoQuery = null;
 export type PlugBoard = { id: DeviceId, kind: BoardKind, };
 export type ScriptAnswer = "once" | "always" | "deny" | "fail" | "never";
+export type TestConsoleLine = { line: string, 
+/**
+ * Milliseconds to wait for the `@td` reply: 3000 when absent, 0 to 15000. With 0 the
+ * route returns what arrived while it sent the line.
+ */
+wait_ms: number | null, };
 export type VolumeInput = { level: number, muted: boolean, };
 export const testEndpoints = {
   'test.approvals_script': { method: 'POST', path: '/test/approvals/script', access: 'session' },

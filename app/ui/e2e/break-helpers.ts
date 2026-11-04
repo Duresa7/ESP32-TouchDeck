@@ -95,6 +95,15 @@ export function spills(page: Page, allowed: readonly string[] = []): Promise<Spi
   );
 }
 
+export function underDock(page: Page, selector: string): Promise<string[]> {
+  return page.evaluate((selector) => {
+    const dock = document.querySelector('.nav-dock')?.getBoundingClientRect();
+    if (!dock) return [];
+    const covered = (box: DOMRect) => box.width > 1 && box.height > 1 && box.left < dock.right && box.right > dock.left && box.top < dock.bottom && box.bottom > dock.top;
+    return [...document.querySelectorAll(selector)].filter((el) => covered(el.getBoundingClientRect())).map((el) => `${el.getAttribute('data-testid') ?? el.tagName.toLowerCase()} “${(el.textContent ?? '').trim().slice(0, 40)}”`);
+  }, selector);
+}
+
 /** How far the page scrolls sideways; 0 when nothing pushes it wider than the window. */
 export const sideScroll = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 

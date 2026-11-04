@@ -102,12 +102,13 @@ async fn a_connected_device_is_probed_once_and_keeps_its_link_across_scans() {
         received.iter().filter(|m| m["m"] == "hello").count()
     };
     let probed = hellos();
+    let link = td.device(&id).unwrap().link;
     // Longer than two 1 s polls: a scan never reprobes a connected port.
     tokio::time::sleep(Duration::from_millis(2500)).await;
     td.call::<PortsRescan>((), NoQuery, ()).await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(hellos(), probed);
-    assert_eq!(td.device(&id).unwrap().rev, 1, "the link never changed");
+    assert_eq!(td.device(&id).unwrap().link, link);
 }
 
 #[tokio::test]
@@ -375,7 +376,7 @@ async fn a_restart_the_device_starts_itself_brings_a_fresh_hello() {
     tokio::time::sleep(Duration::from_millis(2500)).await;
     // The full console reaches the mock, which restarts; the next ping sees its uptime reset.
     let (status, _) = console(&td, "/api/v1/test/devices/mock0001/console", "reboot").await;
-    assert_eq!(status, 204);
+    assert_eq!(status, 200);
     let lost = frame(
         &mut socket,
         Duration::from_secs(5),
@@ -395,10 +396,17 @@ async fn a_restart_the_device_starts_itself_brings_a_fresh_hello() {
 async fn the_console_allowlist_is_enforced_before_the_device() {
     let td = TestCompanion::start().await;
     td.plug_device("mock0001").await;
+    let console_lines = || {
+        td.deck("mock0001")
+            .lines()
+            .into_iter()
+            .filter(|line| line != "layout state")
+            .collect::<Vec<_>>()
+    };
     let route = "/api/v1/devices/mock0001/console";
     assert_eq!(console(&td, route, "version").await.0, 204);
     assert_eq!(console(&td, route, "link state").await.0, 204);
-    td.until(|td| td.deck("mock0001").lines() == ["version", "link state"])
+    td.until(|_| console_lines() == ["version", "link state"])
         .await;
     let long = format!("store get /{}", "a".repeat(300));
     for line in [
@@ -419,24 +427,136 @@ async fn the_console_allowlist_is_enforced_before_the_device() {
             "{line:?}"
         );
     }
-    // Nothing forbidden reached the Device, and the input sink typed nothing.
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(td.deck("mock0001").lines(), ["version", "link state"]);
+    td.let_live_rounds_run(1).await;
+    assert!(
+        td.deck("mock0001")
+            .lines()
+            .iter()
+            .any(|l| l == "layout state")
+    );
+    assert_eq!(console_lines(), ["version", "link state"]);
     assert!(td.input_log().is_empty());
-    // The e2e harness gets the full console through the test route.
     assert_eq!(
         console(&td, "/api/v1/test/devices/mock0001/console", "keys a")
             .await
             .0,
-        204
+        200
     );
-    td.until(|td| {
-        td.deck("mock0001")
-            .lines()
-            .last()
-            .is_some_and(|l| l == "keys a")
-    })
+    td.until(|_| console_lines() == ["version", "link state", "keys a"])
+        .await;
+}
+
+async fn test_console(td: &TestCompanion, device: &str, body: Value) -> (u16, Value) {
+    let response = td
+        .raw()
+        .post(&format!("/api/v1/test/devices/{device}/console"))
+        .bearer_auth(&td.token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    (
+        status,
+        response.json::<Value>().await.unwrap_or(Value::Null),
+    )
+}
+
+#[tokio::test]
+async fn test_console_returns_what_the_device_answered() {
+    let td = TestCompanion::start().await;
+    td.plug_device("mock0001").await;
+    let (status, body) = test_console(&td, "mock0001", json!({"line": "version"})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"]["cmd"], "version");
+    assert_eq!(body["reply"]["ok"], true);
+    assert_eq!(body["reply"]["project_name"], "touchdeck");
+    let lines = body["lines"].as_array().unwrap();
+    assert!(lines.last().unwrap().as_str().unwrap().contains("@td "));
+    let (status, body) = test_console(&td, "mock0001", json!({"line": "keys a"})).await;
+    assert_eq!(status, 200);
+    assert_eq!(body["reply"]["cmd"], "keys");
+    assert_eq!(body["reply"]["ok"], false);
+}
+
+#[tokio::test]
+async fn test_console_waits_for_a_reply_only_until_its_deadline() {
+    let td = TestCompanion::start().await;
+    td.plug_device("mock0001").await;
+    td.deck("mock0001").lose_console_replies(1);
+    let started = Instant::now();
+    let (status, body) =
+        test_console(&td, "mock0001", json!({"line": "version", "wait_ms": 300})).await;
+    let elapsed = started.elapsed();
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"], Value::Null);
+    assert!(
+        (Duration::from_millis(300)..Duration::from_millis(1500)).contains(&elapsed),
+        "{elapsed:?}"
+    );
+    assert!(td.deck("mock0001").lines().iter().any(|l| l == "version"));
+    let (status, body) = test_console(
+        &td,
+        "mock0001",
+        json!({"line": "version", "wait_ms": 15_001}),
+    )
     .await;
+    assert_eq!(status, 400, "{body}");
+    td.deck("mock0001").lose_console_replies(1);
+    let started = Instant::now();
+    let (status, body) =
+        test_console(&td, "mock0001", json!({"line": "version", "wait_ms": 0})).await;
+    assert_eq!((status, &body["reply"]), (200, &Value::Null));
+    assert!(started.elapsed() < Duration::from_millis(500));
+}
+
+#[tokio::test]
+async fn test_console_is_not_found_for_a_real_port_device_without_the_opt_in() {
+    let td = TestCompanion::start_on_real_ports(false).await;
+    td.plug_device("mock0001").await;
+    let (status, body) = test_console(&td, "mock0001", json!({"line": "touch tap 10 10"})).await;
+    assert_eq!(
+        (status, body["error"]["code"].as_str()),
+        (404, Some("route.not_found"))
+    );
+    td.let_live_rounds_run(1).await;
+    assert!(
+        !td.deck("mock0001")
+            .lines()
+            .iter()
+            .any(|l| l.starts_with("touch"))
+    );
+}
+
+#[tokio::test]
+async fn test_console_reaches_a_real_port_device_with_the_opt_in() {
+    let td = TestCompanion::start_on_real_ports(true).await;
+    td.plug_device("mock0001").await;
+    let (status, body) = test_console(&td, "mock0001", json!({"line": "version"})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"]["cmd"], "version");
+    assert!(td.deck("mock0001").lines().iter().any(|l| l == "version"));
+    let (status, _) = test_console(&td, "nosuch01", json!({"line": "version"})).await;
+    assert_eq!(status, 404);
+    let response = td
+        .raw()
+        .get("/api/v1/test/devices/mock0001/record")
+        .bearer_auth(&td.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 404);
+}
+
+#[tokio::test]
+async fn the_release_router_has_no_test_console() {
+    let td = TestCompanion::start_release_router().await;
+    td.plug_device("mock0001").await;
+    let (status, body) = test_console(&td, "mock0001", json!({"line": "version"})).await;
+    assert_eq!(
+        (status, body["error"]["code"].as_str()),
+        (404, Some("route.not_found"))
+    );
 }
 
 #[tokio::test]
@@ -543,4 +663,39 @@ async fn mock_summary_carries_hello_diagnostics() {
         value["diagnostics"],
         json!({"product":"touchdeck", "running_from":"ota_0", "sinks":["log","link"], "current_layout":"builtin"})
     );
+}
+
+#[tokio::test]
+async fn closed_session_releases_every_held_key() {
+    let td = TestCompanion::start().await;
+    td.plug_device("mock0001").await;
+    let deck = td.deck("mock0001");
+    deck.emit_key(&json!({"type":"kbd","mods":1,"keys":[4,5]}));
+    td.until(|td| {
+        td.input_log()
+            .iter()
+            .filter(|entry| entry.starts_with("down "))
+            .count()
+            == 3
+    })
+    .await;
+    deck.hang_up();
+    td.until(|td| {
+        td.input_log()
+            .iter()
+            .filter(|entry| entry.starts_with("up "))
+            .count()
+            == 3
+    })
+    .await;
+    let log = td.input_log();
+    let mut held = std::collections::BTreeSet::new();
+    for entry in log {
+        if let Some(key) = entry.strip_prefix("down ") {
+            held.insert(key.to_owned());
+        } else if let Some(key) = entry.strip_prefix("up ") {
+            assert!(held.remove(key), "released a key that was not held");
+        }
+    }
+    assert!(held.is_empty());
 }

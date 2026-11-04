@@ -17,11 +17,15 @@ mkdirSync(DATA_DIR, { recursive: true });
 writeFileSync(join(DATA_DIR, 'companion-settings.json'), JSON.stringify({ port: COMPANION_PORT }));
 
 const env = { TOUCHDECK_APP_DATA_DIR: DATA_DIR };
+const [main] = demo.projects ?? [];
+const MAIN = main.name ?? 'main';
+const UNPLUGS_A_SHARED_MOCK = '**/controls.companion.spec.ts';
 
 export default defineConfig({
   ...demo,
   projects: [
-    ...(demo.projects ?? []).map(project => ({ ...project, testIgnore: '**/pairing.companion.spec.ts' })),
+    { ...main, name: MAIN, testIgnore: ['**/pairing.companion.spec.ts', UNPLUGS_A_SHARED_MOCK] },
+    { ...main, name: `${MAIN}-controls`, testMatch: UNPLUGS_A_SHARED_MOCK, dependencies: [MAIN] },
     { name: 'browser-chromium', testMatch: '**/pairing.companion.spec.ts', use: { browserName: 'chromium' } },
     { name: 'browser-edge', testMatch: '**/pairing.companion.spec.ts', use: { browserName: 'chromium', channel: 'msedge' } },
   ],

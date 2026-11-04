@@ -255,29 +255,45 @@ mod tests {
     }
     #[test]
     fn a_timeout_stops_the_processes_the_command_started() {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+        let token = format!(
+            "started-{}",
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        let expected = token.clone();
         let (dir, program) = fixture();
         let marker = dir.path().join("grandchild-ran");
         let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let probe_addr = probe.local_addr().unwrap().to_string();
         let grandchild = std::thread::spawn(move || {
-            let (mut stream, _) = probe.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(30)))
-                .unwrap();
-            let mut started = [0; 7];
-            stream.read_exact(&mut started).unwrap();
-            assert_eq!(&started, b"started");
-            let mut rest = [0; 1];
-            match stream.read(&mut rest) {
-                Ok(0) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {}
-                other => panic!("grandchild survived timeout: {other:?}"),
+            for accepted in probe.incoming() {
+                let Ok(mut stream) = accepted else { break };
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+                let mut started = vec![0; expected.len()];
+                if stream.read_exact(&mut started).is_err() || started != expected.as_bytes() {
+                    continue;
+                }
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(30)))
+                    .unwrap();
+                let mut rest = [0; 1];
+                match stream.read(&mut rest) {
+                    Ok(0) => return,
+                    Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => return,
+                    other => panic!("grandchild survived timeout: {other:?}"),
+                }
             }
+            panic!("grandchild never connected");
         });
         assert_eq!(
             capture(
                 &program,
-                &["fork".into(), marker.to_string_lossy().into(), probe_addr],
+                &[
+                    "fork".into(),
+                    marker.to_string_lossy().into(),
+                    probe_addr,
+                    token,
+                ],
                 Duration::from_secs(2),
             ),
             Err(TIMED_OUT)

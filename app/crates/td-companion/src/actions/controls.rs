@@ -12,12 +12,24 @@ pub(crate) const ACT_TIMEOUT: Duration = Duration::from_secs(2);
 const UNAVAILABLE: &str = "This Tile's control isn't available.";
 const GESTURE_DONE: &str = "Volume changed.";
 
+pub(crate) fn takes_input(tile: &td_core::layout::Tile, stream: &str) -> bool {
+    tile.input
+        && tile.render == Some(TileRender::Bar)
+        && tile
+            .streams
+            .as_ref()
+            .and_then(|streams| streams.get(stream))
+            == Some(&StreamType::Number)
+}
+
 pub(crate) type Settable = Arc<dyn Fn(&StreamKey) -> bool + Send + Sync>;
+pub(crate) type TurnedOn = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 pub(super) struct Wiring {
     live: Live,
     controls: Controls,
     settable: Settable,
+    turned_on: TurnedOn,
     active: Arc<parking_lot::Mutex<std::collections::BTreeSet<String>>>,
 }
 
@@ -27,13 +39,16 @@ impl Actions {
         live: Live,
         controls: Controls,
         settable: Settable,
+        turned_on: TurnedOn,
         layouts: crate::store::LayoutStore,
     ) {
         live.trust(layouts);
+        live.settable(settable.clone());
         let _ = self.0.controls.set(Wiring {
             live,
             controls,
             settable,
+            turned_on,
             active: Arc::default(),
         });
         self.0
@@ -104,17 +119,14 @@ impl Actions {
             Ok(tile) => tile?,
             Err(()) => return Some(Err(UNAVAILABLE.into())),
         };
-        let takes_input = tile.input
-            && tile.render == Some(TileRender::Bar)
-            && tile
-                .streams
-                .as_ref()
-                .and_then(|streams| streams.get(&input.stream))
-                == Some(&StreamType::Number);
+        let takes_input = takes_input(&tile, &input.stream);
         if !takes_input {
             return None;
         }
         let source = stream_source(&tile, &input.stream)?;
+        if !(wiring.turned_on)(&source.integration) {
+            return None;
+        }
         let control = wiring.controls.get(&source.integration);
         let Some(control) = control.filter(|_| (wiring.settable)(&source)) else {
             return Some(Err(UNAVAILABLE.into()));
@@ -224,6 +236,7 @@ mod tests {
         live: Option<Live>,
         volume: Arc<FakeControl>,
         media: Arc<FakeControl>,
+        volume_on: Arc<std::sync::atomic::AtomicBool>,
         _data: tempfile::TempDir,
     }
 
@@ -275,6 +288,10 @@ mod tests {
     }
 
     fn running(layout: Value, cached: bool) -> Running {
+        running_with_authority(layout, cached, cached)
+    }
+
+    fn running_with_authority(layout: Value, cached: bool, pushed: bool) -> Running {
         let events = Events::default();
         let devices = DeviceManager::new(events.clone());
         let config = Config::mock(None);
@@ -319,18 +336,23 @@ mod tests {
             Arc::new(NoGrants),
             true,
         );
+        let volume_on = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let turned_on = volume_on.clone();
         let data = tempfile::tempdir().unwrap();
         let layouts = crate::store::LayoutStore::new(data.path().join("layouts"));
-        if cached {
+        if pushed {
             layouts.put(DEVICE, &layout).unwrap();
         }
         actions.attach(
             live.clone(),
             controls,
             Arc::new(|key: &StreamKey| key.integration == "volume" && key.stream == "level"),
+            Arc::new(move |id| {
+                id != "volume" || turned_on.load(std::sync::atomic::Ordering::SeqCst)
+            }),
             layouts,
         );
-        if cached {
+        if cached && pushed {
             wait("the router reads the Layout", || {
                 live.tile(DEVICE, session().unwrap(), "media", "volume")
                     .is_some()
@@ -344,6 +366,7 @@ mod tests {
             _data: data,
             volume,
             media,
+            volume_on,
         }
     }
 
@@ -371,6 +394,37 @@ mod tests {
         );
         wait("the gesture logs", || !td.log().is_empty());
         std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(td.log(), [entry("volume", "ok", GESTURE_DONE)]);
+    }
+
+    #[test]
+    fn a_drag_in_progress_stops_when_its_integration_is_turned_off_and_logs_no_failure() {
+        let td = running(media(), true);
+        td.deck
+            .emit_input("media", "volume", "value", InputPhase::Move, 0.3);
+        wait("the first move is set", || td.last_set() == Some(0.3));
+        *td.volume.set_result.lock() =
+            Some(ControlError::Unavailable("Volume is unavailable.".into()));
+        td.deck
+            .emit_input("media", "volume", "value", InputPhase::Move, 0.4);
+        wait("the next move fails", || {
+            td.volume.sets.lock().last().map(|set| set.2) == Some(0.4)
+        });
+
+        td.volume_on
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        td.drag("volume", &[0.5, 0.6, 0.7]);
+        std::thread::sleep(Duration::from_millis(400));
+        let values: Vec<f64> = td.volume.sets.lock().iter().map(|s| s.2).collect();
+        assert_eq!(values, [0.3, 0.4], "the cancelled drag was still acted on");
+        assert_eq!(td.log(), []);
+
+        *td.volume.set_result.lock() = None;
+        td.volume_on
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        td.drag("volume", &[0.2, 0.25]);
+        wait("a later gesture is set", || td.last_set() == Some(0.25));
+        wait("it logs", || !td.log().is_empty());
         assert_eq!(td.log(), [entry("volume", "ok", GESTURE_DONE)]);
     }
 
@@ -484,31 +538,42 @@ mod tests {
 
     #[test]
     fn a_flood_of_drags_and_taps_stays_bounded_and_the_next_gesture_still_works() {
-        let td = running(media(), true);
-        let started = Instant::now();
-        for i in 0..5_000 {
-            let value = f64::from(i % 100) / 100.0;
-            td.deck
-                .emit_input("media", "volume", "value", InputPhase::Move, value);
-        }
-        for _ in 0..200 {
-            td.deck
-                .emit_press_part("media", "playing", "widget", "next");
-        }
-        let flooded = started.elapsed();
-        std::thread::sleep(Duration::from_millis(300));
-        let sets = td.volume.sets.lock().len();
-        assert!(sets < 5_000 / 4, "{sets} sets for 5000 moves");
-        let acts = td.media.acts.lock().len() as u64;
-        assert!(
-            acts <= 10 * (flooded.as_secs() + 2),
-            "{acts} acts in {flooded:?}"
-        );
-        assert!(td.log().len() as u64 <= acts);
+        for force_overflow in [false, true] {
+            let td = running(media(), true);
+            let paused = force_overflow.then(|| td.devices.pause_key_reports());
+            td.deck.emit_key(&json!({"type":"kbd","mods":0,"keys":[]}));
+            let started = Instant::now();
+            for i in 0..5_000 {
+                let value = f64::from(i % 100) / 100.0;
+                td.deck
+                    .emit_input("media", "volume", "value", InputPhase::Move, value);
+            }
+            for _ in 0..200 {
+                td.deck
+                    .emit_press_part("media", "playing", "widget", "next");
+            }
+            Links::new(td.devices.clone())
+                .with(DEVICE, |session| {
+                    session.request(&td_core::Request::Ping { n: None }, Duration::from_secs(5))
+                })
+                .unwrap()
+                .unwrap();
+            drop(paused);
+            let flooded = started.elapsed();
+            std::thread::sleep(Duration::from_millis(300));
+            let sets = td.volume.sets.lock().len();
+            assert!(sets < 5_000 / 4, "{sets} sets for 5000 moves");
+            let acts = td.media.acts.lock().len() as u64;
+            assert!(
+                acts <= 10 * (flooded.as_secs() + 2),
+                "{acts} acts in {flooded:?}"
+            );
+            assert!(td.log().len() as u64 <= acts);
 
-        std::thread::sleep(Duration::from_secs(1));
-        td.drag("volume", &[0.25, 0.33]);
-        wait("a later gesture is set", || td.last_set() == Some(0.33));
+            std::thread::sleep(Duration::from_secs(1));
+            td.drag("volume", &[0.25, 0.33]);
+            wait("a later gesture is set", || td.last_set() == Some(0.33));
+        }
     }
 
     #[test]
@@ -538,6 +603,34 @@ mod tests {
         wait("the refused tap logs", || !td.log().is_empty());
         assert!(td.media.acts.lock().is_empty());
         assert_eq!(td.log(), [entry("playing", "failed", UNAVAILABLE)]);
+    }
+
+    #[test]
+    fn a_device_read_layout_without_a_pushed_copy_never_reaches_act_or_set() {
+        let td = running_with_authority(media(), true, false);
+        let id = DeviceId::parse(DEVICE).unwrap();
+        wait("the read Layout has no pushed copy", || {
+            matches!(
+                td.devices.get(&id).unwrap().control_layout,
+                crate::devices::ControlLayout::NoPushedCopy {
+                    has_controls: true,
+                    ..
+                }
+            )
+        });
+        td.deck
+            .emit_press_part("media", "playing", "widget", "next");
+        td.drag("volume", &[0.4, 0.5]);
+        wait("both touches finish", || td.log().len() == 2);
+        assert!(td.media.acts.lock().is_empty());
+        assert!(td.volume.sets.lock().is_empty());
+        assert_eq!(
+            td.log(),
+            [
+                entry("playing", "failed", UNAVAILABLE),
+                entry("volume", "failed", UNAVAILABLE)
+            ]
+        );
     }
 
     #[test]
@@ -651,5 +744,28 @@ mod tests {
         td.drag("volume", &[0.6, 0.7]);
         wait("new gesture completes", || !td.log().is_empty());
         assert_eq!(td.log(), [entry("volume", "ok", GESTURE_DONE)]);
+    }
+
+    #[test]
+    fn an_external_layout_change_without_samples_updates_the_status() {
+        use crate::devices::ControlLayout;
+        let td = running(media(), true);
+        let id = DeviceId::parse(DEVICE).unwrap();
+        let status = || td.devices.get(&id).unwrap().control_layout;
+        wait("initial matches", || {
+            matches!(status(), ControlLayout::Matches { .. })
+        });
+        let mut changed = media();
+        changed["pages"][0]["tiles"][2]["action"]["account"] = json!("other-account");
+        let layout = td_core::Layout::parse(&serde_json::to_vec(&changed).unwrap()).unwrap();
+        Links::new(td.devices.clone())
+            .with(DEVICE, |session| {
+                td_link::xfer::put_layout(session, layout.orientation, &layout)
+            })
+            .unwrap()
+            .unwrap();
+        wait("the changed Layout is reported", || {
+            matches!(status(), ControlLayout::Differs { .. })
+        });
     }
 }

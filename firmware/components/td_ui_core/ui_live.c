@@ -370,6 +370,11 @@ uint8_t ui_live_samples(const ui_live_slot_t *slot, double out[UI_LIVE_SERIES_MA
     return slot->count;
 }
 
+double ui_live_latest(const ui_live_slot_t *slot)
+{
+    return slot->count > 0 ? slot->samples[(slot->head + slot->count - 1) % UI_LIVE_SERIES_MAX] : 0;
+}
+
 ui_live_result_t ui_live_check(const ui_live_table_t *table, const ui_live_set_t *set, uint32_t now_ms,
                                uint32_t *retry_ms, bool *new_image)
 {

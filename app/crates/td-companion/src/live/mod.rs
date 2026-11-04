@@ -18,7 +18,7 @@ use td_host::integrations::{Delivery, LiveSample};
 
 pub use router::{Binding, LiveCaps, Report, Router, StreamKey, bindings, stream_source};
 
-use crate::devices::{DeviceManager, LinkState};
+use crate::devices::{ControlLayout, ControlLayoutUnavailable, DeviceManager, LinkState};
 use crate::features::integrations::{Controls, Service};
 use crate::link::Links;
 use covers::CoverCache;
@@ -33,6 +33,9 @@ const LINK_WAIT: Duration = Duration::from_millis(50);
 #[derive(Default)]
 struct Shared {
     generation: std::sync::atomic::AtomicU64,
+    publication: Mutex<()>,
+    devices: std::sync::OnceLock<DeviceManager>,
+    settable: std::sync::OnceLock<crate::actions::controls::Settable>,
     trusted: std::sync::OnceLock<crate::store::LayoutStore>,
     wake: Mutex<bool>,
     woken: Condvar,
@@ -47,9 +50,69 @@ struct Shared {
     sent: Mutex<HashMap<(String, String), u64>>,
     #[cfg(any(test, feature = "test-hooks"))]
     injected: Mutex<HashMap<StreamKey, LiveSample>>,
+    #[cfg(any(test, feature = "test-hooks"))]
+    rounds: std::sync::atomic::AtomicU64,
 }
 
 impl Shared {
+    fn assess(&self, device: &str, session: u64) -> (ControlLayout, Option<Layout>) {
+        let changed = self.changed.lock();
+        if changed.contains(device) {
+            return (ControlLayout::default(), None);
+        }
+        let layout = match self.shown.lock().get(device) {
+            Some((read_in, layout)) if *read_in == session => layout.clone(),
+            _ => return (ControlLayout::default(), None),
+        };
+        let orientation = layout.orientation;
+        let has_controls = layout.pages.iter().any(|page| {
+            let td_core::layout::Page::Grid { tiles, .. } = page else {
+                return false;
+            };
+            tiles.iter().any(|tile| {
+                ["previous", "play_pause", "next", "mute"]
+                    .iter()
+                    .any(|part| td_host::actions::Plan::part(tile, part).is_some())
+                    || tile.streams.iter().flatten().any(|(stream, _)| {
+                        crate::actions::controls::takes_input(tile, stream)
+                            && stream_source(tile, stream).is_some_and(|source| {
+                                self.settable
+                                    .get()
+                                    .is_some_and(|settable| settable(&source))
+                            })
+                    })
+            })
+        });
+        let Some(trusted) = self
+            .trusted
+            .get()
+            .and_then(|store| store.get(device, layout.orientation))
+        else {
+            return (
+                ControlLayout::NoPushedCopy {
+                    orientation,
+                    has_controls,
+                },
+                None,
+            );
+        };
+        if trusted.to_canonical_json() != layout.to_canonical_json() {
+            return (
+                ControlLayout::Differs {
+                    orientation,
+                    has_controls,
+                },
+                None,
+            );
+        }
+        (
+            ControlLayout::Matches {
+                orientation,
+                has_controls,
+            },
+            Some(trusted),
+        )
+    }
     fn wake(&self) {
         *self.wake.lock() = true;
         self.woken.notify_one();
@@ -62,6 +125,7 @@ pub struct Live(Arc<Shared>);
 impl Live {
     pub fn start(devices: DeviceManager, links: Links, integrations: Service) -> Live {
         let live = Live(Arc::default());
+        let _ = live.0.devices.set(devices.clone());
         live.0
             .router
             .lock()
@@ -85,6 +149,7 @@ impl Live {
 
     /// The Device now shows another Layout, so its bindings are read again and every value goes again.
     pub fn layout_changed(&self, device: &str) {
+        let _publication = self.0.publication.lock();
         let mut changed = self.0.changed.lock();
         changed.insert(device.to_owned());
         self.0
@@ -92,11 +157,26 @@ impl Live {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.0.shown.lock().remove(device);
         drop(changed);
+        if let Some(devices) = self.0.devices.get() {
+            let session = devices
+                .summaries()
+                .into_iter()
+                .find(|d| d.id.as_str() == device)
+                .and_then(|d| match d.link {
+                    LinkState::Connected { since_ms, .. } => Some(since_ms),
+                    _ => None,
+                });
+            devices.control_layout(device, session, ControlLayout::default());
+        }
         self.0.wake();
     }
 
     pub(crate) fn generation(&self) -> u64 {
         self.0.generation.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub(crate) fn settable(&self, predicate: crate::actions::controls::Settable) {
+        let _ = self.0.settable.set(predicate);
     }
 
     pub(crate) fn trust(&self, layouts: crate::store::LayoutStore) {
@@ -116,23 +196,8 @@ impl Live {
         page: &str,
         tile: &str,
     ) -> Result<Option<Tile>, ()> {
-        let changed = self.0.changed.lock();
-        if changed.contains(device) {
-            return Err(());
-        }
-        let layout = match self.0.shown.lock().get(device) {
-            Some((read_in, layout)) if *read_in == session => layout.clone(),
-            _ => return Err(()),
-        };
-        let trusted = self
-            .0
-            .trusted
-            .get()
-            .and_then(|store| store.get(device, layout.orientation))
-            .ok_or(())?;
-        if trusted.to_canonical_json() != layout.to_canonical_json() {
-            return Err(());
-        }
+        let (_, trusted) = self.0.assess(device, session);
+        let trusted = trusted.ok_or(())?;
         Ok(td_host::actions::find_tile(&trusted, page, tile).cloned())
     }
 
@@ -141,6 +206,12 @@ impl Live {
     pub fn inject(&self, key: StreamKey, sample: LiveSample) {
         self.0.injected.lock().insert(key, sample);
         self.0.wake();
+    }
+
+    /// How many live rounds have finished.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn rounds(&self) -> u64 {
+        self.0.rounds.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
@@ -163,6 +234,10 @@ fn run(
             *wake = false;
         }
         let covers = round(&shared, &devices, &links, &integrations);
+        #[cfg(any(test, feature = "test-hooks"))]
+        shared
+            .rounds
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let _ = jobs.try_send(covers);
     }
 }
@@ -173,6 +248,7 @@ fn round(
     links: &Links,
     integrations: &Service,
 ) -> Vec<CoverJob> {
+    let generation = shared.generation.load(std::sync::atomic::Ordering::SeqCst);
     let connected: Vec<(String, u64, LiveCaps)> = devices
         .summaries()
         .into_iter()
@@ -200,6 +276,14 @@ fn round(
     let wanted = {
         let mut router = shared.router.lock();
         router.set_covers(covers);
+        router.set_off(
+            integrations
+                .summaries()
+                .into_iter()
+                .filter(|summary| !summary.enabled)
+                .map(|summary| summary.id)
+                .collect(),
+        );
         router.retain(&connected.iter().map(|(id, ..)| id.clone()).collect());
         for device in changed {
             router.layout_changed(&device);
@@ -229,7 +313,52 @@ fn round(
         (router.cover_jobs(&samples), router.shown())
     };
     publish_shown(shared, shown);
+    publish_status(shared, devices, generation);
     jobs
+}
+
+fn publish_status(shared: &Shared, devices: &DeviceManager, generation: u64) {
+    let _publication = shared.publication.lock();
+    if shared.generation.load(std::sync::atomic::Ordering::SeqCst) != generation {
+        return;
+    }
+    for device in devices.summaries() {
+        let (session, status) = match device.link {
+            LinkState::Connected {
+                since_ms,
+                protocol: 2,
+                ..
+            } if device
+                .capabilities
+                .as_ref()
+                .and_then(LiveCaps::of)
+                .is_some() =>
+            {
+                let mut status = shared.assess(&device.id, since_ms).0;
+                if matches!(status, ControlLayout::Unavailable { .. })
+                    && shared.router.lock().read_failed(&device.id, since_ms)
+                {
+                    status = ControlLayout::Unavailable {
+                        reason: ControlLayoutUnavailable::ReadFailed,
+                    };
+                }
+                (Some(since_ms), status)
+            }
+            LinkState::Connected { since_ms, .. } => (
+                Some(since_ms),
+                ControlLayout::Unavailable {
+                    reason: ControlLayoutUnavailable::Unsupported,
+                },
+            ),
+            _ => (
+                None,
+                ControlLayout::Unavailable {
+                    reason: ControlLayoutUnavailable::Offline,
+                },
+            ),
+        };
+        devices.control_layout(&device.id, session, status);
+    }
 }
 
 fn publish_shown(shared: &Shared, mut shown: HashMap<String, (u64, Arc<Layout>)>) {

@@ -52,6 +52,10 @@ pub struct Ctx {
     /// Counts requests that reached a handler, so tests can show a rejection never did.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) handler_hits: Arc<std::sync::atomic::AtomicUsize>,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) checkpoints: crate::checkpoints::Checkpoints,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) real_device_console: bool,
 }
 impl Ctx {
     pub(crate) fn new(
@@ -82,10 +86,12 @@ impl Ctx {
         integrations.command_approval(Arc::new(actions.clone()));
         let live = crate::live::Live::start(devices.clone(), links.clone(), integrations.clone());
         let settable = integrations.clone();
+        let turned_on = integrations.clone();
         actions.attach(
             live.clone(),
             integrations.controls.clone(),
             Arc::new(move |key| settable.settable(key)),
+            Arc::new(move |id| turned_on.enabled(id)),
             layouts.pushed(),
         );
         Self {
@@ -129,6 +135,10 @@ impl Ctx {
             started_ms: crate::now_ms(),
             #[cfg(any(test, feature = "test-hooks"))]
             handler_hits: Default::default(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            checkpoints: Default::default(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            real_device_console: false,
         }
     }
     #[cfg(windows)]

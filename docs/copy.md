@@ -259,6 +259,8 @@ Opens from the Device's name.
 | Status, first check | Checking… |
 | Status, failing | Can't connect |
 | Status, no credentials | Not set up |
+| Check button, in progress | Check now, Checking… |
+| Check sent (new values arrive when it ends) | Check started |
 | Card button, not set up | Set up |
 | Secret field, saved | Saved · ends in {last4} |
 | Secret field, empty | Not set |
@@ -1062,6 +1064,7 @@ Today these Rust strings show in the UI, most under Details and some as the main
 | `crates/td-link/src/session.rs:76` | write failed: {error} | Lost {device}. Check the USB cable. It reconnects on its own. | |
 | `crates/td-link/src/session.rs:485` | read failed: {error} | Lost {device}. Check the USB cable. It reconnects on its own. | |
 | `crates/td-link/src/session.rs:500` | heartbeat failed: {error} | Lost {device}. Check the USB cable. It reconnects on its own. | |
+| `crates/td-link/src/session.rs:30` | the Device dropped the session | Lost {device}. It reconnects on its own. | |
 | `crates/td-link/src/recover.rs:60` | recovery port not found | Can't find {device}'s USB loader. Unplug it, plug it back in, then retry. | |
 | `crates/td-link/src/recover.rs:62` | recovery requires USB-Serial/JTAG | Repair works only over the board's built-in USB port. | |
 | `crates/td-link/src/recover.rs:65` | recovery requires Espressif USB-Serial/JTAG | Repair works only over the board's built-in USB port. | |
@@ -1272,3 +1275,35 @@ Drag switch shows only when the bar's stream is settable. Without the Firmware,
 Add Tile still offers the Volume bar and Now playing Presets with Needs Firmware
 {x.y} where their art goes, and places them; the Tile shows its label and the
 badge until the Device can draw it.
+
+## Controls need Send to Device
+
+A connected Device whose Companion reports `control_layout` as `no-pushed-copy` or `differs`, with `has_controls`, shows these. `matches`, a Layout without controls, a Device that isn't connected and `unavailable` show nothing new. The notices name the action by its button, **Send to Device**, never as "a Send". A Send to Device that fails keeps the notice and shows the failure with Details. After one that succeeds, Checking controls… stays until a fresh assessment arrives: `matches` or a Layout without controls ends it quietly, `no-pushed-copy` or `differs` brings the notice back, and `read-failed` or `unsupported` shows "Couldn't check" until a later assessment decides, so a Send to Device never looks confirmed when nothing was checked.
+
+| Element | String |
+| --- | --- |
+| Home, under the status | Controls need Send to Device |
+| Home button | Review Layout |
+| Home button, accessible name | Review Layout for {device} |
+| Editor notice title | Controls need Send to Device |
+| Editor notice, no copy on this PC | These Tiles show live values, but their controls aren't set up on this PC. |
+| Editor notice, the Layout differs | The Layout on {device} differs from the one this PC sent. |
+| Editor notice, after either line | Sending replaces the Layout on {device} and lets its Tiles control the Integrations shown here. |
+| Editor notice, the editor shows the other orientation | {device} shows its {orientation} Layout. Switch to {Orientation} to review it. |
+| Editor notice button | Review Layout |
+| Editor notice button, while loading | Loading… |
+| Editor notice button, the other orientation | Switch to {Orientation} |
+| After Send to Device, until the Companion reports a match | Checking controls… |
+| After Send to Device, the Companion couldn't read the Layout (`read-failed`) | Couldn't check {device}'s controls. Unplug it and plug it back in. |
+| After Send to Device, the Firmware can't report its Layout (`unsupported`) | Couldn't check {device}'s controls. Update its Firmware. |
+| Inspector section | Controls |
+| Inspector count | {n} Tiles |
+| Inspector hint | Tiles on every Page that control an Integration. Select one to change it. |
+| Inspector, no control Tiles | No Tile on this Layout controls an Integration. |
+| Row, where | {page} Page |
+| Row, the Integration's own account | Default account |
+| Row, an Integration this PC doesn't have | Unknown Integration “{id}” |
+| Row, an account this PC doesn't have | Unknown account “{id}” |
+| Row, controls | Drag to change, Mute, Previous track, Play or pause, Next track, joined by “ · ” |
+
+`{orientation}` is lowercase in a sentence and capitalized on the button, as the Orientation options are. Unknown names show the Device's text in quotes, so a Tile label never stands in for an Integration.

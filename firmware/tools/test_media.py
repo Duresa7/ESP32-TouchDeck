@@ -27,8 +27,10 @@ class MediaParseTest(unittest.TestCase):
         includes = [out, host / "include", cjson]
         includes += [ROOT / "components" / c / "include" for c in ["td_layout", "td_ui_core", "keys", "td_link_core", "td_link", "td_console", "ui"]]
         link = (ROOT / "components/td_link/td_link.c").read_text()
-        start = link.index("void td_link_press_part(")
-        (out / "press_part.c").write_text(link[start:link.index("\nvoid td_link_input_cancel", start)], newline="\n")
+        start = link.index("void td_link_press(")
+        events = link.index("static void send_events(void)")
+        snippet = link[start:link.index("\nvoid td_link_input_cancel", start)] + "\n" + link[events:link.index("\nstatic void link_task", events)]
+        (out / "press_part.c").write_text(snippet, newline="\n")
         sources = [ROOT / "components/td_ui_core/ui_live.c", ROOT / "components/td_ui_core/ui_pages.c", host / "media_parse.c", ROOT / "components/td_link/td_link_live.c", ROOT / "components/td_link_core/td_input.c", ROOT / "components/td_layout/td_layout_parse.c", cjson / "cJSON.c"]
         dll = out / ("media.dll" if os.name == "nt" else "media.so")
         if os.name == "nt":

@@ -23,3 +23,14 @@ TEST_CASE("input coalesces moves and prioritizes end", "[td_link]")
     TEST_ASSERT_FALSE(td_input_put(&box, "p", "t", NAN, false, 101));
     TEST_ASSERT_FALSE(td_input_put(&box, "p", "t", 1.1, false, 101));
 }
+
+TEST_CASE("presses require matching session generation", "[td_link]")
+{
+    td_press_t press = {0};
+    TEST_ASSERT_FALSE(td_press_init(&press, "p", "t", "widget", "mute", false, 1, 10));
+    TEST_ASSERT_TRUE(td_press_init(&press, "p", "t", "widget", "mute", true, 1, 10));
+    TEST_ASSERT_TRUE(td_press_ready(&press, true, true, 1));
+    TEST_ASSERT_FALSE(td_press_ready(&press, true, true, 2));
+    TEST_ASSERT_FALSE(td_press_ready(&press, false, true, 1));
+    TEST_ASSERT_FALSE(td_press_ready(&press, true, false, 1));
+}

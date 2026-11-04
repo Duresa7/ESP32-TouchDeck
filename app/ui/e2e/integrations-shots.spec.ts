@@ -18,22 +18,22 @@ for (const theme of ['light', 'dark'] as const) {
 
     test('the list', async ({ page }) => {
       await openIntegrations(page);
-      await expect(page.getByTestId('integration-status')).toHaveText('Connected');
+      await expect(page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-status')).toHaveText('Connected');
       await page.mouse.move(0, 0);
       await page.screenshot({ path: join(folder, `integrations-${theme}.png`) });
     });
 
     test('the list, not set up', async ({ page }) => {
       await openIntegrations(page, '?integrations=new');
-      await expect(page.getByTestId('integration-setup')).toBeVisible();
+      await expect(page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-setup')).toBeVisible();
       await page.mouse.move(0, 0);
       await page.screenshot({ path: join(folder, `integrations-new-${theme}.png`) });
     });
 
     test('CLIProxyAPI', async ({ page }) => {
       await openIntegrations(page);
-      await page.getByTestId('integration-open').click();
-      await expect(page.getByTestId('usage-account')).toHaveCount(3);
+      await page.locator('[data-testid="integration"][data-id="cliproxyapi"]').getByTestId('integration-open').click();
+      await expect(page.getByTestId('usage-account')).toHaveCount(2);
       await page.mouse.move(0, 0);
       await page.screenshot({ path: join(folder, `integrations-cliproxyapi-${theme}.png`) });
       await page.screenshot({ path: join(folder, `integrations-cliproxyapi-full-${theme}.png`), fullPage: true });

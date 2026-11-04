@@ -3,7 +3,6 @@ use crate::recover::Recovery;
 use crate::{Incoming, Session, SessionConfig, XferFrame};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 use td_core::frame::CHUNK_DATA_MAX;
 
@@ -19,11 +18,11 @@ pub enum UpdateState {
     Recovering { pct: u8 },
 }
 pub trait Connector {
-    fn connect(&mut self) -> Result<(Session, Receiver<Incoming>), String>;
+    fn connect(&mut self) -> Result<(Session, crate::IncomingReceiver), String>;
 }
 pub struct PortConnector<'a>(pub &'a str);
 impl Connector for PortConnector<'_> {
-    fn connect(&mut self) -> Result<(Session, Receiver<Incoming>), String> {
+    fn connect(&mut self) -> Result<(Session, crate::IncomingReceiver), String> {
         Session::open(
             Box::new(crate::Serial::open(self.0).map_err(|e| e.to_string())?),
             SessionConfig {
@@ -35,9 +34,9 @@ impl Connector for PortConnector<'_> {
     }
 }
 impl Connector for crate::MockDeck {
-    fn connect(&mut self) -> Result<(Session, Receiver<Incoming>), String> {
+    fn connect(&mut self) -> Result<(Session, crate::IncomingReceiver), String> {
         Session::open(
-            Box::new(crate::MockDeck::connect(self)),
+            Box::new(self.try_connect().map_err(|e| e.to_string())?),
             SessionConfig {
                 ping_every: None,
                 ..SessionConfig::default()
@@ -48,6 +47,9 @@ impl Connector for crate::MockDeck {
 }
 #[derive(Clone, Copy)]
 pub struct Deadlines {
+    /// How long the Device may keep answering as its old build after the restart was sent before
+    /// the update stops waiting for it to go away.
+    pub gone: Duration,
     pub reconnect: Duration,
     pub confirm: Duration,
     pub tick: Duration,
@@ -55,6 +57,7 @@ pub struct Deadlines {
 impl Default for Deadlines {
     fn default() -> Self {
         Self {
+            gone: Duration::from_secs(3),
             reconnect: Duration::from_secs(15),
             confirm: Duration::from_secs(30),
             tick: Duration::from_millis(250),
@@ -62,7 +65,7 @@ impl Default for Deadlines {
     }
 }
 const REQUEST: Duration = Duration::from_secs(2);
-fn state(session: &Session, incoming: &Receiver<Incoming>) -> Result<Value, String> {
+fn state(session: &Session, incoming: &crate::IncomingReceiver) -> Result<Value, String> {
     session
         .send_line("update state")
         .map_err(|e| e.to_string())?;
@@ -158,13 +161,22 @@ fn confirm(
     emit: &mut dyn FnMut(UpdateState),
 ) -> Result<(), String> {
     let start = Instant::now();
+    let mut gone = false;
     let mut confirming = None;
     loop {
         // Each attempt drops both serial handles before opening another connection.
-        if let Ok((session, incoming)) = connector.connect()
-            && let Ok(hello) = session.hello(Duration::from_millis(500))
-            && hello.is_deck()
-        {
+        let reached = connector.connect().ok().and_then(|(session, incoming)| {
+            let hello = session.hello(Duration::from_millis(500)).ok()?;
+            hello.is_deck().then_some((session, incoming, hello))
+        });
+        if reached.is_none() {
+            gone = true;
+        }
+        let ready = reached.filter(|(_, _, hello)| {
+            let still_old_build = hello.elf_sha256 != bundle.manifest.elf_sha256;
+            gone || !still_old_build || start.elapsed() >= limits.gone
+        });
+        if let Some((session, incoming, hello)) = ready {
             if confirming.is_none() {
                 emit(UpdateState::Confirming);
                 confirming = Some(Instant::now());
@@ -275,6 +287,7 @@ mod tests {
     }
     fn limits() -> Deadlines {
         Deadlines {
+            gone: Duration::from_millis(10),
             reconnect: Duration::from_millis(50),
             confirm: Duration::from_millis(50),
             tick: Duration::from_millis(1),
@@ -341,12 +354,78 @@ mod tests {
             Err("rolled back".into())
         );
     }
+    fn real_limits() -> Deadlines {
+        Deadlines {
+            gone: Duration::from_secs(2),
+            reconnect: Duration::from_secs(5),
+            confirm: Duration::from_secs(5),
+            tick: Duration::from_millis(5),
+        }
+    }
+    #[test]
+    fn rebooting_holds_until_the_device_goes_away() {
+        let mut mock = crate::MockDeck::new();
+        let probe = mock.clone();
+        mock.restart_after(Duration::from_millis(150), Duration::from_millis(100));
+        let mut states = Vec::new();
+        let mut early = false;
+        run(&mut mock, None, &bundle(), real_limits(), &mut |s| {
+            if s == UpdateState::Confirming {
+                early = probe.port_drops_at().is_none_or(|at| Instant::now() < at);
+            }
+            states.push(s)
+        })
+        .unwrap();
+        assert!(!early, "Confirming came before the port went away");
+        let order: Vec<_> = states
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s,
+                    UpdateState::Rebooting | UpdateState::Confirming | UpdateState::Done { .. }
+                )
+            })
+            .collect();
+        assert!(matches!(
+            order[..],
+            [
+                UpdateState::Rebooting,
+                UpdateState::Confirming,
+                UpdateState::Done { .. }
+            ]
+        ));
+        assert_eq!(mock.reboots(), 1);
+    }
+    #[test]
+    fn rebooting_gives_way_to_confirming_when_the_device_never_goes_away() {
+        let mut mock = crate::MockDeck::new();
+        mock.restart_after(Duration::from_secs(60), Duration::from_secs(1));
+        let limits = Deadlines {
+            gone: Duration::from_millis(100),
+            confirm: Duration::from_millis(100),
+            ..real_limits()
+        };
+        let mut rebooting = None;
+        let mut waited = None;
+        let mut states = Vec::new();
+        let result = run(&mut mock, None, &bundle(), limits, &mut |s| {
+            match s {
+                UpdateState::Rebooting => rebooting = Some(Instant::now()),
+                UpdateState::Confirming => waited = rebooting.map(|at| at.elapsed()),
+                _ => {}
+            }
+            states.push(s)
+        });
+        assert!(waited.is_some_and(|w| w >= Duration::from_millis(100)));
+        assert!(waited.is_some_and(|w| w < Duration::from_secs(2)));
+        assert_eq!(result, Err("confirm timeout".into()));
+    }
     struct Vanished {
         mock: crate::MockDeck,
         calls: u32,
     }
     impl Connector for Vanished {
-        fn connect(&mut self) -> Result<(Session, Receiver<Incoming>), String> {
+        fn connect(&mut self) -> Result<(Session, crate::IncomingReceiver), String> {
             self.calls += 1;
             if self.calls > 1 {
                 Err("unplugged".into())

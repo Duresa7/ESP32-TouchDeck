@@ -1,4 +1,4 @@
-import type { AssetSource, Delivery, DeviceSummary, ErrorBody, Fit } from './api.ts';
+import type { AssetSource, ControlLayout, Delivery, DeviceSummary, ErrorBody, Fit } from './api.ts';
 import type { Environment } from './connection.ts';
 import { createFakeCompanion } from './fake.ts';
 import type { FakeSearch } from './fake-assets.ts';
@@ -39,6 +39,7 @@ declare global {
       push(id: string, order: string[]): void;
       offline(id: string): void;
       device(id: string, change: Partial<Omit<DeviceSummary, 'id' | 'rev'>>): void;
+      controls: { set(id: string, layout: ControlLayout): void; hold(id: string): void; release(id: string): void };
       firmware: { hold(id: string, at?: number | 'rebooting'): void; release(id: string): void; cancel(id: string): void; picks(...answers: FakePick[]): void };
       fresh(id: string, firmware?: { version: string; protocol: number }): void;
       newBoards: {
@@ -47,7 +48,7 @@ declare global {
         answer(id: string, answer: Answer): void;
         confirming(id: string): boolean;
         fail(id: string, fail: boolean): void;
-        hold(id: string, pct?: number): void;
+        hold(id: string, at?: number | 'done'): void;
         release(id: string): void;
       };
       updates: Pick<FakeUpdates, 'script' | 'finish' | 'calls'>;
@@ -152,6 +153,7 @@ export function demoEnvironment(target: Window): Environment {
     push: (id, order) => fake.setLayout(id, demoLayout(order)),
     offline: (id) => fake.update(id, { link: { state: 'lost', reason: 'unplugged', detail: '', at_ms: Date.UTC(2026, 9, 27, 21, 40) } }),
     device: (id, change) => fake.update(id, change),
+    controls: { set: fake.controls.set, hold: fake.controls.hold, release: fake.controls.release },
     firmware: { hold: fake.firmware.hold, release: fake.firmware.release, cancel: fake.firmware.cancel, picks: fake.firmware.picks },
     fresh: (id, firmware = { version: '1.5.0', protocol: 2 }) => fake.add(freshDevice({ id, port: 'COM9', firmware })),
     newBoards: {

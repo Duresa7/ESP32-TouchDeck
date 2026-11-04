@@ -287,21 +287,44 @@ fn shared_registry(secrets: Arc<MemorySecrets>) -> Registry {
 fn http_source(url: &str, pin: Option<&str>, interval_s: u64) -> serde_json::Value {
     serde_json::json!({"enabled":true,"sources":[{"id":"s","name":"S","interval_s":interval_s,"kind":"number","input":{"type":"http","url":url,"tls_pin":pin,"value_path":"$.v","headers":{"Authorization":"auth"}}}]})
 }
+fn next_token() -> usize {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+fn read_request(stream: &mut impl std::io::Read, expected: &str) -> Option<String> {
+    let mut request = [0; 4096];
+    let mut filled = 0;
+    while filled < request.len() {
+        match stream.read(&mut request[filled..]) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                filled += n;
+                if request[..filled].windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+        }
+    }
+    request[..filled]
+        .starts_with(expected.as_bytes())
+        .then(|| String::from_utf8_lossy(&request[..filled]).into_owned())
+}
 fn recording_server(reply: &'static str) -> (String, std::sync::mpsc::Receiver<String>) {
-    use std::io::{Read, Write};
+    use std::io::Write;
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}/v", listener.local_addr().unwrap());
+    let path = format!("/v-{}", next_token());
+    let expected = format!("GET {path} HTTP/1.1\r\n");
+    let url = format!("http://{}{path}", listener.local_addr().unwrap());
     let (sent, received) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { return };
-            let mut request = [0; 4096];
-            let n = stream.read(&mut request).unwrap_or(0);
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(500)));
+            let Some(request) = read_request(&mut stream, &expected) else {
+                continue;
+            };
             let _ = stream.write_all(reply.as_bytes());
-            if sent
-                .send(String::from_utf8_lossy(&request[..n]).into_owned())
-                .is_err()
-            {
+            if sent.send(request).is_err() {
                 return;
             }
         }
@@ -330,23 +353,31 @@ fn fixture_program(dir: &std::path::Path) -> String {
 
 #[test]
 fn a_trickled_http_body_ends_at_the_deadline() {
-    use std::io::{Read, Write};
+    use std::io::Write;
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}/v", listener.local_addr().unwrap());
+    let path = format!("/v-{}", next_token());
+    let expected = format!("GET {path} HTTP/1.1\r\n");
+    let url = format!("http://{}{path}", listener.local_addr().unwrap());
     std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let _ = stream.read(&mut [0; 4096]);
-        let body = b"{\"v\":123456.0}";
-        let _ = write!(
-            stream,
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
-            body.len()
-        );
-        for byte in body {
-            if stream.write_all(&[*byte]).is_err() {
-                return;
+        for accepted in listener.incoming() {
+            let Ok(mut stream) = accepted else { return };
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(500)));
+            if read_request(&mut stream, &expected).is_none() {
+                continue;
             }
-            std::thread::sleep(std::time::Duration::from_secs(1));
+            let body = b"{\"v\":123456.0}";
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
+            for byte in body {
+                if stream.write_all(&[*byte]).is_err() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            return;
         }
     });
     let mut r = shared_registry(Arc::default());
@@ -370,7 +401,7 @@ fn a_trickled_http_body_ends_at_the_deadline() {
 #[test]
 fn changing_or_clearing_the_pin_deletes_the_secret_headers() {
     use sha2::{Digest, Sha256};
-    use std::io::{Read, Write};
+    use std::io::Write;
     use td_host::integrations::secrets::SecretStore;
     let rogue = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let pin: String = Sha256::digest(rogue.cert.der().as_ref())
@@ -388,20 +419,28 @@ fn changing_or_clearing_the_pin_deletes_the_secret_headers() {
         rustls::pki_types::PrivatePkcs8KeyDer::from(rogue.signing_key.serialize_der()).into(),
     )
     .unwrap();
+    let config = Arc::new(config);
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let path = format!("/v-{}", next_token());
+    let expected = format!("GET {path} HTTP/1.1\r\n");
     let url = format!(
-        "https://localhost:{}/v",
+        "https://localhost:{}{path}",
         listener.local_addr().unwrap().port()
     );
     let (sent, received) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let (socket, _) = listener.accept().unwrap();
-        let connection = rustls::ServerConnection::new(Arc::new(config)).unwrap();
-        let mut tls = rustls::StreamOwned::new(connection, socket);
-        let mut request = [0; 4096];
-        let n = tls.read(&mut request).unwrap_or(0);
-        let _ = tls.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\n{\"v\":7}");
-        let _ = sent.send(String::from_utf8_lossy(&request[..n]).into_owned());
+        for accepted in listener.incoming() {
+            let Ok(socket) = accepted else { return };
+            let _ = socket.set_read_timeout(Some(std::time::Duration::from_millis(500)));
+            let connection = rustls::ServerConnection::new(config.clone()).unwrap();
+            let mut tls = rustls::StreamOwned::new(connection, socket);
+            let Some(request) = read_request(&mut tls, &expected) else {
+                continue;
+            };
+            let _ = tls.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\n{\"v\":7}");
+            let _ = sent.send(request);
+            return;
+        }
     });
     let secrets = Arc::new(MemorySecrets::default());
     let mut r = shared_registry(secrets.clone());
@@ -767,4 +806,37 @@ fn corrupt_or_unreadable_custom_json_recovers_without_blocking_other_integration
         summary.status.message.as_deref(),
         Some("Couldn't read custom.json. Started empty.")
     );
+}
+
+#[test]
+fn a_failed_save_that_deletes_a_secret_drops_the_poll_that_used_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let custom_file = dir.path().join("custom.json");
+    let mut r = Registry::new(Environment {
+        media_provider: Some(Arc::new(
+            td_host::integrations::media::fake::FakeMedia::default(),
+        )),
+        volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
+        secrets: Arc::new(MemorySecrets::default()),
+        config_file: Some(dir.path().join("sources.json")),
+        fetch: Arc::new(|| Box::new(Reply(r#"{"readings":[{"value":23.5}]}"#))),
+    })
+    .unwrap();
+    let i = r.get("custom").unwrap();
+    i.configure(config("https://example.invalid/metrics"))
+        .unwrap();
+    i.secret_put("auth", "synthetic-header").unwrap();
+    let poll = i.prepare_poll().expect("a due source prepares a poll");
+
+    std::fs::remove_file(&custom_file).unwrap();
+    std::fs::create_dir(&custom_file).unwrap();
+    std::fs::write(custom_file.join("keep"), b"").unwrap();
+    assert!(matches!(
+        i.configure(config("https://other.example.invalid/")),
+        Err(td_host::integrations::Error::Storage)
+    ));
+    assert!(!i.view().unwrap().secrets["auth"].set);
+
+    i.apply_poll(poll());
+    assert!(i.live().is_empty());
 }

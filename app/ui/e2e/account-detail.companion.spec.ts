@@ -54,7 +54,12 @@ test('one mock Device and a local hub expose account detail without leaking cred
     expect((await request.put(`${url}/config`, { headers, data: { enabled: true, url: `http://127.0.0.1:${address.port}`, interval_s: 60 } })).ok()).toBe(true);
     expect((await request.put(`${url}/secrets/management_key`, { headers, data: { value: 'IX97-private-JX03' } })).ok()).toBe(true);
     expect((await request.post(`${url}/refresh`, { headers })).ok()).toBe(true);
-    const text = await (await request.get(url, { headers })).text();
+    let text = '';
+    await expect.poll(async () => {
+      text = await (await request.get(url, { headers })).text();
+      const polled: unknown = JSON.parse(text);
+      return typeof polled === 'object' && polled !== null && 'detail' in polled && polled.detail !== null;
+    }, { timeout: 30_000 }).toBe(true);
     const view: unknown = JSON.parse(text);
     expect(view).toHaveProperty('detail.accounts.0.account', 'Work');
     expect(view).toHaveProperty('detail.accounts.1.error', 'provider refused (HTTP 403)');
