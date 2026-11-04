@@ -13,6 +13,10 @@ use std::{
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::client::IntoClientRequest};
 /// How long a `plug` or `unplug` helper waits for the Companion to notice.
 const SETTLE: Duration = Duration::from_secs(5);
+enum Ports {
+    Mock,
+    Real { device_console: bool },
+}
 pub struct TestCompanion {
     ctx: Ctx,
     ports: MockPorts,
@@ -41,13 +45,21 @@ impl TestCompanion {
     }
     /// Starts with other connection and time limits, so limit tests run in milliseconds.
     pub async fn start_with(limits: crate::Limits) -> Self {
-        Self::start_router(limits, false, None, None, Box::new(NoCatalogNetwork)).await
+        Self::start_router(
+            limits,
+            false,
+            None,
+            None,
+            Box::new(NoCatalogNetwork),
+            Ports::Mock,
+        )
+        .await
     }
     pub async fn start_with_catalog(
         limits: crate::Limits,
         fetcher: Box<dyn td_host::catalog::Fetcher>,
     ) -> Self {
-        Self::start_router(limits, false, None, None, fetcher).await
+        Self::start_router(limits, false, None, None, fetcher, Ports::Mock).await
     }
     pub async fn start_release_router() -> Self {
         Self::start_router(
@@ -56,6 +68,20 @@ impl TestCompanion {
             None,
             None,
             Box::new(NoCatalogNetwork),
+            Ports::Mock,
+        )
+        .await
+    }
+    /// Starts on mock ports that the Companion treats as real ones, as a Companion without
+    /// `--mock-devices` does, with or without `--test-real-device-console`.
+    pub async fn start_on_real_ports(device_console: bool) -> Self {
+        Self::start_router(
+            crate::Limits::default(),
+            false,
+            None,
+            None,
+            Box::new(NoCatalogNetwork),
+            Ports::Real { device_console },
         )
         .await
     }
@@ -67,6 +93,7 @@ impl TestCompanion {
             Some(grants),
             None,
             Box::new(NoCatalogNetwork),
+            Ports::Mock,
         )
         .await
     }
@@ -76,6 +103,7 @@ impl TestCompanion {
         grants: Option<Arc<dyn GrantStore>>,
         desktop: Option<Arc<crate::tray::Desktop>>,
         fetcher: Box<dyn td_host::catalog::Fetcher>,
+        mode: Ports,
     ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -95,8 +123,12 @@ impl TestCompanion {
         if let Some(desktop) = desktop {
             ctx.desktop = desktop;
         }
-        let config = Config::mock(Some(data.path().join("devices.json")));
+        let mut config = Config::mock(Some(data.path().join("devices.json")));
         let (ports, input) = config.mock.clone().unwrap();
+        if let Ports::Real { device_console } = mode {
+            config.mock = None;
+            ctx.real_device_console = device_console;
+        }
         ctx.devices.start(config);
         let router = if release {
             crate::api::release_router(ctx.clone())
@@ -146,6 +178,7 @@ impl TestCompanion {
             None,
             Some(desktop),
             Box::new(NoCatalogNetwork),
+            Ports::Mock,
         )
         .await;
     }

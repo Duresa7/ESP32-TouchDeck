@@ -108,6 +108,7 @@ struct Subscriber {
     queue: Mutex<Queue>,
     topics: Mutex<HashSet<(Topic, String)>>,
     notify: tokio::sync::Notify,
+    gets_state_frames: bool,
 }
 /// What a client may send: `{"op": "subscribe" | "unsubscribe", "topic", "device"}`.
 #[derive(Deserialize)]
@@ -138,10 +139,10 @@ impl Events {
             let Some(s) = weak.upgrade() else {
                 return false;
             };
-            if let Some(key) = &key
-                && !s.topics.lock().contains(key)
-            {
-                return true;
+            match &key {
+                Some(key) if !s.topics.lock().contains(key) => return true,
+                None if !s.gets_state_frames => return true,
+                _ => {}
             }
             let mut q = s.queue.lock();
             if q.frames.len() >= 1024 || q.bytes + size > 4 * 1024 * 1024 {
@@ -165,13 +166,42 @@ impl Events {
         }
     }
     fn subscribe(&self) -> Arc<Subscriber> {
+        self.add(true, HashSet::new())
+    }
+    fn add(&self, gets_state_frames: bool, topics: HashSet<(Topic, String)>) -> Arc<Subscriber> {
         let s = Arc::new(Subscriber {
             queue: Mutex::new(Queue::default()),
-            topics: Mutex::new(HashSet::new()),
+            topics: Mutex::new(topics),
             notify: tokio::sync::Notify::new(),
+            gets_state_frames,
         });
         self.subscribers.lock().push(Arc::downgrade(&s));
         s
+    }
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn listen(&self, topic: Topic, device: &str) -> Listener {
+        Listener(self.add(false, HashSet::from([(topic, device.to_owned())])))
+    }
+}
+#[cfg(any(test, feature = "test-hooks"))]
+pub(crate) struct Listener(Arc<Subscriber>);
+#[cfg(any(test, feature = "test-hooks"))]
+impl Listener {
+    pub(crate) async fn next(&self, deadline: tokio::time::Instant) -> Option<serde_json::Value> {
+        loop {
+            let notified = self.0.notify.notified();
+            if let Some((mut frame, _)) = {
+                let mut queue = self.0.queue.lock();
+                let next = queue.frames.pop_front();
+                if let Some((_, size)) = &next {
+                    queue.bytes -= size;
+                }
+                next
+            } {
+                return Some(frame["data"].take());
+            }
+            tokio::time::timeout_at(deadline, notified).await.ok()?;
+        }
     }
 }
 struct Lease {

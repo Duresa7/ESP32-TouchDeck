@@ -503,7 +503,7 @@ The Companion owns this exact allowlist, derived from registrations and handlers
 | `settings get`, `store stat`, `store stat <path>`, `store ls <path>`, `store get <path>` | `td_store/td_store_cmds.c` |
 | `backlight` (no arguments), `screenshot`, `screenshot 1`, `screenshot 2`, `screenshot 4` | `display/display_cmds.c` |
 
-Each placeholder is one unquoted token. `<path>` is validated as a storage path by the Firmware; `<id>`, `<tile>` and `<page>` name existing Tiles or Pages. Only these read-only forms pass; the allowlist never grants an entire command family. All `keys`, `touch` and `perf` commands, mutating `ui` subcommands, storage and NVS writes, Layout changes and reboot commands are excluded. New Firmware commands are denied until explicitly reviewed and added here. The e2e harness uses `test.console` for the full console, only under `test-hooks` on mock ports.
+Each placeholder is one unquoted token. `<path>` is validated as a storage path by the Firmware; `<id>`, `<tile>` and `<page>` name existing Tiles or Pages. Only these read-only forms pass; the allowlist never grants an entire command family. All `keys`, `touch` and `perf` commands, mutating `ui` subcommands, storage and NVS writes, Layout changes and reboot commands are excluded. New Firmware commands are denied until explicitly reviewed and added here. The e2e harness uses `test.console` for the full console, only under `test-hooks`, on mock ports or with `--test-real-device-console`.
 
 ### Layouts
 
@@ -1021,11 +1021,13 @@ The auth module mounts these itself. Features can't import it.
 
 ### Test hooks
 
-Feature module `test_hooks`, compiled only with the `test-hooks` Cargo feature and mounted only when the Companion runs on mock ports (`--mock-devices N`). Release builds don't contain it. Its types go into a separate `api.test.gen.ts`, so the product UI can't import them.
+Feature module `test_hooks`, compiled only with the `test-hooks` Cargo feature and mounted only when the Companion runs on mock ports (`--mock-devices N`). Release builds don't contain it: `package_windows.py` builds `td-companion` without features and refuses a binary that holds a test route or test argument. Its types go into a separate `api.test.gen.ts`, so the product UI can't import them.
+
+One exception lets a board pass drive the real Device while the Companion owns its port. A `test-hooks` Companion started with `--test-real-device-console` (the only argument) also serves `test.console` for Devices on real ports. Every other test route stays `route.not_found` there, and without the argument `test.console` is `route.not_found` for real ports too. A release build rejects the argument as unknown.
 
 | Name | Method and path | Request → Response |
 |---|---|---|
-| `test.console` | `POST /test/devices/{device}/console` | `{line}` → `()`. Full console for the e2e harness |
+| `test.console` | `POST /test/devices/{device}/console` | `{line, wait_ms?}` → `{reply, lines}`. Full console for the e2e harness and board pass. Waits up to `wait_ms` (default 3000, at most 15000, else 400 `request.invalid`) for the `@td` reply whose `cmd` is the line's first word. `reply` is that JSON or `null`; `lines` holds the Device's console lines from the send to the reply or the deadline, at most 256 |
 | `test.mock` | `POST /test/devices/{device}/mock` | `{action: "no-confirm" \| "rollback" \| "normal-update" \| "stop" \| "hang-up"}` → `()` |
 | `test.press` | `POST /test/devices/{device}/press` | `{page, tile, kind}` → `()` |
 | `test.sets` | `GET /test/devices/{device}/sets` | → `Value[]` |
@@ -1341,7 +1343,7 @@ Required integration tests in `crates/td-companion/tests/`:
 8. **Runtime file**, Windows only (`#[cfg(windows)]`). After start the DACL is protected, has one entry, and the owner is the user. A junction planted at `runtime\` makes start fail. The file is gone after a clean shutdown.
 9. **Contract.** `api_bindings_are_current`, `api_contract_is_documented` and `test_registry_is_consistent`.
 
-10. **Console and input.** Each allowlisted form passes; `keys`, `touch tap`, `ui hold`, state changes, unknown commands, extra arguments, control bytes and lines over 256 bytes get `console.forbidden` and never reach the Device. None inject PC input or answer an approval. While a native dialog shows, input from every mock Device is dropped with key-mirror `outcome: "suppressed"`, never replayed. Full console works only through `test.console`; the release router lacks it.
+10. **Console and input.** Each allowlisted form passes; `keys`, `touch tap`, `ui hold`, state changes, unknown commands, extra arguments, control bytes and lines over 256 bytes get `console.forbidden` and never reach the Device. None inject PC input or answer an approval. While a native dialog shows, input from every mock Device is dropped with key-mirror `outcome: "suppressed"`, never replayed. Full console works only through `test.console`; the release router lacks it, and a Companion on real ports serves it only with `--test-real-device-console`.
 11. **Integration origins.** Changing scheme, host or effective port clears the old secret and reports `set: false`; same-origin path changes keep it. No credential reaches the new destination before re-entry, including concurrent refresh. Cross-origin redirects and public plain-HTTP destinations receive no credential. Explicit loopback/private-address HTTP destinations work; a hostname resolving privately does not gain the exception.
 12. **Pairing delivery.** `auth.pair_code` returns only `{expires_ms}`, with no code or URL in any API response. Fake native browser and tray adapters capture delivery for tests. A new code invalidates the previous one, Reset pairing invalidates the pending code, and the Electron renderer gets no code to display or copy.
 13. **Firmware consent.** Install, repair and downgrade stay `waiting_for_confirmation` with no writes until the fake native dialog accepts the exact target and bundle. Decline, or 5 minutes of test clock without an answer, gives `firmware.declined`; cancelling while waiting closes the fake dialog and writes nothing. Same-or-newer bundled updates need no confirmation. A picked bundle fails on another target, on reuse and after 10 minutes.

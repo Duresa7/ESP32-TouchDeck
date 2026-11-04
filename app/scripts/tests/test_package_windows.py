@@ -14,7 +14,7 @@ class ProductionCompanionTests(unittest.TestCase):
         package.verify_production_companion(b"MZ/api/v1/system/shutdown")
 
     def test_test_hook_routes_or_arguments_are_rejected(self):
-        for marker in (b"/test/pairing-delivery", b"/test/devices/", b"--emit-ts"):
+        for marker in (b"/test/pairing-delivery", b"/test/devices/", b"--emit-ts", b"--test-real-device-console"):
             with self.subTest(marker=marker), self.assertRaisesRegex(ValueError, "Test hooks"):
                 package.verify_production_companion(b"MZ" + marker)
 

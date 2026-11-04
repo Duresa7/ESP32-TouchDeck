@@ -376,7 +376,7 @@ async fn a_restart_the_device_starts_itself_brings_a_fresh_hello() {
     tokio::time::sleep(Duration::from_millis(2500)).await;
     // The full console reaches the mock, which restarts; the next ping sees its uptime reset.
     let (status, _) = console(&td, "/api/v1/test/devices/mock0001/console", "reboot").await;
-    assert_eq!(status, 204);
+    assert_eq!(status, 200);
     let lost = frame(
         &mut socket,
         Duration::from_secs(5),
@@ -440,10 +440,123 @@ async fn the_console_allowlist_is_enforced_before_the_device() {
         console(&td, "/api/v1/test/devices/mock0001/console", "keys a")
             .await
             .0,
-        204
+        200
     );
     td.until(|_| console_lines() == ["version", "link state", "keys a"])
         .await;
+}
+
+async fn test_console(td: &TestCompanion, device: &str, body: Value) -> (u16, Value) {
+    let response = td
+        .raw()
+        .post(&format!("/api/v1/test/devices/{device}/console"))
+        .bearer_auth(&td.token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    (
+        status,
+        response.json::<Value>().await.unwrap_or(Value::Null),
+    )
+}
+
+#[tokio::test]
+async fn test_console_returns_what_the_device_answered() {
+    let td = TestCompanion::start().await;
+    td.plug_device("mock0001").await;
+    let (status, body) = test_console(&td, "mock0001", json!({"line": "version"})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"]["cmd"], "version");
+    assert_eq!(body["reply"]["ok"], true);
+    assert_eq!(body["reply"]["project_name"], "touchdeck");
+    let lines = body["lines"].as_array().unwrap();
+    assert!(lines.last().unwrap().as_str().unwrap().contains("@td "));
+    let (status, body) = test_console(&td, "mock0001", json!({"line": "keys a"})).await;
+    assert_eq!(status, 200);
+    assert_eq!(body["reply"]["cmd"], "keys");
+    assert_eq!(body["reply"]["ok"], false);
+}
+
+#[tokio::test]
+async fn test_console_waits_for_a_reply_only_until_its_deadline() {
+    let td = TestCompanion::start().await;
+    td.plug_device("mock0001").await;
+    td.deck("mock0001").lose_console_replies(1);
+    let started = Instant::now();
+    let (status, body) =
+        test_console(&td, "mock0001", json!({"line": "version", "wait_ms": 300})).await;
+    let elapsed = started.elapsed();
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"], Value::Null);
+    assert!(
+        (Duration::from_millis(300)..Duration::from_millis(1500)).contains(&elapsed),
+        "{elapsed:?}"
+    );
+    assert!(td.deck("mock0001").lines().iter().any(|l| l == "version"));
+    let (status, body) = test_console(
+        &td,
+        "mock0001",
+        json!({"line": "version", "wait_ms": 15_001}),
+    )
+    .await;
+    assert_eq!(status, 400, "{body}");
+    td.deck("mock0001").lose_console_replies(1);
+    let started = Instant::now();
+    let (status, body) =
+        test_console(&td, "mock0001", json!({"line": "version", "wait_ms": 0})).await;
+    assert_eq!((status, &body["reply"]), (200, &Value::Null));
+    assert!(started.elapsed() < Duration::from_millis(500));
+}
+
+#[tokio::test]
+async fn test_console_is_not_found_for_a_real_port_device_without_the_opt_in() {
+    let td = TestCompanion::start_on_real_ports(false).await;
+    td.plug_device("mock0001").await;
+    let (status, body) = test_console(&td, "mock0001", json!({"line": "touch tap 10 10"})).await;
+    assert_eq!(
+        (status, body["error"]["code"].as_str()),
+        (404, Some("route.not_found"))
+    );
+    td.let_live_rounds_run(1).await;
+    assert!(
+        !td.deck("mock0001")
+            .lines()
+            .iter()
+            .any(|l| l.starts_with("touch"))
+    );
+}
+
+#[tokio::test]
+async fn test_console_reaches_a_real_port_device_with_the_opt_in() {
+    let td = TestCompanion::start_on_real_ports(true).await;
+    td.plug_device("mock0001").await;
+    let (status, body) = test_console(&td, "mock0001", json!({"line": "version"})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"]["cmd"], "version");
+    assert!(td.deck("mock0001").lines().iter().any(|l| l == "version"));
+    let (status, _) = test_console(&td, "nosuch01", json!({"line": "version"})).await;
+    assert_eq!(status, 404);
+    let response = td
+        .raw()
+        .get("/api/v1/test/devices/mock0001/record")
+        .bearer_auth(&td.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 404);
+}
+
+#[tokio::test]
+async fn the_release_router_has_no_test_console() {
+    let td = TestCompanion::start_release_router().await;
+    td.plug_device("mock0001").await;
+    let (status, body) = test_console(&td, "mock0001", json!({"line": "version"})).await;
+    assert_eq!(
+        (status, body["error"]["code"].as_str()),
+        (404, Some("route.not_found"))
+    );
 }
 
 #[tokio::test]
