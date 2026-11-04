@@ -1064,6 +1064,7 @@ Today these Rust strings show in the UI, most under Details and some as the main
 | `crates/td-link/src/session.rs:76` | write failed: {error} | Lost {device}. Check the USB cable. It reconnects on its own. | |
 | `crates/td-link/src/session.rs:485` | read failed: {error} | Lost {device}. Check the USB cable. It reconnects on its own. | |
 | `crates/td-link/src/session.rs:500` | heartbeat failed: {error} | Lost {device}. Check the USB cable. It reconnects on its own. | |
+| `crates/td-link/src/session.rs:30` | the Device dropped the session | Lost {device}. It reconnects on its own. | |
 | `crates/td-link/src/recover.rs:60` | recovery port not found | Can't find {device}'s USB loader. Unplug it, plug it back in, then retry. | |
 | `crates/td-link/src/recover.rs:62` | recovery requires USB-Serial/JTAG | Repair works only over the board's built-in USB port. | |
 | `crates/td-link/src/recover.rs:65` | recovery requires Espressif USB-Serial/JTAG | Repair works only over the board's built-in USB port. | |

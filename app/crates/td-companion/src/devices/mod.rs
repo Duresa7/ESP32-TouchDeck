@@ -454,6 +454,9 @@ struct Entry {
     actor: Option<actor::Handle>,
     /// Off after Disconnect, until replug or Connect.
     auto: bool,
+    /// Links in a row that closed on their own soon after they opened. Each one doubles the wait
+    /// before the next probe, so a Device that keeps dropping its session isn't hammered.
+    quick_drops: u32,
 }
 struct PortRecord {
     info: PortInfo,
@@ -615,6 +618,7 @@ impl DeviceManager {
                         summary,
                         actor: None,
                         auto: true,
+                        quick_drops: 0,
                     },
                 );
             }

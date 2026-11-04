@@ -152,6 +152,7 @@ struct State {
     dropped: u64,
     last_rx: Option<Instant>,
     online_since_hello: bool,
+    refuse_sessions: bool,
     booted: Instant,
     link: Option<Sender<Vec<u8>>>,
     generation: u64,
@@ -305,6 +306,7 @@ impl MockDeck {
                 dropped: 0,
                 last_rx: None,
                 online_since_hello: false,
+                refuse_sessions: false,
                 booted: Instant::now(),
                 link: None,
                 generation: 0,
@@ -435,6 +437,20 @@ impl MockDeck {
         let mut state = self.state();
         state.link = None;
         state.generation += 1;
+    }
+
+    /// Drops the session as the Firmware's link idle timeout does: the deck keeps answering, but
+    /// reports `online: false` and refuses protocol 2 `not-negotiated` until the next `hello`.
+    pub fn drop_session(&self) {
+        let mut state = self.state();
+        state.selected_v2 = false;
+        state.online_since_hello = false;
+    }
+
+    /// While on, `hello` still answers but no longer brings the link online, so the deck refuses
+    /// every session it is offered.
+    pub fn refuse_sessions(&self, refuse: bool) {
+        self.state().refuse_sessions = refuse;
     }
 
     pub fn delay_replies(&self, delay: Duration) {
@@ -1279,7 +1295,7 @@ impl MockDeck {
         match m {
             "hello" => {
                 let mut state = self.state();
-                state.online_since_hello = true;
+                state.online_since_hello = !state.refuse_sessions;
                 let mut reply =
                     object(serde_json::to_value(&state.hello).expect("hello serializes"));
                 if state.v2 {
