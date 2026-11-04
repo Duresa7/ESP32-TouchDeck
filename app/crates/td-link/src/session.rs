@@ -15,6 +15,7 @@ use crate::xfer::LayoutState;
 
 const CONSOLE_LINE_MAX: usize = 16 * 1024;
 const INCOMING_CAPACITY: usize = 256;
+const CONSOLE_QUEUE_LIMIT: usize = 192;
 const TRANSFER_CAPACITY: usize = 64;
 
 #[derive(Default)]
@@ -68,7 +69,7 @@ pub enum Incoming {
     Closed(String),
 }
 
-/// Bounded unsolicited traffic. Excess lines and events are dropped; session closure has a reserved slot.
+/// Bounded FIFO traffic. Excess console lines are dropped; event overflow closes the session.
 pub struct IncomingReceiver {
     receiver: Receiver<Incoming>,
     queued: Arc<AtomicUsize>,
@@ -167,10 +168,22 @@ impl Shared {
     }
 
     fn publish(&self, item: Incoming) {
-        if self.queued.fetch_add(1, Ordering::AcqRel) >= INCOMING_CAPACITY
+        if !self.open.load(Ordering::Acquire) {
+            return;
+        }
+        let is_event = matches!(item, Incoming::Event(_));
+        let limit = if is_event {
+            INCOMING_CAPACITY
+        } else {
+            CONSOLE_QUEUE_LIMIT
+        };
+        if self.queued.fetch_add(1, Ordering::AcqRel) >= limit
             || self.incoming.try_send(item).is_err()
         {
             self.queued.fetch_sub(1, Ordering::AcqRel);
+            if is_event {
+                self.shutdown("Device sent events faster than the Companion could read them");
+            }
         }
     }
 
@@ -628,6 +641,71 @@ mod tests {
             }
         }
         panic!("nothing matched within 5 s");
+    }
+
+    fn route_event(session: &Session, event: Value) {
+        session.shared.route(
+            Item::Frame(Frame::message(
+                Role::Event,
+                serde_json::to_vec(&event).unwrap(),
+            )),
+            &mut ConsoleLine::default(),
+        );
+    }
+
+    #[test]
+    fn console_backlog_preserves_key_release() {
+        let (session, events) = Session::open(Box::new(BrokenTransport), quiet()).unwrap();
+        let down = serde_json::json!({"m":"key.report","seq":1,"type":"kbd","mods":1,"keys":[4]});
+        let up = serde_json::json!({"m":"key.report","seq":2,"type":"kbd","mods":0,"keys":[]});
+        route_event(&session, down.clone());
+        for n in 0..255 {
+            session.shared.route(
+                Item::Text(format!("log {n}\n").into_bytes()),
+                &mut ConsoleLine::default(),
+            );
+        }
+        route_event(&session, up.clone());
+        let received: Vec<_> = events.try_iter().collect();
+        assert_eq!(received.first(), Some(&Incoming::Event(down)));
+        assert_eq!(received.last(), Some(&Incoming::Event(up)));
+        assert!(session.is_open());
+        let lines: Vec<_> = received
+            .into_iter()
+            .filter_map(|item| match item {
+                Incoming::Line(line) => Some(line),
+                _ => None,
+            })
+            .collect();
+        assert!(lines.len() <= 192);
+        for (n, line) in lines.iter().enumerate() {
+            assert_eq!(line, &format!("log {n}"));
+        }
+    }
+
+    #[test]
+    fn event_flood_closes_after_the_events_that_fit() {
+        let (session, events) = Session::open(Box::new(BrokenTransport), quiet()).unwrap();
+        for seq in 0..10000 {
+            route_event(&session, serde_json::json!({"m":"press","seq":seq}));
+        }
+        let received: Vec<_> = events.try_iter().collect();
+        assert_eq!(received.len(), 257);
+        for (seq, item) in received[..256].iter().enumerate() {
+            assert_eq!(
+                item,
+                &Incoming::Event(serde_json::json!({"m":"press","seq":seq}))
+            );
+        }
+        assert_eq!(
+            received.last(),
+            Some(&Incoming::Closed(
+                "Device sent events faster than the Companion could read them".into()
+            ))
+        );
+        assert!(!session.is_open());
+        route_event(&session, serde_json::json!({"m":"press","seq":10001}));
+        assert!(events.try_recv().is_err());
     }
 
     #[test]
