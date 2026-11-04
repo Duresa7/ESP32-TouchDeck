@@ -201,32 +201,53 @@ mod tests {
                     .into(),
             )
             .unwrap();
+            let server_config = Arc::new(server_config);
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
             let address = listener.local_addr().unwrap();
+            let path = format!("/api2/json/cluster/resources/{}", next_token());
+            let expected = format!("GET {path} HTTP/1.1\r\n");
+            let done = Arc::new(AtomicBool::new(false));
+            let stop = done.clone();
             let server = thread::spawn(move || {
-                let (socket, _) = listener.accept().unwrap();
-                socket
-                    .set_read_timeout(Some(Duration::from_secs(12)))
-                    .unwrap();
-                let connection = rustls::ServerConnection::new(Arc::new(server_config)).unwrap();
-                let mut tls = rustls::StreamOwned::new(connection, socket);
-                let mut received = [0; 4096];
-                match tls.read(&mut received) {
-                    Ok(n) if n > 0 => {
+                loop {
+                    let Ok((socket, _)) = listener.accept() else {
+                        if stop.load(Ordering::Relaxed) {
+                            return 0;
+                        }
+                        thread::sleep(Duration::from_millis(5));
+                        continue;
+                    };
+                    socket.set_nonblocking(false).unwrap();
+                    socket
+                        .set_read_timeout(Some(Duration::from_millis(500)))
+                        .unwrap();
+                    let connection = rustls::ServerConnection::new(server_config.clone()).unwrap();
+                    let mut tls = rustls::StreamOwned::new(connection, socket);
+                    let mut received = [0; 4096];
+                    let mut filled = 0;
+                    while filled < received.len() {
+                        match tls.read(&mut received[filled..]) {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                filled += n;
+                                if received[..filled].windows(4).any(|w| w == b"\r\n\r\n") {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if received[..filled].starts_with(expected.as_bytes()) {
                         tls.write_all(
                             b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
                         )
                         .unwrap();
-                        n
+                        return filled;
                     }
-                    _ => 0,
                 }
             });
             let result = get(&GetRequest {
-                url: &format!(
-                    "https://localhost:{}/api2/json/cluster/resources",
-                    address.port()
-                ),
+                url: &format!("https://localhost:{}{path}", address.port()),
                 headers: &[("Authorization".into(), "fixture-private-value".into())],
                 tls_pin: match mode {
                     0 => None,
@@ -235,6 +256,7 @@ mod tests {
                 },
                 deadline: Instant::now() + TIMEOUT,
             });
+            done.store(true, Ordering::Relaxed);
             let received = server.join().unwrap();
             if mode == 2 {
                 assert_eq!(result, Ok("{}".into()));

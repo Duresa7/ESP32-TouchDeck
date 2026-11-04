@@ -219,22 +219,58 @@ fn real_http_client_does_not_follow_a_cross_origin_redirect() {
     use std::{
         io::{Read, Write},
         net::TcpListener,
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Duration,
     };
+    static NEXT: AtomicUsize = AtomicUsize::new(1);
+    let token = NEXT.fetch_add(1, Ordering::Relaxed);
+    let path = format!("/redirect-{token}");
+    let dest_path = format!("/dest-{token}");
     let destination = TcpListener::bind("127.0.0.1:0").unwrap();
     destination.set_nonblocking(true).unwrap();
     let redirect = TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}", redirect.local_addr().unwrap());
+    let url = format!("http://{}{path}", redirect.local_addr().unwrap());
     let target = destination.local_addr().unwrap();
+    let expected = format!("GET {path} HTTP/1.1\r\n");
+    let redirect_to = dest_path.clone();
     let server = std::thread::spawn(move || {
-        let (mut stream, _) = redirect.accept().unwrap();
-        let mut bytes = [0; 4096];
-        let n = stream.read(&mut bytes).unwrap();
-        assert!(String::from_utf8_lossy(&bytes[..n]).contains("fixture-key"));
-        write!(stream, "HTTP/1.1 302 Found\r\nLocation: http://{target}/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        for accepted in redirect.incoming() {
+            let Ok(mut stream) = accepted else { break };
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+            let mut bytes = [0; 4096];
+            let mut filled = 0;
+            while filled < bytes.len() {
+                match stream.read(&mut bytes[filled..]) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        filled += n;
+                        if bytes[..filled].windows(4).any(|w| w == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                }
+            }
+            if !bytes[..filled].starts_with(expected.as_bytes()) {
+                continue;
+            }
+            assert!(String::from_utf8_lossy(&bytes[..filled]).contains("fixture-key"));
+            write!(
+                stream,
+                "HTTP/1.1 302 Found\r\nLocation: http://{target}{redirect_to}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+            return;
+        }
+        panic!("redirect request not received");
     });
     assert!(HttpFetch::new().get(&url, "fixture-key").is_err());
     server.join().unwrap();
-    assert!(matches!(destination.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+    while let Ok((mut stream, _)) = destination.accept() {
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
+        let mut bytes = [0; 1024];
+        let n = stream.read(&mut bytes).unwrap_or(0);
+        assert!(!String::from_utf8_lossy(&bytes[..n]).contains(&dest_path));
+    }
 }
 
 #[derive(Default)]
