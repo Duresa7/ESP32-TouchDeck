@@ -493,31 +493,42 @@ mod tests {
 
     #[test]
     fn a_flood_of_drags_and_taps_stays_bounded_and_the_next_gesture_still_works() {
-        let td = running(media(), true);
-        let started = Instant::now();
-        for i in 0..5_000 {
-            let value = f64::from(i % 100) / 100.0;
-            td.deck
-                .emit_input("media", "volume", "value", InputPhase::Move, value);
-        }
-        for _ in 0..200 {
-            td.deck
-                .emit_press_part("media", "playing", "widget", "next");
-        }
-        let flooded = started.elapsed();
-        std::thread::sleep(Duration::from_millis(300));
-        let sets = td.volume.sets.lock().len();
-        assert!(sets < 5_000 / 4, "{sets} sets for 5000 moves");
-        let acts = td.media.acts.lock().len() as u64;
-        assert!(
-            acts <= 10 * (flooded.as_secs() + 2),
-            "{acts} acts in {flooded:?}"
-        );
-        assert!(td.log().len() as u64 <= acts);
+        for force_overflow in [false, true] {
+            let td = running(media(), true);
+            let paused = force_overflow.then(|| td.devices.pause_key_reports());
+            td.deck.emit_key(&json!({"type":"kbd","mods":0,"keys":[]}));
+            let started = Instant::now();
+            for i in 0..5_000 {
+                let value = f64::from(i % 100) / 100.0;
+                td.deck
+                    .emit_input("media", "volume", "value", InputPhase::Move, value);
+            }
+            for _ in 0..200 {
+                td.deck
+                    .emit_press_part("media", "playing", "widget", "next");
+            }
+            Links::new(td.devices.clone())
+                .with(DEVICE, |session| {
+                    session.request(&td_core::Request::Ping { n: None }, Duration::from_secs(5))
+                })
+                .unwrap()
+                .unwrap();
+            drop(paused);
+            let flooded = started.elapsed();
+            std::thread::sleep(Duration::from_millis(300));
+            let sets = td.volume.sets.lock().len();
+            assert!(sets < 5_000 / 4, "{sets} sets for 5000 moves");
+            let acts = td.media.acts.lock().len() as u64;
+            assert!(
+                acts <= 10 * (flooded.as_secs() + 2),
+                "{acts} acts in {flooded:?}"
+            );
+            assert!(td.log().len() as u64 <= acts);
 
-        std::thread::sleep(Duration::from_secs(1));
-        td.drag("volume", &[0.25, 0.33]);
-        wait("a later gesture is set", || td.last_set() == Some(0.33));
+            std::thread::sleep(Duration::from_secs(1));
+            td.drag("volume", &[0.25, 0.33]);
+            wait("a later gesture is set", || td.last_set() == Some(0.33));
+        }
     }
 
     #[test]

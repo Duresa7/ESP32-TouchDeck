@@ -156,7 +156,7 @@ fn run_inputs(
                 hub.take()
             };
             for input in batch {
-                if handler.generation() != generation {
+                if handler.generation() != generation || !hub.lock().is_current(&input) {
                     break;
                 }
                 let Some(result) = handler.set(id, &input) else {
@@ -189,7 +189,7 @@ fn forward(
     inner: &Inner,
     id: &DeviceId,
     generation: u64,
-    incoming: td_link::IncomingReceiver,
+    incoming: impl IntoIterator<Item = Incoming>,
     mut mirror: Option<Mirror>,
     touches: Touches,
 ) {
@@ -226,6 +226,16 @@ fn forward(
                 inner.events.publish(&DeviceEvent {
                     device: id.clone(),
                     event,
+                });
+            }
+            Incoming::Overflow => {
+                if let Some(mirror) = mirror.as_mut() {
+                    mirror.release_all();
+                }
+                touches.hub.lock().cancel();
+                inner.events.publish(&DeviceConsole {
+                    device: id.clone(),
+                    line: "Dropped Device events: overflow".into(),
                 });
             }
             Incoming::Closed(reason) => {
@@ -273,4 +283,48 @@ fn key_report(inner: &Inner, id: &DeviceId, mirror: Option<&mut Mirror>, report:
         errors,
         arrived_ms,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overflow_releases_held_keys_before_the_next_event() {
+        let devices = super::super::DeviceManager::new(crate::api::Events::default());
+        let sink = td_host::FakeSink::default();
+        let mut mirror = Mirror::new(Box::new(sink.clone()));
+        mirror.set_enabled(true);
+        let down = serde_json::json!({"m":"key.report","seq":1,"type":"kbd","mods":1,"keys":[4,5]});
+        let incoming = [
+            Incoming::Event(down),
+            Incoming::Overflow,
+            Incoming::Line("after".into()),
+        ];
+        let incoming = incoming.into_iter().inspect(|item| {
+            if matches!(item, Incoming::Line(_)) {
+                let events = sink.take();
+                assert_eq!(events.len(), 6);
+                for event in &events[..3] {
+                    let td_host::KeyEvent::Down(code) = event else {
+                        panic!("expected down")
+                    };
+                    assert!(events[3..].contains(&td_host::KeyEvent::Up(*code)));
+                }
+            }
+        });
+        forward(
+            &devices.inner,
+            &DeviceId::parse("mock0001").unwrap(),
+            0,
+            incoming,
+            Some(mirror),
+            Touches {
+                parts: mpsc::sync_channel(0).0,
+                presses: mpsc::sync_channel(16).0,
+                drags: mpsc::sync_channel(1).0,
+                hub: Arc::default(),
+            },
+        );
+    }
 }

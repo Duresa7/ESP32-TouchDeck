@@ -557,6 +557,11 @@ pub struct DeviceManager {
     inner: Arc<Inner>,
 }
 impl DeviceManager {
+    #[cfg(test)]
+    pub(crate) fn pause_key_reports(&self) -> parking_lot::MutexGuard<'_, ()> {
+        self.inner.input_gate.lock()
+    }
+
     pub(crate) fn action_handler(&self, handler: ActionHandler) {
         let _ = self.inner.actions.set(handler);
     }

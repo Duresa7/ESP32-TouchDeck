@@ -67,25 +67,33 @@ pub enum Incoming {
     Event(Value),
     Line(String),
     Closed(String),
+    Overflow,
 }
 
-/// Bounded FIFO traffic. Excess console lines are dropped; event overflow closes the session.
+/// Bounded FIFO traffic. Excess console lines are dropped. Event loss emits one Overflow
+/// after retained events; events resume after the consumer receives that marker.
 pub struct IncomingReceiver {
     receiver: Receiver<Incoming>,
     queued: Arc<AtomicUsize>,
+    overflow: Arc<AtomicBool>,
 }
 
 impl IncomingReceiver {
+    fn consumed(&self, item: &Incoming) {
+        self.queued.fetch_sub(1, Ordering::AcqRel);
+        if matches!(item, Incoming::Overflow) {
+            self.overflow.store(false, Ordering::Release);
+        }
+    }
+
     pub fn recv_timeout(&self, timeout: Duration) -> Result<Incoming, RecvTimeoutError> {
-        self.receiver.recv_timeout(timeout).inspect(|_| {
-            self.queued.fetch_sub(1, Ordering::AcqRel);
-        })
+        self.receiver
+            .recv_timeout(timeout)
+            .inspect(|item| self.consumed(item))
     }
 
     pub fn try_recv(&self) -> Result<Incoming, mpsc::TryRecvError> {
-        self.receiver.try_recv().inspect(|_| {
-            self.queued.fetch_sub(1, Ordering::AcqRel);
-        })
+        self.receiver.try_recv().inspect(|item| self.consumed(item))
     }
 
     pub fn try_iter(&self) -> impl Iterator<Item = Incoming> + '_ {
@@ -96,9 +104,10 @@ impl IncomingReceiver {
 impl Iterator for IncomingReceiver {
     type Item = Incoming;
     fn next(&mut self) -> Option<Incoming> {
-        self.receiver.recv().ok().inspect(|_| {
-            self.queued.fetch_sub(1, Ordering::AcqRel);
-        })
+        self.receiver
+            .recv()
+            .ok()
+            .inspect(|item| self.consumed(item))
     }
 }
 
@@ -146,6 +155,7 @@ struct Shared {
     reason: Mutex<String>,
     incoming: SyncSender<Incoming>,
     queued: Arc<AtomicUsize>,
+    overflow: Arc<AtomicBool>,
     xfer: Mutex<Option<SyncSender<XferFrame>>>,
     layout_reply: Mutex<Option<LayoutReply>>,
 }
@@ -172,6 +182,9 @@ impl Shared {
             return;
         }
         let is_event = matches!(item, Incoming::Event(_));
+        if is_event && self.overflow.load(Ordering::Acquire) {
+            return;
+        }
         let limit = if is_event {
             INCOMING_CAPACITY
         } else {
@@ -181,8 +194,12 @@ impl Shared {
             || self.incoming.try_send(item).is_err()
         {
             self.queued.fetch_sub(1, Ordering::AcqRel);
-            if is_event {
-                self.shutdown("Device sent events faster than the Companion could read them");
+            if is_event && !self.overflow.swap(true, Ordering::AcqRel) {
+                self.queued.fetch_add(1, Ordering::AcqRel);
+                if self.incoming.try_send(Incoming::Overflow).is_err() {
+                    self.queued.fetch_sub(1, Ordering::AcqRel);
+                    self.overflow.store(false, Ordering::Release);
+                }
             }
         }
     }
@@ -402,11 +419,13 @@ impl Session {
         config: SessionConfig,
     ) -> io::Result<(Session, IncomingReceiver)> {
         let (reader, writer) = transport.split()?;
-        let (incoming, events) = mpsc::sync_channel(INCOMING_CAPACITY + 1);
+        let (incoming, events) = mpsc::sync_channel(INCOMING_CAPACITY + 2);
         let queued = Arc::new(AtomicUsize::new(0));
+        let overflow = Arc::new(AtomicBool::new(false));
         let events = IncomingReceiver {
             receiver: events,
             queued: queued.clone(),
+            overflow: overflow.clone(),
         };
         let shared = Arc::new(Shared {
             writer: Mutex::new(writer),
@@ -418,6 +437,7 @@ impl Session {
             reason: Mutex::new(String::new()),
             incoming,
             queued,
+            overflow,
             xfer: Mutex::new(None),
             layout_reply: Mutex::new(None),
         });
@@ -684,7 +704,7 @@ mod tests {
     }
 
     #[test]
-    fn event_flood_closes_after_the_events_that_fit() {
+    fn event_flood_resyncs_after_the_events_that_fit() {
         let (session, events) = Session::open(Box::new(BrokenTransport), quiet()).unwrap();
         for seq in 0..10000 {
             route_event(&session, serde_json::json!({"m":"press","seq":seq}));
@@ -697,15 +717,43 @@ mod tests {
                 &Incoming::Event(serde_json::json!({"m":"press","seq":seq}))
             );
         }
-        assert_eq!(
-            received.last(),
-            Some(&Incoming::Closed(
-                "Device sent events faster than the Companion could read them".into()
-            ))
-        );
-        assert!(!session.is_open());
+        assert_eq!(received.last(), Some(&Incoming::Overflow));
+        assert!(session.is_open());
         route_event(&session, serde_json::json!({"m":"press","seq":10001}));
-        assert!(events.try_recv().is_err());
+        assert_eq!(
+            events.try_recv().unwrap(),
+            Incoming::Event(serde_json::json!({"m":"press","seq":10001}))
+        );
+    }
+
+    #[test]
+    fn overflow_rearms_on_each_receive_api_and_keeps_the_close_slot() {
+        for receive in 0..3 {
+            let (session, mut events) = Session::open(Box::new(BrokenTransport), quiet()).unwrap();
+            for _ in 0..2 {
+                for seq in 0..10000 {
+                    route_event(&session, serde_json::json!({"m":"press","seq":seq}));
+                }
+                for _ in 0..256 {
+                    assert!(matches!(events.try_recv(), Ok(Incoming::Event(_))));
+                }
+                let marker = match receive {
+                    0 => events.try_recv().unwrap(),
+                    1 => events.recv_timeout(Duration::from_secs(1)).unwrap(),
+                    _ => events.next().unwrap(),
+                };
+                assert_eq!(marker, Incoming::Overflow);
+                assert!(events.try_recv().is_err());
+            }
+            for seq in 0..10000 {
+                route_event(&session, serde_json::json!({"m":"press","seq":seq}));
+            }
+            session.close();
+            let received: Vec<_> = events.try_iter().collect();
+            assert_eq!(received.len(), 258);
+            assert_eq!(received[256], Incoming::Overflow);
+            assert!(matches!(received[257], Incoming::Closed(_)));
+        }
     }
 
     #[test]
