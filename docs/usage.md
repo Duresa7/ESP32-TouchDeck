@@ -233,7 +233,12 @@ Normal updates write the inactive Firmware slot. If the new Firmware fails to co
 
 ### Upgrading from 0.2
 
-Install the new app by hand from the release. There is no automatic bridge from 0.2, and its app Layout drafts and settings do not carry over. Export old Layouts and keep original Assets before replacing the old app. Load the Device's Layout or import an exported file, then set up Integrations again.
+Install Open TouchDeck by hand from the release. It installs next to TouchDeck 0.2 and does not remove it. There is no automatic bridge from 0.2, and its app Layout drafts and settings do not carry over.
+
+1. In TouchDeck 0.2, export your Layouts and keep your original Assets.
+2. Close TouchDeck 0.2. Only one app can use the Device at a time.
+3. Start Open TouchDeck. Load the Device's Layout or import an exported file, then set up Integrations again.
+4. When you no longer need it, uninstall **TouchDeck** from Windows **Installed apps**. This leaves Open TouchDeck and its start at sign-in in place.
 
 **After updating, Volume and Media control Tiles respond only after you send their Layout from the app once. Choose Send to Device.** The Companion acts only on a Layout it pushed itself. Follow [When controls need Send to Device](#when-controls-need-send-to-device) to review the Tiles before sending. Repeat for each Device and orientation you use.
 
