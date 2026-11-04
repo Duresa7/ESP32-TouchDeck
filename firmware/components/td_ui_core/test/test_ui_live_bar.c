@@ -52,6 +52,11 @@ static bool lift(uint32_t now_ms)
     return ui_live_bar_release(&s_bar, s_table.generation, now_ms);
 }
 
+static ui_part_t tap_mute(void)
+{
+    return ui_live_bar_part(&s_bar, s_table.generation, &s_layout, 30, 30);
+}
+
 TEST_CASE("live bar: a session reset mid-drag sends no move and no end afterwards", "[ui_live_bar]")
 {
     start();
@@ -135,4 +140,23 @@ TEST_CASE("live bar: each value is fed once, and an unset value lets the next on
     TEST_ASSERT_EQUAL_UINT32(0, s_bar.fed_n);
     feed();
     TEST_ASSERT_EQUAL_UINT32(2, s_bar.fed_n);
+}
+
+TEST_CASE("live bar: a mute tap after a reset names no part until the new session feeds a fresh value", "[ui_live_bar]")
+{
+    start();
+    value(1, 0.4, 1000);
+    feed();
+    TEST_ASSERT_EQUAL(UI_PART_MUTE, tap_mute());
+    ui_live_session(&s_table, 2000);
+    TEST_ASSERT_EQUAL(UI_PART_NONE, tap_mute());
+    TEST_ASSERT_FALSE(press(100));
+    TEST_ASSERT_EQUAL(UI_PART_NONE, tap_mute());
+    feed();
+    TEST_ASSERT_EQUAL(UI_PART_NONE, tap_mute());
+    value(1, 0.4, 2100);
+    feed();
+    TEST_ASSERT_EQUAL(UI_PART_MUTE, tap_mute());
+    ui_live_bind(&s_table, s_slots, 2, "other", k_pages, 1);
+    TEST_ASSERT_EQUAL(UI_PART_NONE, tap_mute());
 }
