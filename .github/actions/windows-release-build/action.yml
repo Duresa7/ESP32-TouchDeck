@@ -1,5 +1,5 @@
 name: windows release build
-description: Build the Open TouchDeck Windows installer with the Companion and matching radio-free Firmware, signed with the updater key.
+description: Build the Open TouchDeck Windows installer with the Companion and matching radio-free Firmware, unsigned for isolated release signing or test-signed for candidates.
 
 inputs:
   release-mode:
@@ -16,22 +16,15 @@ inputs:
     description: Updater public key for durable-key builds
     required: false
     default: ""
-  signing-key-present:
-    description: Whether TAURI_SIGNING_PRIVATE_KEY is configured
-    required: false
-    default: "false"
-  signing-private-key:
-    description: Updater private key (minisign, made with the Tauri signer) for durable-key builds
-    required: false
-    default: ""
-  signing-private-key-password:
-    description: Password for the Tauri updater private key
-    required: false
-    default: ""
   artifact-name:
     description: Workflow artifact for the release assets; the publish job downloads windows-release-assets
     required: false
     default: windows-release-assets
+
+outputs:
+  installer-sha256:
+    description: SHA256 of the unsigned installer
+    value: ${{ steps.digest.outputs.sha256 }}
 
 runs:
   using: composite
@@ -49,14 +42,16 @@ runs:
       with:
         package_json_file: app/package.json
 
+    - name: Test packaging environment isolation
+      shell: pwsh
+      run: python -B -m unittest discover -s app/scripts/tests -p test_package_environment.py
+
     - name: Validate release identity
       shell: pwsh
       env:
         RELEASE_MODE: ${{ inputs.release-mode }}
         RELEASE_TAG: ${{ inputs.release-tag }}
         UPDATER_PUBLIC_KEY: ${{ inputs.updater-public-key }}
-        # Booleans only: the secrets themselves stay in the signing step.
-        SIGNING_KEY_PRESENT: ${{ inputs.signing-key-present }}
       run: |
         $ErrorActionPreference = 'Stop'
         git diff --exit-code
@@ -79,7 +74,6 @@ runs:
           }
         }
         if ($env:RELEASE_MODE -ne 'test-signing') {
-          if ($env:SIGNING_KEY_PRESENT -ne 'true') { throw 'Secret TAURI_SIGNING_PRIVATE_KEY is not configured.' }
           if (-not $env:UPDATER_PUBLIC_KEY) { throw 'Variable TAURI_UPDATER_PUBLIC_KEY is not configured.' }
         }
 
@@ -133,16 +127,20 @@ runs:
         python app/scripts/package_windows.py build --out "$env:RUNNER_TEMP/touchdeck-release" --test-signing --notes-file "$env:RUNNER_TEMP/release-notes.md"
         exit $LASTEXITCODE
 
-    - name: Build durable-key installer and matching radio-free Firmware
+    - name: Build unsigned installer and matching radio-free Firmware
       if: inputs.release-mode != 'test-signing'
       shell: pwsh
-      env:
-        TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.signing-private-key }}
-        TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.signing-private-key-password }}
       run: |
         . "$env:RUNNER_TEMP/esp-idf/export.ps1"
         python app/scripts/package_windows.py build --out "$env:RUNNER_TEMP/touchdeck-release" --public-key-file "$env:RUNNER_TEMP/updater.pub" --notes-file "$env:RUNNER_TEMP/release-notes.md"
         exit $LASTEXITCODE
+
+    - name: Export installer hash
+      id: digest
+      shell: pwsh
+      run: |
+        $manifest = Get-Content "$env:RUNNER_TEMP/touchdeck-release/release-assets/release-manifest.json" -Raw | ConvertFrom-Json
+        "sha256=$($manifest.installer_sha256)" >> $env:GITHUB_OUTPUT
 
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:

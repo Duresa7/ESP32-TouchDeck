@@ -1,10 +1,5 @@
 name: windows release
 
-# Release-time only. Two modes, one build recipe:
-#   workflow_dispatch  dry run of a commit on main with the durable key in the release environment; never tags or releases
-#   push of vX.Y.Z     durable-key build in the release environment, then the publish job releases it
-# Both modes also run the app, firmware and installer lifecycle checks on the same commit,
-# and the publish job waits for every one of them.
 on:
   workflow_dispatch:
     inputs:
@@ -23,7 +18,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # The checks get no secrets: none of them is passed the release environment or the signing key.
   app:
     uses: ./.github/workflows/app.yml
     with:
@@ -40,12 +34,12 @@ jobs:
       ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
 
   build:
-    # Runs pnpm packages and ESP-IDF, so it only ever holds a read token.
     runs-on: windows-latest
     timeout-minutes: 90
-    environment: release
     permissions:
       contents: read
+    outputs:
+      installer-sha256: ${{ steps.unsigned.outputs.installer-sha256 }}
     env:
       BUILD_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
       # Python on Windows decodes tool output with the ANSI code page unless told to use UTF-8.
@@ -64,21 +58,111 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           git merge-base --is-ancestor HEAD origin/main
           if ($LASTEXITCODE) { throw "Built commit $(git rev-parse HEAD) is not on origin/main." }
-      - name: Build and verify durable-key release
+      - name: Build unsigned release
+        id: unsigned
         uses: ./.github/actions/windows-release-build
         with:
           release-mode: ${{ github.event_name == 'push' && 'publish' || 'dry-run' }}
           release-tag: ${{ github.event_name == 'push' && github.ref_name || '' }}
           build-ref: ${{ env.BUILD_REF }}
           updater-public-key: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
-          signing-key-present: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
-          signing-private-key: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          signing-private-key-password: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          artifact-name: windows-release-unsigned
+
+  sign:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: read
+    env:
+      INSTALLER: OpenTouchDeck-windows-x64-setup.exe
+      EXPECTED_SHA256: ${{ needs.build.outputs.installer-sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/release-signer
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Install only the locked signer without lifecycle scripts
+        run: npm ci --prefix .github/release-signer --ignore-scripts --no-audit --no-fund
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-release-unsigned
+          path: release-assets
+      - name: Check build hash and version
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          echo "$EXPECTED_SHA256  release-assets/$INSTALLER" | sha256sum --strict -c -
+          version=$(jq -r .version release-assets/release-manifest.json)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Sign the checked installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          node .github/release-signer/node_modules/@tauri-apps/cli/tauri.js signer sign \
+            --app-version "$RELEASE_VERSION" "release-assets/$INSTALLER" >/dev/null 2>&1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-release-signature
+          path: release-assets/*.sig
+          if-no-files-found: error
+
+  verify:
+    needs: [build, sign]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      EXPECTED_SHA256: ${{ needs.build.outputs.installer-sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          package_json_file: app/package.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-release-unsigned
+          path: release-assets
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-release-signature
+          path: release-assets
+      - name: Verify signed installer through local HTTPS
+        run: |
+          set -euo pipefail
+          pnpm --dir app install --frozen-lockfile
+          pnpm --dir app --filter @touchdeck/electron build
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout "$RUNNER_TEMP/tls.key" \
+            -out "$RUNNER_TEMP/tls.crt" -days 1 -subj /CN=localhost -addext subjectAltName=DNS:localhost
+          NODE_EXTRA_CA_CERTS="$RUNNER_TEMP/tls.crt" node app/scripts/verify_release.mjs \
+            release-assets "$RUNNER_TEMP/tls.key" "$RUNNER_TEMP/tls.crt"
+          cd release-assets
+          rm SHA256SUMS
+          sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS"
+          mv "$RUNNER_TEMP/SHA256SUMS" SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-release-assets
+          path: release-assets
+          if-no-files-found: error
+          retention-days: 90
 
   publish:
-    # Holds the write token, so it runs no repository or third-party build code: only gh, jq and sha256sum.
-    # Nothing is published unless every check passed on the tagged commit too.
-    needs: [build, app, firmware, installer-lifecycle]
+    needs: [verify, app, firmware, installer-lifecycle]
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -127,7 +211,6 @@ jobs:
               echo "::error::Release $RELEASE_TAG is already published; refusing to replace its assets"
               exit 1
             fi
-            # A draft left by an earlier failed run: drop assets this build does not produce.
             gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | while IFS= read -r name; do
               [ -f "release-assets/$name" ] || gh release delete-asset "$RELEASE_TAG" "$name" --yes
             done
@@ -138,7 +221,7 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" release-assets/* --clobber
 
-      - name: Publish only after every asset is in place
+      - name: Check draft assets
         run: |
           set -euo pipefail
           uploaded=$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[] | "\(.name) \(.size)"' | sort)
@@ -151,6 +234,4 @@ jobs:
           for name in "$INSTALLER" "$INSTALLER.sig" latest.json; do
             grep -qx "$name [0-9]*" <<< "$uploaded" || { echo "::error::Release lacks $name"; exit 1; }
           done
-          # Last step: releases/latest/download/latest.json moves to this release only now.
-          gh release edit "$RELEASE_TAG" --draft=false --latest
           gh release view "$RELEASE_TAG" --json url,isDraft,tagName
