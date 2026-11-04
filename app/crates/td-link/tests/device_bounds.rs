@@ -63,7 +63,7 @@ impl Write for Writer {
                             .encode()
                             .unwrap(),
                     )
-                    .unwrap();
+                    .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
             }
         }
         Ok(bytes.len())

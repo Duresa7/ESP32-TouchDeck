@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{self, ErrorKind, Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -173,9 +173,16 @@ struct Shared {
 impl Shared {
     fn shutdown(&self, reason: &str) {
         if self.open.swap(false, Ordering::AcqRel) {
-            *self.reason.lock().unwrap() = reason.to_owned();
-            self.pending.lock().unwrap().waiting.clear();
-            self.layout_reply.lock().unwrap().take();
+            *self.reason.lock().unwrap_or_else(PoisonError::into_inner) = reason.to_owned();
+            self.pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .waiting
+                .clear();
+            self.layout_reply
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
             self.queued.fetch_add(1, Ordering::AcqRel);
             if self
                 .incoming
@@ -223,6 +230,9 @@ impl Shared {
         let deadline = Instant::now() + WRITE_DEADLINE;
         let mut rest = bytes;
         while !rest.is_empty() {
+            if !self.open.load(Ordering::Acquire) {
+                return Err(ErrorKind::BrokenPipe.into());
+            }
             match writer.write(rest) {
                 Ok(0) => return Err(ErrorKind::WriteZero.into()),
                 Ok(n) => rest = &rest[n..],
@@ -231,6 +241,9 @@ impl Shared {
                         && Instant::now() < deadline => {}
                 Err(error) => return Err(error),
             }
+        }
+        if !self.open.load(Ordering::Acquire) {
+            return Err(ErrorKind::BrokenPipe.into());
         }
         writer.flush()
     }
@@ -425,7 +438,12 @@ impl Transfer<'_> {
 
 impl Drop for Transfer<'_> {
     fn drop(&mut self) {
-        self.session.shared.xfer.lock().unwrap().take();
+        self.session
+            .shared
+            .xfer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
     }
 }
 
@@ -600,12 +618,24 @@ impl Session {
     }
 
     pub fn close(&self) {
+        self.stop
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
         self.shared.shutdown("closed by the app");
-        self.stop.lock().unwrap().take();
-        for thread in self.threads.lock().unwrap().drain(..) {
+        for thread in self
+            .threads
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain(..)
+        {
             let _ = thread.join();
         }
-        *self.shared.writer.lock().unwrap() = Box::new(io::sink());
+        *self
+            .shared
+            .writer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Box::new(io::sink());
     }
 }
 
@@ -621,7 +651,10 @@ fn read_loop(shared: &Shared, mut reader: Box<dyn Read + Send>) {
     let mut buf = [0u8; 4096];
     while shared.open.load(Ordering::Acquire) {
         match reader.read(&mut buf) {
-            Ok(0) => return shared.shutdown("the deck closed the stream"),
+            Ok(0) => {
+                shared.shutdown("the deck closed the stream");
+                break;
+            }
             Ok(n) => {
                 for item in decoder.feed(&buf[..n], Instant::now()) {
                     shared.route(item, &mut line);
@@ -637,9 +670,13 @@ fn read_loop(shared: &Shared, mut reader: Box<dyn Read + Send>) {
                     shared.route(item, &mut line);
                 }
             }
-            Err(error) => return shared.shutdown(&format!("read failed: {error}")),
+            Err(error) => {
+                shared.shutdown(&format!("read failed: {error}"));
+                break;
+            }
         }
     }
+    drop(shared.writer.lock().unwrap_or_else(PoisonError::into_inner));
 }
 
 fn ping_loop(shared: &Shared, stop: &Receiver<()>, every: Duration, config: SessionConfig) {
@@ -935,6 +972,47 @@ mod tests {
         ));
         session.close();
         assert!(events.try_recv().is_err(), "only one Closed event");
+    }
+
+    #[test]
+    fn closing_and_dropping_after_a_writer_panic_does_not_abort() {
+        struct PanicWriter;
+
+        impl Write for PanicWriter {
+            fn write(&mut self, _bytes: &[u8]) -> io::Result<usize> {
+                panic!("writer panicked");
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        struct PanicTransport;
+
+        impl Transport for PanicTransport {
+            fn split(self: Box<Self>) -> io::Result<(Box<dyn Read + Send>, Box<dyn Write + Send>)> {
+                Ok((Box::new(TimeoutReader), Box::new(PanicWriter)))
+            }
+        }
+
+        let config = SessionConfig {
+            ping_every: Some(Duration::from_millis(10)),
+            ping_timeout: Duration::from_millis(100),
+            close_on_restart: false,
+            close_on_drop: false,
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let (session, _events) = Session::open(Box::new(PanicTransport), config).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while !session.shared.writer.is_poisoned() {
+                assert!(Instant::now() < deadline);
+                thread::sleep(Duration::from_millis(1));
+            }
+            session.close();
+            panic!("caller unwinds with a poisoned writer");
+        }));
+        assert!(result.is_err());
     }
 
     #[test]
