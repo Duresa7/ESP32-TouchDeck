@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Reads NUL-separated changed paths on stdin and prints which pull request checks to run,
-# as app=, firmware= and e2e= lines for $GITHUB_OUTPUT.
+# as app=, firmware=, e2e= and actionlint= lines for $GITHUB_OUTPUT.
 set -euo pipefail
 
 app=false
 firmware=false
 e2e=false
+actionlint=false
 while IFS= read -r -d '' path; do
   case "$path" in
-    .github/workflows/pr.yml|.github/scripts/changed-areas.sh) app=true; firmware=true; e2e=true ;;
+    .github/*) app=true; firmware=true; e2e=true; actionlint=true ;;
   esac
   case "$path" in
     app/*|schema/*|.github/workflows/app.yml) app=true ;;
@@ -24,3 +25,4 @@ done
 echo "app=$app"
 echo "firmware=$firmware"
 echo "e2e=$e2e"
+echo "actionlint=$actionlint"
