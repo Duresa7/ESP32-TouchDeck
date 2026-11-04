@@ -54,6 +54,8 @@ pub struct Ctx {
     pub(crate) handler_hits: Arc<std::sync::atomic::AtomicUsize>,
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) checkpoints: crate::checkpoints::Checkpoints,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) real_device_console: bool,
 }
 impl Ctx {
     pub(crate) fn new(
@@ -133,6 +135,8 @@ impl Ctx {
             handler_hits: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             checkpoints: Default::default(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            real_device_console: false,
         }
     }
     #[cfg(windows)]

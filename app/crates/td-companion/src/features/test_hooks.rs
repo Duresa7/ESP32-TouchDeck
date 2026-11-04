@@ -1,8 +1,9 @@
 //! Routes for the e2e harness. Compiled only with `test-hooks`, and they answer only when the
-//! Companion runs on mock ports; otherwise every one is `route.not_found`.
-use super::devices::{ConsoleLine, DeviceError, DevicePath};
+//! Companion runs on mock ports, or for `test.console` when it was started with
+//! `--test-real-device-console`; otherwise every one is `route.not_found`.
+use super::devices::{DeviceError, DevicePath};
 use crate::{
-    api::{CommonError, Ctx, Endpoint, Feature, NoQuery, Registration, Req},
+    api::{CommonError, Ctx, Endpoint, Feature, NoQuery, Registration, Req, Topic},
     devices::{BoardKind, DeviceId, MockPorts},
 };
 use axum::http::{Method, StatusCode};
@@ -23,25 +24,81 @@ fn mock_deck(ctx: &Ctx, id: &DeviceId) -> Result<MockDeck, DeviceError> {
         .ok_or(DeviceError::NotFound)
 }
 
+const CONSOLE_WAIT: Duration = Duration::from_millis(3000);
+const CONSOLE_WAIT_MAX: Duration = Duration::from_millis(15_000);
+const CONSOLE_LINES_MAX: usize = 256;
+const FIRMWARE_CMD_ECHO_MAX: usize = 63;
+
+#[derive(Serialize, Deserialize, TS)]
+pub struct TestConsoleLine {
+    pub line: String,
+    /// Milliseconds to wait for the `@td` reply: 3000 when absent, 0 to 15000. With 0 the
+    /// route returns what arrived while it sent the line.
+    #[serde(default)]
+    pub wait_ms: Option<u64>,
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct ConsoleReply {
+    /// The `@td` JSON whose `cmd` is the line's first word, or null when none came in time.
+    pub reply: Option<Value>,
+    /// The Device's console lines from the send until the reply or the deadline, at most 256.
+    pub lines: Vec<String>,
+}
 pub struct Console;
 impl Endpoint for Console {
     const NAME: &'static str = "test.console";
     const METHOD: Method = Method::POST;
     const PATH: &'static str = "/test/devices/{device}/console";
-    const STATUS: StatusCode = StatusCode::NO_CONTENT;
     type Path = DevicePath;
     type Query = NoQuery;
-    type Body = ConsoleLine;
-    type Ok = ();
+    type Body = TestConsoleLine;
+    type Ok = ConsoleReply;
     type Error = DeviceError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
-        mock_deck(&ctx, &req.path.device)?;
+        if ctx.devices.mock().is_some() {
+            mock_deck(&ctx, &req.path.device)?;
+        } else if !ctx.real_device_console {
+            return Err(CommonError::NotFound.into());
+        }
+        let wait = req.body.wait_ms.map_or(CONSOLE_WAIT, Duration::from_millis);
+        if wait > CONSOLE_WAIT_MAX {
+            return Err(CommonError::invalid("wait_ms", "Expected 0 to 15000.").into());
+        }
+        let device = req.path.device;
+        let listener = ctx.events.listen(Topic::Console, device.as_str());
+        let deadline = tokio::time::Instant::now() + wait;
         let line = req.body.line;
-        Ok(ctx
-            .devices
-            .call(&req.path.device, move |s| s.send_line(&line))
-            .await??)
+        let word = line
+            .split(' ')
+            .find(|word| !word.is_empty())
+            .unwrap_or_default()
+            .to_owned();
+        ctx.devices
+            .call(&device, move |s| s.send_line(&line))
+            .await??;
+        let mut lines = Vec::new();
+        while let Some(data) = listener.next(deadline).await {
+            let Some(text) = data["line"].as_str() else {
+                continue;
+            };
+            if lines.len() < CONSOLE_LINES_MAX {
+                lines.push(text.to_owned());
+            }
+            if let Some(reply) = reply_to(&word, text) {
+                return Ok(ConsoleReply {
+                    reply: Some(reply),
+                    lines,
+                });
+            }
+        }
+        Ok(ConsoleReply { reply: None, lines })
     }
+}
+fn reply_to(word: &str, text: &str) -> Option<Value> {
+    let at = text.find("@td ")?;
+    let reply: Value = serde_json::from_str(&text[at + 4..]).ok()?;
+    let cmd = reply["cmd"].as_str()?;
+    (cmd == word || (cmd.len() >= FIRMWARE_CMD_ECHO_MAX && word.starts_with(cmd))).then_some(reply)
 }
 
 #[derive(Serialize, Deserialize, TS)]

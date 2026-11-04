@@ -17,7 +17,7 @@ APP = ROOT / "app"
 ELECTRON = APP / "electron"
 TARGET = "x86_64-pc-windows-msvc"
 FEED = "https://github.com/Duresa7/OpenTouchDeck/releases/download"
-TEST_HOOK_MARKERS = (b"/test/pairing-delivery", b"/test/devices/", b"--emit-ts")
+TEST_HOOK_MARKERS = (b"/test/pairing-delivery", b"/test/devices/", b"--emit-ts", b"--test-real-device-console")
 
 
 def build_environment(env=None):

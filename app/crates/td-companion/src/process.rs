@@ -69,6 +69,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mock_devices: Option<usize> = match args.as_slice() {
         [] | ["--packaged"] => None,
         #[cfg(feature = "test-hooks")]
+        ["--test-real-device-console"] => None,
+        #[cfg(feature = "test-hooks")]
         ["--emit-ts", path] => {
             if let Some(parent) = Path::new(path).parent() {
                 std::fs::create_dir_all(parent)?;
@@ -114,6 +116,10 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         )
     })
     .await?;
+    #[cfg(feature = "test-hooks")]
+    {
+        ctx.real_device_console = args == ["--test-real-device-console"];
+    }
     if args.contains(&"--native-desktop") {
         ctx.desktop = Arc::new(crate::tray::Desktop::new(false));
     }
