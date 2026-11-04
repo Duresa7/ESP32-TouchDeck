@@ -27,19 +27,19 @@ You need a **Waveshare ESP32-S3-Touch-LCD-5B** (16 MB flash, 8 MB PSRAM, 1024 ×
 2. Open Open TouchDeck and connect the Device through USB-Serial/JTAG. It connects automatically.
 3. For a New board, choose **Install Firmware** and confirm on this PC. This replaces the board's existing project.
 4. Follow setup to name the Device, choose its orientation and pick a starting Layout.
-5. Open the Device's Layout, edit its Tiles and choose **Send to Device**.
+5. Open the Device's Layout, edit its Tiles and choose **Send to Device**. If **Controls need Send to Device** appears, choose **Review Layout** and check its Controls list before sending.
 
 The [user guide](docs/usage.md) covers every step, Integrations, pairing, updates and troubleshooting. If upgrading from 0.2, read [the upgrade steps](docs/usage.md#upgrading-from-02), including the required first Layout send for Volume and Media controls.
 
-Keep the Companion running and USB connected for actions on this PC and live readings. Closing the window leaves the Companion in the tray. Swiping Pages and stored animations work on the Device. Wi-Fi, battery support and standalone USB HID are not part of 1.0. Bluetooth is not supported.
+Keep the Companion running and USB connected for actions on this PC and live readings. Closing the window leaves the Companion in the tray. It reconnects automatically if the Device drops the connection. Turning an Integration off makes its readings on the Device stale within about a second. Swiping Pages and stored animations work on the Device. Wi-Fi, battery support and standalone USB HID are not part of 1.0. Bluetooth is not supported.
 
 ## Device screen examples
 
-These two captures are from earlier Firmware. Updated Device shots are pending; the app screenshots above and in the guide use the current UI with demo data.
+These captures show the built-in Layout on a real Device. The app screenshots above and in the guide use the current UI with demo data.
 
 <p>
-  <img src="docs/images/deck-media.png" width="49%" alt="Earlier Firmware: Media Page">
-  <img src="docs/images/deck-fkeys.png" width="49%" alt="Earlier Firmware: function-key Page">
+  <img src="docs/images/deck-media.png" width="49%" alt="Media Page with playback and Volume controls">
+  <img src="docs/images/deck-fkeys.png" width="49%" alt="Function-key Page with F1 to F12 and modifiers">
 </p>
 
 ## Build from source
