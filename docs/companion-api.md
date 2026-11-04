@@ -308,7 +308,7 @@ How the Device manager (#74) moves between them:
 | `connecting`, `lost` | `hello` answers | `connected` |
 | `connecting` | Still silent 3 s after the port appeared (the boot grace), or answers as other Firmware | `unresponsive` |
 | `connecting`, `unresponsive` | The port is held by another program | `busy` |
-| `connected` | The session ends on its own: missed pings, an I/O error, a closed stream, or a ping that shows the Device restarted | `lost` with `timeout`, `io-error` or `closed`. The Companion keeps probing; silence keeps it `lost` |
+| `connected` | The session ends on its own: missed pings, an I/O error, a closed stream, a ping that shows the Device restarted, or the Device dropping the session (a heartbeat `link.state` reads `online: false`, or a v2 request is refused `not-negotiated`) | `lost` with `timeout`, `io-error` or `closed`. The Companion keeps probing; silence keeps it `lost`. A probe that answers starts a new session with a fresh `hello`. After a link that lasted under 30 s, the next probe waits 250 ms, doubling for each such link in a row up to 10 s |
 | `connected` | `devices.restart` | `connecting`, then `connected` with a fresh `hello` once it boots |
 | `connected`, `lost` | Its port leaves | `lost` with `unplugged`, until replug or restart |
 | `connecting`, `busy`, `unresponsive`, `disconnected` | Its port leaves | `offline`. Unplugging also ends a Disconnect |

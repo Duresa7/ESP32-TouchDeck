@@ -454,6 +454,7 @@ struct Entry {
     actor: Option<actor::Handle>,
     /// Off after Disconnect, until replug or Connect.
     auto: bool,
+    quick_drops: u32,
 }
 struct PortRecord {
     info: PortInfo,
@@ -615,6 +616,7 @@ impl DeviceManager {
                         summary,
                         actor: None,
                         auto: true,
+                        quick_drops: 0,
                     },
                 );
             }

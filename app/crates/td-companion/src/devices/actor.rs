@@ -24,6 +24,7 @@ const INPUT_PACE: Duration = Duration::from_millis(20);
 /// Dropping the handle ends the work thread, which closes the session and frees the port.
 pub(super) struct Handle {
     pub generation: u64,
+    pub opened: Instant,
     work: Sender<Work>,
     session: Arc<Session>,
 }
@@ -103,6 +104,7 @@ pub(super) fn spawn(
         .expect("the Device forwarder starts");
     Handle {
         generation,
+        opened: Instant::now(),
         work,
         session: shared,
     }

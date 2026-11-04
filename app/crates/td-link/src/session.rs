@@ -26,6 +26,8 @@ struct ConsoleLine {
 
 const WRITE_DEADLINE: Duration = Duration::from_secs(2);
 const LAYOUT_REPLY_GRACE: Duration = Duration::from_secs(3);
+/// Why a session closes when the deck no longer counts the app as online.
+pub const DROPPED: &str = "the Device dropped the session";
 
 #[derive(Debug, Clone, Copy)]
 pub struct SessionConfig {
@@ -34,6 +36,11 @@ pub struct SessionConfig {
     /// Closes the session when a ping reply's uptime goes backwards, so the caller can say
     /// `hello` again: a restarted deck counts the app as offline until it does.
     pub close_on_restart: bool,
+    /// Closes the session with [`DROPPED`] when the deck says it no longer counts the app as
+    /// online: a heartbeat `link.state` reads `online: false`, or a `v2.` request is refused
+    /// `not-negotiated` after `hello` selected protocol 2. The deck drops the session after
+    /// 5 seconds without a frame and refuses protocol 2 until the next `hello`.
+    pub close_on_drop: bool,
 }
 
 impl Default for SessionConfig {
@@ -42,6 +49,7 @@ impl Default for SessionConfig {
             ping_every: Some(Duration::from_secs(2)),
             ping_timeout: Duration::from_secs(2),
             close_on_restart: false,
+            close_on_drop: false,
         }
     }
 }
@@ -158,6 +166,8 @@ struct Shared {
     overflow: Arc<AtomicBool>,
     xfer: Mutex<Option<SyncSender<XferFrame>>>,
     layout_reply: Mutex<Option<LayoutReply>>,
+    close_on_drop: bool,
+    protocol_2: AtomicBool,
 }
 
 impl Shared {
@@ -258,7 +268,10 @@ impl Shared {
             return Err(LinkError::Io(error.to_string()));
         }
         match reply.recv_timeout(timeout) {
-            Ok(reply) if reply.m == name => Ok(reply),
+            Ok(reply) if reply.m == name => {
+                self.watch(&reply);
+                Ok(reply)
+            }
             Ok(reply) => Err(LinkError::Reply(ReplyError::Fields(format!(
                 "reply names {:?}, not {name:?}",
                 reply.m
@@ -268,6 +281,20 @@ impl Shared {
                 Err(LinkError::Timeout(timeout))
             }
             Err(RecvTimeoutError::Disconnected) => Err(self.closed()),
+        }
+    }
+
+    fn watch(&self, reply: &Reply) {
+        if reply.m == "hello" {
+            let selected = reply.ok && reply.fields.get("proto").and_then(Value::as_u64) == Some(2);
+            self.protocol_2.store(selected, Ordering::Release);
+        } else if self.close_on_drop
+            && reply.m.starts_with("v2.")
+            && !reply.ok
+            && reply.fields.get("reason").and_then(Value::as_str) == Some("not-negotiated")
+            && self.protocol_2.load(Ordering::Acquire)
+        {
+            self.shutdown(DROPPED);
         }
     }
 
@@ -440,6 +467,8 @@ impl Session {
             overflow,
             xfer: Mutex::new(None),
             layout_reply: Mutex::new(None),
+            close_on_drop: config.close_on_drop,
+            protocol_2: AtomicBool::new(false),
         });
         let (stop, stopped) = mpsc::channel::<()>();
         let mut threads = vec![thread::spawn({
@@ -634,6 +663,19 @@ fn ping_loop(shared: &Shared, stop: &Receiver<()>, every: Duration, config: Sess
             }
             Err(error) => return shared.shutdown(&format!("heartbeat failed: {error}")),
         }
+        if !config.close_on_drop {
+            continue;
+        }
+        match shared.request(&Request::LinkState, config.ping_timeout) {
+            Ok(reply) if reply.ok && reply.fields.get("online") == Some(&Value::Bool(false)) => {
+                return shared.shutdown(DROPPED);
+            }
+            Ok(_) => {}
+            Err(LinkError::Timeout(_)) => {
+                return shared.shutdown("the deck stopped answering ping");
+            }
+            Err(error) => return shared.shutdown(&format!("heartbeat failed: {error}")),
+        }
     }
 }
 
@@ -648,6 +690,7 @@ mod tests {
             ping_every: None,
             ping_timeout: Duration::from_millis(200),
             close_on_restart: false,
+            close_on_drop: false,
         }
     }
 
@@ -877,6 +920,7 @@ mod tests {
             ping_every: Some(Duration::from_millis(10)),
             ping_timeout: Duration::from_millis(100),
             close_on_restart: false,
+            close_on_drop: false,
         };
         let (session, events) = Session::open(Box::new(BrokenTransport), config).unwrap();
         let closed = events.recv_timeout(Duration::from_secs(1)).unwrap();
@@ -900,6 +944,7 @@ mod tests {
             ping_every: Some(Duration::from_millis(100)),
             ping_timeout: Duration::from_millis(100),
             close_on_restart: false,
+            close_on_drop: false,
         };
         let (session, events) = Session::open(Box::new(deck.connect()), config).unwrap();
         session.hello(Duration::from_secs(1)).unwrap();
@@ -937,6 +982,7 @@ mod tests {
                 ping_every: Some(Duration::from_millis(50)),
                 ping_timeout: Duration::from_millis(500),
                 close_on_restart,
+                close_on_drop: false,
             };
             let (session, events) = Session::open(Box::new(deck.connect()), config).unwrap();
             thread::sleep(Duration::from_millis(200));
@@ -952,6 +998,101 @@ mod tests {
                 assert!(session.is_open());
             }
         }
+    }
+
+    fn watching(ping_every: Option<Duration>, close_on_drop: bool) -> SessionConfig {
+        SessionConfig {
+            ping_every,
+            ping_timeout: Duration::from_millis(500),
+            close_on_restart: false,
+            close_on_drop,
+        }
+    }
+
+    fn closed_within(events: &IncomingReceiver, wait: Duration) -> Option<String> {
+        let deadline = Instant::now() + wait;
+        while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+            match events.recv_timeout(left) {
+                Ok(Incoming::Closed(reason)) => return Some(reason),
+                Ok(_) => {}
+                Err(_) => return None,
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn the_heartbeat_closes_a_session_the_deck_dropped_only_when_asked() {
+        for close_on_drop in [true, false] {
+            let deck = MockDeck::v2();
+            let config = watching(Some(Duration::from_millis(50)), close_on_drop);
+            let (session, events) = Session::open(Box::new(deck.connect()), config).unwrap();
+            assert_eq!(
+                session.identity(Duration::from_secs(1)).unwrap().protocol,
+                2
+            );
+            thread::sleep(Duration::from_millis(200));
+            assert!(session.is_open());
+            deck.drop_session();
+            let closed = closed_within(&events, Duration::from_secs(1));
+            if close_on_drop {
+                assert_eq!(closed.as_deref(), Some(DROPPED));
+                assert!(!session.is_open());
+            } else {
+                assert_eq!(closed, None);
+                assert!(session.is_open());
+            }
+        }
+    }
+
+    #[test]
+    fn a_not_negotiated_refusal_after_protocol_2_closes_the_session_at_once() {
+        let deck = MockDeck::v2();
+        let (session, events) =
+            Session::open(Box::new(deck.connect()), watching(None, true)).unwrap();
+        session.identity(Duration::from_secs(1)).unwrap();
+        assert!(
+            session
+                .call(
+                    &serde_json::json!({"m":"v2.name.get"}),
+                    Duration::from_secs(1)
+                )
+                .unwrap()
+                .ok
+        );
+        deck.drop_session();
+        let refused = session
+            .call(
+                &serde_json::json!({"m":"v2.name.get"}),
+                Duration::from_secs(1),
+            )
+            .unwrap();
+        assert_eq!(refused.fields["reason"], "not-negotiated");
+        assert_eq!(
+            closed_within(&events, Duration::from_secs(1)).as_deref(),
+            Some(DROPPED)
+        );
+        assert!(matches!(
+            session.hello(Duration::from_millis(100)),
+            Err(LinkError::Closed(reason)) if reason == DROPPED
+        ));
+    }
+
+    #[test]
+    fn a_not_negotiated_refusal_before_protocol_2_keeps_the_session() {
+        let deck = MockDeck::v2();
+        let (session, events) =
+            Session::open(Box::new(deck.connect()), watching(None, true)).unwrap();
+        assert!(session.hello(Duration::from_secs(1)).unwrap().is_deck());
+        let refused = session
+            .call(
+                &serde_json::json!({"m":"v2.name.get"}),
+                Duration::from_secs(1),
+            )
+            .unwrap();
+        assert_eq!(refused.fields["reason"], "not-negotiated");
+        assert_eq!(closed_within(&events, Duration::from_millis(200)), None);
+        assert!(session.is_open());
     }
 
     #[test]

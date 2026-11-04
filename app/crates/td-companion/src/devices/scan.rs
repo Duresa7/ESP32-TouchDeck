@@ -21,6 +21,7 @@ const MAX_RETRY: Duration = Duration::from_secs(10);
 /// A board that just appeared may still be booting. Until this passes, silence only means
 /// "try again", so a Device being plugged in isn't shown as unresponsive or as a New board.
 const BOOT_GRACE: Duration = Duration::from_secs(3);
+const STEADY_LINK: Duration = Duration::from_secs(30);
 
 pub(super) fn run(inner: Arc<Inner>) {
     let source = inner.config().source.clone();
@@ -82,6 +83,7 @@ fn probe(source: &dyn PortSource, port: &str) -> Probed {
     };
     let config = SessionConfig {
         close_on_restart: true,
+        close_on_drop: true,
         ..SessionConfig::default()
     };
     let Ok((session, incoming)) = Session::open(transport, config) else {
@@ -404,6 +406,7 @@ impl Inner {
                         summary,
                         actor: Some(handle),
                         auto: true,
+                        quick_drops: 0,
                     },
                 );
                 self.save(&reg);
@@ -453,6 +456,13 @@ impl Inner {
             return;
         }
         let actor = entry.actor.take();
+        entry.quick_drops = match actor.as_ref() {
+            Some(actor) if actor.opened.elapsed() < STEADY_LINK => {
+                entry.quick_drops.saturating_add(1)
+            }
+            _ => 0,
+        };
+        let wait = relink_wait(entry.quick_drops);
         let link = LinkState::Lost {
             reason: lost_reason(reason),
             detail: reason.into(),
@@ -464,12 +474,18 @@ impl Inner {
             let now = Instant::now();
             record.status = PortStatus::Pending;
             record.appeared = now;
-            record.due = now;
+            record.due = now + wait;
             record.backoff = FIRST_RETRY;
         }
         drop(reg);
         drop(actor);
         self.wake.kick();
+    }
+}
+fn relink_wait(quick_drops: u32) -> Duration {
+    match quick_drops {
+        0 => Duration::ZERO,
+        n => (FIRST_RETRY * 2_u32.saturating_pow(n - 1)).min(MAX_RETRY),
     }
 }
 fn wants_probe(reg: &Registry, id: &DeviceId) -> bool {
@@ -558,5 +574,16 @@ mod tests {
             lost_reason("the deck closed the stream"),
             LostReason::Closed
         );
+        assert_eq!(lost_reason(td_link::session::DROPPED), LostReason::Closed);
+    }
+
+    #[test]
+    fn quick_drops_back_off_to_the_retry_cap() {
+        let waits: Vec<u64> = (0..9).map(|n| relink_wait(n).as_millis() as u64).collect();
+        assert_eq!(
+            waits,
+            [0, 250, 500, 1_000, 2_000, 4_000, 8_000, 10_000, 10_000]
+        );
+        assert_eq!(relink_wait(u32::MAX), MAX_RETRY);
     }
 }
