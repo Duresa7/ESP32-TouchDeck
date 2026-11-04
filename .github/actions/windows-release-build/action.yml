@@ -18,8 +18,7 @@ inputs:
     default: ""
   artifact-name:
     description: Workflow artifact for the release assets
-    required: false
-    default: windows-release-assets
+    required: true
 
 outputs:
   installer-sha256:
@@ -29,16 +28,16 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: 24
-    - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: "3.13"
     - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       with:
         toolchain: stable
-    - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+    - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       with:
         package_json_file: app/package.json
 
@@ -142,7 +141,7 @@ runs:
         $manifest = Get-Content "$env:RUNNER_TEMP/touchdeck-release/release-assets/release-manifest.json" -Raw | ConvertFrom-Json
         "sha256=$($manifest.installer_sha256)" >> $env:GITHUB_OUTPUT
 
-    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ inputs.artifact-name }}
         path: ${{ runner.temp }}/touchdeck-release/release-assets
