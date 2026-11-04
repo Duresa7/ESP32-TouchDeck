@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::io::{self, ErrorKind, Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -12,6 +12,17 @@ use td_core::{Body, Frame, Hello, Item, Pong, Reply, ReplyError, Request, Role, 
 
 use crate::Transport;
 use crate::xfer::LayoutState;
+
+const CONSOLE_LINE_MAX: usize = 16 * 1024;
+const INCOMING_CAPACITY: usize = 256;
+const CONSOLE_QUEUE_LIMIT: usize = 192;
+const TRANSFER_CAPACITY: usize = 64;
+
+#[derive(Default)]
+struct ConsoleLine {
+    bytes: Vec<u8>,
+    discarding: bool,
+}
 
 const WRITE_DEADLINE: Duration = Duration::from_secs(2);
 const LAYOUT_REPLY_GRACE: Duration = Duration::from_secs(3);
@@ -56,6 +67,48 @@ pub enum Incoming {
     Event(Value),
     Line(String),
     Closed(String),
+    Overflow,
+}
+
+/// Bounded FIFO traffic. Excess console lines are dropped. Event loss emits one Overflow
+/// after retained events; events resume after the consumer receives that marker.
+pub struct IncomingReceiver {
+    receiver: Receiver<Incoming>,
+    queued: Arc<AtomicUsize>,
+    overflow: Arc<AtomicBool>,
+}
+
+impl IncomingReceiver {
+    fn consumed(&self, item: &Incoming) {
+        self.queued.fetch_sub(1, Ordering::AcqRel);
+        if matches!(item, Incoming::Overflow) {
+            self.overflow.store(false, Ordering::Release);
+        }
+    }
+
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<Incoming, RecvTimeoutError> {
+        self.receiver
+            .recv_timeout(timeout)
+            .inspect(|item| self.consumed(item))
+    }
+
+    pub fn try_recv(&self) -> Result<Incoming, mpsc::TryRecvError> {
+        self.receiver.try_recv().inspect(|item| self.consumed(item))
+    }
+
+    pub fn try_iter(&self) -> impl Iterator<Item = Incoming> + '_ {
+        std::iter::from_fn(|| self.try_recv().ok())
+    }
+}
+
+impl Iterator for IncomingReceiver {
+    type Item = Incoming;
+    fn next(&mut self) -> Option<Incoming> {
+        self.receiver
+            .recv()
+            .ok()
+            .inspect(|item| self.consumed(item))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,8 +153,10 @@ struct Shared {
     pending: Mutex<Pending>,
     open: AtomicBool,
     reason: Mutex<String>,
-    incoming: Sender<Incoming>,
-    xfer: Mutex<Option<Sender<XferFrame>>>,
+    incoming: SyncSender<Incoming>,
+    queued: Arc<AtomicUsize>,
+    overflow: Arc<AtomicBool>,
+    xfer: Mutex<Option<SyncSender<XferFrame>>>,
     layout_reply: Mutex<Option<LayoutReply>>,
 }
 
@@ -111,7 +166,41 @@ impl Shared {
             *self.reason.lock().unwrap() = reason.to_owned();
             self.pending.lock().unwrap().waiting.clear();
             self.layout_reply.lock().unwrap().take();
-            let _ = self.incoming.send(Incoming::Closed(reason.to_owned()));
+            self.queued.fetch_add(1, Ordering::AcqRel);
+            if self
+                .incoming
+                .try_send(Incoming::Closed(reason.to_owned()))
+                .is_err()
+            {
+                self.queued.fetch_sub(1, Ordering::AcqRel);
+            }
+        }
+    }
+
+    fn publish(&self, item: Incoming) {
+        if !self.open.load(Ordering::Acquire) {
+            return;
+        }
+        let is_event = matches!(item, Incoming::Event(_));
+        if is_event && self.overflow.load(Ordering::Acquire) {
+            return;
+        }
+        let limit = if is_event {
+            INCOMING_CAPACITY
+        } else {
+            CONSOLE_QUEUE_LIMIT
+        };
+        if self.queued.fetch_add(1, Ordering::AcqRel) >= limit
+            || self.incoming.try_send(item).is_err()
+        {
+            self.queued.fetch_sub(1, Ordering::AcqRel);
+            if is_event && !self.overflow.swap(true, Ordering::AcqRel) {
+                self.queued.fetch_add(1, Ordering::AcqRel);
+                if self.incoming.try_send(Incoming::Overflow).is_err() {
+                    self.queued.fetch_sub(1, Ordering::AcqRel);
+                    self.overflow.store(false, Ordering::Release);
+                }
+            }
         }
     }
 
@@ -182,10 +271,18 @@ impl Shared {
         }
     }
 
-    fn route(&self, item: Item, line: &mut Vec<u8>) {
+    fn route(&self, item: Item, buffer: &mut ConsoleLine) {
         match item {
             Item::Text(bytes) => {
                 for byte in bytes {
+                    if buffer.discarding {
+                        if byte == b'\n' {
+                            buffer.discarding = false;
+                            self.publish(Incoming::Line("[console line truncated]".into()));
+                        }
+                        continue;
+                    }
+                    let line = &mut buffer.bytes;
                     if byte == b'\n' {
                         let text =
                             String::from_utf8_lossy(line.strip_suffix(b"\r").unwrap_or(line))
@@ -202,9 +299,14 @@ impl Shared {
                         {
                             let _ = waiting.waiting.send(reply);
                         }
-                        let _ = self.incoming.send(Incoming::Line(text));
+                        self.publish(Incoming::Line(text));
                     } else {
-                        line.push(byte);
+                        if line.len() == CONSOLE_LINE_MAX {
+                            line.clear();
+                            buffer.discarding = true;
+                        } else {
+                            line.push(byte);
+                        }
                     }
                 }
             }
@@ -223,7 +325,7 @@ impl Shared {
                 body: Body::Message(payload),
             }) => {
                 if let Ok(event @ Value::Object(_)) = serde_json::from_slice::<Value>(&payload) {
-                    let _ = self.incoming.send(Incoming::Event(event));
+                    self.publish(Incoming::Event(event));
                 }
             }
             Item::Frame(Frame {
@@ -245,7 +347,7 @@ impl Shared {
 
     fn to_xfer(&self, frame: XferFrame) {
         if let Some(sink) = self.xfer.lock().unwrap().as_ref() {
-            let _ = sink.send(frame);
+            let _ = sink.try_send(frame);
         }
     }
 }
@@ -315,9 +417,16 @@ impl Session {
     pub fn open(
         transport: Box<dyn Transport>,
         config: SessionConfig,
-    ) -> io::Result<(Session, Receiver<Incoming>)> {
+    ) -> io::Result<(Session, IncomingReceiver)> {
         let (reader, writer) = transport.split()?;
-        let (incoming, events) = mpsc::channel();
+        let (incoming, events) = mpsc::sync_channel(INCOMING_CAPACITY + 2);
+        let queued = Arc::new(AtomicUsize::new(0));
+        let overflow = Arc::new(AtomicBool::new(false));
+        let events = IncomingReceiver {
+            receiver: events,
+            queued: queued.clone(),
+            overflow: overflow.clone(),
+        };
         let shared = Arc::new(Shared {
             writer: Mutex::new(writer),
             pending: Mutex::new(Pending {
@@ -327,6 +436,8 @@ impl Session {
             open: AtomicBool::new(true),
             reason: Mutex::new(String::new()),
             incoming,
+            queued,
+            overflow,
             xfer: Mutex::new(None),
             layout_reply: Mutex::new(None),
         });
@@ -382,7 +493,7 @@ impl Session {
         if slot.is_some() {
             return Err(LinkError::TransferBusy);
         }
-        let (sink, frames) = mpsc::channel();
+        let (sink, frames) = mpsc::sync_channel(TRANSFER_CAPACITY);
         *slot = Some(sink);
         Ok(Transfer {
             session: self,
@@ -477,7 +588,7 @@ impl Drop for Session {
 
 fn read_loop(shared: &Shared, mut reader: Box<dyn Read + Send>) {
     let mut decoder = StreamDecoder::default();
-    let mut line = Vec::new();
+    let mut line = ConsoleLine::default();
     let mut buf = [0u8; 4096];
     while shared.open.load(Ordering::Acquire) {
         match reader.read(&mut buf) {
@@ -540,7 +651,7 @@ mod tests {
         }
     }
 
-    fn until<T>(events: &Receiver<Incoming>, mut pick: impl FnMut(Incoming) -> Option<T>) -> T {
+    fn until<T>(events: &IncomingReceiver, mut pick: impl FnMut(Incoming) -> Option<T>) -> T {
         let deadline = Instant::now() + Duration::from_secs(5);
         while let Some(left) = deadline.checked_duration_since(Instant::now()) {
             if let Ok(item) = events.recv_timeout(left)
@@ -550,6 +661,99 @@ mod tests {
             }
         }
         panic!("nothing matched within 5 s");
+    }
+
+    fn route_event(session: &Session, event: Value) {
+        session.shared.route(
+            Item::Frame(Frame::message(
+                Role::Event,
+                serde_json::to_vec(&event).unwrap(),
+            )),
+            &mut ConsoleLine::default(),
+        );
+    }
+
+    #[test]
+    fn console_backlog_preserves_key_release() {
+        let (session, events) = Session::open(Box::new(BrokenTransport), quiet()).unwrap();
+        let down = serde_json::json!({"m":"key.report","seq":1,"type":"kbd","mods":1,"keys":[4]});
+        let up = serde_json::json!({"m":"key.report","seq":2,"type":"kbd","mods":0,"keys":[]});
+        route_event(&session, down.clone());
+        for n in 0..255 {
+            session.shared.route(
+                Item::Text(format!("log {n}\n").into_bytes()),
+                &mut ConsoleLine::default(),
+            );
+        }
+        route_event(&session, up.clone());
+        let received: Vec<_> = events.try_iter().collect();
+        assert_eq!(received.first(), Some(&Incoming::Event(down)));
+        assert_eq!(received.last(), Some(&Incoming::Event(up)));
+        assert!(session.is_open());
+        let lines: Vec<_> = received
+            .into_iter()
+            .filter_map(|item| match item {
+                Incoming::Line(line) => Some(line),
+                _ => None,
+            })
+            .collect();
+        assert!(lines.len() <= 192);
+        for (n, line) in lines.iter().enumerate() {
+            assert_eq!(line, &format!("log {n}"));
+        }
+    }
+
+    #[test]
+    fn event_flood_resyncs_after_the_events_that_fit() {
+        let (session, events) = Session::open(Box::new(BrokenTransport), quiet()).unwrap();
+        for seq in 0..10000 {
+            route_event(&session, serde_json::json!({"m":"press","seq":seq}));
+        }
+        let received: Vec<_> = events.try_iter().collect();
+        assert_eq!(received.len(), 257);
+        for (seq, item) in received[..256].iter().enumerate() {
+            assert_eq!(
+                item,
+                &Incoming::Event(serde_json::json!({"m":"press","seq":seq}))
+            );
+        }
+        assert_eq!(received.last(), Some(&Incoming::Overflow));
+        assert!(session.is_open());
+        route_event(&session, serde_json::json!({"m":"press","seq":10001}));
+        assert_eq!(
+            events.try_recv().unwrap(),
+            Incoming::Event(serde_json::json!({"m":"press","seq":10001}))
+        );
+    }
+
+    #[test]
+    fn overflow_rearms_on_each_receive_api_and_keeps_the_close_slot() {
+        for receive in 0..3 {
+            let (session, mut events) = Session::open(Box::new(BrokenTransport), quiet()).unwrap();
+            for _ in 0..2 {
+                for seq in 0..10000 {
+                    route_event(&session, serde_json::json!({"m":"press","seq":seq}));
+                }
+                for _ in 0..256 {
+                    assert!(matches!(events.try_recv(), Ok(Incoming::Event(_))));
+                }
+                let marker = match receive {
+                    0 => events.try_recv().unwrap(),
+                    1 => events.recv_timeout(Duration::from_secs(1)).unwrap(),
+                    _ => events.next().unwrap(),
+                };
+                assert_eq!(marker, Incoming::Overflow);
+                assert!(events.try_recv().is_err());
+            }
+            for seq in 0..10000 {
+                route_event(&session, serde_json::json!({"m":"press","seq":seq}));
+            }
+            session.close();
+            let received: Vec<_> = events.try_iter().collect();
+            assert_eq!(received.len(), 258);
+            assert_eq!(received[256], Incoming::Overflow);
+            assert!(matches!(received[257], Incoming::Closed(_)));
+        }
     }
 
     #[test]
@@ -863,7 +1067,7 @@ mod tests {
             Item::Text(
                 b"@td {\"cmd\":\"console\",\"ok\":false,\"error\":\"input overflow\"}\r\n".to_vec(),
             ),
-            &mut Vec::new(),
+            &mut ConsoleLine::default(),
         );
         assert_eq!(
             session.layout_state(Duration::from_secs(1)).unwrap(),

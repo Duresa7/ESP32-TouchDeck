@@ -1,4 +1,3 @@
-use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -10,7 +9,7 @@ use td_link::{Incoming, LiveError, LiveReason, LiveValue, MockDeck, Session, Ses
 const TIMEOUT: Duration = Duration::from_secs(1);
 const MEDIA: &[u8] = include_bytes!("../../../../schema/examples/media.json");
 
-fn open(device: &MockDeck) -> (Session, Receiver<Incoming>) {
+fn open(device: &MockDeck) -> (Session, td_link::IncomingReceiver) {
     let (session, events) = Session::open(
         Box::new(device.connect()),
         SessionConfig {
@@ -23,7 +22,7 @@ fn open(device: &MockDeck) -> (Session, Receiver<Incoming>) {
     (session, events)
 }
 
-fn media_deck() -> (MockDeck, Session, Receiver<Incoming>, String) {
+fn media_deck() -> (MockDeck, Session, td_link::IncomingReceiver, String) {
     let device = MockDeck::v2();
     device.set_media_capabilities(true);
     let (session, events) = open(&device);
@@ -74,7 +73,7 @@ fn refused(result: Result<u32, LiveError>) -> LiveReason {
     result.unwrap_err().reason().unwrap().clone()
 }
 
-fn next_event(events: &Receiver<Incoming>) -> Value {
+fn next_event(events: &td_link::IncomingReceiver) -> Value {
     loop {
         match events.recv_timeout(TIMEOUT).unwrap() {
             Incoming::Event(event) => return event,

@@ -551,3 +551,38 @@ async fn mock_summary_carries_hello_diagnostics() {
         json!({"product":"touchdeck", "running_from":"ota_0", "sinks":["log","link"], "current_layout":"builtin"})
     );
 }
+
+#[tokio::test]
+async fn closed_session_releases_every_held_key() {
+    let td = TestCompanion::start().await;
+    td.plug_device("mock0001").await;
+    let deck = td.deck("mock0001");
+    deck.emit_key(&json!({"type":"kbd","mods":1,"keys":[4,5]}));
+    td.until(|td| {
+        td.input_log()
+            .iter()
+            .filter(|entry| entry.starts_with("down "))
+            .count()
+            == 3
+    })
+    .await;
+    deck.hang_up();
+    td.until(|td| {
+        td.input_log()
+            .iter()
+            .filter(|entry| entry.starts_with("up "))
+            .count()
+            == 3
+    })
+    .await;
+    let log = td.input_log();
+    let mut held = std::collections::BTreeSet::new();
+    for entry in log {
+        if let Some(key) = entry.strip_prefix("down ") {
+            held.insert(key.to_owned());
+        } else if let Some(key) = entry.strip_prefix("up ") {
+            assert!(held.remove(key), "released a key that was not held");
+        }
+    }
+    assert!(held.is_empty());
+}

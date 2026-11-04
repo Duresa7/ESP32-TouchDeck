@@ -3,7 +3,6 @@ use crate::recover::Recovery;
 use crate::{Incoming, Session, SessionConfig, XferFrame};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 use td_core::frame::CHUNK_DATA_MAX;
 
@@ -19,11 +18,11 @@ pub enum UpdateState {
     Recovering { pct: u8 },
 }
 pub trait Connector {
-    fn connect(&mut self) -> Result<(Session, Receiver<Incoming>), String>;
+    fn connect(&mut self) -> Result<(Session, crate::IncomingReceiver), String>;
 }
 pub struct PortConnector<'a>(pub &'a str);
 impl Connector for PortConnector<'_> {
-    fn connect(&mut self) -> Result<(Session, Receiver<Incoming>), String> {
+    fn connect(&mut self) -> Result<(Session, crate::IncomingReceiver), String> {
         Session::open(
             Box::new(crate::Serial::open(self.0).map_err(|e| e.to_string())?),
             SessionConfig {
@@ -35,7 +34,7 @@ impl Connector for PortConnector<'_> {
     }
 }
 impl Connector for crate::MockDeck {
-    fn connect(&mut self) -> Result<(Session, Receiver<Incoming>), String> {
+    fn connect(&mut self) -> Result<(Session, crate::IncomingReceiver), String> {
         Session::open(
             Box::new(crate::MockDeck::connect(self)),
             SessionConfig {
@@ -62,7 +61,7 @@ impl Default for Deadlines {
     }
 }
 const REQUEST: Duration = Duration::from_secs(2);
-fn state(session: &Session, incoming: &Receiver<Incoming>) -> Result<Value, String> {
+fn state(session: &Session, incoming: &crate::IncomingReceiver) -> Result<Value, String> {
     session
         .send_line("update state")
         .map_err(|e| e.to_string())?;
@@ -346,7 +345,7 @@ mod tests {
         calls: u32,
     }
     impl Connector for Vanished {
-        fn connect(&mut self) -> Result<(Session, Receiver<Incoming>), String> {
+        fn connect(&mut self) -> Result<(Session, crate::IncomingReceiver), String> {
             self.calls += 1;
             if self.calls > 1 {
                 Err("unplugged".into())

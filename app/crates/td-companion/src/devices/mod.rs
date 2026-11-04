@@ -557,6 +557,11 @@ pub struct DeviceManager {
     inner: Arc<Inner>,
 }
 impl DeviceManager {
+    #[cfg(test)]
+    pub(crate) fn pause_key_reports(&self) -> parking_lot::MutexGuard<'_, ()> {
+        self.inner.input_gate.lock()
+    }
+
     pub(crate) fn action_handler(&self, handler: ActionHandler) {
         let _ = self.inner.actions.set(handler);
     }
@@ -868,9 +873,7 @@ struct FirmwareConnector {
     port: String,
 }
 impl td_link::update::Connector for FirmwareConnector {
-    fn connect(
-        &mut self,
-    ) -> Result<(Session, std::sync::mpsc::Receiver<td_link::Incoming>), String> {
+    fn connect(&mut self) -> Result<(Session, td_link::IncomingReceiver), String> {
         Session::open(
             self.source.open(&self.port).map_err(|e| e.to_string())?,
             td_link::SessionConfig {

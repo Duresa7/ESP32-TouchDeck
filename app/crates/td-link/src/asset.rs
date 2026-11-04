@@ -6,6 +6,7 @@
 //! for a Layout, and `v2.asset.end {xfer}` commits it. `v2.asset.delete {id}` removes one. Every call here
 //! needs protocol 2 selected first, which [`Session::identity`] does.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -14,7 +15,7 @@ use serde_json::{Map, Value};
 use td_core::Reply;
 
 use crate::session::{LinkError, Session};
-use crate::xfer::{XferError, send_chunks};
+use crate::xfer::{ListingBudget, XferError, listing_error, send_chunks};
 
 /// The most Assets one `v2.asset.list` reply holds.
 pub const ASSET_PAGE: usize = 4;
@@ -390,12 +391,32 @@ pub fn list_asset_page(session: &Session, after: Option<&str>) -> Result<AssetPa
 pub fn list_assets(session: &Session) -> Result<Vec<AssetItem>, AssetError> {
     let mut items: Vec<AssetItem> = Vec::new();
     let mut after: Option<String> = None;
+    let mut cursors = BTreeSet::new();
+    let mut ids = BTreeSet::new();
+    let mut budget = ListingBudget::new();
     loop {
-        let page = list_asset_page(session, after.as_deref())?;
+        let page: AssetPage = call(
+            session,
+            &AssetRequest::List {
+                after: after.as_deref(),
+            },
+            budget.timeout()?,
+        )?;
+        budget.page(page.items.len())?;
+        for item in &page.items {
+            if !ids.insert(item.id.clone()) {
+                return Err(listing_error("repeated an item").into());
+            }
+        }
         items.extend(page.items);
         match page.next {
-            Some(next) if Some(&next) != after.as_ref() => after = Some(next),
-            _ => return Ok(items),
+            Some(next) => {
+                if !cursors.insert(next.clone()) {
+                    return Err(listing_error("repeated a cursor").into());
+                }
+                after = Some(next);
+            }
+            None => return Ok(items),
         }
     }
 }

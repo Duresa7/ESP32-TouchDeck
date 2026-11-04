@@ -8,10 +8,10 @@ use super::{
 };
 use std::{
     io,
-    sync::{Arc, atomic::Ordering, mpsc::Receiver},
+    sync::{Arc, atomic::Ordering},
     time::{Duration, Instant},
 };
-use td_link::{Identity, Incoming, LinkError, Session, SessionConfig, discover::HELLO_TIMEOUT};
+use td_link::{Identity, LinkError, Session, SessionConfig, discover::HELLO_TIMEOUT};
 
 /// The fallback poll when no USB change arrives.
 const POLL: Duration = Duration::from_secs(1);
@@ -52,7 +52,7 @@ pub(super) fn run(inner: Arc<Inner>) {
 /// A Device that answered, with the session that becomes its link.
 pub(super) struct Found {
     session: Session,
-    incoming: Receiver<Incoming>,
+    incoming: td_link::IncomingReceiver,
     identity: Identity,
     hello: td_core::Hello,
 }
