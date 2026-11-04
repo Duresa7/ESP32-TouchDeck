@@ -65,7 +65,7 @@ export function createFakeNewBoards(options: FakeNewBoardsOptions) {
   const confirming = new Map<string, (answer: Answer) => void>();
   const script: Answer[] = [];
   const outcomes = new Map<string, Outcome>();
-  const held = new Map<string, number>();
+  const held = new Map<string, number | 'done'>();
   const waiting = new Map<string, () => void>();
   let minted = 0;
 
@@ -89,11 +89,16 @@ export function createFakeNewBoards(options: FakeNewBoardsOptions) {
   function becomeDevice(board: NewBoard) {
     boards.delete(board.id);
     publish({ type: 'new-board.removed', data: { id: board.id } });
-    setTimeout(() => {
+    const add = () => {
       const device = freshDevice({ id: board.id, port: board.port, firmware: { version: bundled.version, protocol: 2 } });
       devices.set(device.id, device);
       publish({ type: 'device.added', device: device.id, data: device });
-    }, bootMs);
+    };
+    if (held.get(board.id) === 'done') {
+      waiting.set(board.id, () => setTimeout(add, bootMs));
+      return;
+    }
+    setTimeout(add, bootMs);
   }
 
   function write(jobId: string, board: NewBoard) {
@@ -220,7 +225,7 @@ export function createFakeNewBoards(options: FakeNewBoardsOptions) {
     },
     script: (...answers: Answer[]) => void script.push(...answers),
     outcome: (id: string, outcome: Outcome) => void outcomes.set(id, outcome),
-    hold: (id: string, pct = 40) => void held.set(id, pct),
+    hold: (id: string, at: number | 'done' = 40) => void held.set(id, at),
     release(id: string) {
       held.delete(id);
       waiting.get(id)?.();

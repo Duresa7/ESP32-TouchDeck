@@ -48,7 +48,7 @@ declare global {
         answer(id: string, answer: Answer): void;
         confirming(id: string): boolean;
         fail(id: string, fail: boolean): void;
-        hold(id: string, pct?: number): void;
+        hold(id: string, at?: number | 'done'): void;
         release(id: string): void;
       };
       updates: Pick<FakeUpdates, 'script' | 'finish' | 'calls'>;
