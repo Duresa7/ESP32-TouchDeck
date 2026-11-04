@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a signed Open TouchDeck Windows x64 installer with the Companion and Firmware; never publish or touch a port."""
+"""Build an unsigned release or test-signed Open TouchDeck Windows x64 installer with the Companion and Firmware; never publish or touch a port."""
 
 import argparse
 import datetime
@@ -20,15 +20,20 @@ FEED = "https://github.com/Duresa7/ESP32-TouchDeck/releases/download"
 TEST_HOOK_MARKERS = (b"/test/pairing-delivery", b"/test/devices/", b"--emit-ts")
 
 
-def run(args, *, cwd=ROOT, env=None, quiet=False):
+def build_environment(env=None):
+    return {key: value for key, value in (os.environ if env is None else env).items()
+            if not key.upper().startswith("TAURI_SIGNING_PRIVATE_KEY")}
+
+
+def run(args, *, cwd=ROOT, env=None, quiet=False, signing=False):
     print("+ " + subprocess.list2cmdline([str(arg) for arg in args]), flush=True)
     # The signer prints key material on generate: quiet runs capture and drop all output.
     output = subprocess.PIPE if quiet else None
-    subprocess.run([str(arg) for arg in args], cwd=cwd, env=env, check=True, stdout=output, stderr=output)
+    subprocess.run([str(arg) for arg in args], cwd=cwd, env=env if signing else build_environment(env), check=True, stdout=output, stderr=output)
 
 
 def capture(args, *, cwd=ROOT, env=None):
-    return subprocess.check_output(args, cwd=cwd, env=env, text=True, encoding="utf-8").strip()
+    return subprocess.check_output(args, cwd=cwd, env=build_environment(env), text=True, encoding="utf-8").strip()
 
 
 def sha(data):
@@ -141,7 +146,7 @@ def sign(installer, version, env, key_path=None):
     args = ["node", APP / "node_modules/@tauri-apps/cli/tauri.js", "signer", "sign", "--app-version", version]
     if key_path:
         args += ["--private-key-path", key_path]
-    run(args + [installer], cwd=APP, env=env, quiet=True)
+    run(args + [installer], cwd=APP, env=env, quiet=True, signing=True)
     return installer.with_name(installer.name + ".sig").read_text(encoding="utf-8").strip()
 
 
@@ -155,11 +160,13 @@ def manifest_entry(installer, signature, version, notes):
 def build(args):
     if sys.platform != "win32":
         raise ValueError("This recipe supports Windows x64 only")
-    signing_present = os.environ.get("TAURI_SIGNING_PRIVATE_KEY") or os.environ.get("TAURI_SIGNING_PRIVATE_KEY_PATH")
-    if args.test_signing and (args.public_key_file or signing_present):
+    signing_present = any(key.upper().startswith("TAURI_SIGNING_PRIVATE_KEY") for key in os.environ)
+    if signing_present:
+        raise ValueError("Builds must not inherit signing variables")
+    if args.test_signing and args.public_key_file:
         raise ValueError("Disposable signing cannot be combined with an existing signing configuration")
-    if not args.test_signing and not (args.public_key_file and signing_present):
-        raise ValueError("Configure a durable public key and signing environment, or use --test-signing for an unpublished candidate")
+    if not args.test_signing and not args.public_key_file:
+        raise ValueError("Configure a public key for an unsigned release, or use --test-signing for a candidate")
     if args.firmware_bundle and not args.test_signing:
         raise ValueError("--firmware-bundle is for test-signed candidates only; releases build the Firmware")
     revision = clean_revision()
@@ -180,7 +187,7 @@ def build(args):
     shutil.copyfile(ROOT / "app/icons/builtin/LICENSE-lucide.txt", payload / "licenses/LICENSE-lucide.txt")
     write_json(payload / "install-manifest.json", {"source_revision": revision, "version": version, "firmware": fw})
 
-    env = os.environ.copy()
+    env = build_environment()
     for key in ("CARGO_BUILD_TARGET", "CARGO_ENCODED_RUSTFLAGS", "RUSTFLAGS"):
         env.pop(key, None)
     env["RUSTFLAGS"] = "-C target-feature=+crt-static"
@@ -211,7 +218,7 @@ def build(args):
 
         suffix = "-TEST-ONLY" if args.test_signing else ""
         installer = package(out, version, companion, payload, f"OpenTouchDeck-windows-x64{suffix}-setup.exe", env)
-        signature = sign(installer, version, env, key_path)
+        signature = sign(installer, version, env, key_path) if args.test_signing else ""
         if args.test_signing:
             upcoming = next_patch(version)
             next_installer = package(out, upcoming, companion, payload, "OpenTouchDeck-windows-x64-TEST-ONLY-next-setup.exe", env)
@@ -255,7 +262,7 @@ def main():
     builder.add_argument("--out", type=Path, required=True, help="new directory outside checkout")
     builder.add_argument("--build-lock", type=Path, help="shared ESP-IDF build lock; defaults to primary checkout .verify")
     builder.add_argument("--test-signing", action="store_true", help="generate and delete a disposable candidate-only signing key")
-    builder.add_argument("--public-key-file", type=Path, help="durable updater public key; private key comes from existing signing environment")
+    builder.add_argument("--public-key-file", type=Path, help="durable updater public key; signing happens in a separate job")
     builder.add_argument("--notes-file", type=Path, help="release notes for latest.json")
     builder.add_argument("--firmware-bundle", type=Path, help="test-signed candidates only: reuse this .tdfw instead of building Firmware")
     checker = commands.add_parser("verify-companion", help="check a Companion binary has no test hooks")

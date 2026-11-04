@@ -31,9 +31,9 @@ Installers are not Authenticode-signed: there's no certificate, so Windows Smart
 
 ## Update signing
 
-The update key is the existing updater key ([ADR 0005](adr/0005-updater-keeps-the-signing-key.md)). The release build signs the installer with the Tauri CLI signer (`tauri signer sign --app-version X.Y.Z`), which writes the minisign signature the Electron updater verifies, with the version bound in its trusted comment. Never regenerate or replace the key: every installed copy trusts it.
+The update key is the existing updater key ([ADR 0005](adr/0005-updater-keeps-the-signing-key.md)). A separate release signing job signs the installer with the Tauri CLI signer (`tauri signer sign --app-version X.Y.Z`), which writes the minisign signature the Electron updater verifies, with the version bound in its trusted comment. Never regenerate or replace the key: every installed copy trusts it.
 
-The key lives in the `release` GitHub environment: `TAURI_UPDATER_PUBLIC_KEY` (variable), `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (secrets). Only `main` and `v*` tags can deploy to it.
+Set `TAURI_UPDATER_PUBLIC_KEY` as a repository Actions variable so the unsigned build can read it without the `release` environment. Keep `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as secrets only in the `release` GitHub environment. Copy only the public variable from the environment to repository scope when enabling this workflow. Only `main` and `v*` tags can deploy to it.
 
 A release contains:
 
@@ -66,7 +66,9 @@ SHA256SUMS
    git push origin vX.Y.Z
    ```
 
-3. The tag push runs **windows release** (`.github/workflows/release-windows.yml`). It runs the app, Firmware and installer lifecycle checks on the tagged commit without secrets, builds and signs with the durable key, and a separate publish job, which runs no build code, uploads every asset to a draft and only then publishes it as latest.
+3. The tag push runs **windows release** (`.github/workflows/release-windows.yml`). It runs the app, Firmware and installer lifecycle checks on the tagged commit without secrets, builds without secrets, signs on a separate runner, and verifies the signed installer through the real updater against local HTTPS fixtures. The draft job uploads every asset, checks the uploaded list and sizes, then stops.
+
+4. Review the draft and its assets on the Releases page, then publish it as the latest release. The workflow never publishes it automatically.
 
 To rehearse without publishing, run **windows release** by hand on a commit on `main`. It builds and signs with the durable key and keeps the assets as a workflow artifact:
 
@@ -74,7 +76,7 @@ To rehearse without publishing, run **windows release** by hand on a commit on `
 gh workflow run release-windows.yml --ref main -f ref=main
 ```
 
-If a tag's run fails for a transient reason, re-run it; the publish job reuses its own draft. If the source needs a fix, ship the next patch version instead of moving the tag.
+If a tag's run fails for a transient reason, re-run it; the draft job reuses its own draft. If the source needs a fix, ship the next patch version instead of moving the tag.
 
 ## Installer lifecycle check
 
@@ -102,16 +104,51 @@ Use Windows x64 with Rust (MSVC), Node 24, the pinned pnpm, Python 3.11+ and ESP
 ```powershell
 Set-Location app
 pnpm install --frozen-lockfile
-# The signing environment supplies the private key; never put it on the command line.
 python scripts/package_windows.py build --out E:/touchdeck-artifacts/build-001 `
   --public-key-file E:/secure-public-material/touchdeck-updater.pub `
   --notes-file E:/touchdeck-artifacts/release-notes.md
 ```
 
-The recipe builds the Firmware and audits it radio-free, builds the UI, builds the Companion with `cargo build --release --locked -p td-companion` and the Firmware bundle embedded, refuses a Companion with test hooks, builds the Electron code with the updater public key, packages it with electron-builder and signs the installer.
+The recipe builds the Firmware and audits it radio-free, builds the UI, builds the Companion with `cargo build --release --locked -p td-companion` and the Firmware bundle embedded, refuses a Companion with test hooks, builds the Electron code with the updater public key, packages it with electron-builder. Durable releases leave the signature empty until the separate signing job; use the workflow to produce verified release assets.
 
 For an unpublished candidate, pass `--test-signing` instead of `--public-key-file`, with no signing environment. It generates a throwaway key, builds the installer named `OpenTouchDeck-windows-x64-TEST-ONLY-setup.exe` and the next-patch installer for the lifecycle check, and deletes the private key. Never publish these assets. On a PC without ESP-IDF, a test-signed candidate can reuse a checked bundle with `--firmware-bundle <file.tdfw>`; releases always build the Firmware.
 
 The recipe holds the shared `.verify/m3-build.lock` while it compiles Firmware and removes only its own lock. Never delete another owner's lock.
 
 The installer enforces current-user mode and `%LOCALAPPDATA%\Programs\Open TouchDeck` after resolving command-line and stored installation settings. `/allusers` and `/D=` cannot change that destination. A busy Device stops the installer with exit code 3. If the Companion passes authentication proof but the helper cannot confirm an install lock, the installer exits 4 and asks you to close Open TouchDeck from the tray before retrying.
+
+## Signing boundary and dependency disposition
+
+The job graph is `build -> sign -> verify -> publish` (the last job only prepares a draft).
+The app, Firmware and installer lifecycle checks must also pass before that draft is prepared.
+Build and verification have read-only repository tokens and no signing secrets. Signing has a
+read-only token and the `release` environment; only its signer invocation receives the secrets.
+It checks the installer SHA256 against the build job output before signing. Its standalone npm
+lock installs only Tauri CLI 2.12.4 and its platform binary with `npm ci --ignore-scripts`;
+no app dependency installation or lifecycle script runs on that runner. The signature is
+uploaded separately. Verification checks the hash again, accepts the signed bytes and rejects
+a tampered copy through the real updater, and uploads no release files. Verification checks
+out the exact commit resolved by build and
+uses the repository public-key variable, refusing a different key in the manifest. The draft
+job downloads the original build and signature artifacts, checks the build hash, and creates
+the feed and checksums itself using the annotated tag notes from GitHub. Signing keeps its
+locked tooling at the workflow commit, fetches the built commit only to read its package
+version, and checks that version, the tag version and production signing mode before signing.
+Only the draft job has a write token. The Python recipe also removes every `TAURI_SIGNING_PRIVATE_KEY*`
+variable, case-insensitively, from build subprocess environments, including inherited ones.
+It also refuses ambient signing variables in either build mode before importing any Firmware tooling.
+
+As of the security fix for #108, electron-builder 26.18.0 still resolves minimatch versions
+covered by GHSA-g3hv-75wg-m249. The compatible update does not fix the advisory; no major
+minimatch override is applied. Exposure is in development packaging dependencies, where
+repository-controlled file patterns are processed. Track an upstream compatible fix before
+accepting untrusted build patterns. The audit remains nonzero.
+
+RUSTSEC-2026-0344 remains in ruzstd 0.8.3 via object 0.39.1 and espflash 4.5.0.
+`cargo update -p espflash` finds no newer version compatible with the workspace's Rust 1.88
+requirement; espflash 4.7.0 requires Rust 1.95. The Companion recovery path in
+`app/crates/td-link/src/recover.rs` constructs `Segment`s from bundle image bytes and calls
+`Flasher::write_bins_to_flash`; it does not call the ELF/debug-symbol loader or object section
+decompression. espflash's CLI feature is disabled. The vulnerable zstd decoder is present
+transitively but no attacker-supplied zstd decoding path was found in td-link. Revisit on any
+ELF/debug-symbol support or compatible upstream update; the audit remains nonzero.
