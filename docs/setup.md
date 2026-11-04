@@ -105,7 +105,7 @@ On Linux, run the app in the intended user's desktop login session with a sessio
 
 ## Verification boundary
 
-Linux CI builds the app and runs mock GUI tests under Xvfb. Mock Devices and fake input do not exercise hardware, and mock Integrations use an in-memory key store. Those checks establish neither real serial permissions, real `/dev/uinput` operation, nor a usable desktop credential store. The setup changes were verified with isolated Windows process fixtures; no real installers, Linux runtime session, device permission changes, or real key injection were exercised in that validation.
+Linux CI builds the app and runs its unit and Rust tests on mock Devices; the UI e2e specs run on Windows only. Mock Devices and fake input do not exercise hardware, and mock Integrations use an in-memory key store. Those checks establish neither real serial permissions, real `/dev/uinput` operation, nor a usable desktop credential store. The setup changes were verified with isolated Windows process fixtures; no real installers, Linux runtime session, device permission changes, or real key injection were exercised in that validation.
 
 The focused setup tests require Windows and PowerShell 7, with no Pester or installed Node/Rust/pnpm dependency:
 
