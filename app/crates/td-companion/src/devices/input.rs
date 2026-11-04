@@ -99,6 +99,11 @@ impl InputHub {
         self.cancelled_through = self.last_seq;
     }
 
+    /// The input binds nothing now, so a failure kept for its gesture is no longer reported.
+    pub fn dropped(&mut self, input: &Input) {
+        self.failed.remove(&input.key());
+    }
+
     pub fn is_current(&self, input: &Input) -> bool {
         self.cancelled_through.is_none_or(|seq| input.seq > seq)
     }

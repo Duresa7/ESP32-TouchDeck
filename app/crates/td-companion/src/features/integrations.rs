@@ -211,6 +211,14 @@ impl Service {
                 .collect(),
         )
     }
+    /// Whether the Integration is turned on. Reads the cached summaries, never the registry.
+    pub fn enabled(&self, id: &str) -> bool {
+        self.summaries
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|summary| summary.id == id && summary.enabled)
+    }
     /// Whether a Device's input can set this Integration stream: its Integration lists it as `settable`. Reads the
     /// cached summaries, never the registry.
     pub fn settable(&self, key: &StreamKey) -> bool {

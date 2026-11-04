@@ -629,6 +629,7 @@ The Companion's live router (`td_companion::live`) reads each connected v2 Devic
 - **`rate`.** The router waits `retry_ms` before it sends the Device anything else, and doubles the wait for each further `rate` in a row, up to 8 seconds.
 - **Sequence.** `n` rises for every new value sent to a Device. A send whose reply never came goes again with the same `n` and value, so a value the Device already took isn't added twice.
 - **Resend.** A new link session, a Layout push or an orientation change sends every bound value again. A `layout`, `page`, `tile`, `stream` or `type` refusal makes the router read the Device's Layout again.
+- **Turned off.** A stream whose Integration is turned off and reports no sample is sent once more with its last value and the shortest `ttl_ms` (1000), so the Device draws it stale within a second instead of waiting out the original `ttl_ms`. Nothing more is sent for it while the Integration is off, and the first new sample after it is turned on goes as usual. A drag on a bar whose Integration is turned off is dropped and logs nothing; the Device keeps sending the rest of that drag until its lift.
 - **Values a Tile can't take.** A series is cut to its newest `series` numbers and text to `text_bytes`. A value of the wrong type, or a number outside ±1e9, is never sent.
 
 Each Integration's `status.delivery` counts the values each Device accepted and carries the last refusal.

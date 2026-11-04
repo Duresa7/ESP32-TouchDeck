@@ -276,6 +276,14 @@ fn round(
     let wanted = {
         let mut router = shared.router.lock();
         router.set_covers(covers);
+        router.set_off(
+            integrations
+                .summaries()
+                .into_iter()
+                .filter(|summary| !summary.enabled)
+                .map(|summary| summary.id)
+                .collect(),
+        );
         router.retain(&connected.iter().map(|(id, ..)| id.clone()).collect());
         for device in changed {
             router.layout_changed(&device);

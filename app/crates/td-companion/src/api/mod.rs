@@ -86,10 +86,12 @@ impl Ctx {
         integrations.command_approval(Arc::new(actions.clone()));
         let live = crate::live::Live::start(devices.clone(), links.clone(), integrations.clone());
         let settable = integrations.clone();
+        let turned_on = integrations.clone();
         actions.attach(
             live.clone(),
             integrations.controls.clone(),
             Arc::new(move |key| settable.settable(key)),
+            Arc::new(move |id| turned_on.enabled(id)),
             layouts.pushed(),
         );
         Self {

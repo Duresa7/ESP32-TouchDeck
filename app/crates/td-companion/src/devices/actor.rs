@@ -162,6 +162,7 @@ fn run_inputs(
                     break;
                 }
                 let Some(result) = handler.set(id, &input) else {
+                    hub.lock().dropped(&input);
                     continue;
                 };
                 let outcome = {
