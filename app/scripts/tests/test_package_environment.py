@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -12,6 +13,13 @@ spec.loader.exec_module(packaging)
 
 
 class BuildEnvironmentTests(unittest.TestCase):
+    def test_build_rejects_ambient_signing_in_every_mode(self):
+        for test_signing in (False, True):
+            with self.subTest(test_signing=test_signing), patch.object(sys, 'platform', 'win32'), \
+                    patch.dict(os.environ, {'tauri_signing_private_key_future': 'fake'}):
+                with self.assertRaisesRegex(ValueError, 'must not inherit signing variables'):
+                    packaging.build(SimpleNamespace(test_signing=test_signing))
+
     def test_children_never_receive_signing_variables(self):
         environment = dict(os.environ)
         environment.update(TAURI_SIGNING_PRIVATE_KEY='fake', TAURI_SIGNING_PRIVATE_KEY_PASSWORD='fake',

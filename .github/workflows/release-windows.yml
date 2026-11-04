@@ -40,6 +40,7 @@ jobs:
       contents: read
     outputs:
       installer-sha256: ${{ steps.unsigned.outputs.installer-sha256 }}
+      source-revision: ${{ steps.source.outputs.revision }}
     env:
       BUILD_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
       # Python on Windows decodes tool output with the ANSI code page unless told to use UTF-8.
@@ -51,6 +52,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Verify built commit is on origin/main
+        id: source
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -58,6 +60,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           git merge-base --is-ancestor HEAD origin/main
           if ($LASTEXITCODE) { throw "Built commit $(git rev-parse HEAD) is not on origin/main." }
+          "revision=$(git rev-parse HEAD)" >> $env:GITHUB_OUTPUT
       - name: Build unsigned release
         id: unsigned
         uses: ./.github/actions/windows-release-build
@@ -78,11 +81,14 @@ jobs:
     env:
       INSTALLER: OpenTouchDeck-windows-x64-setup.exe
       EXPECTED_SHA256: ${{ needs.build.outputs.installer-sha256 }}
+      SOURCE_REVISION: ${{ needs.build.outputs.source-revision }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          ref: ${{ github.sha }}
           sparse-checkout: .github/release-signer
+          filter: blob:none
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
@@ -97,8 +103,19 @@ jobs:
           set -euo pipefail
           [[ "$EXPECTED_SHA256" =~ ^[a-f0-9]{64}$ ]]
           echo "$EXPECTED_SHA256  release-assets/$INSTALLER" | sha256sum --strict -c -
+          [[ "$SOURCE_REVISION" =~ ^[a-f0-9]{40}$ ]]
+          git fetch --no-tags --depth=1 origin "$SOURCE_REVISION"
+          committed_version=$(git show "$SOURCE_REVISION:app/electron/package.json" | jq -er .version)
           version=$(jq -r .version release-assets/release-manifest.json)
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [ "$version" = "$committed_version" ]
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_TYPE" = tag ]; then
+            [ "$version" = "${GITHUB_REF_NAME#v}" ]
+          fi
+          jq -e --arg sha "$EXPECTED_SHA256" --arg revision "$SOURCE_REVISION" '
+            .test_signing == false and .source_revision == $revision and
+            ((has("installer_sha256") | not) or .installer_sha256 == $sha)
+          ' release-assets/release-manifest.json >/dev/null
           echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
       - name: Sign the checked installer
         env:
@@ -122,10 +139,11 @@ jobs:
       contents: read
     env:
       EXPECTED_SHA256: ${{ needs.build.outputs.installer-sha256 }}
+      UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+          ref: ${{ needs.build.outputs.source-revision }}
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -150,19 +168,9 @@ jobs:
             -out "$RUNNER_TEMP/tls.crt" -days 1 -subj /CN=localhost -addext subjectAltName=DNS:localhost
           NODE_EXTRA_CA_CERTS="$RUNNER_TEMP/tls.crt" node app/scripts/verify_release.mjs \
             release-assets "$RUNNER_TEMP/tls.key" "$RUNNER_TEMP/tls.crt"
-          cd release-assets
-          rm SHA256SUMS
-          sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS"
-          mv "$RUNNER_TEMP/SHA256SUMS" SHA256SUMS
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: windows-release-assets
-          path: release-assets
-          if-no-files-found: error
-          retention-days: 90
 
   publish:
-    needs: [verify, app, firmware, installer-lifecycle]
+    needs: [build, sign, verify, app, firmware, installer-lifecycle]
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -175,33 +183,53 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ github.ref_name }}
-      TAGGED_SHA: ${{ github.sha }}
+      TAGGED_SHA: ${{ needs.build.outputs.source-revision }}
+      EXPECTED_SHA256: ${{ needs.build.outputs.installer-sha256 }}
+      UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
       INSTALLER: OpenTouchDeck-windows-x64-setup.exe
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: windows-release-assets
+          name: windows-release-unsigned
           path: release-assets
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-release-signature
+          path: signed-assets
 
       - name: Check the downloaded assets belong to this tag
         run: |
           set -euo pipefail
           cd release-assets
           sha256sum --strict -c SHA256SUMS
+          [[ "$EXPECTED_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          echo "$EXPECTED_SHA256  $INSTALLER" | sha256sum --strict -c -
           version="${RELEASE_TAG#v}"
-          url="https://github.com/Duresa7/ESP32-TouchDeck/releases/download/${RELEASE_TAG}/${INSTALLER}"
-          for name in "$INSTALLER" "$INSTALLER.sig" latest.json release-manifest.json; do
-            [ -s "$name" ] || { echo "::error::Missing asset $name"; exit 1; }
-          done
-          if ls | grep -q TEST-ONLY; then echo "::error::Test-signing assets must never be published"; exit 1; fi
-          [ "$(jq -r .version latest.json)" = "$version" ] || { echo "::error::latest.json version is not $version"; exit 1; }
-          [ "$(jq -r '.platforms["windows-x86_64"].url' latest.json)" = "$url" ] || { echo "::error::latest.json url is not $url"; exit 1; }
-          [ "$(jq -r '.platforms["windows-x86_64"].signature' latest.json)" = "$(tr -d '\r\n' < "$INSTALLER.sig")" ] \
-            || { echo "::error::latest.json signature differs from $INSTALLER.sig"; exit 1; }
-          [ "$(jq -r .test_signing release-manifest.json)" = "false" ] || { echo "::error::Assets were test-signed"; exit 1; }
-          [ "$(jq -r .installer release-manifest.json)" = "$INSTALLER" ] || { echo "::error::Unexpected installer name"; exit 1; }
-          [ "$(jq -r .source_revision release-manifest.json)" = "$TAGGED_SHA" ] || { echo "::error::Assets were not built from $TAGGED_SHA"; exit 1; }
-          jq -r .notes latest.json > "$RUNNER_TEMP/release-notes.md"
+          jq -e --arg version "$version" --arg sha "$EXPECTED_SHA256" \
+            --arg revision "$TAGGED_SHA" --arg installer "$INSTALLER" --arg key "$UPDATER_PUBLIC_KEY" '
+            .version == $version and .test_signing == false and .installer == $installer and
+            .source_revision == $revision and .installer_sha256 == $sha and .updater_public_key == $key
+          ' release-manifest.json >/dev/null
+          cp "../signed-assets/$INSTALLER.sig" "$INSTALLER.sig"
+          [ -s "$INSTALLER.sig" ]
+          tag=$(gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG")
+          [ "$(jq -r .object.type <<< "$tag")" = tag ]
+          annotation=$(gh api "repos/$GH_REPO/git/tags/$(jq -r .object.sha <<< "$tag")")
+          [ "$(jq -r .object.type <<< "$annotation")" = commit ]
+          [ "$(jq -r .object.sha <<< "$annotation")" = "$TAGGED_SHA" ]
+          jq -r '.message | split("-----BEGIN PGP SIGNATURE-----")[0] | split("-----BEGIN SSH SIGNATURE-----")[0] | sub("\\s+$"; "")' <<< "$annotation" > "$RUNNER_TEMP/release-notes.md"
+          jq -n --arg version "$version" --rawfile notes "$RUNNER_TEMP/release-notes.md" \
+            --arg date "$(jq -r .tagger.date <<< "$annotation")" \
+            --arg signature "$(tr -d '\r\n' < "$INSTALLER.sig")" \
+            --arg url "https://github.com/$GH_REPO/releases/download/$RELEASE_TAG/$INSTALLER" \
+            --argjson size "$(stat -c %s "$INSTALLER")" '
+            {version: $version, notes: $notes, pub_date: $date,
+             platforms: {"windows-x86_64": {signature: $signature, url: $url, size: $size}}}
+          ' > latest.json
+          rm SHA256SUMS
+          sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS"
+          mv "$RUNNER_TEMP/SHA256SUMS" SHA256SUMS
 
       - name: Upload every asset to a draft release
         run: |

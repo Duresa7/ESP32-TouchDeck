@@ -161,7 +161,9 @@ def build(args):
     if sys.platform != "win32":
         raise ValueError("This recipe supports Windows x64 only")
     signing_present = any(key.upper().startswith("TAURI_SIGNING_PRIVATE_KEY") for key in os.environ)
-    if args.test_signing and (args.public_key_file or signing_present):
+    if signing_present:
+        raise ValueError("Builds must not inherit signing variables")
+    if args.test_signing and args.public_key_file:
         raise ValueError("Disposable signing cannot be combined with an existing signing configuration")
     if not args.test_signing and not args.public_key_file:
         raise ValueError("Configure a public key for an unsigned release, or use --test-signing for a candidate")

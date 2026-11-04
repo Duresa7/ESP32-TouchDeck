@@ -104,7 +104,6 @@ Use Windows x64 with Rust (MSVC), Node 24, the pinned pnpm, Python 3.11+ and ESP
 ```powershell
 Set-Location app
 pnpm install --frozen-lockfile
-# Build without a signing environment.
 python scripts/package_windows.py build --out E:/touchdeck-artifacts/build-001 `
   --public-key-file E:/secure-public-material/touchdeck-updater.pub `
   --notes-file E:/touchdeck-artifacts/release-notes.md
@@ -128,9 +127,16 @@ It checks the installer SHA256 against the build job output before signing. Its 
 lock installs only Tauri CLI 2.12.4 and its platform binary with `npm ci --ignore-scripts`;
 no app dependency installation or lifecycle script runs on that runner. The signature is
 uploaded separately. Verification checks the hash again, accepts the signed bytes and rejects
-a tampered copy through the real updater, then writes the feed and checksums. Only the draft
-job has a write token. The Python recipe also removes every `TAURI_SIGNING_PRIVATE_KEY*`
+a tampered copy through the real updater, and uploads no release files. Verification checks
+out the exact commit resolved by build and
+uses the repository public-key variable, refusing a different key in the manifest. The draft
+job downloads the original build and signature artifacts, checks the build hash, and creates
+the feed and checksums itself using the annotated tag notes from GitHub. Signing keeps its
+locked tooling at the workflow commit, fetches the built commit only to read its package
+version, and checks that version, the tag version and production signing mode before signing.
+Only the draft job has a write token. The Python recipe also removes every `TAURI_SIGNING_PRIVATE_KEY*`
 variable, case-insensitively, from build subprocess environments, including inherited ones.
+It also refuses ambient signing variables in either build mode before importing any Firmware tooling.
 
 As of the security fix for #108, electron-builder 26.18.0 still resolves minimatch versions
 covered by GHSA-g3hv-75wg-m249. The compatible update does not fix the advisory; no major

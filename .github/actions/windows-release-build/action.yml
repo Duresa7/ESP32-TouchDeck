@@ -17,7 +17,7 @@ inputs:
     required: false
     default: ""
   artifact-name:
-    description: Workflow artifact for the release assets; the publish job downloads windows-release-assets
+    description: Workflow artifact for the release assets
     required: false
     default: windows-release-assets
 
