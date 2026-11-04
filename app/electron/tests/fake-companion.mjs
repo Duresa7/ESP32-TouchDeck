@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-export async function fakeCompanion({ wrongProof = false, api = ['v1'], updateBusy = false, lockResponse } = {}) {
+export async function fakeCompanion({ wrongProof = false, api = ['v1'], updateBusy = false, lockResponse, holdPage = false } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'touchdeck-shell-'));
   const pairing = 'tdp_' + randomBytes(32).toString('base64url');
   const sessions = new Set();
@@ -42,6 +42,7 @@ export async function fakeCompanion({ wrongProof = false, api = ['v1'], updateBu
       res.statusCode = 409; return res.end(JSON.stringify({ error: { code: 'system.busy', details: { device: 'Studio' } } }));
     }
     if (!req.url.startsWith('/api/')) {
+      if (holdPage) return;
       res.setHeader('Content-Type', 'text/html');
       res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'");
       return res.end('<!doctype html><title>Open TouchDeck</title><h1>Open TouchDeck</h1><p>Companion shell test</p>');

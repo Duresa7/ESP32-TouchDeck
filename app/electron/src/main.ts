@@ -160,6 +160,7 @@ else {
   });
   app.on('window-all-closed', () => app.quit());
   void app.whenReady().then(openWindow).catch(error => {
+    if (closing) return;
     dialog.showErrorBox('Open TouchDeck', error instanceof Error && error.message === restartMessage
       ? restartMessage : 'Could not verify or start the Companion. Try restarting Open TouchDeck.');
     app.quit();

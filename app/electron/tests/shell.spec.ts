@@ -102,3 +102,24 @@ test('wrong proof never loads a window or hands over credentials', async () => {
     expect(fake.calls.every(c => !c.authorization && c.path === '/api/v1/auth/proof')).toBe(true);
   } finally { await app.close(); await fake.close(); }
 });
+
+test('closing the window while its page is still loading quits without an error box', async () => {
+  const fake = await fakeCompanion({ holdPage: true });
+  const env = { ...process.env, TOUCHDECK_APP_DATA_DIR: fake.dir };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const app = await electron.launch({ args: [resolve('.')], env });
+  const child = app.process();
+  const exited = once(child, 'exit');
+  let stderr = '';
+  child.stderr?.on('data', chunk => { stderr += chunk; });
+  try {
+    await expect.poll(() => fake.calls.some(c => c.method === 'GET' && c.path === '/')).toBe(true);
+    await app.evaluate(({ dialog }) => {
+      dialog.showErrorBox = (_title, content) => { console.error(`error box: ${content}`); };
+    });
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+    await exited;
+    expect(stderr).not.toContain('error box:');
+    expect(fake.sessions.size).toBe(0);
+  } finally { child.kill(); await fake.close(); }
+});
