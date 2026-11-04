@@ -130,6 +130,7 @@ jobs:
           name: windows-release-signature
           path: release-assets/*.sig
           if-no-files-found: error
+          retention-days: ${{ github.event_name == 'push' && 90 || 1 }}
 
   verify:
     needs: [build, sign]
