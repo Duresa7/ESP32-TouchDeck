@@ -393,6 +393,7 @@ impl Inner {
                     capabilities,
                     orientation: None,
                     layout: None,
+                    control_layout: super::ControlLayout::default(),
                     key_mirror,
                     stable_id: stable,
                 };

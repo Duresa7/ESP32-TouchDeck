@@ -176,7 +176,7 @@ describe('Refresh', () => {
     const store = await detail();
     await setUp(store);
     await store.refresh();
-    expect(store.getState().notice?.event).toBe('refreshed');
+    expect(store.getState().notice).toMatchObject({ kind: 'ok', event: 'refreshed', text: 'Check started' });
     expect(fake.integrations.refreshes).toBe(1);
 
     clock += REFRESH_FLOOR_MS - 1;

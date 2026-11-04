@@ -276,7 +276,7 @@ struct Core {
     proxy_refresh: RefreshGate,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct RefreshGate(Option<Instant>);
 
 impl RefreshGate {

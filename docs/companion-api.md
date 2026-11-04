@@ -332,6 +332,7 @@ pub struct DeviceSummary {
     pub capabilities: Option<Capabilities>,    // v2 hello: screen, storage_free, tile_kinds, live_hz, live_total_hz, series, text_bytes. None on v1
     pub orientation: Option<Orientation>,
     pub layout: Option<LayoutSummary>,         // what the Device shows
+    pub control_layout: ControlLayout,
     pub key_mirror: KeyMirrorState,            // {enabled, reason}
     pub stable_id: bool,
 }
@@ -348,6 +349,15 @@ Changes increment `rev` and publish `device.updated`. These strings, and the Fir
 and clients show control, format and line or paragraph separator characters as escapes.
 
 ### Rules for several Devices
+
+`control_layout` describes the active orientation's Control authorization. It is a union tagged by `state`:
+
+- `unavailable`, with `reason`: `checking`, `offline`, `unsupported`, or `read-failed`.
+- `no-pushed-copy`, `matches`, or `differs`, each with `orientation` and `has_controls`.
+
+Missing, unreadable, and invalid pushed copies produce `no-pushed-copy`. `has_controls` checks all Pages using the touch path's renderer parts and settable numeric bar input rules. The built-in Layout has no controls. `matches` compares canonical Layout bytes with this Companion's pushed copy; it does not promise an Integration is currently available. A touch still binds only against a pushed copy.
+
+Startup, link loss, a new session, and Layout/orientation replacement reset the assessment to `unavailable/checking`. A push writes the pushed copy before it releases the link, so a successful push goes from `checking` straight to `matches`, and a failed push leaves the pushed copy as it was and ends in a fresh assessment. An orientation change resets the assessment before `SettingsPut` and again once it is sent, even when a later step of the change fails. Subsequent live rounds report offline or unsupported Devices, read failures, or the comparison after reading the active Layout. A failed read is retried after 5 seconds, or at once after a push or orientation change. Every 5 seconds the Companion also checks the active Layout, with or without live values: one `layout.get` of the stored Layout the Device shows, or of both stored Layouts while it shows the built-in one. It reads the active Layout again only when a stored Layout changed, so a change made outside this Companion shows within about 5 seconds. Every assessment rereads the pushed copy, so a deleted or corrupt file is noticed at the next one. Changes increment the Device's `rev` and publish the full object through `device.updated`; GET Devices and `sync` expose that same object. Old sessions and rounds invalidated by a replacement cannot publish a stale assessment.
 
 - Each Device has its own link session, Layout, key mirror, action resolution and Job slot. Its actor thread owns them, and the API reads `DeviceSummary` from that owner.
 - A Job on one Device never blocks another Device.
@@ -579,6 +589,8 @@ Requests carrying a credential never follow a redirect to another origin. They s
 | `integrations.secret_put` | `PUT /integrations/{integration}/secrets/{field}` | `{value}` → `{hint}`. Write-only. The value never comes back and is never in `config` |
 | `integrations.secret_delete` | `DELETE /integrations/{integration}/secrets/{field}` | → `()` |
 | `integrations.refresh` | `POST /integrations/{integration}/refresh` | → `()` |
+
+Polling Integrations run upstream work outside the shared registry lock, with at most one poll in flight per Integration. `integrations.refresh` schedules a poll and returns before its result is available, so the next `integrations.get` may still show the earlier result. A refresh sent while a poll runs starts one more poll as soon as that one ends; CLIProxyAPI still keeps its 15-second spacing. There is no completion event for a refresh. A finished CLIProxyAPI poll sets a new `detail.polled_ms`, increases `summary.revision` and publishes `integration.status`, so a client waits for that event or re-reads `integrations.get` until `detail.polled_ms` changes. Custom and This PC polls change Live tile values; their summary changes, and `integration.status` fires, only when the status message changes. Disabled or edited configurations, and credential changes, discard results from earlier polls. A poll that panics is dropped and runs again when due. When the last Integrations service owner is dropped, it stops scheduling and waits for active upstream calls to finish. This in-process drop can take about 160 seconds for Custom; CLIProxyAPI depends on its account count and request deadlines. Normal process exit does not join these workers, but a last-owner drop on the shutdown path can still wait for them.
 
 CLIProxyAPI config is `{enabled: boolean, url: string, interval_s: integer}`. The URL is trimmed and the interval has a 60-second floor. Unknown fields, including `management_key`, are rejected in config. Its write-only secret field is `management_key`; the secret-write hint is the constant `Set`, including for short keys. Identical config writes preserve the polling deadline. Background polls, manual refreshes, config resets and secret writes share a 15-second minimum spacing between polling attempts.
 

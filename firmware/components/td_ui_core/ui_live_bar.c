@@ -15,14 +15,10 @@ static bool current(ui_live_bar_t *bar, uint32_t generation)
     return false;
 }
 
-static double latest(const ui_live_slot_t *slot)
-{
-    return slot->count > 0 ? slot->samples[(slot->head + slot->count - 1) % UI_LIVE_SERIES_MAX] : 0;
-}
-
 void ui_live_bar_feed(ui_live_bar_t *bar, uint32_t generation, const ui_live_slot_t *value)
 {
     current(bar, generation);
+    bar->fresh = value != NULL && value->set && !value->stale;
     if (value == NULL || !value->set) {
         bar->fed_n = 0;
         bar->fed_digest = 0;
@@ -31,7 +27,7 @@ void ui_live_bar_feed(ui_live_bar_t *bar, uint32_t generation, const ui_live_slo
     if (value->n != bar->fed_n || value->digest != bar->fed_digest) {
         bar->fed_n = value->n;
         bar->fed_digest = value->digest;
-        ui_bar_live(&bar->bar, latest(value));
+        ui_bar_live(&bar->bar, ui_live_latest(value));
     }
 }
 
@@ -53,4 +49,11 @@ bool ui_live_bar_move(ui_live_bar_t *bar, uint32_t generation, const ui_bar_layo
 bool ui_live_bar_release(ui_live_bar_t *bar, uint32_t generation, uint32_t now_ms)
 {
     return current(bar, generation) && ui_bar_release(&bar->bar, now_ms);
+}
+
+ui_part_t ui_live_bar_part(const ui_live_bar_t *bar, uint32_t generation, const ui_bar_layout_t *layout, int16_t x,
+                           int16_t y)
+{
+    const bool fresh = bar->generation == generation && bar->fresh;
+    return ui_bar_hit(layout, x, y, fresh, false) == UI_BAR_ZONE_MUTE ? UI_PART_MUTE : UI_PART_NONE;
 }

@@ -12,6 +12,16 @@ pub(crate) const ACT_TIMEOUT: Duration = Duration::from_secs(2);
 const UNAVAILABLE: &str = "This Tile's control isn't available.";
 const GESTURE_DONE: &str = "Volume changed.";
 
+pub(crate) fn takes_input(tile: &td_core::layout::Tile, stream: &str) -> bool {
+    tile.input
+        && tile.render == Some(TileRender::Bar)
+        && tile
+            .streams
+            .as_ref()
+            .and_then(|streams| streams.get(stream))
+            == Some(&StreamType::Number)
+}
+
 pub(crate) type Settable = Arc<dyn Fn(&StreamKey) -> bool + Send + Sync>;
 
 pub(super) struct Wiring {
@@ -30,6 +40,7 @@ impl Actions {
         layouts: crate::store::LayoutStore,
     ) {
         live.trust(layouts);
+        live.settable(settable.clone());
         let _ = self.0.controls.set(Wiring {
             live,
             controls,
@@ -104,13 +115,7 @@ impl Actions {
             Ok(tile) => tile?,
             Err(()) => return Some(Err(UNAVAILABLE.into())),
         };
-        let takes_input = tile.input
-            && tile.render == Some(TileRender::Bar)
-            && tile
-                .streams
-                .as_ref()
-                .and_then(|streams| streams.get(&input.stream))
-                == Some(&StreamType::Number);
+        let takes_input = takes_input(&tile, &input.stream);
         if !takes_input {
             return None;
         }
@@ -275,6 +280,10 @@ mod tests {
     }
 
     fn running(layout: Value, cached: bool) -> Running {
+        running_with_authority(layout, cached, cached)
+    }
+
+    fn running_with_authority(layout: Value, cached: bool, pushed: bool) -> Running {
         let events = Events::default();
         let devices = DeviceManager::new(events.clone());
         let config = Config::mock(None);
@@ -321,7 +330,7 @@ mod tests {
         );
         let data = tempfile::tempdir().unwrap();
         let layouts = crate::store::LayoutStore::new(data.path().join("layouts"));
-        if cached {
+        if pushed {
             layouts.put(DEVICE, &layout).unwrap();
         }
         actions.attach(
@@ -330,7 +339,7 @@ mod tests {
             Arc::new(|key: &StreamKey| key.integration == "volume" && key.stream == "level"),
             layouts,
         );
-        if cached {
+        if cached && pushed {
             wait("the router reads the Layout", || {
                 live.tile(DEVICE, session().unwrap(), "media", "volume")
                     .is_some()
@@ -541,6 +550,34 @@ mod tests {
     }
 
     #[test]
+    fn a_device_read_layout_without_a_pushed_copy_never_reaches_act_or_set() {
+        let td = running_with_authority(media(), true, false);
+        let id = DeviceId::parse(DEVICE).unwrap();
+        wait("the read Layout has no pushed copy", || {
+            matches!(
+                td.devices.get(&id).unwrap().control_layout,
+                crate::devices::ControlLayout::NoPushedCopy {
+                    has_controls: true,
+                    ..
+                }
+            )
+        });
+        td.deck
+            .emit_press_part("media", "playing", "widget", "next");
+        td.drag("volume", &[0.4, 0.5]);
+        wait("both touches finish", || td.log().len() == 2);
+        assert!(td.media.acts.lock().is_empty());
+        assert!(td.volume.sets.lock().is_empty());
+        assert_eq!(
+            td.log(),
+            [
+                entry("playing", "failed", UNAVAILABLE),
+                entry("volume", "failed", UNAVAILABLE)
+            ]
+        );
+    }
+
+    #[test]
     fn a_non_settable_bar_never_reaches_set() {
         let mut layout = media();
         layout["pages"][0]["tiles"][0]["action"]["field"] = json!("readonly");
@@ -651,5 +688,28 @@ mod tests {
         td.drag("volume", &[0.6, 0.7]);
         wait("new gesture completes", || !td.log().is_empty());
         assert_eq!(td.log(), [entry("volume", "ok", GESTURE_DONE)]);
+    }
+
+    #[test]
+    fn an_external_layout_change_without_samples_updates_the_status() {
+        use crate::devices::ControlLayout;
+        let td = running(media(), true);
+        let id = DeviceId::parse(DEVICE).unwrap();
+        let status = || td.devices.get(&id).unwrap().control_layout;
+        wait("initial matches", || {
+            matches!(status(), ControlLayout::Matches { .. })
+        });
+        let mut changed = media();
+        changed["pages"][0]["tiles"][2]["action"]["account"] = json!("other-account");
+        let layout = td_core::Layout::parse(&serde_json::to_vec(&changed).unwrap()).unwrap();
+        Links::new(td.devices.clone())
+            .with(DEVICE, |session| {
+                td_link::xfer::put_layout(session, layout.orientation, &layout)
+            })
+            .unwrap()
+            .unwrap();
+        wait("the changed Layout is reported", || {
+            matches!(status(), ControlLayout::Differs { .. })
+        });
     }
 }

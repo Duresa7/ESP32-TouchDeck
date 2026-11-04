@@ -194,6 +194,9 @@ ui_live_slot_t *ui_live_find(ui_live_table_t *table, const ui_tile_t *tile, cons
 /* Copies a slot's samples to out, oldest first, and returns how many. */
 uint8_t ui_live_samples(const ui_live_slot_t *slot, double out[UI_LIVE_SERIES_MAX]);
 
+/* The newest sample of a number or series slot, or 0 when it has none. */
+double ui_live_latest(const ui_live_slot_t *slot);
+
 #ifdef __cplusplus
 }
 #endif

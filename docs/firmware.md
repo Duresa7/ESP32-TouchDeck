@@ -750,14 +750,18 @@ advances. The screen reads the generation and hands a move or an end to
 cancels the input mailbox after it advances the generation. A move or end from
 before the change is therefore cancelled or never sent, and the first value of
 the new session is drawn even when its `n` matches the old one. A tap on the
-glyph of a bar that declares `muted` sends `press` with `part: "mute"`. Mute is
-drawn only as the Companion reports it.
+glyph of a bar that declares `muted` sends `press` with `part: "mute"`, but only
+while the bar holds a fresh value of the current generation. Between a session
+or Layout change and the redraw that follows it, the glyph names no part. Mute
+is drawn only as the Companion reports it.
 
 A `now-playing` Tile draws, from `schema/live/now-playing-vectors.json`, the
 cover, the title and the artist. A tall, wide Tile adds the previous,
 play/pause and next controls in a row below them, and a tap on one sends its
 part. A compact Tile is play/pause as a whole. State 0 draws "Nothing playing"
-over the placeholder art, with no artist, no controls and no parts. A cover
+over the placeholder art, with no artist, no controls and no parts. A part is
+named only for a fresh state of the current generation, so a tap between a
+session or Layout change and the next redraw names none. A cover
 larger than its art box draws its centred part, so its corners stay rounded.
 Until the Tile hears a state it shows the `--` marker. Text is drawn as sent and
 cut with an ellipsis to its column. Glyphs the font lacks draw as placeholder
@@ -779,10 +783,10 @@ handles its next message. A delete of an old cover therefore answers `in-use`
 only while a slot still shows it. Unpins run with the live-value and LVGL locks
 released, so the LVGL task never waits on the storage lock.
 
-Taps come first. The touch and LVGL tasks never wait on a decode: the
-live-value lock is held only to check, commit and copy values, to read the
-generation for a bar press, and to send a bar drag's value, and the storage lock
-only to read the file. The link task runs at priority 3, below the LVGL
+Taps come first. The touch and LVGL tasks never wait on a decode: the live-value
+lock is held only to check, commit and copy values, to read the generation for a
+bar press or a tap on a part, and to send a bar drag's value, and the storage
+lock only to read the file. The link task runs at priority 3, below the LVGL
 task at 6. The decode sleeps a tick after each row of JPEG blocks, 16 rows for a
 256 by 256 cover, so the idle tasks run and feed the task watchdog. A decoded
 cover is at most 256 by 256 pixels plus one spare row, about 128.5 KiB. At most

@@ -259,6 +259,8 @@ Opens from the Device's name.
 | Status, first check | Checking… |
 | Status, failing | Can't connect |
 | Status, no credentials | Not set up |
+| Check button, in progress | Check now, Checking… |
+| Check sent (new values arrive when it ends) | Check started |
 | Card button, not set up | Set up |
 | Secret field, saved | Saved · ends in {last4} |
 | Secret field, empty | Not set |

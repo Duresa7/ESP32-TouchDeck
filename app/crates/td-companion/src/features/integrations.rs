@@ -18,6 +18,7 @@ pub type Controls = Arc<BTreeMap<String, Arc<dyn Control>>>;
 #[derive(Clone)]
 pub struct Service {
     registry: Arc<Mutex<Result<Registry, Error>>>,
+    runtime: Arc<PollRuntime>,
     summaries: Arc<Mutex<Vec<IntegrationSummary>>>,
     pending: Arc<Pending>,
     events: Events,
@@ -26,6 +27,58 @@ pub struct Service {
     media: Option<td_host::integrations::media::fake::FakeMedia>,
     #[cfg(any(test, feature = "test-hooks"))]
     volume: Option<td_host::integrations::volume::fake::FakeVolume>,
+}
+#[derive(Default)]
+struct PollRuntime {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    handle: Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+impl Drop for PollRuntime {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(handle) = self.handle.get_mut().unwrap().take() {
+            handle.thread().unpark();
+            let _ = handle.join();
+        }
+    }
+}
+struct PollWorker {
+    jobs: Option<std::sync::mpsc::SyncSender<td_host::integrations::Poll>>,
+    results: std::sync::mpsc::Receiver<td_host::integrations::PollState>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    busy: bool,
+}
+impl PollWorker {
+    fn new(id: String) -> Self {
+        let (jobs, work) = std::sync::mpsc::sync_channel::<td_host::integrations::Poll>(1);
+        let (done, results) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            while let Ok(poll) = work.recv() {
+                let state = std::panic::catch_unwind(std::panic::AssertUnwindSafe(poll))
+                    .unwrap_or_else(|_| {
+                        eprintln!("Companion: the {id} poll failed; it runs again when due.");
+                        Box::new(())
+                    });
+                if done.send(state).is_err() {
+                    break;
+                }
+            }
+        });
+        Self {
+            jobs: Some(jobs),
+            results,
+            handle: Some(handle),
+            busy: false,
+        }
+    }
+}
+impl Drop for PollWorker {
+    fn drop(&mut self) {
+        self.jobs.take();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
 }
 type Pending = Mutex<HashMap<(String, String), Delivery>>;
 impl Service {
@@ -64,6 +117,7 @@ impl Service {
         );
         let service = Self {
             registry: Arc::new(Mutex::new(registry)),
+            runtime: Arc::default(),
             summaries: Arc::default(),
             pending: Arc::default(),
             events: events.clone(),
@@ -78,16 +132,38 @@ impl Service {
         }
         let cache = service.summaries.clone();
         let pending = service.pending.clone();
-        let weak = Arc::downgrade(&service.registry);
-        std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(1));
-                let Some(state) = weak.upgrade() else { break };
+        let state = service.registry.clone();
+        let stop = service.runtime.stop.clone();
+        let handle = std::thread::spawn(move || {
+            let mut workers = BTreeMap::<String, PollWorker>::new();
+            while !stop.load(std::sync::atomic::Ordering::Acquire) {
+                std::thread::park_timeout(std::time::Duration::from_secs(1));
+                if stop.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
+                }
                 let mut state = state.lock().unwrap();
                 if let Ok(registry) = state.as_mut() {
                     let before = serde_json::to_value(registry.list()).unwrap();
                     apply_pending(registry, &pending);
-                    registry.tick();
+                    for (id, worker) in &mut workers {
+                        if let Ok(result) = worker.results.try_recv() {
+                            worker.busy = false;
+                            if let Ok(integration) = registry.get(id) {
+                                integration.apply_poll(result);
+                            }
+                        }
+                    }
+                    let busy = workers
+                        .iter()
+                        .filter(|(_, w)| w.busy)
+                        .map(|(id, _)| id.clone())
+                        .collect();
+                    for (id, poll) in registry.poll_jobs(&busy) {
+                        let worker = workers
+                            .entry(id.clone())
+                            .or_insert_with(|| PollWorker::new(id));
+                        worker.busy = worker.jobs.as_ref().unwrap().send(poll).is_ok();
+                    }
                     *cache.lock().unwrap() = registry.list();
                     if before != serde_json::to_value(registry.list()).unwrap() {
                         publish(registry, &events);
@@ -95,6 +171,7 @@ impl Service {
                 }
             }
         });
+        *service.runtime.handle.lock().unwrap() = Some(handle);
         service
     }
     #[cfg(any(test, feature = "test-hooks"))]
@@ -108,8 +185,6 @@ impl Service {
     pub fn media_fake(&self) -> Option<td_host::integrations::media::fake::FakeMedia> {
         self.media.clone()
     }
-    /// The newest samples of the wanted streams that Integrations poll. None while an Integration is busy, such as
-    /// during a poll.
     pub fn live(&self, wanted: &BTreeSet<StreamKey>) -> Option<HashMap<StreamKey, LiveSample>> {
         let state = self.registry.try_lock().ok()?;
         let Ok(registry) = state.as_ref() else {
@@ -429,7 +504,7 @@ impl Endpoint for Refresh {
     type Error = IntegrationError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
         work(ctx, move |r| {
-            r.get(&req.path.integration)?.refresh();
+            r.get(&req.path.integration)?.request_refresh();
             Ok(())
         })
         .await
@@ -695,5 +770,301 @@ mod control_tests {
         let id = cover.as_str().unwrap().strip_prefix("sha256:").unwrap();
         let picture = image::load_from_memory(&run.deck.assets()[id]).unwrap();
         assert_eq!((picture.width(), picture.height()), (256, 256));
+    }
+}
+
+#[cfg(test)]
+mod poll_isolation_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+    #[derive(Clone, Copy)]
+    struct Upstream {
+        delay: Duration,
+        panic_first: bool,
+    }
+    const SLOW: Upstream = Upstream {
+        delay: Duration::from_secs(3),
+        panic_first: false,
+    };
+    const SLOWER: Upstream = Upstream {
+        delay: Duration::from_secs(5),
+        panic_first: false,
+    };
+    #[derive(Default)]
+    struct Calls {
+        started: AtomicUsize,
+        finished: AtomicUsize,
+    }
+    impl Calls {
+        fn started(&self) -> usize {
+            self.started.load(Ordering::SeqCst)
+        }
+        fn finished(&self) -> usize {
+            self.finished.load(Ordering::SeqCst)
+        }
+    }
+    struct Fetch(Arc<Calls>, Upstream);
+    impl td_host::sources::Fetch for Fetch {
+        fn post_json(&self, _: &str, _: &str, _: &Value) -> Result<String, String> {
+            Ok("[]".into())
+        }
+        fn get(&self, _: &str, _: &str) -> Result<String, String> {
+            Ok("[]".into())
+        }
+        fn request(
+            &self,
+            request: &td_host::sources::network::GetRequest<'_>,
+        ) -> Result<String, td_host::sources::network::FetchError> {
+            let call = self.0.started.fetch_add(1, Ordering::SeqCst);
+            assert!(
+                !(self.1.panic_first && call == 0),
+                "upstream fixture fails its first call"
+            );
+            std::thread::sleep(self.1.delay);
+            self.0.finished.fetch_add(1, Ordering::SeqCst);
+            Ok(if request.url.ends_with("/old") {
+                "1"
+            } else {
+                "2"
+            }
+            .into())
+        }
+    }
+    struct Counter;
+    impl td_host::integrations::this_pc::CounterSource for Counter {
+        fn collect(&mut self) -> td_host::integrations::this_pc::CounterSample {
+            td_host::integrations::this_pc::CounterSample {
+                values: BTreeMap::from([("cpu_pct".into(), 42.0)]),
+                ..Default::default()
+            }
+        }
+    }
+    fn config(enabled: bool, path: &str) -> Value {
+        serde_json::json!({"enabled": enabled, "sources": [{"id":"value", "name":"Value", "interval_s":3600, "kind":"number", "input":{"type":"http", "url":format!("https://example.invalid/{path}"), "value_path":"$"}}]})
+    }
+    fn start() -> (Service, Arc<Calls>) {
+        start_with(SLOW)
+    }
+    fn start_with(upstream: Upstream) -> (Service, Arc<Calls>) {
+        let calls = Arc::new(Calls::default());
+        let fetch = calls.clone();
+        let mut registry = Registry::new(Environment {
+            media_provider: Some(Arc::new(
+                td_host::integrations::media::fake::FakeMedia::default(),
+            )),
+            volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
+            secrets: Arc::new(MemorySecrets::default()),
+            config_file: None,
+            fetch: Arc::new(move || Box::new(Fetch(fetch.clone(), upstream))),
+        })
+        .unwrap();
+        registry
+            .get("custom")
+            .unwrap()
+            .configure(config(true, "old"))
+            .unwrap();
+        *registry.get("this_pc").unwrap() = Box::new(td_host::integrations::this_pc::ThisPc::new(
+            Box::new(Counter),
+        ));
+        let service = Service::new(true, Events::default());
+        *service.registry.lock().unwrap() = Ok(registry);
+        assert!(
+            wait_until(Duration::from_secs(5), || calls.started() > 0),
+            "the first poll never started"
+        );
+        (service, calls)
+    }
+    fn wait_until(limit: Duration, mut done: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + limit;
+        loop {
+            if done() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    fn this_pc_sample(service: &Service) -> Option<u64> {
+        let key = StreamKey {
+            integration: "this_pc".into(),
+            account: String::new(),
+            stream: "cpu_pct".into(),
+        };
+        let values = service.live(&BTreeSet::from([key.clone()]))?;
+        Some(values.get(&key)?.sample)
+    }
+    fn this_pc_advances(service: &Service, times: usize) -> bool {
+        let mut seen = None;
+        let mut advances = 0;
+        wait_until(Duration::from_secs(5), || {
+            if let Some(sample) = this_pc_sample(service) {
+                if seen.is_some_and(|seen| sample > seen) {
+                    advances += 1;
+                }
+                if seen.is_none_or(|seen| sample > seen) {
+                    seen = Some(sample);
+                }
+            }
+            advances >= times
+        })
+    }
+    fn custom_values(service: &Service) -> Vec<td_core::live::LiveValue> {
+        service
+            .with_registry(&service.events, |r| Ok(r.get("custom")?.live()))
+            .unwrap()
+            .into_iter()
+            .map(|sample| sample.value)
+            .collect()
+    }
+    fn refresh_custom(service: &Service) {
+        service
+            .with_registry(&service.events, |r| {
+                r.get("custom")?.request_refresh();
+                Ok(())
+            })
+            .unwrap();
+    }
+    #[test]
+    fn slow_poll_does_not_block_registry_calls() {
+        let (service, _) = start();
+        type Operation = fn(&mut Registry) -> Result<(), Error>;
+        let operations: [Operation; 6] = [
+            |r| {
+                r.list();
+                Ok(())
+            },
+            |r| {
+                r.get("custom")?.view()?;
+                Ok(())
+            },
+            |r| {
+                r.get("custom")?.request_refresh();
+                Ok(())
+            },
+            |r| {
+                r.get("cliproxyapi")?
+                    .secret_put("management_key", "fixture-private-value")
+            },
+            |r| r.get("cliproxyapi")?.secret_delete("management_key"),
+            |r| {
+                r.get("custom")?.configure(config(true, "new"))?;
+                Ok(())
+            },
+        ];
+        for operation in operations {
+            let at = Instant::now();
+            service.with_registry(&service.events, operation).unwrap();
+            assert!(
+                at.elapsed() < Duration::from_millis(200),
+                "registry call took {:?}",
+                at.elapsed()
+            );
+        }
+    }
+    #[test]
+    fn dropping_service_joins_in_flight_workers() {
+        let (service, _) = start();
+        let stop = service.runtime.stop.clone();
+        let at = Instant::now();
+        drop(service);
+        assert!(stop.load(std::sync::atomic::Ordering::Acquire));
+        assert!(at.elapsed() >= Duration::from_secs(2));
+        assert!(at.elapsed() < Duration::from_secs(5));
+    }
+    #[test]
+    fn slow_poll_does_not_delay_other_live_values() {
+        let (service, calls) = start_with(SLOWER);
+        assert!(
+            this_pc_advances(&service, 2),
+            "This PC samples stopped advancing during the slow poll"
+        );
+        assert_eq!(
+            calls.finished(),
+            0,
+            "the slow poll ended before This PC advanced twice"
+        );
+        assert_eq!(calls.started(), 1);
+    }
+    fn change_during_poll(enabled: bool) {
+        let (service, calls) = start();
+        let at = Instant::now();
+        let view = service
+            .with_registry(&service.events, |r| {
+                r.get("custom")?.configure(config(enabled, "new"))
+            })
+            .unwrap();
+        assert_eq!(view.summary.enabled, enabled);
+        assert!(
+            at.elapsed() < Duration::from_millis(200),
+            "config change took {:?}",
+            at.elapsed()
+        );
+        assert!(wait_until(Duration::from_secs(5), || calls.finished() > 0));
+        assert!(
+            this_pc_advances(&service, 2),
+            "the loop stopped ticking after the old poll ended"
+        );
+        let summary = service
+            .with_registry(&service.events, |r| Ok(r.get("custom")?.summary()))
+            .unwrap();
+        assert_eq!(summary.enabled, enabled);
+        assert_eq!(
+            summary.revision, view.summary.revision,
+            "an old poll result rewound the summary"
+        );
+        assert!(
+            !custom_values(&service).contains(&td_core::live::LiveValue::Number(1.0)),
+            "an old poll result became a live value"
+        );
+    }
+    #[test]
+    fn disable_drops_in_flight_result() {
+        change_during_poll(false);
+    }
+    #[test]
+    fn config_edit_drops_in_flight_result() {
+        change_during_poll(true);
+    }
+    #[test]
+    fn only_one_poll_is_in_flight() {
+        let (service, calls) = start_with(SLOWER);
+        let until = Instant::now() + Duration::from_millis(3500);
+        while Instant::now() < until {
+            let at = Instant::now();
+            refresh_custom(&service);
+            assert!(
+                at.elapsed() < Duration::from_millis(200),
+                "refresh took {:?} while one poll was in flight",
+                at.elapsed()
+            );
+            assert_eq!(calls.started(), 1);
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    #[test]
+    fn refresh_during_poll_polls_again_when_it_ends() {
+        let (service, calls) = start();
+        refresh_custom(&service);
+        assert_eq!(calls.started(), 1);
+        assert!(
+            wait_until(Duration::from_secs(8), || calls.started() > 1),
+            "a refresh sent during a poll was lost"
+        );
+        assert_eq!(calls.finished(), 1, "the second poll overlapped the first");
+    }
+    #[test]
+    fn a_panicking_poll_is_retried() {
+        let (service, _) = start_with(Upstream {
+            delay: Duration::ZERO,
+            panic_first: true,
+        });
+        assert!(
+            wait_until(Duration::from_secs(8), || !custom_values(&service)
+                .is_empty()),
+            "polling stopped after one poll panicked"
+        );
     }
 }

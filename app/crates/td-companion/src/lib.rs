@@ -2,6 +2,8 @@ pub mod actions;
 pub mod api;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod bindings;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod checkpoints;
 pub mod devices;
 mod dialog_text;
 pub mod features;

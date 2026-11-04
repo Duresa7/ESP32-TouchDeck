@@ -325,3 +325,309 @@ async fn image_budget_is_checked_before_starting_a_push() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn control_layout_get_sync_and_updates_agree_after_push_and_reconnect() {
+    use td_companion::devices::ControlLayout;
+    use td_companion::features::devices::{DevicePath, Get as DeviceGet, List as Devices};
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let td = TestCompanion::start().await;
+    let id = td.plug_media_device("mock0001").await;
+    td.until(|td| {
+        matches!(
+            td.device(&id).unwrap().control_layout,
+            ControlLayout::NoPushedCopy {
+                has_controls: false,
+                ..
+            }
+        )
+    })
+    .await;
+    let mut events = td.events().await;
+    let layout = Layout::parse(include_bytes!("../../../../schema/examples/media.json")).unwrap();
+    td.deck(&id).corrupt_next_put();
+    let failed = push(&td, &id, &layout).await;
+    assert_eq!(td.wait(&failed).await.state, JobState::Failed);
+    td.until(|td| {
+        matches!(
+            td.device(&id).unwrap().control_layout,
+            ControlLayout::NoPushedCopy {
+                has_controls: false,
+                ..
+            }
+        )
+    })
+    .await;
+    let job = push(&td, &id, &layout).await;
+    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    let updated = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let message = events.next().await.unwrap().unwrap();
+            let frame: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+            if frame["type"] == "device.updated"
+                && frame["data"]["control_layout"]["state"] == "matches"
+            {
+                break frame["data"].clone();
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(updated["control_layout"]["has_controls"], true);
+    let get = td
+        .call::<DeviceGet>(DevicePath { device: id.clone() }, NoQuery, ())
+        .await
+        .unwrap();
+    assert_eq!(serde_json::to_value(&get).unwrap(), updated);
+    assert_eq!(td.call::<Devices>((), NoQuery, ()).await.unwrap()[0], get);
+    let mut request = format!("{}/api/v1/events", td.url.replace("http:", "ws:"))
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "sec-websocket-protocol",
+        format!("touchdeck.v1, touchdeck.bearer.{}", td.token)
+            .parse()
+            .unwrap(),
+    );
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    socket.next().await.unwrap().unwrap();
+    let sync = socket.next().await.unwrap().unwrap();
+    let sync: Value = serde_json::from_str(sync.to_text().unwrap()).unwrap();
+    assert_eq!(sync["data"]["devices"][0], updated);
+    td.unplug("mock0001").await;
+    assert!(matches!(
+        td.device(&id).unwrap().control_layout,
+        ControlLayout::Unavailable { .. }
+    ));
+    td.plug_media_device("mock0001").await;
+    td.until(|td| {
+        matches!(
+            td.device(&id).unwrap().control_layout,
+            ControlLayout::Matches { .. }
+        )
+    })
+    .await;
+}
+
+async fn states_until_matches(
+    events: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    device: &str,
+) -> Vec<String> {
+    let mut states: Vec<String> = Vec::new();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let message = events.next().await.unwrap().unwrap();
+            let frame: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+            if frame["type"] != "device.updated" || frame["device"] != device {
+                continue;
+            }
+            let status = &frame["data"]["control_layout"];
+            let state = status["reason"]
+                .as_str()
+                .or(status["state"].as_str())
+                .unwrap()
+                .to_owned();
+            if (states.is_empty() && state != "checking") || states.last() == Some(&state) {
+                continue;
+            }
+            states.push(state);
+            if states.last().unwrap() == "matches" {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no matches after {states:?}"));
+    states
+}
+
+#[tokio::test]
+async fn a_push_publishes_only_checking_then_matches() {
+    use td_companion::checkpoints::Checkpoint;
+    use td_companion::devices::ControlLayout;
+    let td = TestCompanion::start().await;
+    let id = td.plug_media_device("mock0001").await;
+    td.until(|td| {
+        matches!(
+            td.device(&id).unwrap().control_layout,
+            ControlLayout::NoPushedCopy { .. }
+        )
+    })
+    .await;
+    let mut events = td.events().await;
+    td.checkpoints().hold(Checkpoint::LayoutPut);
+    let layout = Layout::parse(include_bytes!("../../../../schema/examples/media.json")).unwrap();
+    let job = push(&td, &id, &layout).await;
+    td.until(|td| td.checkpoints().waiting(Checkpoint::LayoutPut))
+        .await;
+    td.let_live_rounds_run(3).await;
+    td.checkpoints().release(Checkpoint::LayoutPut, false);
+    assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
+    assert_eq!(
+        states_until_matches(&mut events, id.as_str()).await,
+        ["checking", "matches"]
+    );
+}
+
+async fn matching_device_without_samples(
+    td: &TestCompanion,
+) -> (td_companion::devices::DeviceId, Layout) {
+    use td_companion::devices::ControlLayout;
+    let id = td.plug_media_device("mock0001").await;
+    let mut unsampled: Value =
+        serde_json::from_slice(include_bytes!("../../../../schema/examples/media.json")).unwrap();
+    for tile in unsampled["pages"][0]["tiles"].as_array_mut().unwrap() {
+        tile["action"]["account"] = json!("no-samples");
+    }
+    let layout: Layout = serde_json::from_value(unsampled).unwrap();
+    assert_eq!(
+        td.wait(&push(td, &id, &layout).await).await.state,
+        JobState::Succeeded
+    );
+    td.until(|td| {
+        matches!(
+            td.device(&id).unwrap().control_layout,
+            ControlLayout::Matches { .. }
+        )
+    })
+    .await;
+    let mut other = serde_json::to_value(&layout).unwrap();
+    other["pages"][0]["tiles"][2]["action"]["account"] = json!("other-account");
+    (id, serde_json::from_value(other).unwrap())
+}
+
+async fn differs_within(
+    td: &TestCompanion,
+    id: &td_companion::devices::DeviceId,
+    within: std::time::Duration,
+) -> bool {
+    use td_companion::devices::ControlLayout;
+    tokio::time::timeout(within, async {
+        while !matches!(
+            td.device(id).unwrap().control_layout,
+            ControlLayout::Differs { .. }
+        ) {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .is_ok()
+}
+
+fn to_portrait() -> td_companion::features::devices::DeviceSettingsPatch {
+    td_companion::features::devices::DeviceSettingsPatch {
+        orientation: Some("portrait".into()),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn a_round_during_an_orientation_change_leaves_no_stale_layout() {
+    use td_companion::checkpoints::Checkpoint;
+    use td_companion::devices::ControlLayout;
+    use td_companion::features::devices::{DevicePath, SettingsPatch};
+    let td = TestCompanion::start().await;
+    let (id, other) = matching_device_without_samples(&td).await;
+    td.checkpoints().hold(Checkpoint::BeforeOrientationPut);
+    td.checkpoints().hold(Checkpoint::AfterOrientationPut);
+    let patching =
+        td.call::<SettingsPatch>(DevicePath { device: id.clone() }, NoQuery, to_portrait());
+    let steering = async {
+        td.until(|td| td.checkpoints().waiting(Checkpoint::BeforeOrientationPut))
+            .await;
+        td.until(|td| {
+            matches!(
+                td.device(&id).unwrap().control_layout,
+                ControlLayout::Matches { .. }
+            )
+        })
+        .await;
+        td.write_layout_unseen(&id, &other).await;
+        td.checkpoints()
+            .release(Checkpoint::BeforeOrientationPut, false);
+        td.until(|td| td.checkpoints().waiting(Checkpoint::AfterOrientationPut))
+            .await;
+        let reported = differs_within(&td, &id, std::time::Duration::from_secs(2)).await;
+        td.checkpoints()
+            .release(Checkpoint::AfterOrientationPut, false);
+        reported
+    };
+    let (patched, reported) = tokio::join!(patching, steering);
+    assert!(patched.unwrap().restart_required);
+    assert!(reported, "the Layout read before the put stayed cached");
+}
+
+#[tokio::test]
+async fn an_orientation_change_that_fails_after_the_put_still_reads_the_layout_again() {
+    use td_companion::checkpoints::Checkpoint;
+    use td_companion::devices::ControlLayout;
+    use td_companion::features::devices::{DevicePath, SettingsPatch};
+    let td = TestCompanion::start().await;
+    let (id, other) = matching_device_without_samples(&td).await;
+    td.checkpoints().hold(Checkpoint::BeforeOrientationPut);
+    let patching =
+        td.call::<SettingsPatch>(DevicePath { device: id.clone() }, NoQuery, to_portrait());
+    let steering = async {
+        td.until(|td| td.checkpoints().waiting(Checkpoint::BeforeOrientationPut))
+            .await;
+        td.until(|td| {
+            matches!(
+                td.device(&id).unwrap().control_layout,
+                ControlLayout::Matches { .. }
+            )
+        })
+        .await;
+        td.write_layout_unseen(&id, &other).await;
+        td.checkpoints()
+            .release(Checkpoint::AfterOrientationPut, true);
+        td.checkpoints()
+            .release(Checkpoint::BeforeOrientationPut, false);
+    };
+    let (patched, ()) = tokio::join!(patching, steering);
+    assert!(patched.is_err());
+    assert_eq!(
+        td.deck(id.as_str()).settings().orientation,
+        Orientation::Portrait
+    );
+    assert!(
+        differs_within(&td, &id, std::time::Duration::from_secs(2)).await,
+        "the Layout read before the put stayed cached"
+    );
+}
+
+#[tokio::test]
+async fn control_layout_reports_unsupported_firmware_and_a_failed_read() {
+    use td_companion::devices::{ControlLayout, ControlLayoutUnavailable};
+    let unavailable = |reason| ControlLayout::Unavailable { reason };
+    let td = TestCompanion::start().await;
+    let old = td.plug_device_v1("mock0002").await;
+    td.until(|td| {
+        td.device(&old).unwrap().control_layout
+            == unavailable(ControlLayoutUnavailable::Unsupported)
+    })
+    .await;
+    let id = td.plug_media_device("mock0001").await;
+    let layout = Layout::parse(include_bytes!("../../../../schema/examples/media.json")).unwrap();
+    td.deck(id.as_str()).lose_sent_chunks([0; 5]);
+    assert_eq!(
+        td.wait(&push(&td, &id, &layout).await).await.state,
+        JobState::Succeeded
+    );
+    td.until(|td| {
+        td.device(&id).unwrap().control_layout == unavailable(ControlLayoutUnavailable::ReadFailed)
+    })
+    .await;
+    assert_eq!(
+        td.wait(&push(&td, &id, &layout).await).await.state,
+        JobState::Succeeded
+    );
+    td.until(|td| {
+        matches!(
+            td.device(&id).unwrap().control_layout,
+            ControlLayout::Matches { .. }
+        )
+    })
+    .await;
+}
