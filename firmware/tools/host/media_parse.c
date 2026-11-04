@@ -142,7 +142,6 @@ int host_press(void)
     send_events();
     if (emitted_count != 1 || last_emitted_seq != 1) return 2;
 
-    /* Queued press and in-flight part tap across a session reset must not reach the new session. */
     td_link_press("p", "t", "widget");
     tap_gen = 1;
     live_gen = 2;
