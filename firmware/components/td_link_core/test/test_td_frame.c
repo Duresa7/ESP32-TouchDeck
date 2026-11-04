@@ -4,6 +4,8 @@
 #include "unity.h"
 #include "cJSON.h"
 #include <string.h>
+#include <stdlib.h>
+#include "esp_heap_caps.h"
 
 extern const char golden_start[] asm("_binary_golden_frames_json_start");
 
@@ -47,9 +49,29 @@ TEST_CASE("CRC-16 CCITT FALSE matches the published check value", "[td_frame]")
     TEST_ASSERT_EQUAL_HEX16(0xffff, td_crc16(NULL, 0));
 }
 
+static size_t failed_allocation;
+
+static void *fixture_malloc(size_t bytes)
+{
+    void *memory = malloc(bytes);
+    if (!memory) failed_allocation = bytes;
+    return memory;
+}
+
 static void golden(const char *text, bool v1)
 {
+    failed_allocation = 0;
+    cJSON_Hooks hooks = { .malloc_fn = fixture_malloc, .free_fn = free };
+    size_t before = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    cJSON_InitHooks(&hooks);
     cJSON *root = cJSON_Parse(text);
+    const char *error = cJSON_GetErrorPtr();
+    cJSON_InitHooks(NULL);
+    printf("Frame fixture: bytes=%u heap_before=%u largest=%u heap_after=%u failed_alloc=%u error_offset=%d\n",
+           (unsigned)strlen(text), (unsigned)before, (unsigned)largest,
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT), (unsigned)failed_allocation,
+           error ? (int)(error - text) : -1);
     TEST_ASSERT_NOT_NULL(root);
     const cJSON *frames = cJSON_GetObjectItemCaseSensitive(root, "frames");
     TEST_ASSERT_GREATER_OR_EQUAL_INT(12, cJSON_GetArraySize(frames));

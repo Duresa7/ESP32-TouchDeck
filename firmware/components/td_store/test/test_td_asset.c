@@ -247,7 +247,7 @@ TEST_CASE("Asset listing pages four at a time in id order across shards, and del
 TEST_CASE("Asset admission cost stays bounded as the store grows", "[td_asset]")
 {
     mount();
-    char ids[64][TD_ASSET_ID_LEN + 1];
+    static char ids[64][TD_ASSET_ID_LEN + 1];
     int64_t empty = 0, populated = 0;
     int64_t empty_put = 0, populated_put = 0;
     for (unsigned count = 0; count <= 64; count++) {
