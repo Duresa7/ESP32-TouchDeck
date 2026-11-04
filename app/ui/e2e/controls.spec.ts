@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Capabilities, ControlLayout } from '../src/companion/api.ts';
 import type { GridPage, Layout, Tile } from '../src/lib/editor/validate.ts';
-import { consoleErrors, sideScroll, spills } from './break-helpers.ts';
+import { consoleErrors, sideScroll, spills, underDock } from './break-helpers.ts';
 import { layoutOf, waitEvent } from './layout-helpers.ts';
 
 const shots = process.env.TD_SHOTS;
@@ -72,7 +72,8 @@ async function home(page: Page) {
 
 async function noSpill(page: Page, name: string) {
   await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== 'running' || animation.effect?.getTiming().iterations === Infinity));
-  expect({ scroll: await sideScroll(page), spills: await spills(page, ['.preset-label']) }, name).toEqual({ scroll: 0, spills: [] });
+  const dock = await underDock(page, '[data-testid=page-tab], [data-testid=page-add], [data-testid=status]');
+  expect({ scroll: await sideScroll(page), spills: await spills(page, ['.preset-label']), dock }, name).toEqual({ scroll: 0, spills: [], dock: [] });
 }
 
 async function shot(page: Page, name: string) {
@@ -247,6 +248,20 @@ for (const theme of ['light', 'dark'] as const) {
         await shot(page, `checking-${size}-${theme}`);
         await page.evaluate(() => window.touchdeckDemo?.controls.release('mock0001'));
         await expect(notice(page)).toHaveCount(0);
+      });
+
+      test('a failed Send keeps the notice, the Page tabs and the Details clear of the nav', async ({ page }) => {
+        await home(page);
+        await onDevice(page, REFUSED, NO_COPY);
+        await card(page, 'Desk').getByTestId('controls-review').click();
+        await waitEvent(page, 'pulled');
+        await page.getByTestId('push').click();
+        await waitEvent(page, 'push-failed');
+        await page.getByTestId('status').getByText('Details').click();
+        await expect(page.getByTestId('status-detail')).toBeVisible();
+        await expect(notice(page)).toHaveAttribute('data-state', 'no-pushed-copy');
+        await noSpill(page, `failed-${size}-${theme}`);
+        await shot(page, `failed-${size}-${theme}`);
       });
     });
   }

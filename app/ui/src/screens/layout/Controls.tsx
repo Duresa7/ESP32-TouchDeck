@@ -2,7 +2,7 @@ import { useId, useMemo } from 'react';
 import { useStore } from 'zustand';
 import { useDevices } from '../../companion/devices.ts';
 import { useIntegrations } from '../../companion/integrations.ts';
-import { controlsStore, noticeOf, type ControlNotice } from '../../lib/device/controls.ts';
+import { controlsStore, noticeOf, type ControlNotice, type NeedsSend, type Unchecked } from '../../lib/device/controls.ts';
 import { controlBindings, controlWords, type ControlBinding } from '../../lib/editor/control-bindings.ts';
 import { plural } from '../../lib/editor/messages.ts';
 import type { EditorStore } from '../../lib/editor/store.ts';
@@ -19,14 +19,27 @@ export function useEditorControlNotice(store: EditorStore): ControlNotice {
   return device ? noticeOf(watch, device) : { kind: 'none' };
 }
 
-function needsText(notice: Extract<ControlNotice, { kind: 'needs-send' }>, device: string) {
-  switch (notice.reason) {
+function needsText(reason: NeedsSend, device: string) {
+  switch (reason) {
     case 'no-pushed-copy':
-      return "These Tiles show live values, but their controls aren't set up on this PC. Review the Layout, then choose Send to Device.";
+      return "These Tiles show live values, but their controls aren't set up on this PC.";
     case 'differs':
-      return `The Layout on ${device} differs from the one this PC sent. Review the Layout, then choose Send to Device.`;
+      return `The Layout on ${device} differs from the one this PC sent.`;
     default: {
-      const exhaustive: never = notice.reason;
+      const exhaustive: never = reason;
+      return exhaustive;
+    }
+  }
+}
+
+export function uncheckedText(reason: Unchecked, device: string) {
+  switch (reason) {
+    case 'read-failed':
+      return `Couldn't check controls. Unplug ${device} and plug it back in.`;
+    case 'unsupported':
+      return `Couldn't check controls. Update the Firmware on ${device}.`;
+    default: {
+      const exhaustive: never = reason;
       return exhaustive;
     }
   }
@@ -45,6 +58,16 @@ export function ControlNoticeBar({ store, device }: { store: EditorStore; device
         <p className="controls-notice-title">
           <i className="led" aria-hidden />
           Checking controls…
+        </p>
+      </section>
+    );
+  }
+  if (notice.kind === 'unchecked') {
+    return (
+      <section className="controls-notice is-unchecked" role="status" data-testid="controls-notice" data-state="unchecked" data-reason={notice.reason}>
+        <p className="controls-notice-title">
+          <i className="led" aria-hidden />
+          {uncheckedText(notice.reason, device)}
         </p>
       </section>
     );
@@ -70,22 +93,22 @@ export function ControlNoticeBar({ store, device }: { store: EditorStore; device
       <div className="controls-notice-head">
         <h2 className="controls-notice-title" id={titleId}>
           <i className="led" aria-hidden />
-          Controls need a Send
+          Controls need Send to Device
         </h2>
         {action}
       </div>
-      {other ? (
-        <p className="controls-notice-body" data-testid="controls-notice-body">
-          {device} shows its {notice.orientation} Layout. Switch to {NAMES[notice.orientation]} to review it.
-        </p>
-      ) : (
-        <>
-          <p className="controls-notice-body" data-testid="controls-notice-body">
-            {needsText(notice, device)}
-          </p>
-          <p className="controls-notice-note">Sending replaces the Layout on {device} and lets its Tiles control the Integrations shown here.</p>
-        </>
-      )}
+      <p className="controls-notice-text">
+        {other ? (
+          <span data-testid="controls-notice-body">
+            {device} shows its {notice.orientation} Layout. Switch to {NAMES[notice.orientation]} to review it.
+          </span>
+        ) : (
+          <>
+            <span data-testid="controls-notice-body">{needsText(notice.reason, device)}</span>{' '}
+            <span className="controls-notice-note">Sending replaces the Layout on {device} and lets its Tiles control the Integrations shown here.</span>
+          </>
+        )}
+      </p>
     </section>
   );
 }
@@ -135,7 +158,7 @@ export function ControlReview({ store, layout }: { store: EditorStore; layout: L
       </div>
       {bindings.length ? (
         <>
-          <p className="field-hint">Tiles on every Page that control an Integration on this PC. Select one to change it.</p>
+          <p className="field-hint">Tiles on every Page that control an Integration. Select one to change it.</p>
           <ul className="control-list">
             {bindings.map((binding) => (
               <li key={`${binding.page.id}/${binding.tile.id}`}>

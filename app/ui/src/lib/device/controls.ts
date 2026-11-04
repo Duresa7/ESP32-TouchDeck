@@ -5,9 +5,19 @@ import { devicesStore, type DevicesStore } from '../../companion/devices.ts';
 
 export type NeedsSend = 'no-pushed-copy' | 'differs';
 
+export type Unchecked = 'read-failed' | 'unsupported';
+
+export type SendCheck = { kind: 'echo'; before: ControlLayout } | { kind: 'fresh' } | { kind: 'unread'; reason: Unchecked };
+
+export interface SendWatch {
+  orientation: Orientation;
+  job: 'running' | 'succeeded';
+  check: SendCheck;
+}
+
 export interface ControlWatch {
   needs: { reason: NeedsSend; orientation: Orientation } | null;
-  send: { orientation: Orientation; phase: 'sending' | 'checking'; reset: boolean; before: ControlLayout } | null;
+  send: SendWatch | null;
 }
 
 export const QUIET: ControlWatch = { needs: null, send: null };
@@ -17,7 +27,8 @@ export type SendOutcome = 'succeeded' | 'failed';
 export type ControlNotice =
   | { kind: 'none' }
   | { kind: 'needs-send'; reason: NeedsSend; orientation: Orientation }
-  | { kind: 'checking'; orientation: Orientation };
+  | { kind: 'checking'; orientation: Orientation }
+  | { kind: 'unchecked'; reason: Unchecked; orientation: Orientation };
 
 const NONE: ControlNotice = { kind: 'none' };
 
@@ -29,6 +40,23 @@ export function sameAssessment(a: ControlLayout, b: ControlLayout): boolean {
   return a.state === b.state && a.orientation === b.orientation && a.has_controls === b.has_controls;
 }
 
+function unavailable(watch: ControlWatch, status: Extract<ControlLayout, { state: 'unavailable' }>): ControlWatch {
+  const { send } = watch;
+  switch (status.reason) {
+    case 'offline':
+      return QUIET;
+    case 'checking':
+      return send && send.check.kind !== 'fresh' ? { ...watch, send: { ...send, check: { kind: 'fresh' } } } : watch;
+    case 'read-failed':
+    case 'unsupported':
+      return send ? { needs: null, send: { ...send, check: { kind: 'unread', reason: status.reason } } } : QUIET;
+    default: {
+      const exhaustive: never = status.reason;
+      return exhaustive;
+    }
+  }
+}
+
 export function observe(watch: ControlWatch, device: Pick<DeviceSummary, 'link' | 'control_layout'>): ControlWatch {
   const status = device.control_layout;
   if (!connected(device)) return QUIET;
@@ -36,13 +64,13 @@ export function observe(watch: ControlWatch, device: Pick<DeviceSummary, 'link' 
     case 'matches':
       return QUIET;
     case 'unavailable':
-      if (status.reason !== 'checking') return QUIET;
-      return watch.send && !watch.send.reset ? { ...watch, send: { ...watch.send, reset: true } } : watch;
+      return unavailable(watch, status);
     case 'no-pushed-copy':
     case 'differs': {
       const needs = status.has_controls ? { reason: status.state, orientation: status.orientation } : null;
-      const stale = watch.send !== null && !watch.send.reset && sameAssessment(watch.send.before, status);
-      return { needs, send: stale ? watch.send : null };
+      const { send } = watch;
+      const stale = send?.check.kind === 'echo' && sameAssessment(send.check.before, status);
+      return { needs, send: stale ? send : null };
     }
     default: {
       const exhaustive: never = status;
@@ -53,17 +81,21 @@ export function observe(watch: ControlWatch, device: Pick<DeviceSummary, 'link' 
 
 export function sending(watch: ControlWatch, { orientation, before }: { orientation: Orientation; before: ControlLayout }): ControlWatch {
   if (watch.needs?.orientation !== orientation) return watch;
-  return { ...watch, send: { orientation, phase: 'sending', reset: false, before } };
+  return { ...watch, send: { orientation, job: 'running', check: { kind: 'echo', before } } };
 }
 
 export function sent(watch: ControlWatch, outcome: SendOutcome): ControlWatch {
-  if (!watch.send) return watch;
-  return outcome === 'succeeded' ? { ...watch, send: { ...watch.send, phase: 'checking' } } : { ...watch, send: null };
+  const { send } = watch;
+  if (send?.job !== 'running') return watch;
+  return outcome === 'succeeded' ? { ...watch, send: { ...send, job: 'succeeded' } } : { ...watch, send: null };
 }
 
 export function noticeOf(watch: ControlWatch | undefined, device: Pick<DeviceSummary, 'link'>): ControlNotice {
   if (!watch || !connected(device)) return NONE;
-  if (watch.send?.phase === 'checking') return { kind: 'checking', orientation: watch.send.orientation };
+  const { send } = watch;
+  if (send?.job === 'succeeded') {
+    return send.check.kind === 'unread' ? { kind: 'unchecked', reason: send.check.reason, orientation: send.orientation } : { kind: 'checking', orientation: send.orientation };
+  }
   return watch.needs ? { kind: 'needs-send', ...watch.needs } : NONE;
 }
 

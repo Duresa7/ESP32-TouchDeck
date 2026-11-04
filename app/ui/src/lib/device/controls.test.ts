@@ -75,6 +75,45 @@ describe('Checking controls after a Send', () => {
     expect(notice(walk([send, (w) => sent(w, 'succeeded'), see(DIFFERS)], asked)), 'a changed assessment is fresh').toBe('needs-send');
   });
 
+  test('once the Companion has reset, an assessment equal to the one before the Send is fresh', () => {
+    const needs = { kind: 'needs-send', reason: 'no-pushed-copy', orientation: 'landscape' };
+    expect(noticeOf(walk([send, see(CHECKING), (w) => sent(w, 'succeeded'), see(NO_COPY)], asked), desk(NO_COPY))).toEqual(needs);
+    expect(noticeOf(walk([send, (w) => sent(w, 'succeeded'), see(CHECKING), see(NO_COPY)], asked), desk(NO_COPY))).toEqual(needs);
+  });
+
+  test('losing the link while sending or checking drops the check, and the reconnect asks again', () => {
+    const offline = see({ state: 'unavailable', reason: 'offline' }, LOST);
+    const reconnect = [see(CHECKING), see(NO_COPY)];
+    const whileChecking = walk([send, (w) => sent(w, 'succeeded'), offline], asked);
+    expect(noticeOf(whileChecking, desk(CHECKING, LOST))).toEqual({ kind: 'none' });
+    expect(notice(walk([see(CHECKING)], whileChecking))).toBe('none');
+    expect(notice(walk(reconnect, whileChecking))).toBe('needs-send');
+    const whileSending = walk([send, offline, (w) => sent(w, 'succeeded')], asked);
+    expect(notice(walk([see(CHECKING)], whileSending))).toBe('none');
+    expect(notice(walk(reconnect, whileSending))).toBe('needs-send');
+    expect(notice(walk([see(CHECKING), see(MATCHES)], whileSending))).toBe('none');
+  });
+
+  test('a check that ends unread says so until a later assessment decides', () => {
+    for (const reason of ['read-failed', 'unsupported'] as const) {
+      const unread = see({ state: 'unavailable', reason });
+      const ended = walk([send, see(CHECKING), (w) => sent(w, 'succeeded'), unread], asked);
+      expect(noticeOf(ended, desk(CHECKING)), reason).toEqual({ kind: 'unchecked', reason, orientation: 'landscape' });
+      expect(notice(walk([send, see(CHECKING), unread, (w) => sent(w, 'succeeded')], asked)), `${reason} while the Job runs`).toBe('unchecked');
+      expect(notice(walk([send, unread, (w) => sent(w, 'failed')], asked)), `${reason} and a failed Send`).toBe('none');
+      expect(notice(walk([see(CHECKING)], ended))).toBe('checking');
+      expect(notice(walk([see(MATCHES)], ended))).toBe('none');
+      expect(notice(walk([see(NO_COPY)], ended))).toBe('needs-send');
+      expect(noticeOf(ended, desk(CHECKING, LOST))).toEqual({ kind: 'none' });
+    }
+  });
+
+  test('a Layout without controls after the Send has nothing to check', () => {
+    for (const end of [MATCHES, NO_COPY, DIFFERS].map((status) => ({ ...status, has_controls: false }))) {
+      expect(notice(walk([send, see(CHECKING), (w) => sent(w, 'succeeded'), see(end)], asked)), end.state).toBe('none');
+    }
+  });
+
   test('a failed Send keeps the guidance', () => {
     expect(notice(walk([send, see(CHECKING), (w) => sent(w, 'failed')], asked))).toBe('needs-send');
     expect(notice(walk([send, (w) => sent(w, 'failed'), see(CHECKING), see(NO_COPY)], asked))).toBe('needs-send');
