@@ -6,7 +6,9 @@ import { jobsStore, waitForJob } from '../../companion/jobs.ts';
 import { showsKind, type TileKind } from '../../lib/device/needs-firmware.ts';
 import { offersGif } from '../../lib/editor/gif.ts';
 import { createGifTiles, type GifTiles, type GifTilesState } from '../../lib/editor/gif-tiles.ts';
-import { createEditorStore, type EditorState, type EditorStore } from '../../lib/editor/store.ts';
+import { controlsStore, type ControlsStore } from '../../lib/device/controls.ts';
+import { createEditorStore, type EditorDevice, type EditorState, type EditorStore } from '../../lib/editor/store.ts';
+import type { Orientation } from '../../lib/editor/validate.ts';
 
 const stores = new WeakMap<Companion, EditorStore>();
 const gifStores = new WeakMap<Companion, GifTiles>();
@@ -19,13 +21,29 @@ function storage() {
   }
 }
 
+export function watchSends(editor: EditorStore, controls: ControlsStore): () => void {
+  return editor.subscribe((next, previous) => {
+    const device = next.device?.id;
+    if (!device || next.busy === previous.busy) return;
+    if (next.busy === 'push') controls.getState().sending(device, next.orientation);
+    else if (previous.busy === 'push') controls.getState().sent(device, next.status?.event === 'pushed' ? 'succeeded' : 'failed');
+  });
+}
+
 export function editorFor(companion: Companion): EditorStore {
   let store = stores.get(companion);
   if (!store) {
     store = createEditorStore({ companion, storage: storage(), wait: (job) => waitForJob(jobsStore, companion, job) });
+    watchSends(store, controlsStore);
     stores.set(companion, store);
   }
   return store;
+}
+
+export function reviewLayout(store: EditorStore, device: EditorDevice, orientation: Orientation) {
+  store.open(device, orientation);
+  store.setOrientation(orientation);
+  void store.load();
 }
 
 /** The GIF Tiles of the editor that `editorFor` gives for this Companion. */

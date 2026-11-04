@@ -8,6 +8,7 @@ export interface FakeLayoutsOptions {
   publish(frame: Frame): void;
   seed?: Record<string, StoredLayout>;
   delayMs?: number;
+  wrote?(push: { device: string; orientation: Orientation }): void;
 }
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
@@ -142,6 +143,7 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
     const job = startJob('layouts.push', device, { assets_sent: 0, assets_total: 0, bytes_sent: 0, bytes_total: bytes }, () => {
       puts += 1;
       stored.set(slot(device, orientation), text);
+      options.wrote?.({ device, orientation });
       const tiles = layout.pages.reduce((sum, page) => sum + (page.kind === 'grid' ? page.tiles.length : 0), 0);
       const report: PushReport = {
         state: { source: 'device', name: layout.name, orientation: layout.orientation, pages: layout.pages.length, tiles, icons_loaded: 0, icons_missing: 0, bytes, load_ms: 4, error: null },
@@ -228,6 +230,7 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
     store: (device: string, layout: Layout) => void stored.set(slot(device, layout.orientation), canonical(layout)),
     pushed(device: string, layout: StoredLayout) {
       stored.set(slot(device, layout.orientation), JSON.stringify(layout));
+      options.wrote?.({ device, orientation: layout.orientation });
       puts += 1;
       minted += 1;
       const job: Job = {
