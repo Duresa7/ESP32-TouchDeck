@@ -548,10 +548,11 @@ pub struct ProxyInfo {
     pub accounts: Vec<Account>,
 }
 
+#[derive(Clone)]
 pub struct CliProxy {
     base: String,
     keys: Arc<dyn KeyStore>,
-    fetch: Box<dyn Fetch>,
+    fetch: Arc<dyn Fetch>,
     last: Vec<Reading>,
     info: ProxyInfo,
     refresh_gate: RefreshGate,
@@ -568,7 +569,7 @@ impl CliProxy {
             },
             base,
             keys,
-            fetch,
+            fetch: fetch.into(),
             last: Vec::new(),
             refresh_gate: RefreshGate::default(),
         }
