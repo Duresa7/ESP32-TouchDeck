@@ -686,8 +686,12 @@ is up), `photo_timeout_s`, `face_count` (times the face came up since boot), and
 
 ### GIF validation host tests
 
-From the repository root, install Pillow (`python -m pip install Pillow`) and run
-`python firmware/tools/test_gif.py` and `python firmware/tools/test_asset.py`.
+Both tests need Pillow, which the ESP-IDF Python environment doesn't ship.
+Use any Python 3 with Pillow at the version CI pins
+(`python -m pip install Pillow==13.0.0`, see `.github/workflows/firmware.yml`).
+That can be a plain Python or a virtualenv of your own; or, in an ESP-IDF shell,
+install the pin into the IDF environment, as CI does. Then, from the repository
+root, run `python firmware/tools/test_gif.py` and `python firmware/tools/test_asset.py`.
 Linux uses `CC` (default `cc`); Windows uses an x64 Visual Studio developer
 terminal. Set `TD_TEST_OUT` to an existing local evidence directory to keep
 compiled test libraries there. Resolve the locked dependencies first with
