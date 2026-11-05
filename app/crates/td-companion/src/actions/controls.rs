@@ -720,10 +720,8 @@ mod tests {
     }
 
     #[test]
-    fn a_burst_keeps_its_final_end_and_paces_control_sets() {
+    fn a_burst_within_queue_capacity_keeps_its_final_end_and_paces_control_sets() {
         let td = running(media(), true);
-        // The burst fits the link's 256-event queue. A burst past it overflows by design, and the flood test
-        // covers that.
         for _ in 0..200 {
             td.deck
                 .emit_input("media", "volume", "value", InputPhase::Move, 0.2);

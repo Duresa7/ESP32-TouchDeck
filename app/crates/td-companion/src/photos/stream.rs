@@ -180,8 +180,6 @@ mod tests {
         interval: Duration::from_secs(15),
     };
 
-    /// Opens a session without pings. The mock Device drops a session that sends nothing for five seconds, so each
-    /// test makes its pictures before it opens one.
     fn session(deck: &MockDeck) -> Session {
         let session = Session::open(
             Box::new(deck.connect()),

@@ -1522,8 +1522,6 @@ mod tests {
     }
 
     impl Media {
-        /// The pictures are made before the session opens: the mock Device drops a session that sends nothing for
-        /// five seconds, and these sessions do not ping.
         fn new(rows: u8) -> Media {
             let fake = Arc::new(FakeControl::default());
             for seed in 1..=6 {
@@ -1547,7 +1545,6 @@ mod tests {
             }
         }
 
-        /// One round, then the covers it asked for, then a round half a second later that sends them.
         fn deliver(&mut self) -> HashMap<String, String> {
             let mut errors = self.round().errors;
             make_covers(&mut self.router, &self.fake, &mut self.cache);
@@ -1557,7 +1554,6 @@ mod tests {
             errors
         }
 
-        /// The mock Device's rate windows follow the router's clock.
         fn round(&mut self) -> Report {
             self.deck
                 .set_live_time(self.now.duration_since(self.start).as_millis() as u64);
