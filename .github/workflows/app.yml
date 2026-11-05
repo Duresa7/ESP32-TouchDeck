@@ -24,7 +24,38 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  source:
+    name: Resolve checked revision
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      revision: ${{ steps.source.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify and pin the checked revision
+        id: source
+        shell: bash
+        env:
+          EXPLICIT_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          if [ -n "$EXPLICIT_REF" ]; then
+            git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+            git merge-base --is-ancestor HEAD origin/main || {
+              echo '::error::An explicit app ref must be a commit on origin/main.'
+              exit 1
+            }
+          fi
+          revision=$(git rev-parse --verify 'HEAD^{commit}')
+          [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
   app:
+    needs: source
     name: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -43,18 +74,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
-          fetch-depth: 0
+          ref: ${{ needs.source.outputs.revision }}
           persist-credentials: false
-
-      - name: Verify an explicit ref is on main
-        if: inputs.ref != ''
-        shell: pwsh
-        run: |
-          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          git merge-base --is-ancestor HEAD origin/main
-          if ($LASTEXITCODE) { throw 'An explicit app ref must be a commit on origin/main.' }
 
       # Windows builds Rust on a Dev Drive: ReFS, with Defender scanning it asynchronously.
       # It mounts beside the checkout so the drive's protected System Volume Information folder stays out of the Rust cache.
@@ -122,6 +143,7 @@ jobs:
         run: pnpm --filter @touchdeck/electron e2e
 
   e2e:
+    needs: source
     name: e2e ${{ matrix.shard }}/3
     if: inputs.e2e
     strategy:
@@ -136,7 +158,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ needs.source.outputs.revision }}
           persist-credentials: false
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
