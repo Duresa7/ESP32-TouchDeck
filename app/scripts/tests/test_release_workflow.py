@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import os
@@ -100,6 +101,28 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.data = b'tampered with consistent checksums'
         self.prepare()
         self.assertNotEqual(self.run_shell('Check the downloaded assets belong to this tag', prelude).returncode, 0)
+
+    @unittest.skipUnless(shutil.which('node'), 'node required')
+    def test_sign_step_signs_with_the_release_secrets_and_version(self):
+        self.prepare()
+        shutil.copytree(ROOT / '.github/release-signer', self.root / '.github/release-signer')
+        key = self.root / 'disposable-test-only.key'
+        subprocess.run(['node', ROOT / '.github/release-signer/cli.mjs', 'generate', '--write-keys', key,
+                        '--password', 'test-only'], check=True, capture_output=True)
+        public = base64.b64decode(base64.b64decode(key.with_name(key.name + '.pub').read_text()).decode().split('\n')[1])
+        self.env.update(RELEASE_VERSION='1.0.0', TAURI_SIGNING_PRIVATE_KEY=key.read_text(),
+                        TAURI_SIGNING_PRIVATE_KEY_PASSWORD='test-only')
+        key.unlink()
+        result = self.run_shell('Sign the checked installer', '')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, '')
+        lines = base64.b64decode((self.assets / (NAME + '.sig')).read_text()).decode().split('\n')
+        self.assertEqual(base64.b64decode(lines[1])[:10], b'ED' + public[2:10])
+        self.assertRegex(lines[2], rf'^trusted comment: timestamp:\d+\tfile:{NAME}\tversion:1\.0\.0$')
+        self.env['TAURI_SIGNING_PRIVATE_KEY_PASSWORD'] = 'wrong'
+        failed = self.run_shell('Sign the checked installer', '')
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertEqual(failed.stderr.strip(), 'release-signer: Wrong password for the private key')
 
 
 if __name__ == '__main__':
