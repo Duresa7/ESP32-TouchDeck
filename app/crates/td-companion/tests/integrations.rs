@@ -358,9 +358,9 @@ async fn local_stub_accounts_revision_and_wire_outputs_are_safe() {
             ("status", "Account status"),
             ("success", "Requests OK"),
             ("failed", "Requests failed"),
-            ("recent_10m", "Requests in 10 min"),
-            ("five_hour_pct", "5-hour limit used"),
-            ("seven_day_pct", "7-day limit used"),
+            ("recent_10m", "Requests 10 min"),
+            ("five_hour_pct", "5-hour used"),
+            ("seven_day_pct", "7-day used"),
             ("five_hour_reset", "5-hour reset in"),
             ("seven_day_reset", "7-day reset in"),
             ("plan", "Plan")

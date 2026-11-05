@@ -52,15 +52,15 @@ export const ACTION_GROUPS: readonly { name: string; kinds: readonly { type: Act
 ];
 
 export const PROXY_FIELDS: Readonly<Record<string, string>> = {
-  five_hour_pct: '5-hour limit used',
-  seven_day_pct: '7-day limit used',
+  five_hour_pct: '5-hour used',
+  seven_day_pct: '7-day used',
   five_hour_reset: '5-hour reset in',
   seven_day_reset: '7-day reset in',
   plan: 'Plan',
   status: 'Account status',
   success: 'Requests OK',
   failed: 'Requests failed',
-  recent_10m: 'Requests in 10 min',
+  recent_10m: 'Requests 10 min',
 };
 
 export function freshAction(type: ActionType, pages: readonly string[], here?: string): Action {

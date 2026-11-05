@@ -239,6 +239,34 @@ mod tests {
         assert!(Registry::from_registrations(env, [registration, registration]).is_err());
     }
 
+    /// `UI_WIDGET_CAPTION_MAX` in `firmware/components/td_ui_core/include/ui_widget_state.h`.
+    const FIRMWARE_CAPTION_MAX_BYTES: usize = 16;
+
+    #[test]
+    fn preset_captions_fit_the_firmware_caption_limit() {
+        let env = Environment {
+            media_provider: Some(Arc::new(media::fake::FakeMedia::default())),
+            volume: Some(volume::fake::FakeVolume::default().factory()),
+            secrets: Arc::new(secrets::MemorySecrets::default()),
+            config_file: None,
+            fetch: Arc::new(|| Box::new(crate::sources::HttpFetch::new())),
+        };
+        let registry = Registry::new(env).unwrap();
+        let mut presets = 0;
+        for (id, integration) in &registry.0 {
+            for preset in integration.summary().presets {
+                presets += 1;
+                assert!(
+                    preset.name.len() <= FIRMWARE_CAPTION_MAX_BYTES,
+                    "{id} preset {:?} is {} bytes",
+                    preset.name,
+                    preset.name.len()
+                );
+            }
+        }
+        assert!(presets > 0);
+    }
+
     #[test]
     fn polling_integrations_have_no_control() {
         let env = Environment {

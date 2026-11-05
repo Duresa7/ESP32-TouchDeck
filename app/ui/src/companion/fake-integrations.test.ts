@@ -22,7 +22,7 @@ test('detail is null until a poll and carries typed account usage and named Pres
   expect(result).toHaveProperty('detail.accounts.0.account', 'Work');
   expect(result).toHaveProperty('detail.accounts.0.five_hour.resets_at_ms', 1800007800000);
   expect(result).toHaveProperty('detail.accounts.1.error', 'provider refused (HTTP 403)');
-  expect(fake.list()[0].presets.map(p => p.name)).toEqual(['Account status', 'Requests OK', 'Requests failed', 'Requests in 10 min', '5-hour limit used', '7-day limit used', '5-hour reset in', '7-day reset in', 'Plan']);
+  expect(fake.list()[0].presets.map(p => p.name)).toEqual(['Account status', 'Requests OK', 'Requests failed', 'Requests 10 min', '5-hour used', '7-day used', '5-hour reset in', '7-day reset in', 'Plan']);
   expect(JSON.stringify([result, frames])).not.toContain('fixture-private-value');
   const revision = fake.list()[0].revision;
   expect(await call('PUT', `${path}/config`, { enabled: true, url: 'https://hub.example', interval_s: 60 })).toEqual(result);
