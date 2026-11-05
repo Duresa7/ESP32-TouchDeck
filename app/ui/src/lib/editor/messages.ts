@@ -24,7 +24,7 @@ const FIELDS: Record<string, string> = {
   field: 'Choose a value to show.',
 };
 
-export function friendlyRefusal(reason: string, layout?: Layout | null, device = 'the Device'): string {
+export function friendlyRefusal(reason: string, layout?: Layout | null, device = 'the Device', path = ''): string {
   let match: RegExpExecArray | null;
   if ((match = /^overlaps (\S+)$/.exec(reason))) {
     const label = tileLabel(layout, match[1]);
@@ -41,7 +41,10 @@ export function friendlyRefusal(reason: string, layout?: Layout | null, device =
     const label = tileLabel(layout, match[1]);
     return `The grid can't shrink past ${label ? `“${label}”` : 'a Tile'}. Move or remove it first.`;
   }
-  if ((match = /^text\.empty: \/pages\/\d+\/tiles\/\d+\/action\/(\w+)/.exec(reason)) && FIELDS[match[1]]) return FIELDS[match[1]];
+  if (reason.startsWith('text.empty')) {
+    const field = FIELDS[path.split('/').pop() ?? ''];
+    if (field) return field;
+  }
   switch (reason.split(':')[0]) {
     case 'label.too-long':
       return 'Tile labels can be up to 16 characters.';

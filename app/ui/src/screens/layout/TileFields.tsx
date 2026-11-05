@@ -29,7 +29,7 @@ function LabelField({ store, tile, device, layout }: { store: EditorStore; tile:
   const ids = useFieldIds();
   const refused = useEditorState(store, (s) => tileProblems(s, tile.id)?.label);
   const value = refused?.value ?? tile.label;
-  const error = refused ? friendlyRefusal(refused.reason, layout, device) : null;
+  const error = refused ? friendlyRefusal(refused.reason, layout, device, refused.path) : null;
   const missing = missingGlyphs(value);
   const hint = `${[...value].length} of ${LABEL_MAX} characters. Long labels shrink on ${device}.`;
   return (

@@ -380,9 +380,9 @@ Every user-visible string in today's app. Locations are relative to `app/`. "Dro
 | Location | Old | New | Note |
 | --- | --- | --- | --- |
 | `index.html:6` | TouchDeck | Open TouchDeck | Page title (ADR 0003) |
-| `src-tauri/tauri.conf.json:3` | TouchDeck | Open TouchDeck | Product name for the installer and taskbar |
-| `src-tauri/tauri.conf.json:18` | TouchDeck | Open TouchDeck | Window title |
-| `src-tauri/src/lib.rs:159` | TouchDeck {BUILD_SHA} | Open TouchDeck | Build hash moves to Settings, About |
+| `app/electron/electron-builder.json` (`productName`) | TouchDeck | Open TouchDeck | Product name for the installer and taskbar |
+| `app/electron/src/main.ts` (window `title`) | TouchDeck | Open TouchDeck | Window title |
+| `src-tauri/src/lib.rs:159` (removed) | TouchDeck {BUILD_SHA} | Open TouchDeck | Build hash moves to Settings, About |
 | `src/App.svelte:13` | TouchDeck | Open TouchDeck | |
 | `src/App.svelte:18` | Buttons | Layout | Bottom-left icon, tooltip "Layout" |
 | `src/App.svelte:19` | AI usage | Integrations | Bottom-left icon. AI usage becomes the CLIProxyAPI Integration |
@@ -1007,7 +1007,7 @@ Detection is automatic, so the connection pill and its panel go away. Status wor
 
 ### Messages from the Companion and Firmware that reach the UI
 
-Today these Rust strings show in the UI, most under Details and some as the main text. The Companion API gives each error a code and a message (spec, "API contract"). The UI shows the "New" sentence for the code and puts the raw message under Details. Locations are relative to `app/`.
+History: the `src-tauri/` locations in this table cite the removed Tauri crate and record what the migration replaced; those files no longer exist. Today these Rust strings showed in the UI, most under Details and some as the main text. The Companion API gives each error a code and a message (spec, "API contract"). The UI shows the "New" sentence for the code and puts the raw message under Details. Locations are relative to `app/`.
 
 | Location | Old | New | Note |
 | --- | --- | --- | --- |

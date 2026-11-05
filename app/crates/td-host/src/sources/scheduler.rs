@@ -37,7 +37,11 @@ struct Sent {
 }
 
 fn cut(text: &str, max: usize) -> String {
-    text.chars().take(max).collect()
+    let mut end = text.len().min(max);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_owned()
 }
 
 #[derive(Default)]
@@ -206,10 +210,13 @@ impl Scheduler {
                     value: if status.stale {
                         "stale".to_owned()
                     } else if usage {
-                        format!(
-                            "5h {} 7d {}",
-                            five.map_or("—", |r| r.value.as_str()),
-                            seven.map_or("—", |r| r.value.as_str())
+                        cut(
+                            &format!(
+                                "5h {} 7d {}",
+                                five.map_or("—", |r| r.value.as_str()),
+                                seven.map_or("—", |r| r.value.as_str())
+                            ),
+                            CAPTION_MAX,
                         )
                     } else {
                         cut(&status.value, CAPTION_MAX)
@@ -268,5 +275,21 @@ impl Scheduler {
                 SEND_FLOOR.checked_sub(now.saturating_duration_since(sent.at))
             })
             .min()
+    }
+}
+
+#[cfg(test)]
+mod cut_tests {
+    use super::{CAPTION_MAX, cut};
+
+    #[test]
+    fn cuts_to_the_firmware_byte_limit_without_splitting_a_character() {
+        let cut_label = cut("Température du CPU", CAPTION_MAX);
+        assert!(cut_label.len() <= CAPTION_MAX);
+        assert_eq!(cut_label, "Température du ");
+        let emoji = cut("CPU 🔥🔥🔥🔥🔥", CAPTION_MAX);
+        assert_eq!(emoji, "CPU 🔥🔥🔥");
+        assert!(emoji.len() <= CAPTION_MAX);
+        assert_eq!(cut("Mute", CAPTION_MAX), "Mute");
     }
 }
