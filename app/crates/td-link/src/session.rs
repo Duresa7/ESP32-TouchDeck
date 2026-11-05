@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{self, ErrorKind, Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -227,11 +227,22 @@ impl Shared {
 
     fn write(&self, bytes: &[u8]) -> io::Result<()> {
         let mut writer = self.writer.lock().unwrap();
-        let deadline = Instant::now() + WRITE_DEADLINE;
+        self.write_locked(&mut **writer, bytes, Instant::now() + WRITE_DEADLINE)
+    }
+
+    fn write_locked(
+        &self,
+        writer: &mut dyn Write,
+        bytes: &[u8],
+        deadline: Instant,
+    ) -> io::Result<()> {
         let mut rest = bytes;
         while !rest.is_empty() {
             if !self.open.load(Ordering::Acquire) {
                 return Err(ErrorKind::BrokenPipe.into());
+            }
+            if Instant::now() >= deadline {
+                return Err(ErrorKind::TimedOut.into());
             }
             match writer.write(rest) {
                 Ok(0) => return Err(ErrorKind::WriteZero.into()),
@@ -262,6 +273,7 @@ impl Shared {
     }
 
     fn call(&self, name: &str, payload: Vec<u8>, timeout: Duration) -> Result<Reply, LinkError> {
+        let deadline = Instant::now() + timeout;
         let (slot, reply) = mpsc::sync_channel(1);
         let seq = {
             let mut pending = self.pending.lock().unwrap();
@@ -276,11 +288,43 @@ impl Shared {
         let wire = Frame::message(Role::Request(seq), payload)
             .encode()
             .map_err(|error| LinkError::Io(format!("request does not fit one frame: {error}")))?;
-        if let Err(error) = self.write(&wire) {
+        let sent = (|| {
+            loop {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    return Err(LinkError::Timeout(timeout));
+                }
+                if !self.open.load(Ordering::Acquire) {
+                    return Err(self.closed());
+                }
+                match self.writer.try_lock() {
+                    Ok(mut writer) => {
+                        if Instant::now() >= deadline {
+                            return Err(LinkError::Timeout(timeout));
+                        }
+                        let result = self.write_locked(
+                            &mut **writer,
+                            &wire,
+                            deadline.min(Instant::now() + WRITE_DEADLINE),
+                        );
+                        return if Instant::now() >= deadline {
+                            Err(LinkError::Timeout(timeout))
+                        } else {
+                            result.map_err(|error| LinkError::Io(error.to_string()))
+                        };
+                    }
+                    Err(TryLockError::WouldBlock) => {
+                        thread::sleep(left.min(Duration::from_millis(1)));
+                    }
+                    Err(TryLockError::Poisoned(error)) => panic!("{error}"),
+                }
+            }
+        })();
+        if let Err(error) = sent {
             forget();
-            return Err(LinkError::Io(error.to_string()));
+            return Err(error);
         }
-        match reply.recv_timeout(timeout) {
+        match reply.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
             Ok(reply) if reply.m == name => {
                 self.watch(&reply);
                 Ok(reply)
@@ -917,6 +961,113 @@ mod tests {
         );
         assert!(started.elapsed() >= Duration::from_millis(300));
         assert!(session.is_open());
+    }
+
+    struct StalledWriter {
+        entered: Sender<()>,
+        release: Receiver<()>,
+        writes: Arc<AtomicUsize>,
+    }
+
+    impl Write for StalledWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if self.writes.fetch_add(1, Ordering::SeqCst) == 0 {
+                self.entered.send(()).unwrap();
+                self.release.recv().unwrap();
+            }
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Transport for StalledWriter {
+        fn split(self: Box<Self>) -> io::Result<(Box<dyn Read + Send>, Box<dyn Write + Send>)> {
+            Ok((Box::new(TimeoutReader), self))
+        }
+    }
+
+    #[test]
+    fn request_timeout_includes_stalled_write_lock_without_a_late_write() {
+        let (entered, started) = mpsc::channel();
+        let (release, blocked) = mpsc::channel();
+        let writes = Arc::new(AtomicUsize::new(0));
+        let (session, _events) = Session::open(
+            Box::new(StalledWriter {
+                entered,
+                release: blocked,
+                writes: writes.clone(),
+            }),
+            quiet(),
+        )
+        .unwrap();
+        let session = Arc::new(session);
+        let first = thread::spawn({
+            let session = session.clone();
+            move || session.send_line("version")
+        });
+        started.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (done, result) = mpsc::channel();
+        let timeout = Duration::from_millis(100);
+        let second = thread::spawn({
+            let session = session.clone();
+            move || {
+                done.send(session.request(&Request::Hello, timeout))
+                    .unwrap()
+            }
+        });
+        let timely = result.recv_timeout(Duration::from_millis(600));
+        release.send(()).unwrap();
+        first.join().unwrap().unwrap();
+        second.join().unwrap();
+        assert_eq!(
+            writes.load(Ordering::SeqCst),
+            1,
+            "expired request wrote after release"
+        );
+        assert_eq!(timely, Ok(Err(LinkError::Timeout(timeout))));
+        assert!(session.is_open());
+    }
+
+    #[test]
+    fn heartbeat_timeout_includes_stalled_write_lock() {
+        let (entered, started) = mpsc::channel();
+        let (release, blocked) = mpsc::channel();
+        let writes = Arc::new(AtomicUsize::new(0));
+        let (session, events) = Session::open(
+            Box::new(StalledWriter {
+                entered,
+                release: blocked,
+                writes: writes.clone(),
+            }),
+            quiet(),
+        )
+        .unwrap();
+        let session = Arc::new(session);
+        let first = thread::spawn({
+            let session = session.clone();
+            move || session.send_line("version")
+        });
+        started.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (stop, stopped) = mpsc::channel();
+        let heartbeat = thread::spawn({
+            let shared = session.shared.clone();
+            move || ping_loop(&shared, &stopped, Duration::from_millis(10), quiet())
+        });
+        let closed = events.recv_timeout(Duration::from_millis(800));
+        let was_open = session.is_open();
+        stop.send(()).ok();
+        release.send(()).unwrap();
+        first.join().unwrap().ok();
+        heartbeat.join().unwrap();
+        assert_eq!(
+            closed,
+            Ok(Incoming::Closed("the deck stopped answering ping".into()))
+        );
+        assert!(!was_open);
+        assert_eq!(writes.load(Ordering::SeqCst), 1);
     }
 
     struct BrokenWriter;
