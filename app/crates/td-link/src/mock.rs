@@ -177,6 +177,7 @@ struct State {
     update_aborted: bool,
     assets: BTreeMap<String, Vec<u8>>,
     asset_capacity: u64,
+    pinned_assets: BTreeSet<String>,
     chunk_bytes: usize,
     /// The xfer of the last Asset transfer that closed and what `v2.asset.end` answered for it.
     asset_end: Option<(u8, Map<String, Value>)>,
@@ -333,6 +334,7 @@ impl MockDeck {
                 update_aborted: false,
                 assets: BTreeMap::new(),
                 asset_capacity: ASSET_CAPACITY,
+                pinned_assets: BTreeSet::new(),
                 chunk_bytes: 0,
                 asset_end: None,
                 live: Live::new(),
@@ -722,6 +724,17 @@ impl MockDeck {
 
     pub fn reboots(&self) -> u32 {
         self.state().reboots
+    }
+
+    /// Seeds a stored Asset and optionally makes deletion return `in-use`.
+    pub fn seed_asset(&self, bytes: Vec<u8>, in_use: bool) -> String {
+        let id = asset_id(&bytes);
+        let mut state = self.state();
+        state.assets.insert(id.clone(), bytes);
+        if in_use {
+            state.pinned_assets.insert(id.clone());
+        }
+        id
     }
 
     /// The Assets the Device stores, by id.
@@ -1803,7 +1816,7 @@ impl MockDeck {
                 {
                     return refused("busy");
                 }
-                if state.shows(&id) {
+                if state.shows(&id) || state.pinned_assets.contains(&id) {
                     return refused("in-use");
                 }
                 let deleted = state.assets.remove(&id).is_some();

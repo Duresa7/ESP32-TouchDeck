@@ -185,7 +185,7 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
         if (offline) return offline;
         const holding = active(found.id);
         if (holding) return failure(409, 'device.busy', 'A Job holds the Device.', { job: holding });
-        return json(202, startJob('assets.prune', found.id, { removed: 0, total: 0 }, () => ({ removed: [] })));
+        return json(202, startJob('assets.prune', found.id, { removed: 0, total: 0 }, () => ({ removed: [], kept_in_use: 0 })));
       }
       if (path === '/jobs') return method === 'GET' ? json(200, [...jobs.values()]) : failure(405, 'route.method_not_allowed', 'Use GET.');
       if ((match = /^\/jobs\/([^/]+)$/.exec(path))) {

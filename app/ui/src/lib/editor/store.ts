@@ -701,7 +701,8 @@ export function createEditorStore(deps: EditorDeps) {
       try {
         const job = await deps.companion.assets.prune({ device: device.id }, null, { also_keep: keepIds });
         const result = await deps.wait<'assets.prune'>(job);
-        say('ok', `Removed ${plural(result.removed.length, 'unused Asset')} from ${name()}`, { detail: result.removed.join(', ') || 'none', event: 'assets-removed' });
+        const kept = result.kept_in_use > 0 ? `; kept ${plural(result.kept_in_use, 'Asset')} in use` : '';
+        say('ok', `Removed ${plural(result.removed.length, 'unused Asset')} from ${name()}${kept}`, { detail: result.removed.join(', ') || 'none', event: 'assets-removed' });
       } catch (error) {
         say('error', `Couldn't remove unused Assets. Check that ${name()} is plugged in, then retry.`, { detail: toApiError(error).message, event: 'assets-failed' });
       } finally {

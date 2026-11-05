@@ -44,6 +44,8 @@ pub enum AssetError {
     Unsupported(serde_json::Value),
     #[error("The Device could not store this Asset. Remove unused Assets, then retry.")]
     Refused { reason: String },
+    #[error("The Device could not remove this Asset.")]
+    DeleteRefused { reason: String },
     #[error("The Asset does not exist.")]
     NotFound,
     #[error("The upload expired or never existed.")]
@@ -84,7 +86,8 @@ impl ApiError for AssetError {
             Self::TooLarge(_)
             | Self::TooShort { .. }
             | Self::Unsupported(_)
-            | Self::Refused { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+            | Self::Refused { .. }
+            | Self::DeleteRefused { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             Self::NotFound | Self::UploadNotFound => StatusCode::NOT_FOUND,
             Self::RenderFailed(_) | Self::GifFailed { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             Self::StoreFull { .. } => StatusCode::INSUFFICIENT_STORAGE,
@@ -98,7 +101,7 @@ impl ApiError for AssetError {
             Self::TooLarge(_) => "asset.too_large",
             Self::TooShort { .. } => "asset.too_short",
             Self::Unsupported(_) => "asset.unsupported",
-            Self::Refused { .. } => "asset.refused",
+            Self::Refused { .. } | Self::DeleteRefused { .. } => "asset.refused",
             Self::NotFound => "asset.not_found",
             Self::UploadNotFound => "upload.not_found",
             Self::RenderFailed(_) | Self::GifFailed { .. } => "asset.render_failed",
@@ -114,7 +117,9 @@ impl ApiError for AssetError {
             Self::TooShort { limit, actual } => Some(
                 serde_json::json!({"field":"duration_ms","limit":limit,"actual":actual,"unit":"ms"}),
             ),
-            Self::Refused { reason } => Some(serde_json::json!({"reason":reason})),
+            Self::Refused { reason } | Self::DeleteRefused { reason } => {
+                Some(serde_json::json!({"reason":reason}))
+            }
             Self::GifFailed { reason } => Some(serde_json::json!({"reason":reason})),
             Self::StoreFull { limit, actual } => {
                 Some(serde_json::json!({"limit":limit,"actual":actual,"unit":"bytes"}))
@@ -470,6 +475,7 @@ pub struct PruneProgress {
 #[derive(Serialize, Deserialize, TS)]
 pub struct PruneResult {
     pub removed: Vec<String>,
+    pub kept_in_use: u32,
 }
 pub struct PruneJob;
 impl JobKind for PruneJob {
@@ -477,7 +483,7 @@ impl JobKind for PruneJob {
     type Progress = PruneProgress;
     type Result = PruneResult;
 }
-/// Removes from the Device every Asset that no stored Layout uses and `also_keep` doesn't name.
+/// Removes unused Assets, preserving stored Layouts, caller-kept Assets and live covers.
 pub struct Prune;
 impl Endpoint for Prune {
     const NAME: &'static str = "assets.prune";
@@ -539,17 +545,42 @@ fn prune(
             progress.removed += 1;
             job.progress(&progress);
         }
+        let mut kept_in_use = 0;
+        let live_covers = ctx.live.cover_assets(device);
         let (device_info, _) = ctx.links.connected(device)?;
         if device_info.capabilities.is_some() {
             for asset in td_link::asset::list_assets(session).map_err(asset_link)? {
-                if !keep.contains(&asset.id) {
+                if live_covers.contains(&asset.id) {
+                    kept_in_use += 1;
+                } else if !keep.contains(&asset.id) {
                     job.check()?;
-                    td_link::asset::delete_asset(session, &asset.id).map_err(asset_link)?;
-                    removed.push(asset.id);
+                    match td_link::asset::delete_asset(session, &asset.id) {
+                        Ok(_) => {
+                            ctx.live.forget_cover(device, &asset.id);
+                            removed.push(asset.id);
+                        }
+                        Err(error)
+                            if error.reason() == Some(&td_link::asset::AssetReason::InUse) =>
+                        {
+                            kept_in_use += 1;
+                        }
+                        Err(error) => {
+                            let error = match asset_link(error) {
+                                AssetError::Refused { reason } => {
+                                    AssetError::DeleteRefused { reason }
+                                }
+                                other => other,
+                            };
+                            return Err(error.into());
+                        }
+                    }
                 }
             }
         }
-        Ok(PruneResult { removed })
+        Ok(PruneResult {
+            removed,
+            kept_in_use,
+        })
     })?
 }
 
