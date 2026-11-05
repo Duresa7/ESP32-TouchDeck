@@ -157,14 +157,14 @@ export function refusedActionField(refused: Refused<Action>): string | null {
   return at > 0 && at + 1 < segments.length ? segments[at + 1] : null;
 }
 
-export function firstProblem(state: EditorState): { page: string; tile: string; reason: string } | null {
+export function firstProblem(state: EditorState): { page: string; tile: string; reason: string; path: string } | null {
   const layout = state.drafts[state.orientation]?.layout;
   for (const page of layout?.pages ?? []) {
     if (page.kind !== 'grid') continue;
     for (const tile of page.tiles) {
       const problems = state.invalid[state.orientation][tile.id];
-      const reason = problems?.label?.reason ?? problems?.action?.reason;
-      if (reason) return { page: page.id, tile: tile.id, reason };
+      const refused = problems?.label ?? problems?.action;
+      if (refused) return { page: page.id, tile: tile.id, reason: refused.reason, path: refused.path };
     }
   }
   return null;
@@ -244,7 +244,7 @@ export function createEditorStore(deps: EditorDeps) {
     if (!draft) return 'no layout is open';
     const result = edit(draft.layout);
     if (!result.ok) {
-      say('error', friendlyRefusal(result.reason, draft.layout, name()), { detail: result.reason, event: 'refused' });
+      say('error', friendlyRefusal(result.reason, draft.layout, name(), result.path), { detail: result.reason, event: 'refused' });
       return result.reason;
     }
     keep(state().orientation, { ...draft, layout: result.layout });
@@ -279,13 +279,14 @@ export function createEditorStore(deps: EditorDeps) {
     return { layout: parsed.layout, revision: read.revision };
   }
 
-  function refusals(details: unknown): string[] {
+  function refusals(details: unknown): { reason: string; path: string }[] {
     if (typeof details !== 'object' || details === null || !('issues' in details) || !Array.isArray(details.issues)) return [];
     return details.issues.map((issue: unknown) => {
       const known = typeof issue === 'object' && issue !== null ? issue : {};
       const rule = 'rule' in known && typeof known.rule === 'string' ? known.rule : 'layout.invalid';
       const message = 'message' in known && typeof known.message === 'string' ? known.message : '';
-      return `${rule}: ${message}`;
+      const path = 'path' in known && typeof known.path === 'string' ? known.path : '';
+      return { reason: `${rule}: ${message}`, path };
     });
   }
 
@@ -296,8 +297,8 @@ export function createEditorStore(deps: EditorDeps) {
       say('error', gif.text, { detail: gif.detail, event: 'push-failed' });
     } else if (error.code === 'layout.invalid') {
       const issues = refusals(error.details);
-      const text = issues.length ? friendlyRefusal(issues[0], layout, device) : 'That change breaks a Layout rule. See Details.';
-      say('error', text, { detail: issues.join('\n') || error.message, event: 'push-failed' });
+      const text = issues.length ? friendlyRefusal(issues[0].reason, layout, device, issues[0].path) : 'That change breaks a Layout rule. See Details.';
+      say('error', text, { detail: issues.map((i) => i.reason).join('\n') || error.message, event: 'push-failed' });
     } else if (error.code === 'device.busy') {
       say('error', `${device} is busy. Wait a moment, then retry.`, { detail: error.message, event: 'push-failed' });
     } else if (error.code === 'job.cancelled') {
@@ -355,7 +356,7 @@ export function createEditorStore(deps: EditorDeps) {
       const id = freshId(layout, 'page');
       const added = addPage(layout, newGridPage(id, `Page ${layout.pages.length + 1}`));
       if (!added.ok) {
-        say('error', friendlyRefusal(added.reason, layout, name()), { detail: added.reason, event: 'refused' });
+        say('error', friendlyRefusal(added.reason, layout, name(), added.path), { detail: added.reason, event: 'refused' });
         return null;
       }
       layout = added.layout;
@@ -620,7 +621,7 @@ export function createEditorStore(deps: EditorDeps) {
       const problem = firstProblem(state());
       if (problem) {
         set({ page: problem.page, selected: problem.tile, adding: null, mode: 'edit' });
-        say('error', friendlyRefusal(problem.reason, layout, name()), { detail: problem.reason, event: 'refused' });
+        say('error', friendlyRefusal(problem.reason, layout, name(), problem.path), { detail: problem.reason, event: 'refused' });
         return;
       }
       set({ busy: 'push', status: { kind: 'info', text: 'Sending…', event: 'pushing' } });
