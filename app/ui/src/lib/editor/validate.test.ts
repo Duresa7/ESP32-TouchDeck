@@ -203,6 +203,18 @@ test('setAction keeps a valid action and refuses an invalid one', () => {
   assert.equal(refused(setAction(layout, 'main', 'zz', { type: 'none' })), 'no tile zz');
 });
 
+test('a refused edit names the refused value by pointer, and empty when the rule names none', () => {
+  const layout = small();
+  const empty = setAction(layout, 'main', 'b', { type: 'command', program: '', args: [], cwd: '', shell: false });
+  assert.deepEqual(empty.ok ? null : empty.path, '/pages/0/tiles/1/action/program');
+  const missing = setAction(layout, 'main', 'a', { type: 'page', page: 'gone' });
+  assert.deepEqual(missing.ok ? null : missing.path, '');
+  assert.deepEqual(
+    validateLayout({ ...layout, pages: 'none' }).map((error) => [error.key, error.path]),
+    [['shape.type', '/pages']],
+  );
+});
+
 test('labels and icons follow the schema', () => {
   const layout = small();
   assert.equal(grid(ok(setLabel(layout, 'main', 'a', 'Build')), 'main').tiles[0].label, 'Build');
@@ -333,5 +345,5 @@ test('a grid grows freely and shrinks only past empty cells', () => {
   const smaller = setGridSize(dev(), 'shortcuts', 2, 3);
   assert.ok(!smaller.ok);
   assert.equal(smaller.reason, 'grid.too-small: quiet');
-  assert.deepEqual(setGridSize(dev(), 'shortcuts', 9, 4), { ok: false, reason: 'grid.size' });
+  assert.deepEqual(setGridSize(dev(), 'shortcuts', 9, 4), { ok: false, reason: 'grid.size', path: '' });
 });

@@ -41,7 +41,7 @@ pub struct LayoutRead {
 pub struct LayoutIssue {
     /// The rule key from `schema/README.md`, such as `tile.overlap`.
     pub rule: String,
-    /// A JSON pointer into the Layout when the rule names one, otherwise empty.
+    /// The JSON pointer of the value the rule refused, or empty when the rule names no single value.
     pub path: String,
     pub message: String,
 }
@@ -50,13 +50,7 @@ fn issues(errors: Vec<td_core::layout::LayoutError>) -> Vec<LayoutIssue> {
         .into_iter()
         .map(|e| LayoutIssue {
             rule: e.rule.key().into(),
-            path: e
-                .message
-                .split_whitespace()
-                .next()
-                .filter(|w| w.starts_with('/'))
-                .unwrap_or_default()
-                .into(),
+            path: e.path,
             message: e.message,
         })
         .collect()

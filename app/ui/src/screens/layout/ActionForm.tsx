@@ -13,7 +13,7 @@ import {
   switchKind,
 } from '../../lib/editor/actions.ts';
 import { friendlyRefusal } from '../../lib/editor/messages.ts';
-import { tileProblems, type EditorStore } from '../../lib/editor/store.ts';
+import { refusedActionField, tileProblems, type EditorStore } from '../../lib/editor/store.ts';
 import { ACTION_TYPES, MODIFIERS, type Action, type ActionType, type GridPage, type Layout, type Tile } from '../../lib/editor/validate.ts';
 import { useEditorState } from './editor.ts';
 import { described, Field, FieldError, Select, useFieldIds } from './fields.tsx';
@@ -24,10 +24,6 @@ interface KindProps<T extends Action['type']> {
   action: Of<T>;
   commit(next: Action): void;
   error(field: string): string | null;
-}
-
-function refusedField(reason: string): string | null {
-  return /\/action\/(\w+)/.exec(reason)?.[1] ?? null;
 }
 
 const SHOWN: Record<ActionType, readonly string[]> = {
@@ -297,7 +293,7 @@ export function ActionForm({ store, page, tile, layout, device }: { store: Edito
   const ids = useFieldIds();
   const action = refused?.value ?? tile.action;
   const message = refused ? friendlyRefusal(refused.reason, layout, device) : null;
-  const at = refused ? refusedField(refused.reason) : null;
+  const at = refused ? refusedActionField(refused) : null;
   const pageIds = layout.pages.map((p) => p.id);
   const commit = (next: Action) => void store.editAction(tile.id, next);
   const error = (field: string) => (at === field ? message : null);
