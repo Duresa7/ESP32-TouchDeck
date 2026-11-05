@@ -355,13 +355,9 @@ static void update_bar(view_t *v)
     const ui_live_slot_t *muted = stream(v, "muted");
     b->set = value != NULL && value->set;
     b->muted = muted != NULL && muted->set && ui_live_latest(muted) != 0;
-    ui_live_bar_feed(&b->live, s_view_generation, value);
-    if (!b->live.fresh && (b->live.bar.pressed || b->live.bar.phase != UI_BAR_LIVE)) {
-        if (s.dragging >= 0 && &s.views[s.dragging] == v) {
-            drop_capture();
-        } else {
-            ui_bar_cancel(&b->live.bar);
-        }
+    if (ui_live_bar_feed(&b->live, s_view_generation, value) && s.dragging >= 0 && &s.views[s.dragging] == v) {
+        ESP_LOGI(TAG, "drag on %s ended: value stale", v->tile->id);
+        drop_capture();
     }
     draw_bar(b);
 }
