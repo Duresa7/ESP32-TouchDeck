@@ -6,6 +6,7 @@
 #include "td_link.h"
 
 bool td_link_v2_selected(void);
+uint32_t td_link_v2_session(void);
 
 /* Everything below runs on the td_link task only. */
 

@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "app"
 ELECTRON = APP / "electron"
 TARGET = "x86_64-pc-windows-msvc"
+SIGNER = ROOT / ".github/release-signer/cli.mjs"
 FEED = "https://github.com/Duresa7/OpenTouchDeck/releases/download"
 TEST_HOOK_MARKERS = (b"/test/pairing-delivery", b"/test/devices/", b"--emit-ts", b"--test-real-device-console")
 
@@ -27,7 +28,6 @@ def build_environment(env=None):
 
 def run(args, *, cwd=ROOT, env=None, quiet=False, signing=False):
     print("+ " + subprocess.list2cmdline([str(arg) for arg in args]), flush=True)
-    # The signer prints key material on generate: quiet runs capture and drop all output.
     output = subprocess.PIPE if quiet else None
     subprocess.run([str(arg) for arg in args], cwd=cwd, env=env if signing else build_environment(env), check=True, stdout=output, stderr=output)
 
@@ -143,11 +143,16 @@ def package(out, version, companion, payload, name, env):
 
 
 def sign(installer, version, env, key_path=None):
-    args = ["node", APP / "node_modules/@tauri-apps/cli/tauri.js", "signer", "sign", "--app-version", version]
+    args = ["node", SIGNER, "sign", "--app-version", version]
     if key_path:
         args += ["--private-key-path", key_path]
     run(args + [installer], cwd=APP, env=env, quiet=True, signing=True)
     return installer.with_name(installer.name + ".sig").read_text(encoding="utf-8").strip()
+
+
+def generate_test_key(key_path):
+    run(["node", SIGNER, "generate", "--write-keys", key_path], cwd=APP, quiet=True)
+    return key_path.with_name(key_path.name + ".pub").read_text(encoding="utf-8").strip()
 
 
 def manifest_entry(installer, signature, version, notes):
@@ -198,9 +203,7 @@ def build(args):
     try:
         if args.test_signing:
             key_path = out / "disposable-test-signing.key"
-            run(["node", APP / "node_modules/@tauri-apps/cli/tauri.js", "signer", "generate", "--ci", "--password", "",
-                 "--write-keys", key_path], cwd=APP, quiet=True)
-            public_key = key_path.with_suffix(".key.pub").read_text(encoding="utf-8").strip()
+            public_key = generate_test_key(key_path)
             env["TAURI_SIGNING_PRIVATE_KEY_PASSWORD"] = ""
         else:
             public_key = args.public_key_file.read_text(encoding="utf-8").strip()

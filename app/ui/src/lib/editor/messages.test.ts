@@ -19,7 +19,9 @@ test('a refusal names the Tile in the way and the size that fits', () => {
 
 test('rule keys read as what to do', () => {
   assert.equal(friendlyRefusal('label.too-long: /pages/0/tiles/0/label must NOT have more than 16 characters (maxLength)'), 'Tile labels can be up to 16 characters.');
-  assert.equal(friendlyRefusal('text.empty: /pages/1/tiles/0/action/path must NOT have fewer than 1 characters (minLength)'), 'Choose an app.');
+  assert.equal(friendlyRefusal('text.empty: must NOT have fewer than 1 characters (minLength)', null, 'Desk', '/pages/1/tiles/0/action/path'), 'Choose an app.');
+  assert.equal(friendlyRefusal('text.empty: must NOT have fewer than 1 characters (minLength)', null, 'Desk', '/pages/0/tiles/2/action/program'), 'Enter a program.');
+  assert.equal(friendlyRefusal('text.empty: /pages/1/tiles/0/action/path must NOT have fewer than 1 characters (minLength)'), 'That change breaks a Layout rule. See Details.');
   assert.equal(friendlyRefusal('something.new: whatever'), "That change breaks a Layout rule. See Details.");
   assert.equal(friendlyFileError('notes.txt', 'file.json'), '“notes.txt” isn\'t a Layout file. Nothing changed.');
 });

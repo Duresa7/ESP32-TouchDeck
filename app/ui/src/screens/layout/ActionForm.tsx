@@ -292,7 +292,7 @@ export function ActionForm({ store, page, tile, layout, device }: { store: Edito
   const refused = useEditorState(store, (s) => tileProblems(s, tile.id)?.action);
   const ids = useFieldIds();
   const action = refused?.value ?? tile.action;
-  const message = refused ? friendlyRefusal(refused.reason, layout, device) : null;
+  const message = refused ? friendlyRefusal(refused.reason, layout, device, refused.path) : null;
   const at = refused ? refusedActionField(refused) : null;
   const pageIds = layout.pages.map((p) => p.id);
   const commit = (next: Action) => void store.editAction(tile.id, next);

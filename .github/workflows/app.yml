@@ -130,6 +130,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm test
+      - name: Test the packaging recipe's disposable signing
+        run: python -B -m unittest discover -s scripts/tests -p "test_package_signing.py" -v
       - name: Build the UI that the Companion embeds
         run: pnpm build:ui
       - run: cargo fmt --check

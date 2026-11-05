@@ -228,6 +228,7 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
     jobs: () => [...jobs.values()],
     stored: (device: string, orientation: Orientation) => stored.get(slot(device, orientation)) ?? null,
     store: (device: string, layout: Layout) => void stored.set(slot(device, layout.orientation), canonical(layout)),
+    forget: (device: string, orientation: Orientation) => void stored.delete(slot(device, orientation)),
     pushed(device: string, layout: StoredLayout) {
       stored.set(slot(device, layout.orientation), JSON.stringify(layout));
       options.wrote?.({ device, orientation: layout.orientation });

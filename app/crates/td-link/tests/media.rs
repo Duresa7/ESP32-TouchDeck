@@ -76,7 +76,7 @@ fn refused(result: Result<u32, LiveError>) -> LiveReason {
 fn next_event(events: &td_link::IncomingReceiver) -> Value {
     loop {
         match events.recv_timeout(TIMEOUT).unwrap() {
-            Incoming::Event(event) => return event,
+            Incoming::Event(event) if event["m"] != "v2.page" => return event,
             _ => continue,
         }
     }

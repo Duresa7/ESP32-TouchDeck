@@ -81,7 +81,7 @@ Every new request is a type 1 JSON object with `m`, flags 0, and a unique pendin
 sequence. Replies use the same `m` and sequence, flags 1, and Boolean `ok`.
 All v2 names start with `v2.`. Except hello, they require selected v2 or return
 `not-negotiated`. Unknown v2 names return `unsupported` on v2 Firmware.
-The unsolicited `v2.input` event and optional `press.part` extend touch input on selected v2 sessions. Existing key events remain unchanged.
+The unsolicited `v2.input` and `v2.page` events and optional `press.part` extend touch input on selected v2 sessions. Existing key events remain unchanged.
 
 A failure is `{"m":"v2.name.set","ok":false,"reason":"args","error":"Invalid name"}`.
 `reason` is stable; `error` is human-readable, at most 96 UTF-8 bytes.
@@ -320,6 +320,27 @@ pager slop. Press-lost ends it; session/Layout change or offline cancels it.
 Stale or unset values disable input. During dragging the Device draws locally;
 after lift it settles until live readback is within 0.01 or 1.5 s elapses, then
 draws the newest live value. Mute is never predicted. A set above zero unmutes.
+
+## Page on screen
+
+`v2.page` is a type 1 unsolicited frame, flags 2, frame sequence 0, that names
+the Page on screen by its schema 1 id:
+
+```json
+{"m":"v2.page","page":"media"}
+```
+
+Firmware that reports Pages sends it once right after each successful protocol
+2 selection, and again whenever the Page on screen changes (a swipe, a page
+action, the first touch waking to the last Page) or a Layout loads, which starts
+on its first Page. It is sent only while v2 is selected and the link is online,
+and never on v1. A repeat of the last report can occur and means nothing new.
+No ack or replay is required, so a lost event leaves the Companion with the
+previous Page until the next change or session. There is no hello field or
+capability for it: a Companion treats the Page as unknown until the first event
+of a session, so Firmware without `v2.page` simply never reports one. The id is
+resolved against the Layout the Companion read from the Device; an id the read
+Layout lacks means unknown.
 
 ## Photo frame, idle, and clock
 

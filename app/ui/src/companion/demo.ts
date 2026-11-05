@@ -38,6 +38,7 @@ declare global {
     touchdeckDemo?: {
       push(id: string, order: string[]): void;
       offline(id: string): void;
+      clearLayout(id: string): void;
       device(id: string, change: Partial<Omit<DeviceSummary, 'id' | 'rev'>>): void;
       controls: { set(id: string, layout: ControlLayout): void; hold(id: string): void; release(id: string): void };
       firmware: { hold(id: string, at?: number | 'rebooting'): void; release(id: string): void; cancel(id: string): void; picks(...answers: FakePick[]): void };
@@ -152,6 +153,7 @@ export function demoEnvironment(target: Window): Environment {
   target.touchdeckDemo = {
     push: (id, order) => fake.setLayout(id, demoLayout(order)),
     offline: (id) => fake.update(id, { link: { state: 'lost', reason: 'unplugged', detail: '', at_ms: Date.UTC(2026, 9, 27, 21, 40) } }),
+    clearLayout: (id) => fake.clearLayout(id),
     device: (id, change) => fake.update(id, change),
     controls: { set: fake.controls.set, hold: fake.controls.hold, release: fake.controls.release },
     firmware: { hold: fake.firmware.hold, release: fake.firmware.release, cancel: fake.firmware.cancel, picks: fake.firmware.picks },

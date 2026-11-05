@@ -331,19 +331,40 @@ pub struct DeviceSummary {
     pub diagnostics: Option<DeviceDiagnostics>,
     pub capabilities: Option<Capabilities>,    // v2 hello: screen, storage_free, tile_kinds, live_hz, live_total_hz, series, text_bytes. None on v1
     pub orientation: Option<Orientation>,
-    pub layout: Option<LayoutSummary>,         // what the Device shows
+    pub layout: Option<LayoutSummary>,         // what the Device shows; see below
     pub control_layout: ControlLayout,
     pub key_mirror: KeyMirrorState,            // {enabled, reason}
     pub stable_id: bool,
+}
+pub struct LayoutSummary {
+    pub source: LayoutSource,                  // Builtin | Storage
+    pub name: String,
+    pub orientation: Orientation,
+    pub pages: u32,                            // Page count
+    pub page: Option<u32>,                     // index of the Page on screen
 }
 pub struct NewBoard { pub id: DeviceId, pub port: String, pub probe: BoardProbe, pub seen_ms: u64 }
 pub enum BoardProbe { Silent, Busy { detail: String }, OtherFirmware { product: String, detail: String } }
 ```
 
+`layout` is what the Device shows, from the Layout the live router reads from it
+(below, under Rules for several Devices) and the Page the Device reports with
+`v2.page` ([link v2](../schema/protocol/link-v2.md#page-on-screen)). `source` is
+`builtin` when the Device runs its built-in Layout because none is stored for its
+orientation, and `storage` otherwise. `name`, `orientation` and `pages` describe
+that Layout. `page` is the index in `pages` of the Page on screen; it is null
+until the Device reports a Page of this Layout, and always on Firmware that
+doesn't send `v2.page`. `layout` is null on protocol 1, while offline and until
+the first read of a session completes, which is within one live round of
+connecting. A link change clears it. A Layout push or orientation change keeps
+the previous summary until the next read lands, so it never goes null mid-push.
+Changes increment `rev` and publish `device.updated`. `name` is the Device's own
+and untrusted, like the strings below.
+
 `diagnostics` is null until the Device has answered `hello`. Otherwise it is
 `{ product: string, running_from: string, sinks: string[], current_layout: string }`,
 from `hello.product`, `hello.running`, `hello.sinks` and `hello.layout`. `current_layout`
-is the Firmware's Layout id, separate from the Layout JSON in `DeviceSummary.layout`.
+is the Firmware's Layout source as `hello` reports it, separate from `DeviceSummary.layout`.
 Changes increment `rev` and publish `device.updated`. These strings, and the Firmware's
 `version` and `build`, are the Device's own and untrusted. The API returns them as sent,
 and clients show control, format and line or paragraph separator characters as escapes.
@@ -995,7 +1016,7 @@ App updates aren't API routes. They stay in Electron's preload as `openTouchDeck
 
 The preload calls always resolve with data, except successful `install()`, which quits without resolving. `UpdateCheck`, `UpdateProgress`, `UpdateDownload` and `UpdateInstall` in `app/ui/src/companion/session.ts` are the UI seam. Each update IPC handler uses the same top-frame, window and Companion-origin check as `session`. The renderer supplies no URL, path, key or installer arguments.
 
-The Windows x64 feed is the existing `plugins.updater.endpoints[0]` in `app/src-tauri/tauri.conf.json`, mirrored in Electron and checked by a test. Only a strictly newer SemVer version is offered. Manifest bodies are limited to 1 MiB and 15 seconds; installers to 256 MiB and 5 minutes, including redirects and reading the body. Every redirect is checked for HTTPS. Unpackaged builds alone honor `TOUCHDECK_UPDATE_TEST_FEED=http://127.0.0.1:PORT/latest.json`; this also permits numeric-loopback HTTP artifact URLs. Packaged builds ignore it.
+The Windows x64 feed is `UPDATE_FEED` in `app/electron/src/updates/index.ts`. Only a strictly newer SemVer version is offered. Manifest bodies are limited to 1 MiB and 15 seconds; installers to 256 MiB and 5 minutes, including redirects and reading the body. Every redirect is checked for HTTPS. Unpackaged builds alone honor `TOUCHDECK_UPDATE_TEST_FEED=http://127.0.0.1:PORT/latest.json`; this also permits numeric-loopback HTTP artifact URLs. Packaged builds ignore it.
 
 For #91 and #108: set `TOUCHDECK_UPDATER_PUBKEY` at build time to the existing base64-wrapped public key. Every Electron build generates the ignored `src/updates/key.gen.ts` before TypeScript compiles it. Unset means disabled, including ordinary source builds. No runtime environment, file or IPC supplies the trusted key. Release packaging must use this build entry point, supply the real public key, and protect app.asar integrity (including the Electron integrity fuse); that wiring belongs to #91/#108. The existing Tauri packaging scripts do not package Electron.
 
@@ -1049,7 +1070,7 @@ mock Devices; it cannot control a real player.
 
 ## Mapping from today's Tauri commands and events
 
-Release builds of `app/src-tauri` register 33 commands. `--features e2e` adds 7, marked e2e. Each one maps to a route above, moves to Electron, or goes away.
+History: release builds of the removed `app/src-tauri` crate registered 33 commands. `--features e2e` adds 7, marked e2e. Each one maps to a route above, moves to Electron, or goes away.
 
 | # | Today | Replacement | Notes |
 |---|---|---|---|

@@ -39,7 +39,7 @@ describe('the form rules', () => {
   function check(action: Action): string | null {
     const layout = starterLayout('landscape');
     const edit = setAction(layout, 'shortcuts', 'copy', action);
-    return edit.ok ? null : friendlyRefusal(edit.reason, layout, 'Desk');
+    return edit.ok ? null : friendlyRefusal(edit.reason, layout, 'Desk', edit.path);
   }
 
   test.each<[string, Action, string]>([
