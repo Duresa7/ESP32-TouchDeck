@@ -1263,6 +1263,7 @@ mod tests {
             .collect();
         let mut router = Router::default();
         let t0 = Instant::now();
+        device.set_live_time(0);
         let report = router.deliver("d", 1, &session, generous, &samples, t0);
         assert_eq!(
             report.sent["test"],
@@ -1277,7 +1278,7 @@ mod tests {
             t0 + Duration::from_millis(1),
         );
         assert!(held.sent.is_empty());
-        std::thread::sleep(Duration::from_millis(1_050));
+        device.set_live_time(1_050);
         let later = router.deliver(
             "d",
             1,
@@ -1516,44 +1517,50 @@ mod tests {
         fake: Arc<FakeControl>,
         router: Router,
         cache: CoverCache,
+        start: Instant,
         now: Instant,
     }
 
     impl Media {
+        /// The pictures are made before the session opens: the mock Device drops a session that sends nothing for
+        /// five seconds, and these sessions do not ping.
         fn new(rows: u8) -> Media {
-            let deck = MockDeck::v2();
-            deck.set_media_capabilities(true);
-            let session = open(&deck);
-            show(&session, &media_layout(rows, 1));
             let fake = Arc::new(FakeControl::default());
             for seed in 1..=6 {
                 fake.add_picture(&format!("sha256:art{seed}"), noise_png(300, 300, seed));
             }
+            let deck = MockDeck::v2();
+            deck.set_media_capabilities(true);
+            let session = open(&deck);
+            show(&session, &media_layout(rows, 1));
             let mut router = Router::default();
             router.set_controls(control("media", &fake));
+            let now = Instant::now();
             Media {
                 deck,
                 session,
                 fake,
                 router,
                 cache: CoverCache::default(),
-                now: Instant::now(),
+                start: now,
+                now,
             }
         }
 
-        /// One round, then the covers it asked for, then a round half a second later that sends them. The mock
-        /// Device counts its per-stream rate in real one-second windows, so a real second passes before the next.
+        /// One round, then the covers it asked for, then a round half a second later that sends them.
         fn deliver(&mut self) -> HashMap<String, String> {
             let mut errors = self.round().errors;
             make_covers(&mut self.router, &self.fake, &mut self.cache);
             self.now += CONTROL_GAP;
             errors.extend(self.round().errors);
             self.now += CONTROL_GAP;
-            std::thread::sleep(Duration::from_secs(1));
             errors
         }
 
+        /// The mock Device's rate windows follow the router's clock.
         fn round(&mut self) -> Report {
+            self.deck
+                .set_live_time(self.now.duration_since(self.start).as_millis() as u64);
             let samples = read(&self.fake);
             self.router
                 .deliver("d", 1, &self.session, MEDIA_CAPS, &samples, self.now)
@@ -1598,17 +1605,14 @@ mod tests {
     fn a_prepared_cover_uploads_during_the_display_gap() {
         let mut m = Media::new(1);
         let start = m.now;
-        m.deck.set_live_time(0);
         track(&m.fake, "First", Some("sha256:art1"));
         m.round();
         make_covers(&mut m.router, &m.fake, &mut m.cache);
         m.now = start + Duration::from_millis(100);
-        m.deck.set_live_time(100);
         assert!(m.round().errors.is_empty());
         assert_eq!(m.puts(), 1);
         assert!(m.shown("cover").is_null());
         m.now = start + Duration::from_millis(500);
-        m.deck.set_live_time(500);
         assert!(m.round().errors.is_empty());
         assert_eq!(m.puts(), 1);
         assert!(m.shown("cover").is_string());
@@ -1754,9 +1758,9 @@ mod tests {
 
     #[test]
     fn a_session_starts_by_sweeping_leftover_covers() {
-        let mut media = Media::new(1);
         let mut cache = CoverCache::default();
         let cover = cache.prepare("left", &noise_png(60, 60, 9), 64).unwrap();
+        let mut media = Media::new(1);
         td_link::asset::put_asset(
             &media.session,
             &cover.bytes,
@@ -1830,19 +1834,16 @@ mod tests {
     fn review_track_change_waits_for_cover_gap() {
         let mut m = Media::new(1);
         let start = m.now;
-        m.deck.set_live_time(0);
         track(&m.fake, "First", Some("sha256:art1"));
         m.round();
         make_covers(&mut m.router, &m.fake, &mut m.cache);
         m.now = start + Duration::from_millis(500);
-        m.deck.set_live_time(500);
         m.round();
         assert!(m.shown("cover").is_string());
         track(&m.fake, "Second", None);
         m.fake
             .publish(&[("artist", LiveValue::Text("New artist".into()))]);
         m.now = start + Duration::from_millis(600);
-        m.deck.set_live_time(600);
         let count = m.deck.live_sets().len();
         m.round();
         assert_eq!(
@@ -1852,7 +1853,6 @@ mod tests {
         );
         assert_eq!(m.shown("title"), "First");
         m.now = start + Duration::from_millis(1000);
-        m.deck.set_live_time(1000);
         m.round();
         assert!(m.shown("cover").is_null());
         assert_eq!(m.shown("title"), "Second");
@@ -1880,12 +1880,10 @@ mod tests {
         let start = m.now;
         for ms in (500..=2500).step_by(50) {
             m.now = start + Duration::from_millis(ms);
-            m.deck.set_live_time(ms);
             m.round();
         }
         assert!(m.puts() <= 3, "put attempts: {}", m.puts());
         m.now = start + Duration::from_millis(4500);
-        m.deck.set_live_time(4500);
         m.round();
         assert!(m.shown("cover").is_string());
     }
@@ -1901,7 +1899,6 @@ mod tests {
         m.fake
             .publish(&[("cover", LiveValue::Image(Some("sha256:art1".into())))]);
         make_covers(&mut m.router, &m.fake, &mut m.cache);
-        m.deck.set_live_time(2000);
         m.deck.delay_replies(Duration::from_millis(2300));
         assert!(m.round().errors.contains_key("media"));
         m.deck.delay_replies(Duration::ZERO);
@@ -1911,7 +1908,6 @@ mod tests {
             .publish(&[("title", LiveValue::Text("Second".into()))]);
         let start = m.deck.live_sets().len();
         m.now += CONTROL_GAP;
-        m.deck.set_live_time(3000);
         m.round();
         let sets = m.deck.live_sets()[start..].to_vec();
         let clear = sets
@@ -1930,7 +1926,6 @@ mod tests {
         let start = m.now;
         for ms in (0..=2000).step_by(50) {
             m.now = start + Duration::from_millis(ms);
-            m.deck.set_live_time(ms);
             m.round();
         }
         assert_eq!(m.shown("title"), "First");
@@ -2187,6 +2182,7 @@ mod tests {
             .collect();
         let mut router = Router::default();
         let t0 = Instant::now();
+        device.set_live_time(0);
         router.deliver("d", 1, &session, generous, &samples, t0);
         let lines = device.lines().len();
         router.layout_changed("d");

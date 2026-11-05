@@ -586,6 +586,7 @@ mod tests {
     fn before_the_router_reads_the_layout_touches_fail_closed() {
         let td = running(media(), false);
         td.drag("volume", &[0.4, 0.5]);
+        wait("the drag fails", || td.log().len() == 1);
         td.deck
             .emit_press_part("media", "playing", "widget", "previous");
         wait("the tap fails", || td.log().len() == 2);
@@ -721,7 +722,9 @@ mod tests {
     #[test]
     fn a_burst_keeps_its_final_end_and_paces_control_sets() {
         let td = running(media(), true);
-        for _ in 0..500 {
+        // The burst fits the link's 256-event queue. A burst past it overflows by design, and the flood test
+        // covers that.
+        for _ in 0..200 {
             td.deck
                 .emit_input("media", "volume", "value", InputPhase::Move, 0.2);
         }
