@@ -153,7 +153,17 @@ else
 fi
 
 if (( overall_rc == 0 )); then
-  MSYS_NO_PATHCONV=1 docker run --rm     -v "${src_vol}:/src"     -v "${pnpm_vol}:/pnpm-store"     -w /src/app     -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0     -e CI=true     -e NO_COLOR=1     -e PYTHONUTF8=1     -e RUST_ONLY="$rust_only"     node:24     bash -c '
+  MSYS_NO_PATHCONV=1 docker run --rm \
+    -v "${src_vol}:/src" \
+    -v "${pnpm_vol}:/pnpm-store" \
+    -w /src/app \
+    -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+    -e CI=true \
+    -e NO_COLOR=1 \
+    -e PYTHONUTF8=1 \
+    -e RUST_ONLY="$rust_only" \
+    node:24 \
+    bash -c '
       set -uo pipefail
       run_step() {
         local name=$1
@@ -200,7 +210,16 @@ if (( overall_rc == 0 )); then
 fi
 
 if (( overall_rc == 0 )) || grep -q "=== STEP RESULT: pnpm build:ui | PASS |" "$log_file"; then
-  MSYS_NO_PATHCONV=1 docker run --rm     -v "${src_vol}:/src"     -v "${target_vol}:/src/app/target"     -v "${cargo_vol}:/usr/local/cargo/registry"     -w /src/app     -e DEBIAN_FRONTEND=noninteractive     -e CARGO_TERM_COLOR=never     -e CARGO_PROFILE_DEV_DEBUG=line-tables-only     rust:1     bash -c '
+  MSYS_NO_PATHCONV=1 docker run --rm \
+    -v "${src_vol}:/src" \
+    -v "${target_vol}:/src/app/target" \
+    -v "${cargo_vol}:/usr/local/cargo/registry" \
+    -w /src/app \
+    -e DEBIAN_FRONTEND=noninteractive \
+    -e CARGO_TERM_COLOR=never \
+    -e CARGO_PROFILE_DEV_DEBUG=line-tables-only \
+    rust:1 \
+    bash -c '
       set -uo pipefail
       run_step() {
         local name=$1
