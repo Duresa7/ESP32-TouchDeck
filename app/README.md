@@ -78,6 +78,12 @@ cargo clippy --workspace -- -D warnings
 cargo fmt --check
 ```
 
+To run the Linux app checks on the committed `HEAD` in Docker (needs Docker; the first run takes about 5 minutes and later runs take about 3 minutes):
+
+```sh
+./scripts/linux-check.sh
+```
+
 ### Electron shell
 
 `electron/` is the thin Electron window that loads the UI the Companion serves.
