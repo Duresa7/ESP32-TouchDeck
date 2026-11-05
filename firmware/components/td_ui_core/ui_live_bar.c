@@ -15,20 +15,23 @@ static bool current(ui_live_bar_t *bar, uint32_t generation)
     return false;
 }
 
-void ui_live_bar_feed(ui_live_bar_t *bar, uint32_t generation, const ui_live_slot_t *value)
+bool ui_live_bar_feed(ui_live_bar_t *bar, uint32_t generation, const ui_live_slot_t *value)
 {
     current(bar, generation);
     bar->fresh = value != NULL && value->set && !value->stale;
     if (value == NULL || !value->set) {
         bar->fed_n = 0;
         bar->fed_digest = 0;
-        return;
-    }
-    if (value->n != bar->fed_n || value->digest != bar->fed_digest) {
+    } else if (value->n != bar->fed_n || value->digest != bar->fed_digest) {
         bar->fed_n = value->n;
         bar->fed_digest = value->digest;
         ui_bar_live(&bar->bar, ui_live_latest(value));
     }
+    if (bar->fresh || (!bar->bar.pressed && bar->bar.phase == UI_BAR_LIVE)) {
+        return false;
+    }
+    ui_bar_cancel(&bar->bar);
+    return true;
 }
 
 bool ui_live_bar_press(ui_live_bar_t *bar, uint32_t generation, int16_t x, int16_t y)

@@ -160,3 +160,85 @@ TEST_CASE("live bar: a mute tap after a reset names no part until the new sessio
     ui_live_bind(&s_table, s_slots, 2, "other", k_pages, 1);
     TEST_ASSERT_EQUAL(UI_PART_NONE, tap_mute());
 }
+
+static bool stale(uint32_t now_ms)
+{
+    TEST_ASSERT_TRUE(ui_live_expire(&s_table, now_ms));
+    return ui_live_bar_feed(&s_bar, s_table.generation, ui_live_find(&s_table, &k_tiles[0], "value"));
+}
+
+TEST_CASE("live bar: a value going stale mid-drag ends the drag, sends nothing more and shows the stale value",
+          "[ui_live_bar]")
+{
+    start();
+    value(1, 0.4, 1000);
+    feed();
+    TEST_ASSERT_TRUE(press(100));
+    TEST_ASSERT_TRUE(move(372));
+    TEST_ASSERT_TRUE(stale(6000));
+    TEST_ASSERT_FALSE(s_bar.fresh);
+    TEST_ASSERT_FALSE(move(400));
+    TEST_ASSERT_FALSE(lift(6100));
+    TEST_ASSERT_EQUAL(UI_BAR_LIVE, s_bar.bar.phase);
+    TEST_ASSERT_FALSE(s_bar.bar.pressed);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 0.4, ui_bar_shown(&s_bar.bar));
+    TEST_ASSERT_EQUAL(UI_PART_NONE, tap_mute());
+
+    value(2, 0.6, 7000);
+    feed();
+    TEST_ASSERT_TRUE(press(100));
+    TEST_ASSERT_TRUE(move(372));
+    TEST_ASSERT_TRUE(lift(7100));
+}
+
+TEST_CASE("live bar: a value going stale before the press passes the slop ends the press", "[ui_live_bar]")
+{
+    start();
+    value(1, 0.4, 1000);
+    feed();
+    TEST_ASSERT_TRUE(press(100));
+    TEST_ASSERT_FALSE(move(105));
+    TEST_ASSERT_TRUE(stale(6000));
+    TEST_ASSERT_FALSE(move(372));
+    TEST_ASSERT_FALSE(lift(6100));
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 0.4, ui_bar_shown(&s_bar.bar));
+}
+
+TEST_CASE("live bar: a value going stale while the bar settles shows the stale value", "[ui_live_bar]")
+{
+    start();
+    value(1, 0.4, 1000);
+    feed();
+    TEST_ASSERT_TRUE(press(100));
+    TEST_ASSERT_TRUE(move(372));
+    TEST_ASSERT_TRUE(lift(1100));
+    TEST_ASSERT_EQUAL(UI_BAR_SETTLING, s_bar.bar.phase);
+    TEST_ASSERT_TRUE(stale(6000));
+    TEST_ASSERT_EQUAL(UI_BAR_LIVE, s_bar.bar.phase);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 0.4, ui_bar_shown(&s_bar.bar));
+}
+
+TEST_CASE("live bar: a fresh value mid-drag keeps the drag going", "[ui_live_bar]")
+{
+    start();
+    value(1, 0.4, 1000);
+    feed();
+    TEST_ASSERT_TRUE(press(100));
+    TEST_ASSERT_TRUE(move(372));
+    value(2, 0.5, 1200);
+    TEST_ASSERT_FALSE(ui_live_bar_feed(&s_bar, s_table.generation, ui_live_find(&s_table, &k_tiles[0], "value")));
+    TEST_ASSERT_TRUE(s_bar.fresh);
+    TEST_ASSERT_TRUE(move(400));
+    TEST_ASSERT_EQUAL(UI_BAR_DRAGGING, s_bar.bar.phase);
+    TEST_ASSERT_TRUE(lift(1300));
+}
+
+TEST_CASE("live bar: a value going stale on a bar nobody holds ends nothing", "[ui_live_bar]")
+{
+    start();
+    value(1, 0.4, 1000);
+    feed();
+    TEST_ASSERT_FALSE(stale(6000));
+    TEST_ASSERT_FALSE(s_bar.fresh);
+    TEST_ASSERT_DOUBLE_WITHIN(1e-9, 0.4, ui_bar_shown(&s_bar.bar));
+}

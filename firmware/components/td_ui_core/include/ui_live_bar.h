@@ -29,8 +29,10 @@ typedef struct {
 void ui_live_bar_init(ui_live_bar_t *bar, uint32_t generation);
 
 /* The `value` slot as it was copied at `generation`, or NULL for a Tile without one. A set value the bar was not fed
- * yet becomes its live value. An unset one clears what it was fed, so the next set value is fed whatever its `n`. */
-void ui_live_bar_feed(ui_live_bar_t *bar, uint32_t generation, const ui_live_slot_t *value);
+ * yet becomes its live value. An unset one clears what it was fed, so the next set value is fed whatever its `n`.
+ * A value that is not fresh ends the press, drag or settle the bar holds, so it sends no further move or end and
+ * shows the value it was fed. True when it ended one, so the caller drops the gesture's queued input too. */
+bool ui_live_bar_feed(ui_live_bar_t *bar, uint32_t generation, const ui_live_slot_t *value);
 
 /* A press in the value zone. False, holding nothing, when the bar was from an older generation, because what the
  * screen drew for it is out of date. */
