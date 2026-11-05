@@ -119,7 +119,7 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
     const body = await request.text();
     const parsed = parseLayout(body);
     if (!parsed.ok) {
-      const issues = parsed.errors.map((e) => ({ rule: e.key, path: e.message.split(/\s/)[0].startsWith('/') ? e.message.split(/\s/)[0] : '', message: e.message }));
+      const issues = parsed.errors.map((e) => ({ rule: e.key, path: e.path, message: e.message }));
       return failure(422, 'layout.invalid', `The Layout has ${issues.length} problems.`, { issues });
     }
     const { layout } = parsed;

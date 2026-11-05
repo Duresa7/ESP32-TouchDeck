@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useLayoutEffect } from 'react';
+import { CircleAlert, CircleCheck, Info, TriangleAlert } from 'lucide-react';
 import { MotionConfig } from 'motion/react';
-import { Toaster, toast } from 'sonner';
+import { Toaster, toast, type ToasterProps } from 'sonner';
 import { useCompanion } from './companion/connection.ts';
 import { useDevices } from './companion/devices.ts';
 import { Home } from './screens/Home.tsx';
@@ -11,6 +12,30 @@ import { useUi } from './state/ui.ts';
 
 const Layout = lazy(() => import('./screens/Layout.tsx').then((screen) => ({ default: screen.Layout })));
 const Integrations = lazy(() => import('./screens/Integrations.tsx').then((screen) => ({ default: screen.Integrations })));
+
+const TOAST_ICONS: ToasterProps['icons'] = {
+  success: <CircleCheck size={16} strokeWidth={2} aria-hidden />,
+  error: <CircleAlert size={16} strokeWidth={2} aria-hidden />,
+  warning: <TriangleAlert size={16} strokeWidth={2} aria-hidden />,
+  info: <Info size={16} strokeWidth={2} aria-hidden />,
+};
+
+const TOAST_OPTIONS: ToasterProps['toastOptions'] = {
+  unstyled: true,
+  classNames: {
+    toast: 'toast',
+    icon: 'toast-icon',
+    content: 'toast-content',
+    title: 'toast-title',
+    description: 'toast-description',
+    actionButton: 'button button-small',
+    cancelButton: 'button button-small',
+    success: 'is-success',
+    error: 'is-error',
+    warning: 'is-warning',
+    info: 'is-info',
+  },
+};
 
 /**
  * The app shell: the current screen, the nav cluster over it and the toast
@@ -47,7 +72,7 @@ export function App() {
       {window.openTouchDeck && <button className="open-browser" type="button" onClick={() => {
         void companion.auth.pair_code().catch(() => toast.error("Can't reach the Companion. Check that Open TouchDeck is running in the tray, then retry."));
       }}>Open in browser</button>}
-      <Toaster theme={appearance} position="bottom-right" />
+      <Toaster theme={appearance} position="bottom-right" icons={TOAST_ICONS} toastOptions={TOAST_OPTIONS} />
     </MotionConfig>
   );
 }

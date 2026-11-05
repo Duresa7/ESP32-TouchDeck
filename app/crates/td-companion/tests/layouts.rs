@@ -182,6 +182,20 @@ async fn revisions_orientation_and_validation_are_checked() {
         (422, Some("layout.invalid"))
     );
     assert_eq!(error["details"]["issues"][0]["rule"], "shape.unknown-field");
+    let mut empty = serde_json::to_value(&first).unwrap();
+    empty["pages"][0]["tiles"][0]["action"] = json!({"type": "open", "target": ""});
+    let (status, error) = failure(raw("landscape", empty)).await;
+    assert_eq!(status, 422);
+    assert_eq!(
+        (
+            &error["details"]["issues"][0]["rule"],
+            &error["details"]["issues"][0]["path"]
+        ),
+        (
+            &json!("text.empty"),
+            &json!("/pages/0/tiles/0/action/target")
+        )
+    );
 
     // An unknown Device.
     let (status, error) =

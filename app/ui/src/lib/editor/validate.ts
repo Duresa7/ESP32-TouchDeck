@@ -87,6 +87,7 @@ export interface Layout {
 
 interface LayoutError {
   key: string;
+  path: string;
   message: string;
 }
 
@@ -98,8 +99,9 @@ export const ICONS = ['lv:prev', 'lv:play_pause', 'lv:next', 'lv:mute', 'lv:volu
 export const ACTION_TYPES: readonly ActionType[] = ['none', 'key', 'mod', 'consumer', 'page', 'launch', 'open', 'command', 'widget'];
 
 const NESTING_MAX = 16;
-const fail = (key: string, message: string): LayoutError => ({ key, message });
+const fail = (key: string, message: string): LayoutError => ({ key, path: '', message });
 const place = (pointer: string) => pointer || '/';
+const failAt = (key: string, pointer: string, message: string): LayoutError => ({ key, path: place(pointer), message: `${place(pointer)} ${message}` });
 const lone = /\p{Cs}/u;
 const wellFormed = (text: string) => !lone.test(text);
 const escapePointer = (segment: string | number) =>
@@ -113,14 +115,14 @@ function malformedStrings(root: unknown): LayoutError[] {
   while (pending.length) {
     const [pointer, value] = pending.pop()!;
     if (typeof value === 'string') {
-      if (!wellFormed(value)) errors.push(fail('string.malformed-unicode', `${place(pointer)} is not well-formed Unicode`));
+      if (!wellFormed(value)) errors.push(failAt('string.malformed-unicode', pointer, 'is not well-formed Unicode'));
     } else if (Array.isArray(value)) {
       for (let index = value.length - 1; index >= 0; index--) pending.push([`${pointer}/${index}`, value[index]]);
     } else if (isObject(value)) {
       const members = Object.entries(value);
       for (const [name] of members) {
         if (!wellFormed(name)) {
-          errors.push(fail('string.malformed-unicode', `${place(pointer)} has the member name ${JSON.stringify(name)}, which is not well-formed Unicode`));
+          errors.push(failAt('string.malformed-unicode', pointer, `has the member name ${JSON.stringify(name)}, which is not well-formed Unicode`));
         }
       }
       for (let index = members.length - 1; index >= 0; index--) pending.push([`${pointer}/${escapePointer(members[index][0])}`, members[index][1]]);
@@ -159,7 +161,7 @@ const isActionType = (value: unknown): value is ActionType => typeof value === '
 
 function structuralErrors(root: unknown): LayoutError[] {
   const errors: LayoutError[] = [];
-  const at = (key: string, pointer: string, message: string) => errors.push(fail(key, `${place(pointer)} ${message}`));
+  const at = (key: string, pointer: string, message: string) => errors.push(failAt(key, pointer, message));
   const wrongType = (pointer: string, expected: string) => at('shape.type', pointer, `must be ${expected} (type)`);
 
   const object = (value: unknown, pointer: string, fields: string[], optional: string[] = []) => {
@@ -430,10 +432,10 @@ function scanSource(text: string): LayoutError[] {
     } else if (token[0] === '"' && top?.members && top.expectMember) {
       top.member = String(JSON.parse(token));
       top.expectMember = false;
-      if (top.members.has(top.member)) errors.push(fail('json.duplicate-member', `${place(top.pointer)} repeats the member name ${JSON.stringify(top.member)}`));
+      if (top.members.has(top.member)) errors.push(failAt('json.duplicate-member', top.pointer, `repeats the member name ${JSON.stringify(top.member)}`));
       top.members.add(top.member);
     } else if (/^-?\d/.test(token) && !integerToken.test(token)) {
-      errors.push(fail('json.integer-form', `${place(valuePointer())} is written as ${token}; numbers must be JSON integers`));
+      errors.push(failAt('json.integer-form', valuePointer(), `is written as ${token}; numbers must be JSON integers`));
     }
   }
   return errors;
@@ -469,14 +471,15 @@ export function parseLayout(source: Uint8Array | string): { ok: true; layout: La
 
 export const canonical = (layout: Layout) => JSON.stringify(layout);
 
-export type Edit = { ok: true; layout: Layout } | { ok: false; reason: string };
+/** A refused edit names the refused value by JSON pointer, or empty. */
+export type Edit = { ok: true; layout: Layout } | { ok: false; reason: string; path: string };
 
-const refuse = (reason: string): Edit => ({ ok: false, reason });
+const refuse = (reason: string, path = ''): Edit => ({ ok: false, reason, path });
 const copy = (layout: Layout): Layout => JSON.parse(JSON.stringify(layout)) as Layout;
 
 function checked(layout: Layout): Edit {
   const [first] = validateLayout(layout);
-  return first ? refuse(`${first.key}: ${first.message}`) : { ok: true, layout };
+  return first ? refuse(`${first.key}: ${first.message}`, first.path) : { ok: true, layout };
 }
 
 function gridOf(layout: Layout, page: string): GridPage | string {

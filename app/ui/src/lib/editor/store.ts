@@ -71,6 +71,8 @@ export type SaveState = 'none' | 'saved' | 'unsent' | 'sending';
 export interface Refused<T> {
   value: T;
   reason: string;
+  /** The JSON pointer of the refused value, or empty. */
+  path: string;
 }
 
 export interface TileProblems {
@@ -148,6 +150,13 @@ const tileIds = (layout: Layout) => new Set(layout.pages.flatMap((page) => (page
 
 export const tileProblems = (state: EditorState, tile: string): TileProblems | undefined => state.invalid[state.orientation][tile];
 
+/** The action field a refused action names. */
+export function refusedActionField(refused: Refused<Action>): string | null {
+  const segments = refused.path.split('/');
+  const at = segments.indexOf('action');
+  return at > 0 && at + 1 < segments.length ? segments[at + 1] : null;
+}
+
 export function firstProblem(state: EditorState): { page: string; tile: string; reason: string } | null {
   const layout = state.drafts[state.orientation]?.layout;
   for (const page of layout?.pages ?? []) {
@@ -202,13 +211,13 @@ export function createEditorStore(deps: EditorDeps) {
     });
   }
 
-  function editField(tile: string, edit: (layout: Layout, page: string) => Edit, refused: (reason: string) => TileProblems, field: keyof TileProblems): string | null {
+  function editField(tile: string, edit: (layout: Layout, page: string) => Edit, refused: (why: Pick<Refused<unknown>, 'reason' | 'path'>) => TileProblems, field: keyof TileProblems): string | null {
     const draft = current();
     const page = state().page;
     if (!draft || !page) return 'no layout is open';
     const result = edit(draft.layout, page);
     if (!result.ok) {
-      mark(tile, refused(result.reason));
+      mark(tile, refused({ reason: result.reason, path: result.path }));
       return result.reason;
     }
     keep(state().orientation, { ...draft, layout: result.layout });
@@ -328,11 +337,11 @@ export function createEditorStore(deps: EditorDeps) {
   }
 
   function editLabel(tile: string, label: string): string | null {
-    return editField(tile, (l, page) => setLabel(l, page, tile, label), (reason) => ({ label: { value: label, reason } }), 'label');
+    return editField(tile, (l, page) => setLabel(l, page, tile, label), (why) => ({ label: { value: label, ...why } }), 'label');
   }
 
   function editAction(tile: string, action: Action): string | null {
-    return editField(tile, (l, page) => setAction(l, page, tile, action), (reason) => ({ action: { value: action, reason } }), 'action');
+    return editField(tile, (l, page) => setAction(l, page, tile, action), (why) => ({ action: { value: action, ...why } }), 'action');
   }
 
   function placeAtTarget(action: Action, label: string, look: LiveLook | null = null): { id: string; page: string; pages: string[] } | null {

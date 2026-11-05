@@ -46,7 +46,6 @@ export const THEME = {
   level: { gap: 12, valueW: 84, lineH: 32, trackRadius: 10 },
   nowPlaying: { titleH: 38, artistH: 28, artRadius: 12 },
   anim: { settleMs: 260, bounceOutMs: 110, bounceBackMs: 150, pressMs: 120, dotMs: 160 },
-  font: { tile: 48, title: 28, caption: 28, small: 14 },
 } as const;
 
 const LV_SYMBOL = {

@@ -1,6 +1,6 @@
 import type { TileAction as Action, Page, Tile } from '../../companion/api.gen.ts';
 import { assetOf } from '../editor/validate.ts';
-import { MONTSERRAT_14, MONTSERRAT_28, MONTSERRAT_48 } from './fonts.data.ts';
+import { ARCHIVO_MEDIUM_22, ARCHIVO_MEDIUM_26, ARCHIVO_MEDIUM_44, ARCHIVO_NAMEPLATE_26, ARCHIVO_SEMIBOLD_32, ARCHIVO_SEMIBOLD_40, MONTSERRAT_48 } from './fonts.data.ts';
 import { dotX, truncDiv, tileRect, type Geometry, type Rect } from './geometry.ts';
 import { graphPoints, type GraphPoint } from './graph.ts';
 import { fitText, TEXT_BYTES } from './live-text.ts';
@@ -8,16 +8,25 @@ import { barLayout, NOW_PLAYING, nowPlayingLayout, type Part } from './live-tile
 import { font, isMarker, layoutLabel, textSize, codepoints, type Align, type Font, type Label } from './text.ts';
 import { SYMBOLS, THEME } from './theme.ts';
 
-export type FontSize = 14 | 28 | 48;
+/** The Firmware's ui_theme fonts: font_legend, font_label, font_sub, font_value, font_big, font_title and font_icon. */
+export type FontRole = 'legend' | 'label' | 'sub' | 'value' | 'big' | 'title' | 'icon';
 
-export const FONTS: Record<FontSize, Font> = { 48: font(MONTSERRAT_48), 28: font(MONTSERRAT_28), 14: font(MONTSERRAT_14) };
+export const FONTS: Record<FontRole, Font> = {
+  legend: font(ARCHIVO_MEDIUM_44),
+  label: font(ARCHIVO_MEDIUM_26),
+  sub: font(ARCHIVO_MEDIUM_22),
+  value: font(ARCHIVO_SEMIBOLD_32),
+  big: font(ARCHIVO_SEMIBOLD_40),
+  title: font(ARCHIVO_NAMEPLATE_26),
+  icon: font(MONTSERRAT_48),
+};
 
 const LV_COORD_MAX = (1 << 29) - 1;
 
 export interface TextView {
   x: number;
   y: number;
-  size: FontSize;
+  font: FontRole;
   color: string;
   opacity: number;
   label: Label;
@@ -158,23 +167,26 @@ const centre = (pw: number, ph: number, w: number, h: number, dx = 0, dy = 0) =>
   y: truncDiv(ph, 2) - truncDiv(h, 2) + dy,
 });
 
-function text(label: Label, size: FontSize, color: string, at: { x: number; y: number }, opacity = 255): TextView {
-  return { x: at.x, y: at.y, size, color, opacity, label, icon: null };
+function text(label: Label, role: FontRole, color: string, at: { x: number; y: number }, opacity = 255): TextView {
+  return { x: at.x, y: at.y, font: role, color, opacity, label, icon: null };
 }
 
-export function fitLabel(value: string, tileW: number, tileH: number): { label: Label; size: FontSize } {
+/** The Firmware's fit_label. */
+export function fitLabel(value: string, tileW: number, tileH: number): { label: Label; font: FontRole } {
   const letters = codepoints(value);
-  const big = textSize(letters, FONTS[48], LV_COORD_MAX);
-  if (big.w <= tileW && big.h <= tileH) return { label: layoutLabel(value, FONTS[48]), size: 48 };
-  const maxW = tileW - 2 * THEME.media.labelInset;
-  for (const size of [28, 14] as const) {
-    const measured = textSize(letters, FONTS[size], LV_COORD_MAX);
-    if (measured.w <= maxW && measured.h <= tileH) return { label: layoutLabel(value, FONTS[size]), size };
+  if (letters.every((letter) => FONTS.legend.has(letter))) {
+    const legend = textSize(letters, FONTS.legend, LV_COORD_MAX);
+    if (legend.w <= tileW && legend.h <= tileH) return { label: layoutLabel(value, FONTS.legend), font: 'legend' };
   }
-  const wrapped = textSize(letters, FONTS[14], maxW);
+  const maxW = tileW - 2 * THEME.media.labelInset;
+  for (const role of ['label', 'sub'] as const) {
+    const measured = textSize(letters, FONTS[role], LV_COORD_MAX);
+    if (measured.w <= maxW && measured.h <= tileH) return { label: layoutLabel(value, FONTS[role]), font: role };
+  }
+  const wrapped = textSize(letters, FONTS.sub, maxW);
   return {
-    label: layoutLabel(value, FONTS[14], { width: maxW, height: wrapped.h > tileH ? tileH : null, align: 'center', dots: true }),
-    size: 14,
+    label: layoutLabel(value, FONTS.sub, { width: maxW, height: wrapped.h > tileH ? tileH : null, align: 'center', dots: true }),
+    font: 'sub',
   };
 }
 
@@ -185,13 +197,13 @@ function buildGraph(view: TileView, tile: Tile, sample: GraphSample | null) {
   const { pad, top, radius } = THEME.graph;
   const { rect } = view;
   const stale = !sample || sample.stale;
-  const lineH = FONTS[28].lineHeight;
+  const lineH = FONTS.label.lineHeight;
   const y = truncDiv(top - lineH, 2);
-  const label = layoutLabel(tile.label, FONTS[28], { width: rect.w - 2 * pad, height: lineH, dots: true });
-  view.texts.push(text(label, 28, THEME.color.caption, { x: pad, y }, sample?.stale ? THEME.staleOpa : 255));
+  const label = layoutLabel(tile.label, FONTS.label, { width: rect.w - 2 * pad, height: lineH, dots: true });
+  view.texts.push(text(label, 'label', THEME.color.caption, { x: pad, y }, sample?.stale ? THEME.staleOpa : 255));
   if (stale) {
-    const marker = layoutLabel('--', FONTS[28]);
-    view.texts.push(text(marker, 28, THEME.color.caption, { x: rect.w - pad - marker.width, y }));
+    const marker = layoutLabel('--', FONTS.label);
+    view.texts.push(text(marker, 'label', THEME.color.caption, { x: rect.w - pad - marker.width, y }));
   }
   const w = Math.max(rect.w - 2 * pad, 0);
   const h = Math.max(rect.h - top - pad, 0);
@@ -283,12 +295,12 @@ function buildTile(page: Page & { kind: 'grid' }, tile: Tile, g: Geometry, optio
     const opacity = sample?.stale ? THEME.staleOpa : 255;
     const maxW = rect.w - 2 * media.labelInset;
     const shown = sample?.value || '--';
-    const fits = textSize(codepoints(shown), FONTS[48], LV_COORD_MAX).w <= maxW;
+    const fits = textSize(codepoints(shown), FONTS.big, LV_COORD_MAX).w <= maxW;
     const valueBox = fits ? {} : { width: maxW, align: 'center' as const };
-    const value = layoutLabel(shown, FONTS[48], { ...valueBox, height: FONTS[48].lineHeight, dots: true });
-    view.texts.push(text(value, 48, color.text, centre(rect.w, rect.h, value.width, value.height, 0, -widget.valueDy), opacity));
-    const caption = layoutLabel(sample?.caption || tile.label, FONTS[28], { width: maxW, height: FONTS[28].lineHeight, align: 'center', dots: true });
-    view.texts.push(text(caption, 28, color.caption, centre(rect.w, rect.h, caption.width, caption.height, 0, widget.captionDy), opacity));
+    const value = layoutLabel(shown, FONTS.big, { ...valueBox, height: FONTS.big.lineHeight, dots: true });
+    view.texts.push(text(value, 'big', color.text, centre(rect.w, rect.h, value.width, value.height, 0, -widget.valueDy), opacity));
+    const caption = layoutLabel(sample?.caption || tile.label, FONTS.label, { width: maxW, height: FONTS.label.lineHeight, align: 'center', dots: true });
+    view.texts.push(text(caption, 'label', color.caption, centre(rect.w, rect.h, caption.width, caption.height, 0, widget.captionDy), opacity));
     const barW = !sample || sample.bar < 0 ? 0 : Math.trunc(Math.min(sample.bar, 1) * rect.w + 0.5);
     if (barW > 0) view.bar = { x: 0, y: rect.h - widget.barBottom - widget.barH, w: barW, h: widget.barH, radius: widget.barRadius };
     return view;
@@ -298,17 +310,17 @@ function buildTile(page: Page & { kind: 'grid' }, tile: Tile, g: Geometry, optio
   const stacked = glyph !== undefined || (image !== null && (options.hasImage?.(image) ?? true));
   if (!stacked) {
     const fitted = fitLabel(tile.label, rect.w, rect.h);
-    view.texts.push(text(fitted.label, fitted.size, color.text, centre(rect.w, rect.h, fitted.label.width, fitted.label.height)));
+    view.texts.push(text(fitted.label, fitted.font, color.text, centre(rect.w, rect.h, fitted.label.width, fitted.label.height)));
     return view;
   }
-  const captionH = FONTS[28].lineHeight;
-  const iconH = glyph !== undefined ? FONTS[48].lineHeight : 64;
-  const caption = layoutLabel(tile.label, FONTS[28], { width: rect.w - 2 * media.labelInset, height: captionH, align: 'center' });
-  view.texts.push(text(caption, 28, color.caption, centre(rect.w, rect.h, caption.width, caption.height, 0, truncDiv(iconH + media.gap, 2))));
+  const captionH = FONTS.label.lineHeight;
+  const iconH = glyph !== undefined ? FONTS.icon.lineHeight : 64;
+  const caption = layoutLabel(tile.label, FONTS.label, { width: rect.w - 2 * media.labelInset, height: captionH, align: 'center' });
+  view.texts.push(text(caption, 'label', color.caption, centre(rect.w, rect.h, caption.width, caption.height, 0, truncDiv(iconH + media.gap, 2))));
   const lift = truncDiv(-(captionH + media.gap), 2);
   if (glyph !== undefined) {
-    const icon = layoutLabel(glyph, FONTS[48]);
-    view.texts.push({ ...text(icon, 48, color.text, centre(rect.w, rect.h, icon.width, icon.height, 0, lift)), icon: tile.icon });
+    const icon = layoutLabel(glyph, FONTS.icon);
+    view.texts.push({ ...text(icon, 'icon', color.text, centre(rect.w, rect.h, icon.width, icon.height, 0, lift)), icon: tile.icon });
   } else if (image !== null) {
     view.image = { id: image, ...centre(rect.w, rect.h, 64, 64, 0, lift), size: 64 };
   }
@@ -319,19 +331,20 @@ function buildRows(g: Geometry, rows: RowSample[]): RowView[] {
   const { dash, color } = THEME;
   const rowH = truncDiv(g.grid.h - (dash.rowsMax - 1) * dash.rowGap, dash.rowsMax);
   const barMax = g.grid.w - g.dashBarX - dash.pad;
-  const maxH = truncDiv(rowH, FONTS[28].lineHeight) * FONTS[28].lineHeight;
-  const cell = (value: string, x: number, width: number, tint: string, align: Align = 'left') => {
-    const height = Math.min(textSize(codepoints(value), FONTS[28], width).h, maxH);
-    const label = layoutLabel(value, FONTS[28], { width, height, align, dots: true });
-    return text(label, 28, tint, { x, y: truncDiv(rowH, 2) - truncDiv(label.height, 2) });
+  const cell = (value: string, role: 'label' | 'value', x: number, width: number, tint: string, align: Align = 'left') => {
+    const f = FONTS[role];
+    const maxH = truncDiv(rowH, f.lineHeight) * f.lineHeight;
+    const height = Math.min(textSize(codepoints(value), f, width).h, maxH);
+    const label = layoutLabel(value, f, { width, height, align, dots: true });
+    return text(label, role, tint, { x, y: truncDiv(rowH, 2) - truncDiv(label.height, 2) });
   };
   return rows.slice(0, dash.rowsMax).map((row, i) => {
     const barW = row.bar < 0 ? 0 : Math.trunc(Math.min(row.bar, 1) * barMax + 0.5);
     return {
       rect: { x: g.grid.x, y: g.grid.y + i * (rowH + dash.rowGap), w: g.grid.w, h: rowH },
       texts: [
-        cell(row.label, dash.pad, g.dashValueX - 2 * dash.pad, color.caption),
-        cell(row.value, g.dashValueX, g.dashBarX - g.dashValueX - dash.pad, color.text),
+        cell(row.label, 'label', dash.pad, g.dashValueX - 2 * dash.pad, color.caption),
+        cell(row.value, 'value', g.dashValueX, g.dashBarX - g.dashValueX - dash.pad, color.text),
       ],
       bar: barW > 0 ? { x: g.dashBarX, y: truncDiv(rowH, 2) - truncDiv(dash.barH, 2), w: barW, h: dash.barH, radius: THEME.widget.barRadius } : null,
     };
@@ -347,8 +360,8 @@ export function buildPage(page: Page, g: Geometry, options: SceneOptions = {}): 
 
 export function buildTitle(title: string, g: Geometry): TextView | null {
   if (g.fullScreen) return null;
-  const label = layoutLabel(title, FONTS[28], { width: g.screen.w - 2 * g.titleX, height: FONTS[28].lineHeight, dots: true });
-  return text(label, 28, THEME.color.title, { x: g.titleX, y: g.titleY });
+  const label = layoutLabel(title, FONTS.title, { width: g.screen.w - 2 * g.titleX, height: FONTS.title.lineHeight, dots: true });
+  return text(label, 'title', THEME.color.title, { x: g.titleX, y: g.titleY });
 }
 
 export function buildDots(g: Geometry, count: number, current: number): DotView[] {
@@ -368,7 +381,7 @@ export function buildDots(g: Geometry, count: number, current: number): DotView[
 
 const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
-const drawn = (code: number) => isMarker(code) || FONTS[28].has(code);
+const drawn = (code: number) => isMarker(code) || FONTS.label.has(code);
 
 /** Each character the Device's font lacks, listed whole, so a family emoji is one entry and not its parts. */
 export function missingGlyphs(value: string): string[] {

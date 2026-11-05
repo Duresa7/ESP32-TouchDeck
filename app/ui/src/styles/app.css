@@ -1163,3 +1163,66 @@ button {
 .switch[data-checked] .switch-thumb {
   translate: 14px 0;
 }
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  /* Sonner shrinks a toast stacked behind another to the front toast's height. */
+  overflow: hidden;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-group);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-float);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--text-14);
+  line-height: var(--leading-14);
+  letter-spacing: var(--track-14);
+}
+
+.toast:focus-visible {
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--focus-ring), var(--shadow-float);
+}
+
+.toast-icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: var(--leading-14);
+  color: var(--ink-2);
+}
+
+.toast.is-error .toast-icon {
+  color: var(--danger-ink);
+}
+
+.toast.is-success .toast-icon {
+  color: var(--live-ink);
+}
+
+.toast.is-warning .toast-icon {
+  color: var(--signal-ink);
+}
+
+.toast-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.toast-title {
+  font-weight: var(--weight-medium);
+  text-wrap: pretty;
+}
+
+.toast-description {
+  color: var(--ink-2);
+  font-size: var(--text-12);
+  line-height: var(--leading-12);
+  letter-spacing: var(--track-12);
+  text-wrap: pretty;
+}

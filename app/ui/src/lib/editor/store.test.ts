@@ -8,7 +8,7 @@ import { createJobsStore, waitForJob, type JobsStore } from '../../companion/job
 import { sampleDevice } from '../../companion/samples.ts';
 import { windowSession } from '../../companion/session.ts';
 import { draftKey, type DraftStorage } from './drafts.ts';
-import { createEditorStore, firstProblem, saveState, tileProblems, type EditorDeps, type EditorStore } from './store.ts';
+import { createEditorStore, firstProblem, refusedActionField, saveState, tileProblems, type EditorDeps, type EditorStore } from './store.ts';
 import { canonical, newLayout, starterLayout, type GridPage, type Layout, type Page } from './validate.ts';
 
 const BASE = 'http://127.0.0.1:51234';
@@ -399,6 +399,16 @@ describe('the invalid-Tile rule', () => {
     expect(store.editAction('next', { type: 'command', program: 'notepad.exe', args: [], cwd: '', shell: false })).toBeNull();
     expect(tile(store, 'next').action).toEqual({ type: 'command', program: 'notepad.exe', args: [], cwd: '', shell: false });
     expect(tileProblems(state(store), 'next')).toBeUndefined();
+  });
+
+  test('a refused action names its field by pointer, whatever its reason says', () => {
+    store.editAction('next', { type: 'command', program: '', args: [], cwd: '', shell: false });
+    const refused = tileProblems(state(store), 'next')!.action!;
+    expect(refused.path).toMatch(/\/action\/program$/);
+    expect(refusedActionField(refused)).toBe('program');
+    expect(refusedActionField({ ...refused, reason: 'reworded without a pointer' })).toBe('program');
+    expect(refusedActionField({ ...refused, path: '/pages/1/tiles/0/action/args/2' })).toBe('args');
+    expect(refusedActionField({ ...refused, path: '' })).toBeNull();
   });
 
   test('a refused label stays on the Tile until a valid one replaces it', () => {

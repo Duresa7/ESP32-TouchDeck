@@ -340,6 +340,13 @@ decompression. `--lv-include lvgl.h` makes the files include `lvgl.h` the way th
 ESP-IDF LVGL component provides it. The same tool versions and commands give
 the same files byte for byte.
 
+The app's Device Previews measure and break text with the same fonts. After
+you regenerate them, run
+`node app/ui/src/lib/deck/fonts.extract.mjs firmware/managed_components/lvgl__lvgl/src/font`
+from the repository root to rewrite `app/ui/src/lib/deck/fonts.data.ts`. The
+UI tests fail when a Preview font's size or line height no longer matches the
+Firmware font `ui_theme.c` names for it.
+
 ### Performance options
 
 Five Kconfig options make the firmware faster or lighter without changing what

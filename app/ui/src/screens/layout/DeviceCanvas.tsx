@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import { Film, Lock, Pause, Play, Plus, SkipBack, SkipForward, Volume2, VolumeX } from 'lucide-react';
 import { cellAt, geometry, PANEL_H, PANEL_W, screenSize, tileFits, tileRect, type Geometry, type Rect, type Span } from '../../lib/deck/geometry.ts';
 import { easeOut, goTo, move, nearestPage, pager, press, release, restX, type Bounce } from '../../lib/deck/pager.ts';
-import { buildDots, buildPage, buildTitle, FONTS, sampleRows, sampleSeries, sampleWidget, type ControlGlyph, type FontSize, type GraphView, type LevelView, type NowPlayingView, type PageView, type SceneOptions, type TextView } from '../../lib/deck/scene.ts';
+import { buildDots, buildPage, buildTitle, FONTS, sampleRows, sampleSeries, sampleWidget, type ControlGlyph, type GraphView, type LevelView, type NowPlayingView, type PageView, type SceneOptions, type TextView } from '../../lib/deck/scene.ts';
 import type { Line } from '../../lib/deck/text.ts';
 import { THEME } from '../../lib/deck/theme.ts';
 import type { EditorStore, Target } from '../../lib/editor/store.ts';
@@ -11,8 +11,6 @@ import type { GridPage, Layout, Tile } from '../../lib/editor/validate.ts';
 import { AssetImage } from './AssetImage.tsx';
 import { GifImage } from './GifImage.tsx';
 import { BuiltinIcon } from './glyphs.tsx';
-
-const SIZE: Record<FontSize, string> = { 48: 'var(--screen-text-legend)', 28: 'var(--screen-text-label)', 14: 'var(--screen-text-sub)' };
 
 function runs(line: Line): ReactNode[] {
   const out: ReactNode[] = [];
@@ -30,7 +28,7 @@ function runs(line: Line): ReactNode[] {
   return out;
 }
 
-function SceneText({ view, title }: { view: TextView; title?: boolean }) {
+function SceneText({ view }: { view: TextView }) {
   const box: CSSProperties = { left: view.x, top: view.y, width: view.label.width, height: view.label.height };
   if (view.icon) {
     return (
@@ -39,11 +37,11 @@ function SceneText({ view, title }: { view: TextView; title?: boolean }) {
       </span>
     );
   }
-  const lineHeight = FONTS[view.size].lineHeight;
+  const lineHeight = FONTS[view.font].lineHeight;
   return (
     <span
-      className={clsx('scene-text', title && 'is-title', view.color === THEME.color.text ? 'is-ink' : 'is-ink-2')}
-      style={{ ...box, fontSize: SIZE[view.size], lineHeight: `${lineHeight}px`, opacity: view.opacity / 255 }}
+      className={clsx('scene-text', `is-${view.font}`, view.color === THEME.color.text ? 'is-ink' : 'is-ink-2')}
+      style={{ ...box, lineHeight: `${lineHeight}px`, opacity: view.opacity / 255 }}
       aria-hidden
     >
       {view.label.lines.map((line, i) => {
@@ -733,7 +731,7 @@ export function DeviceCanvas({ store, layout, pageId, mode, selected, adding, lo
           >
             {title && (
               <div data-testid="deck-title">
-                <SceneText view={title} title />
+                <SceneText view={title} />
               </div>
             )}
             <div className="scene-band" style={{ top: 0, width: g.screen.w, height: g.screen.h }}>

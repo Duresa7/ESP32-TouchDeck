@@ -25,33 +25,57 @@ const landscape = geometry(screenSize('landscape'));
 const shown = (view: { label: { lines: { letters: { letter: number }[] }[] } }) =>
   view.label.lines.map((line) => line.letters.map((l) => String.fromCodePoint(l.letter)).join(''));
 
-test('a short label keeps the 48 px tile font and sits in the middle of its tile', () => {
+const firmwareUi = join(import.meta.dirname, '..', '..', '..', '..', '..', 'firmware', 'components', 'ui');
+
+test('each Preview font is the font the Firmware draws that text in, at its size and line height', () => {
+  const theme = readFileSync(join(firmwareUi, 'ui_theme.c'), 'utf8');
+  const fontOf = (role: string) => new RegExp(`\\.font_${role} = &(\\w+),`).exec(theme)?.[1];
+  for (const [role, font] of Object.entries(FONTS)) {
+    const name = fontOf(role);
+    assert.ok(name, role);
+    if (name.startsWith('lv_font_montserrat_')) {
+      assert.deepEqual([role, font.size, font.lineHeight], ['icon', 48, 52]);
+      continue;
+    }
+    const source = readFileSync(join(firmwareUi, 'fonts', `${name}.c`), 'utf8');
+    const metric = (field: string) => Number(new RegExp(`\\.${field} = (\\d+)`).exec(source)?.[1]);
+    const size = Number(/Size: (\d+) px/.exec(source)?.[1]);
+    assert.deepEqual([font.size, font.lineHeight, font.baseLine], [size, metric('line_height'), metric('base_line')], `${role} is ${name}`);
+  }
+});
+
+test('a short label keeps the 44 px legend font and sits in the middle of its tile', () => {
   const page = buildPage(load('builtin.json').pages[0], landscape);
   const f1 = page.tiles.find((tile) => tile.id === 'f1')!;
   assert.deepEqual(f1.rect, tileRect({ rows: 4, cols: 4 }, { row: 0, col: 0, rowSpan: 1, colSpan: 1 }, landscape.grid, landscape.gap));
   const [label] = f1.texts;
-  assert.equal(label.size, 48);
+  assert.equal(label.font, 'legend');
   assert.equal(label.color, THEME.color.text);
-  assert.equal(label.y, Math.trunc(f1.rect.h / 2) - Math.trunc(52 / 2));
+  assert.equal(label.y, Math.trunc(f1.rect.h / 2) - Math.trunc(42 / 2));
   assert.equal(label.x, Math.trunc(f1.rect.w / 2) - Math.trunc(label.label.width / 2));
 });
 
-test('a label steps down to 28 px, then 14 px, then wraps with dots, as fit_label', () => {
-  assert.equal(fitLabel('Shift', 200, 100).size, 48);
-  assert.equal(fitLabel('Ctrl+Shift+F13', 240, 100).size, 28);
-  assert.equal(fitLabel('Ctrl+Shift+F13', 140, 100).size, 14);
-  assert.equal(fitLabel('Ctrl+Shift+F13', 120, 100).label.lines.length, 2);
+test('a label steps down to the 26 px label font, then the 22 px one, then wraps with dots, as fit_label', () => {
+  assert.equal(fitLabel('Shift', 200, 100).font, 'legend');
+  assert.equal(fitLabel('Ctrl+Shift+F13', 240, 100).font, 'label');
+  assert.equal(fitLabel('Ctrl+Shift+F13', 200, 100).font, 'sub');
+  assert.equal(fitLabel('Ctrl+Shift+F13', 160, 100).label.lines.length, 2);
   const wrapped = fitLabel('Launch the thing', 54, 97);
-  assert.equal(wrapped.size, 14);
+  assert.equal(wrapped.font, 'sub');
   assert.equal(wrapped.label.width, 54 - 32);
   assert.ok(wrapped.label.lines.length > 1);
+});
+
+test('a label with a letter beyond Basic Latin skips the legend font, which lacks it', () => {
+  assert.equal(fitLabel('Cafe', 200, 100).font, 'legend');
+  assert.equal(fitLabel('Café', 200, 100).font, 'label');
 });
 
 test('a media tile stacks its symbol over a one-line caption', () => {
   const page = buildPage(load('builtin.json').pages[1], landscape);
   const play = page.tiles.find((tile) => tile.id === 'playpause')!;
   const [caption, icon] = play.texts;
-  assert.equal(caption.size, 28);
+  assert.equal(caption.font, 'label');
   assert.equal(caption.label.height, 30);
   assert.equal(caption.label.width, play.rect.w - 32);
   assert.equal(caption.y, Math.trunc(play.rect.h / 2) - 15 + Math.trunc((52 + 14) / 2));
@@ -65,6 +89,7 @@ test('a widget tile shows its value, its caption below, and a bar as wide as the
   const page = buildPage(load('dev.json').pages[2], landscape, { widget: sampleWidget });
   const five = page.tiles.find((tile) => tile.id === 'five_hour')!;
   const [value, caption] = five.texts;
+  assert.deepEqual([value.font, caption.font], ['big', 'label']);
   assert.deepEqual(shown(value), ['42%']);
   assert.deepEqual(shown(caption), ['5h usage']);
   assert.equal(caption.color, THEME.color.caption);
@@ -107,7 +132,7 @@ test('a stale graph keeps its line at 60% with the unavailable marker, and one w
 test('a widget tile keeps its caption and value on one line, cut with dots to the tile', () => {
   const usage = gridPage(load('dev.json').pages[2]);
   const page = { ...usage, cols: 4, tiles: [{ ...usage.tiles[0], label: 'Claude 5h usage' }] };
-  const long = buildPage(page, landscape, { widget: () => ({ value: '100% of the five hour', caption: 'Claude 5h usage', bar: -1 }) });
+  const long = buildPage(page, landscape, { widget: () => ({ value: '100% of the five hour', caption: 'Claude five-hour usage', bar: -1 }) });
   const [value, caption] = long.tiles[0].texts;
   const maxW = long.tiles[0].rect.w - 32;
   assert.equal(caption.label.lines.length, 1);
@@ -140,36 +165,36 @@ test('a dashboard row wraps its text only as far as the row holds, the last line
   const dashboard = load('dev.json').pages[3];
   const rows = () => [
     { label: 'claude jordan.k', value: '5h 100% 7d 100%', bar: 1 },
-    { label: 'WWWWWWWWWWWWWWWW', value: '0000000000000000', bar: -1 },
+    { label: 'W'.repeat(24), value: '0000000000000000', bar: -1 },
   ];
-  const uncut = (value: string, g: typeof landscape) => layoutLabel(value, FONTS[28], { width: g.dashValueX - 2 * THEME.dash.pad });
+  const uncut = (value: string, g: typeof landscape) => layoutLabel(value, FONTS.label, { width: g.dashValueX - 2 * THEME.dash.pad });
 
   const wide = buildPage(dashboard, landscape, { rows });
   const [label, value] = wide.rows[0].texts;
   assert.deepEqual(label.label, uncut('claude jordan.k', landscape));
   assert.equal(label.y, 25 - 15);
-  assert.deepEqual(shown(value), ['5h 100% 7d 1...']);
-  assert.deepEqual([value.label.width, value.label.height, value.y], [220, 30, 25 - 15]);
-  assert.deepEqual(shown(wide.rows[1].texts[0]), ['WWWWWWWWW...']);
+  assert.deepEqual(shown(value), ['5h 100% 7d ...']);
+  assert.deepEqual([value.font, value.label.width, value.label.height, value.y], ['value', 220, 35, 25 - 17]);
+  assert.deepEqual(shown(wide.rows[1].texts[0]), ['WWWWWWWWWWWW...']);
 
   const portrait = geometry(screenSize('portrait'));
   const tall = buildPage(dashboard, portrait, { rows });
   const [twoLines, twoValues] = tall.rows[0].texts;
   assert.deepEqual(twoLines.label, uncut('claude jordan.k', portrait));
-  assert.deepEqual(shown(twoValues), ['5h 100% ', '7d 100%']);
-  assert.equal(twoValues.y, 52 - 30);
+  assert.deepEqual(shown(twoValues), ['5h 100.', '..']);
+  assert.deepEqual([twoValues.label.height, twoValues.y], [70, 52 - 35]);
   const cut = tall.rows[1].texts[0];
-  assert.equal(uncut('WWWWWWWWWWWWWWWW', portrait).lines.length, 4);
+  assert.equal(uncut('W'.repeat(24), portrait).lines.length, 4);
   assert.deepEqual([cut.label.height, cut.y, cut.label.lines.length], [90, 52 - 45, 3]);
   assert.match(shown(cut)[2], /^W+\.\.\.$/);
 
   const full = buildPage(dashboard, geometry(screenSize('landscape'), true), { rows });
-  assert.deepEqual(shown(full.rows[1].texts[1]), ['000000000000', '0000']);
+  assert.deepEqual(shown(full.rows[1].texts[1]), ['0000000000...']);
 });
 
 test('the title and dots follow the page, and a full-screen layout draws neither', () => {
   const title = buildTitle('Media', landscape)!;
-  assert.deepEqual([title.x, title.y, title.size, title.color], [36, 14, 28, THEME.color.title]);
+  assert.deepEqual([title.x, title.y, title.font, title.color], [36, 14, 'title', THEME.color.title]);
   const dots = buildDots(landscape, 2, 1);
   assert.deepEqual(dots[0], { x: 495 - 6, y: 580 - 6, w: 12, h: 12, active: false });
   assert.deepEqual(dots[1], { x: 529 - 6 - 11, y: 574, w: 34, h: 12, active: true });
@@ -181,19 +206,18 @@ test('the title and dots follow the page, and a full-screen layout draws neither
 test('a title too wide for the screen stays on one line, cut with dots short of the right margin', () => {
   const portrait = geometry(screenSize('portrait'));
   const fits = buildTitle('Usage on every account', portrait)!;
-  assert.deepEqual(fits.label.lines, layoutLabel('Usage on every account', FONTS[28]).lines);
+  assert.deepEqual(fits.label.lines, layoutLabel('Usage on every account', FONTS.title).lines);
   assert.deepEqual([fits.x, fits.y, fits.label.height], [36, 14, 30]);
   const wide = buildTitle('W'.repeat(24), portrait)!;
   assert.equal(wide.label.width, 600 - 2 * 36);
-  assert.deepEqual(shown(wide), [`${'W'.repeat(15)}...`]);
+  assert.deepEqual(shown(wide), [`${'W'.repeat(17)}...`]);
   assert.deepEqual(shown(buildTitle('W'.repeat(24), landscape)!), ['W'.repeat(24)]);
 });
 
 test('characters outside the deck font are listed once', () => {
-  assert.deepEqual(missingGlyphs('Café ☕ é'), ['é', '☕']);
-  assert.deepEqual(missingGlyphs('Play/Pause 100°'), []);
+  assert.deepEqual(missingGlyphs('Café ☕ € ☕'), ['☕', '€']);
+  assert.deepEqual(missingGlyphs('Play/Pause 100° Über…'), []);
   assert.deepEqual(missingGlyphs('👩‍👩‍👧‍👦 Call mum'), ['👩‍👩‍👧‍👦']);
-  assert.deepEqual(missingGlyphs('Über'), ['Ü']);
 });
 
 test('colors widen from RGB565 the way a deck screenshot reads them', () => {

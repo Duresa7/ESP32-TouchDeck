@@ -878,6 +878,28 @@
   color: var(--screen-ink-2);
 }
 
+.scene-text.is-legend {
+  font-size: var(--screen-text-legend);
+}
+
+.scene-text.is-label {
+  font-size: var(--screen-text-label);
+}
+
+.scene-text.is-sub {
+  font-size: var(--screen-text-sub);
+}
+
+.scene-text.is-value {
+  font-size: var(--screen-text-value);
+  font-weight: var(--screen-weight-semibold);
+}
+
+.scene-text.is-big {
+  font-size: var(--screen-text-big);
+  font-weight: var(--screen-weight-semibold);
+}
+
 .scene-text.is-title {
   font-size: var(--screen-text-title);
   font-weight: var(--screen-weight-semibold);

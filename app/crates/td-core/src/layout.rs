@@ -69,6 +69,8 @@ rules! {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayoutError {
     pub rule: Rule,
+    /// The JSON pointer of the value the rule refused, or empty when the rule names no single value.
+    pub path: String,
     pub message: String,
 }
 
@@ -435,7 +437,11 @@ impl Layout {
 }
 
 fn error(rule: Rule, message: String) -> LayoutError {
-    LayoutError { rule, message }
+    LayoutError {
+        rule,
+        path: String::new(),
+        message,
+    }
 }
 
 fn note_id<'a>(
@@ -814,6 +820,7 @@ impl Check {
     fn fail(&mut self, rule: Rule, pointer: &str, message: impl fmt::Display) {
         self.errors.push(LayoutError {
             rule,
+            path: place(pointer).into(),
             message: format!("{} {message}", place(pointer)),
         });
     }
@@ -1353,6 +1360,27 @@ mod tests {
             ]}]
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn an_error_names_the_refused_value_by_pointer_apart_from_its_message() {
+        let mut layout: Value = serde_json::from_slice(&launch_layout("a")).unwrap();
+        layout["pages"][0]["tiles"][0]["action"]["path"] = Value::from("");
+        let errors = Layout::parse(&serde_json::to_vec(&layout).unwrap()).unwrap_err();
+        let empty = errors.iter().find(|e| e.rule == Rule::TextEmpty).unwrap();
+        assert_eq!(empty.path, "/pages/0/tiles/0/action/path");
+        assert!(empty.message.starts_with(&empty.path), "{}", empty.message);
+
+        let mut layout: Value = serde_json::from_slice(&launch_layout("a")).unwrap();
+        let mut copy = layout["pages"][0]["tiles"][0].clone();
+        copy["id"] = Value::from("u");
+        layout["pages"][0]["tiles"]
+            .as_array_mut()
+            .unwrap()
+            .push(copy);
+        let errors = Layout::parse(&serde_json::to_vec(&layout).unwrap()).unwrap_err();
+        let overlap = errors.iter().find(|e| e.rule == Rule::TileOverlap).unwrap();
+        assert_eq!(overlap.path, "");
     }
 
     #[test]
