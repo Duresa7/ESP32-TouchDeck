@@ -31,7 +31,7 @@ Installers are not Authenticode-signed: there's no certificate, so Windows Smart
 
 ## Update signing
 
-The update key is the existing updater key ([ADR 0005](adr/0005-updater-keeps-the-signing-key.md)). A separate release signing job signs the installer with the Tauri CLI signer (`tauri signer sign --app-version X.Y.Z`), which writes the minisign signature the Electron updater verifies, with the version bound in its trusted comment. Never regenerate or replace the key: every installed copy trusts it.
+The update key is the existing updater key ([ADR 0005](adr/0005-updater-keeps-the-signing-key.md)). A separate release signing job signs the installer with the repo's own signer, `.github/release-signer/cli.mjs sign --app-version X.Y.Z`. It writes the same minisign signature the Tauri CLI 2.12.4 `tauri signer sign --app-version` wrote: Ed25519 over the installer's BLAKE2b-512 hash, with the file name and version bound in its trusted comment, which the Electron updater verifies. It reads the key from `TAURI_SIGNING_PRIVATE_KEY` (or a file named by `--private-key-path` or `TAURI_SIGNING_PRIVATE_KEY_PATH`) and its password from `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, the names the Tauri CLI used. It needs only Node.js, with no packages. Never regenerate or replace the key: every installed copy trusts it.
 
 Set `TAURI_UPDATER_PUBLIC_KEY` as a repository Actions variable so the unsigned build can read it without the `release` environment. Keep `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as secrets only in the `release` GitHub environment. Copy only the public variable from the environment to repository scope when enabling this workflow. Only `main` and `v*` tags can deploy to it.
 
@@ -123,16 +123,16 @@ The job graph is `build -> sign -> verify -> publish` (the last job only prepare
 The app, Firmware and installer lifecycle checks must also pass before that draft is prepared.
 Build and verification have read-only repository tokens and no signing secrets. Signing has a
 read-only token and the `release` environment; only its signer invocation receives the secrets.
-It checks the installer SHA256 against the build job output before signing. Its standalone npm
-lock installs only Tauri CLI 2.12.4 and its platform binary with `npm ci --ignore-scripts`;
-no app dependency installation or lifecycle script runs on that runner. The signature is
+It checks the installer SHA256 against the build job output before signing. It checks out only
+`.github/release-signer`, two dependency-free Node.js files that use `node:crypto`, and installs
+nothing: no npm package, app dependency or lifecycle script runs on that runner. The signature is
 uploaded separately. Verification checks the hash again, accepts the signed bytes and rejects
 a tampered copy through the real updater, and uploads no release files. Verification checks
 out the exact commit resolved by build and
 uses the repository public-key variable, refusing a different key in the manifest. The draft
 job downloads the original build and signature artifacts, checks the build hash, and creates
 the feed and checksums itself using the annotated tag notes from GitHub. Signing keeps its
-locked tooling at the workflow commit, fetches the built commit only to read its package
+signer at the workflow commit, fetches the built commit only to read its package
 version, and checks that version, the tag version and production signing mode before signing.
 Only the draft job has a write token. The Python recipe also removes every `TAURI_SIGNING_PRIVATE_KEY*`
 variable, case-insensitively, from build subprocess environments, including inherited ones.
