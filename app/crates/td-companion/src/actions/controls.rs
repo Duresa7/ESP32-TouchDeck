@@ -205,7 +205,7 @@ mod tests {
     use super::super::{AllowedAction, GrantStore};
     use super::*;
     use crate::api::{Clock, Events};
-    use crate::devices::{BoardKind, Config, DeviceManager};
+    use crate::devices::{Config, DeviceManager};
     use crate::features::integrations::Service;
     use crate::link::Links;
     use crate::live::fake::FakeControl;
@@ -296,9 +296,8 @@ mod tests {
         let devices = DeviceManager::new(events.clone());
         let config = Config::mock(None);
         let ports = config.mock.as_ref().unwrap().0.clone();
-        ports.plug(DEVICE, BoardKind::Device);
+        ports.plug_media_device(DEVICE);
         let deck = ports.deck(DEVICE).unwrap();
-        deck.set_media_capabilities(true);
         devices.start(config);
         let id = DeviceId::parse(DEVICE).unwrap();
         let session = || match devices.get(&id).map(|d| d.link) {

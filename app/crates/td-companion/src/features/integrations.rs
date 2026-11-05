@@ -570,7 +570,7 @@ mod tests {
 #[cfg(test)]
 mod control_tests {
     use super::*;
-    use crate::devices::{BoardKind, Config, DeviceManager, LinkState};
+    use crate::devices::{Config, DeviceManager, LinkState};
     use crate::link::Links;
     use crate::live::Live;
     use crate::live::fake::FakeControl;
@@ -605,9 +605,8 @@ mod control_tests {
         let devices = DeviceManager::new(events.clone());
         let config = Config::mock(None);
         let ports = config.mock.as_ref().unwrap().0.clone();
-        ports.plug("mock0001", BoardKind::Device);
+        ports.plug_media_device("mock0001");
         let deck = ports.deck("mock0001").unwrap();
-        deck.set_media_capabilities(true);
         devices.start(config);
         wait("the Device connects", Duration::from_secs(5), || {
             devices

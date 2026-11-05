@@ -189,8 +189,7 @@ impl TestCompanion {
     /// Plugs in a mock Device with v2 Firmware under this USB serial and waits until it's
     /// connected.
     pub async fn plug_media_device(&self, id: &str) -> DeviceId {
-        self.ports.plug(id, BoardKind::Device);
-        self.deck(id).set_media_capabilities(true);
+        self.ports.plug_media_device(id);
         let id = DeviceId::parse(id).unwrap();
         self.until(|td| {
             td.device(&id)
