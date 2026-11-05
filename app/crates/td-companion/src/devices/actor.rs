@@ -9,6 +9,7 @@ use super::{
 use std::{
     sync::{
         Arc,
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, Sender},
     },
     thread,
@@ -59,13 +60,13 @@ pub(super) fn spawn(
             }
         }
     });
-    let (parts, part_taps) = mpsc::sync_channel::<serde_json::Value>(0);
+    let (parts, part_taps) = PartSender::channel();
     let part_inner = inner.clone();
     let part_id = id.clone();
     thread::spawn(move || {
         for event in part_taps {
             if let Some(handler) = part_inner.actions.get() {
-                handler(&part_id, &event);
+                handler(&part_id, &event.value);
             }
         }
     });
@@ -181,8 +182,49 @@ fn run_inputs(
     }
 }
 
+struct PartTap {
+    value: serde_json::Value,
+    busy: Arc<AtomicBool>,
+}
+
+impl Drop for PartTap {
+    fn drop(&mut self) {
+        self.busy.store(false, Ordering::Release);
+    }
+}
+
+struct PartSender {
+    send: mpsc::SyncSender<PartTap>,
+    busy: Arc<AtomicBool>,
+}
+
+impl PartSender {
+    fn channel() -> (Self, Receiver<PartTap>) {
+        let (send, receive) = mpsc::sync_channel(1);
+        (
+            Self {
+                send,
+                busy: Arc::default(),
+            },
+            receive,
+        )
+    }
+
+    fn try_send(&self, value: serde_json::Value) -> bool {
+        if self.busy.swap(true, Ordering::AcqRel) {
+            return false;
+        }
+        self.send
+            .try_send(PartTap {
+                value,
+                busy: self.busy.clone(),
+            })
+            .is_ok()
+    }
+}
+
 struct Touches {
-    parts: mpsc::SyncSender<serde_json::Value>,
+    parts: PartSender,
     presses: mpsc::SyncSender<serde_json::Value>,
     drags: mpsc::SyncSender<()>,
     hub: Arc<parking_lot::Mutex<InputHub>>,
@@ -208,7 +250,7 @@ fn forward(
                 if event["m"] == "press" {
                     if event.get("part").is_some() {
                         if !gate.accept(&event, Instant::now())
-                            || touches.parts.try_send(event.clone()).is_err()
+                            || !touches.parts.try_send(event.clone())
                         {
                             dropped_parts = dropped_parts.saturating_add(1);
                         }
@@ -293,6 +335,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_part_waits_for_worker_scheduling_but_never_queues_behind_another_part() {
+        let (parts, receive) = PartSender::channel();
+        let first = serde_json::json!({"part": "next"});
+        let second = serde_json::json!({"part": "previous"});
+        assert!(parts.try_send(first.clone()));
+        assert!(!parts.try_send(second.clone()));
+        let running = receive.try_recv().unwrap();
+        assert_eq!(running.value, first);
+        assert!(!parts.try_send(second.clone()));
+        drop(running);
+        assert!(receive.try_recv().is_err());
+        assert!(parts.try_send(second.clone()));
+        assert_eq!(receive.try_recv().unwrap().value, second);
+    }
+
+    #[test]
+    fn a_stopped_part_worker_refuses_taps() {
+        let (parts, receive) = PartSender::channel();
+        drop(receive);
+        assert!(!parts.try_send(serde_json::json!({"part": "next"})));
+        assert!(!parts.busy.load(Ordering::Acquire));
+    }
+
+    #[test]
     fn overflow_releases_held_keys_before_the_next_event() {
         let devices = super::super::DeviceManager::new(crate::api::Events::default());
         let sink = td_host::FakeSink::default();
@@ -323,7 +389,7 @@ mod tests {
             incoming,
             Some(mirror),
             Touches {
-                parts: mpsc::sync_channel(0).0,
+                parts: PartSender::channel().0,
                 presses: mpsc::sync_channel(16).0,
                 drags: mpsc::sync_channel(1).0,
                 hub: Arc::default(),

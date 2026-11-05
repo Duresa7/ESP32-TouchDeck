@@ -488,7 +488,11 @@ mod tests {
         for tile in ["nope", "level", "playing"] {
             td.drag(tile, &[0.9, 0.95]);
         }
-        td.drag("volume", &[7.5, -3.0]);
+        td.deck
+            .emit_input("media", "volume", "value", InputPhase::Move, 7.5);
+        wait("the upper bound is clamped", || td.last_set() == Some(1.0));
+        td.deck
+            .emit_input("media", "volume", "value", InputPhase::End, -3.0);
         wait("the clamped gesture ends", || td.last_set() == Some(0.0));
         wait("the clamped gesture logs", || td.log().len() == 1);
         let send = |event: Value| td.deck.emit_value(&event);
@@ -503,17 +507,20 @@ mod tests {
         send(input(3, "value", json!("0.5")));
         send(input(4, "value", Value::Null));
         send(input(5, "tile", json!("x".repeat(900))));
-        for (seq, part, tile) in [
-            (1, "mute", "level"),
-            (2, "next", "volume"),
-            (3, "launch", "playing"),
-            (4, "PLAY", "playing"),
-            (5, "next", "nope"),
+        for (seq, part, tile, entries) in [
+            (1, "mute", "level", 2),
+            (2, "next", "volume", 3),
+            (3, "launch", "playing", 4),
+            (4, "PLAY", "playing", 4),
+            (5, "next", "nope", 5),
         ] {
             send(
                 json!({"m": "press", "page": "media", "tile": tile, "kind": "widget", "part": part,
                 "seq": 1_000_000 + seq, "t": 1}),
             );
+            wait("the part logs before the next tap", || {
+                td.log().len() == entries
+            });
             std::thread::sleep(Duration::from_millis(30));
         }
         wait("the parts log", || td.log().len() == 5);
