@@ -2,8 +2,7 @@
 # Runs on Windows PowerShell 5.1, which every supported Windows has.
 param(
     [Parameter(Mandatory = $true)][string]$InstallDir,
-    [ValidateRange(1, 600)][int]$StopTimeoutSeconds = 15,
-    [ValidateRange(1, 600)][int]$KillTimeoutSeconds = 5
+    [ValidateRange(1, 600)][int]$StopTimeoutSeconds = 15
 )
 
 $ErrorActionPreference = 'Stop'
@@ -94,7 +93,7 @@ $left = Get-InstalledCompanions
 if ($left.Count) {
     Write-Host "The Companion did not stop in $StopTimeoutSeconds seconds; ending it."
     $left | Stop-Process -Force -ErrorAction SilentlyContinue
-    $deadline = [DateTime]::UtcNow.AddSeconds($KillTimeoutSeconds)
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
     while ((Get-InstalledCompanions).Count -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 200 }
 }
 if ((Get-InstalledCompanions).Count) { exit 1 }
