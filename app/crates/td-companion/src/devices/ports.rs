@@ -171,6 +171,14 @@ impl MockPorts {
     }
     /// Plugs a board with this USB serial in.
     pub fn plug(&self, serial: &str, kind: BoardKind) {
+        self.plug_board(serial, kind, false);
+    }
+    /// Plugs in a Device with v2 Firmware that advertises media capabilities from the moment its port is
+    /// published, so a Companion that connects on the change notice never sees it without them.
+    pub fn plug_media_device(&self, serial: &str) {
+        self.plug_board(serial, BoardKind::Device, true);
+    }
+    fn plug_board(&self, serial: &str, kind: BoardKind, media: bool) {
         let changed = {
             let mut state = self.state.lock();
             if state.boards.get(serial).is_none_or(|(k, _)| *k != kind) {
@@ -185,6 +193,9 @@ impl MockPorts {
                     BoardKind::DeviceV1 | BoardKind::Busy => {}
                 }
                 state.boards.insert(serial.into(), (kind, deck));
+            }
+            if media {
+                state.boards[serial].1.set_media_capabilities(true);
             }
             state.plugged.insert(serial.into());
             state.changed.clone()
@@ -244,5 +255,33 @@ impl PortSource for MockPorts {
     }
     fn watch(&self, changed: Changed) {
         self.state.lock().changed = Some(changed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use td_link::{Session, SessionConfig};
+
+    #[test]
+    fn media_capabilities_are_ready_when_the_port_is_published() {
+        let ports = MockPorts::default();
+        let observed = ports.clone();
+        ports.watch(Arc::new(move || {
+            let port = observed.list().pop().unwrap();
+            let (session, _) = Session::open(
+                observed.open(&port.port).unwrap(),
+                SessionConfig {
+                    ping_every: None,
+                    ..SessionConfig::default()
+                },
+            )
+            .unwrap();
+            let identity = session.identity(Duration::from_secs(1)).unwrap();
+            assert_eq!(identity.capabilities.unwrap().live_images, Some(4));
+        }));
+        ports.plug_media_device("mock0001");
+        ports.watch(Arc::new(|| {}));
     }
 }
