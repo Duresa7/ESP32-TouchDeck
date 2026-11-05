@@ -490,7 +490,8 @@ impl Router {
                 let rested = track
                     .and_then(|t| t.last_sent)
                     .is_none_or(|at| now.duration_since(at) >= gap);
-                (fresh && rested).then_some((binding, sample))
+                (fresh && (rested || matches!(sample.value, LiveValue::Image(Some(_)))))
+                    .then_some((binding, sample))
             })
             .collect();
         due.sort_by_key(|(binding, _)| {
@@ -631,6 +632,15 @@ impl Router {
                 other => other,
             };
             if !still_reported(&self.controls, binding, sample) {
+                continue;
+            }
+            let gap = caps.gap(self.controls.contains_key(&binding.source.integration));
+            if state
+                .tracks
+                .get(&key(binding))
+                .and_then(|t| t.last_sent)
+                .is_some_and(|at| now.duration_since(at) < gap)
+            {
                 continue;
             }
             let new_title = match &value {
@@ -1554,6 +1564,27 @@ mod tests {
         media.deliver();
         assert_eq!(media.shown("cover"), Value::String(reference));
         assert_eq!(media.puts(), 2);
+    }
+
+    #[test]
+    fn a_prepared_cover_uploads_during_the_display_gap() {
+        let mut m = Media::new(1);
+        let start = m.now;
+        m.deck.set_live_time(0);
+        track(&m.fake, "First", Some("sha256:art1"));
+        m.round();
+        make_covers(&mut m.router, &m.fake, &mut m.cache);
+        m.now = start + Duration::from_millis(100);
+        m.deck.set_live_time(100);
+        assert!(m.round().errors.is_empty());
+        assert_eq!(m.puts(), 1);
+        assert!(m.shown("cover").is_null());
+        m.now = start + Duration::from_millis(500);
+        m.deck.set_live_time(500);
+        assert!(m.round().errors.is_empty());
+        assert_eq!(m.puts(), 1);
+        assert!(m.shown("cover").is_string());
+        assert_eq!(m.router.devices["d"].rate_strikes, 0);
     }
 
     #[test]
