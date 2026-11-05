@@ -4,7 +4,7 @@ import type { UpdateCheck, UpdateDownload, UpdateInstall, UpdateProgress } from 
 let downloading = false;
 contextBridge.exposeInMainWorld('openTouchDeck', {
   version: 1,
-  session: (): Promise<string | null> => ipcRenderer.invoke('session'),
+  session: (stale?: string): Promise<string | null> => ipcRenderer.invoke('session', stale),
   onSessionChanged: (callback: (token: string) => void) => {
     if (typeof callback !== 'function') throw new TypeError('Expected a callback');
     const listener = (_event: Electron.IpcRendererEvent, token: string) => callback(token);

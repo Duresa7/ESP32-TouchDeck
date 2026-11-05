@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import type {} from '../../ui/src/companion/session';
 
 // Build with `cargo build -p td-companion --features test-hooks` in app/, or point TOUCHDECK_COMPANION_BIN at a build.
 const binary = process.env.TOUCHDECK_COMPANION_BIN ||
@@ -35,9 +36,8 @@ test('window loads from the real Companion and its session lists the mock Device
       const page = await app.firstWindow();
       await page.waitForURL(origin + '/');
       expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getTitle())).toBe('Open TouchDeck');
-      // The Companion doesn't serve the built UI at / yet, so the call runs in whatever page it serves there.
       const result = await page.evaluate(async () => {
-        const token = await (window as any).openTouchDeck.session();
+        const token = await window.openTouchDeck?.session();
         const response = await fetch('/api/v1/devices', { headers: { Authorization: `Bearer ${token}` } });
         return { token, status: response.status, body: await response.json() };
       });
@@ -71,10 +71,43 @@ test('in development the window shows Home from the UI dev server with the mock 
         await expect(cards).toHaveCount(1, { timeout: 15_000 });
         await expect(cards.first()).toContainText('Connected');
         // The dev page signs in through the dev server; Electron gives the window session only to the Companion origin.
-        expect(await page.evaluate(() => (window as any).openTouchDeck.session())).toBe(null);
+        expect(await page.evaluate(() => window.openTouchDeck?.session())).toBe(null);
         await mkdir(evidence, { recursive: true });
         await page.screenshot({ path: resolve(evidence, 'electron-home.png') });
       } finally { await app.close(); }
     } finally { vite?.kill(); }
+  });
+});
+
+test('reading a session preserves in-flight requests and stale renewals share one replacement', async () => {
+  await withCompanion(async env => {
+    const app = await electron.launch({ args: [resolve('.')], env });
+    try {
+      const page = await app.firstWindow();
+      await page.waitForLoadState();
+      const result = await page.evaluate(async () => {
+        const bridge = window.openTouchDeck;
+        if (!bridge) throw new Error('Window bridge missing');
+        const first = await bridge.session();
+        if (!first) throw new Error('Window session missing');
+        const second = await bridge.session();
+        const status = async (token: string) => (await fetch('/api/v1/devices', {
+          headers: { Authorization: `Bearer ${token}` },
+        })).status;
+        const inFlightStatus = await status(first);
+        const renewed = await Promise.all([bridge.session(first), bridge.session(first)]);
+        const late = await bridge.session(first);
+        const read = await bridge.session();
+        return {
+          sameRead: first === second, inFlightStatus,
+          replaced: renewed[0] !== first,
+          shared: renewed.every(token => token === late) && late === read,
+          oldStatus: await status(first),
+          newStatus: late ? await status(late) : null,
+        };
+      });
+      expect(result).toEqual({ sameRead: true, inFlightStatus: 200, replaced: true,
+        shared: true, oldStatus: 401, newStatus: 200 });
+    } finally { await app.close(); }
   });
 });

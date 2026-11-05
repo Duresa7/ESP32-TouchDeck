@@ -48,13 +48,13 @@ test('isolated shell, exact preload, navigation, renewal, single instance and cl
         return handler({ sender: contents, senderFrame: { origin: 'https://example.invalid' } });
       }));
     })).toEqual([{ state: 'failed' }, { state: 'failed', reason: 'download' }, { state: 'failed', reason: 'installer' }]);
-    const token = await page.evaluate(() => (window as any).openTouchDeck.session());
+    const token = await page.evaluate(() => window.openTouchDeck?.session());
+    if (!token) throw new Error('Window session missing');
     expect(fake.sessions.has(token)).toBe(true);
     expect(token).not.toBe(fake.runtime.token);
     await page.evaluate(() => { (window as any).changed = []; (window as any).openTouchDeck.onSessionChanged((t: string) => (window as any).changed.push(t)); });
-    // UI asks again after auth.* / 401 or WebSocket 4401; the bridge has no extra refresh API.
     fake.sessions.clear();
-    const renewed = await page.evaluate(() => (window as any).openTouchDeck.session());
+    const renewed = await page.evaluate(stale => window.openTouchDeck?.session(stale), token);
     expect(renewed).not.toBe(token);
     expect(await page.evaluate(() => (window as any).changed)).toEqual([renewed]);
     await page.evaluate(() => { const f = document.createElement('iframe'); f.src = '/frame'; document.body.append(f); });

@@ -14,7 +14,7 @@ export type UpdateInstall = { state: 'failed'; reason: 'busy'; device: string | 
 // What Electron's preload exposes. The renderer never sees the pairing token.
 export interface OpenTouchDeckBridge {
   version: 1;
-  session(): Promise<string | null>;
+  session(stale?: string): Promise<string | null>;
   onSessionChanged(callback: () => void): void;
   // Every call resolves; none rejects, because Errors lose their fields across contextBridge.
   updates?: {
@@ -46,14 +46,13 @@ export interface Session {
   renew(stale: string | null): Promise<string | null>;
 }
 
-// The Electron window: main mints a new session whenever the renderer asks again.
 export function windowSession(bridge: OpenTouchDeckBridge): Session {
   let token: string | null = null;
   let loaded = false;
   let pending: Promise<string | null> | null = null;
 
-  const ask = () => {
-    pending ??= bridge.session().then(
+  const ask = (stale?: string) => {
+    pending ??= bridge.session(stale).then(
       (fresh) => {
         token = fresh;
         loaded = true;
@@ -74,7 +73,7 @@ export function windowSession(bridge: OpenTouchDeckBridge): Session {
     kind: 'window',
     token: () => (loaded ? Promise.resolve(token) : ask()),
     current: () => token,
-    renew: (stale) => (pending ?? (token !== stale ? Promise.resolve(token) : ask())),
+    renew: (stale) => (pending ?? (token !== stale ? Promise.resolve(token) : ask(stale ?? undefined))),
   };
 }
 
