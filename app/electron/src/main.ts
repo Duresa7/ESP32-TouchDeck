@@ -13,7 +13,6 @@ if (process.env.TOUCHDECK_APP_DATA_DIR) app.setPath('userData', join(process.env
 let window: BrowserWindow | undefined;
 let current: WindowSession | undefined;
 let closing = false;
-let delivered = false;
 let refreshing: Promise<string | null> | undefined;
 // Development only: show the UI dev server, which proxies /api to the Companion and mints its own session,
 // in place of the Companion's page. It never gets the window session: `session` answers only the Companion origin.
@@ -59,7 +58,6 @@ async function refresh(): Promise<string | null> {
   current = next;
   if (previous) await revoke(previous).catch(() => {});
   if (window.webContents.mainFrame.origin !== pageOrigin(next)) {
-    delivered = false;
     await window.loadURL(pageOrigin(next));
     return null;
   }
@@ -67,9 +65,9 @@ async function refresh(): Promise<string | null> {
   return next.token;
 }
 
-ipcMain.handle('session', async event => {
+ipcMain.handle('session', async (event, stale: unknown) => {
   if (!trusted(event)) return null;
-  if (!delivered) { delivered = true; return current!.token; }
+  if (!refreshing && (typeof stale !== 'string' || stale !== current?.token)) return current?.token ?? null;
   refreshing ??= refresh().finally(() => { refreshing = undefined; });
   const token = await refreshing;
   return trusted(event) ? token : null;
