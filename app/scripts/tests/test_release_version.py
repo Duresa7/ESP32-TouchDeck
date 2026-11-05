@@ -18,13 +18,14 @@ SPEC = importlib.util.spec_from_file_location("release_version", ROOT / "app/scr
 release_version = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release_version)
 FILES = tuple(release_version.PATTERNS)
+LOCK = release_version.LOCK
 
 
 class ReleaseVersionTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="touchdeck-release-version-")
         self.root = Path(self.temp.name)
-        for relative in FILES:
+        for relative in (*FILES, LOCK):
             (self.root / relative).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / relative, self.root / relative)
         self.version = release_version.read_versions(self.root)[FILES[0]]
@@ -63,6 +64,39 @@ class ReleaseVersionTest(unittest.TestCase):
                 path.write_bytes(original)
                 self.assertEqual(code, 1)
                 self.assertIn("disagree", errors)
+
+    def test_check_fails_when_a_lock_entry_disagrees(self):
+        path = self.root / LOCK
+        original = path.read_bytes()
+        for crate in release_version.CRATES:
+            with self.subTest(crate=crate):
+                pattern = release_version.lock_pattern(crate)
+                path.write_bytes(pattern.sub(lambda m: m.group(1) + "9.9.9" + m.group(3), original.decode("utf-8"),
+                                             count=1).encode("utf-8"))
+                code, errors = self.run_cli("check")
+                path.write_bytes(original)
+                self.assertEqual(code, 1)
+                self.assertIn("disagree", errors)
+
+    def test_bump_leaves_dependency_versions_alone(self):
+        relative = "app/crates/td-core/Cargo.toml"
+        path = self.root / relative
+        text = path.read_bytes().decode("utf-8")
+        text += '\n[dev-dependencies]\nsome-dep = { version = "0.1.0" }\n\n[dependencies.other]\nversion = "2.0.0"\n'
+        path.write_bytes(text.encode("utf-8"))
+        self.assertEqual(self.run_cli("bump", "7.8.9")[0], 0)
+        updated = path.read_bytes().decode("utf-8")
+        self.assertIn('some-dep = { version = "0.1.0" }', updated)
+        self.assertIn('[dependencies.other]\nversion = "2.0.0"', updated)
+        self.assertEqual(updated.count('version = "7.8.9"'), 1)
+
+    def test_bump_updates_lock_entries_only_for_workspace_crates(self):
+        lock = (self.root / LOCK).read_bytes().decode("utf-8")
+        other_versions = lock.count('version = "') - len(release_version.CRATES)
+        self.assertEqual(self.run_cli("bump", "7.8.9")[0], 0)
+        updated = (self.root / LOCK).read_bytes().decode("utf-8")
+        self.assertEqual(updated.count('version = "7.8.9"'), len(release_version.CRATES))
+        self.assertEqual(updated.count('version = "') - len(release_version.CRATES), other_versions)
 
     def test_bump_changes_only_version_strings(self):
         before = {relative: (self.root / relative).read_bytes() for relative in FILES}

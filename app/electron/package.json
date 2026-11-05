@@ -1,6 +1,6 @@
 {
   "name": "@touchdeck/electron",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Open TouchDeck desktop app",
   "author": "Duresa Kadi",
   "private": true,
