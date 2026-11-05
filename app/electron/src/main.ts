@@ -121,7 +121,7 @@ async function openWindow() {
     quit: () => { closing = true; app.quit(); },
   });
   window = new BrowserWindow({
-    title: 'Open TouchDeck', width: 1100, height: 760, minWidth: 800, minHeight: 600,
+    title: 'Open TouchDeck', useContentSize: true, width: 1100, height: 760, minWidth: 800, minHeight: 600,
     webPreferences: { preload: join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true,
       nodeIntegration: false, webviewTag: false, partition: 'touchdeck-window' },
   });
