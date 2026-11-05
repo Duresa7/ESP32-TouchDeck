@@ -1401,7 +1401,8 @@ mod tests {
             thread::sleep(Duration::from_millis(1));
         }
         session.close();
-        assert!(matches!(query.join().unwrap(), Err(LinkError::Closed(_))));
+        let result = query.join().unwrap();
+        assert!(matches!(result, Err(LinkError::Closed(_))), "{result:?}");
     }
 
     #[test]

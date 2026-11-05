@@ -22,8 +22,9 @@ const cases = [
 ];
 for (const [name, lockResponse, expected] of cases) {
   test(`installer stop: ${name}`, { skip: process.platform !== 'win32', timeout: 40000 }, async t => {
+    const forcesStop = name === 'no listener' || name === 'wrong proof';
     const dir = await mkdtemp(join(tmpdir(), 'touchdeck-installer-'));
-    const f = await fakeCompanion({ lockResponse, wrongProof: name === 'wrong proof' });
+    const f = await fakeCompanion({ lockResponse, wrongProof: name === 'wrong proof', onShutdown: () => target?.kill() });
     let target;
     let helper;
     t.after(async () => {
@@ -41,15 +42,18 @@ for (const [name, lockResponse, expected] of cases) {
     target = spawn(join(dir, 'td-companion.exe'), ['-t', '127.0.0.1'], { stdio: 'ignore' });
     await once(target, 'spawn');
     helper = spawn(join(process.env.WINDIR, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-InstallDir', dir],
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-InstallDir', dir, ...(forcesStop ? ['-StopTimeoutSeconds', '1'] : [])],
       { env: { ...process.env, LOCALAPPDATA: dir }, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     helper.stdout.on('data', chunk => { output += chunk; });
     helper.stderr.on('data', chunk => { output += chunk; });
     const [code] = await once(helper, 'exit');
     assert.equal(code, expected, output);
-    assert.equal(target.exitCode === null, expected !== 0, output);
+    const targetRunning = () => target.exitCode === null && target.signalCode === null;
+    if (expected === 0 && targetRunning()) await once(target, 'exit');
+    assert.equal(targetRunning(), expected !== 0, output);
     assert.equal(f.calls.some(call => call.path === '/api/v1/system/shutdown'), name === 'confirmed lock');
+    assert.equal(output.includes('ending it'), forcesStop, output);
     if (name === 'wrong proof') assert.ok(f.calls.every(call => !call.authorization));
   });
 }
