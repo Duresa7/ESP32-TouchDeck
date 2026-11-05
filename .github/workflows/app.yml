@@ -114,6 +114,12 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --workspace -- -D warnings
       - run: cargo test --workspace
+      - name: Build the Companion for Electron specs
+        if: runner.os == 'Windows'
+        run: cargo build -p td-companion --features test-hooks
+      - name: Run the Electron Playwright specs
+        if: runner.os == 'Windows'
+        run: pnpm --filter @touchdeck/electron e2e
 
   e2e:
     name: e2e ${{ matrix.shard }}/3
