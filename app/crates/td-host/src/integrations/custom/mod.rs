@@ -10,8 +10,6 @@ use td_core::live::LiveValue;
 const WAITING: &str = "Waiting for approval on this PC.";
 const DENIED: &str = "Denied on this PC.";
 const EXPIRED: &str = "Approval expired.";
-const CORRUPT_CONFIG: &str =
-    "Couldn't read custom.json. Kept it as custom.corrupt.json and started empty.";
 const UNREADABLE_CONFIG: &str = "Couldn't read custom.json. Started empty.";
 const PIN_NEEDS_HTTPS: &str =
     "A certificate pin needs an https:// address. Change the address or clear the pin.";
@@ -179,7 +177,7 @@ struct Custom {
     approval: Option<Arc<dyn CommandApproval>>,
     settings: Settings,
     file: Option<PathBuf>,
-    load_error: Option<&'static str>,
+    load_error: Option<String>,
     secrets: Arc<dyn secrets::SecretStore>,
     fetch: Arc<dyn crate::sources::Fetch>,
     samples: BTreeMap<String, Sample>,
@@ -187,6 +185,22 @@ struct Custom {
     last_poll: Option<Instant>,
     revision: u64,
     delivery: BTreeMap<String, Delivery>,
+}
+
+fn set_aside(path: &std::path::Path) -> Option<String> {
+    (1..)
+        .map(|n| match n {
+            1 => "custom.corrupt.json".to_owned(),
+            n => format!("custom.corrupt-{n}.json"),
+        })
+        .find_map(|name| {
+            let target = path.with_file_name(&name);
+            if target.exists() {
+                return None;
+            }
+            Some(std::fs::rename(path, target).is_ok().then_some(name))
+        })
+        .flatten()
 }
 
 fn create(env: &Environment) -> Result<Box<dyn Integration>, Error> {
@@ -201,17 +215,17 @@ fn create(env: &Environment) -> Result<Box<dyn Integration>, Error> {
         {
             Some(settings) => (settings, None),
             None => {
-                let message =
-                    if std::fs::rename(path, path.with_file_name("custom.corrupt.json")).is_ok() {
-                        CORRUPT_CONFIG
-                    } else {
-                        UNREADABLE_CONFIG
-                    };
+                let message = match set_aside(path) {
+                    Some(name) => {
+                        format!("Couldn't read custom.json. Kept it as {name} and started empty.")
+                    }
+                    None => UNREADABLE_CONFIG.to_owned(),
+                };
                 (Settings::default(), Some(message))
             }
         },
         Some((_, Err(e))) if e.kind() != std::io::ErrorKind::NotFound => {
-            (Settings::default(), Some(UNREADABLE_CONFIG))
+            (Settings::default(), Some(UNREADABLE_CONFIG.to_owned()))
         }
         _ => (Settings::default(), None),
     };
@@ -331,9 +345,13 @@ impl Custom {
         parse_value(source, &body)
     }
 
-    fn status_message(&self) -> Option<&'static str> {
-        self.load_error
-            .or_else(|| self.samples.values().find_map(|s| s.error))
+    fn status_message(&self) -> Option<String> {
+        self.load_error.clone().or_else(|| {
+            self.samples
+                .values()
+                .find_map(|s| s.error)
+                .map(str::to_owned)
+        })
     }
 }
 
@@ -396,7 +414,7 @@ impl Integration for Custom {
         self.approval = Some(approval);
     }
     fn summary(&self) -> IntegrationSummary {
-        let message = self.status_message().map(str::to_owned);
+        let message = self.status_message();
         let mut config_schema = vec![
             ConfigField {
                 name: "enabled".into(),

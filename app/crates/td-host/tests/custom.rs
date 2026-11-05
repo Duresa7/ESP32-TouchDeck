@@ -840,3 +840,44 @@ fn a_failed_save_that_deletes_a_secret_drops_the_poll_that_used_it() {
     i.apply_poll(poll());
     assert!(i.live().is_empty());
 }
+
+#[test]
+fn every_corrupt_custom_json_is_kept_under_its_own_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let custom_file = dir.path().join("custom.json");
+    for (round, bad) in [b"{first".as_slice(), b"{second", b"{third"]
+        .into_iter()
+        .enumerate()
+    {
+        std::fs::write(&custom_file, bad).unwrap();
+        let mut r = Registry::new(Environment {
+            media_provider: Some(Arc::new(
+                td_host::integrations::media::fake::FakeMedia::default(),
+            )),
+            volume: Some(td_host::integrations::volume::fake::FakeVolume::default().factory()),
+            secrets: Arc::new(MemorySecrets::default()),
+            config_file: Some(dir.path().join("sources.json")),
+            fetch: Arc::new(|| Box::new(Reply("{}"))),
+        })
+        .unwrap();
+        let message = r
+            .get("custom")
+            .unwrap()
+            .view()
+            .unwrap()
+            .summary
+            .status
+            .message
+            .unwrap();
+        let name = match round {
+            0 => "custom.corrupt.json".to_owned(),
+            n => format!("custom.corrupt-{}.json", n + 1),
+        };
+        assert!(message.contains(&name), "{message}");
+        assert_eq!(std::fs::read(dir.path().join(&name)).unwrap(), bad);
+    }
+    assert_eq!(
+        std::fs::read(dir.path().join("custom.corrupt.json")).unwrap(),
+        b"{first"
+    );
+}

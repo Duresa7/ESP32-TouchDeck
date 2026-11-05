@@ -276,8 +276,11 @@ pause, next, mute, volume down, and volume up. The reports go through the key
 engine to the console key log and the USB app link. The connected desktop app
 mirrors them into the host session. Built-in pages come from embedded JSON in
 [builtin.json](../schema/examples/builtin.json), and saved layouts use the same
-[layout format](../schema/README.md). Every color, size, shadow, and
-animation time of the look is a named token in `firmware/components/ui/ui_theme.c`.
+[layout format](../schema/README.md). The Backlit look is flat: every fill is one
+RGB565 color, with no shadow, glow, border, or gradient. The screen colors are
+macros in `firmware/components/ui/ui_theme.h`, one per token of
+`app/ui/src/styles/tokens.css`. The sizes, radii, and animation times are named
+fields of the theme in `firmware/components/ui/ui_theme.c`.
 
 The `ui` component adds the `ui` console command: `ui state` reports the page and
 the tile that is pressed, `ui goto <page>` changes the page, `ui tile <id>` gives a

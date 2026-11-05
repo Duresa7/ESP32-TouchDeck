@@ -1212,7 +1212,7 @@ tile. A stale graph keeps its last line at 60% opacity, as on the Device.
 | Approval | Waiting for approval on this PC. |
 | Approval denied | Denied on this PC. |
 | Approval expired | Approval expired. |
-| Corrupt settings file | Couldn't read custom.json. Kept it as custom.corrupt.json and started empty. |
+| Corrupt settings file | Couldn't read custom.json. Kept it as custom.corrupt.json and started empty. (The name is custom.corrupt-2.json, -3 and so on when a backup already exists.) |
 | Unreadable settings file | Couldn't read custom.json. Started empty. |
 | Missing headers | Enter the secret headers. |
 | Vault failure | Credential store unavailable. |

@@ -19,3 +19,22 @@ In `pnpm dev:ui`, Vite proxies `/api`, the events WebSocket included, to the Com
 `companion.json`, and plays the part Electron main plays later: it checks the Companion's proof and
 mints a window session for the page. Only the dev page itself can use the proxy or get a session. See
 [`dev/companion.ts`](dev/companion.ts).
+
+### Screenshots
+
+The Playwright specs take screenshots only when `TD_SHOTS` names a folder. Without it the screenshot steps skip. Set it to a folder, which the specs create, and run a spec. Each shot lands in that folder under the name the spec gives it, for example `home-3-light.png`:
+
+```powershell
+$env:TD_SHOTS = "$PWD/../../.verify/shots"
+pnpm e2e:ui e2e/home.spec.ts
+```
+
+`.verify/` is git-ignored, so keep shots there. `TD_BREAK_SURVEY` is the separate switch for the worst-case survey above.
+
+### Preview fonts
+
+`src/lib/deck/fonts.extract.mjs` generates `src/lib/deck/fonts.data.ts`, the Montserrat 14, 28 and 48 metrics the Layout preview uses to measure Tile labels. It is a one-off script, not part of any build. Run it from `app/ui` with the path to LVGL 9's `src/font` folder, then commit the new `fonts.data.ts`:
+
+```powershell
+node src/lib/deck/fonts.extract.mjs <lvgl>/src/font
+```

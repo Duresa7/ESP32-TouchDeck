@@ -53,8 +53,8 @@ function sampleAccounts(polled: number): AccountUsage[] {
 
 const PRESETS: [string, string][] = [
   ['status', 'Account status'], ['success', 'Requests OK'], ['failed', 'Requests failed'],
-  ['recent_10m', 'Requests in 10 min'], ['five_hour_pct', '5-hour limit used'],
-  ['seven_day_pct', '7-day limit used'], ['five_hour_reset', '5-hour reset in'],
+  ['recent_10m', 'Requests 10 min'], ['five_hour_pct', '5-hour used'],
+  ['seven_day_pct', '7-day used'], ['five_hour_reset', '5-hour reset in'],
   ['seven_day_reset', '7-day reset in'], ['plan', 'Plan'],
 ];
 

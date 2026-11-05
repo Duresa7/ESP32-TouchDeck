@@ -246,7 +246,7 @@ test('Add Tile lists Preset tiles by Integration and places one where it points'
   await expect(group.getByTestId('preset')).toHaveCount(9);
   await group.locator('[data-preset="five_hour_pct"]').click();
   const placed = page.locator('[data-testid="tile"][data-row="2"][data-col="2"]');
-  await expect(placed).toHaveAttribute('aria-label', '5-hour limit use');
+  await expect(placed).toHaveAttribute('aria-label', '5-hour used');
   await expect(placed).toHaveAttribute('aria-pressed', 'true');
   await expect(section).toHaveCount(0);
 });
