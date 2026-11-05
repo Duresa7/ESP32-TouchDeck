@@ -331,19 +331,40 @@ pub struct DeviceSummary {
     pub diagnostics: Option<DeviceDiagnostics>,
     pub capabilities: Option<Capabilities>,    // v2 hello: screen, storage_free, tile_kinds, live_hz, live_total_hz, series, text_bytes. None on v1
     pub orientation: Option<Orientation>,
-    pub layout: Option<LayoutSummary>,         // what the Device shows
+    pub layout: Option<LayoutSummary>,         // what the Device shows; see below
     pub control_layout: ControlLayout,
     pub key_mirror: KeyMirrorState,            // {enabled, reason}
     pub stable_id: bool,
+}
+pub struct LayoutSummary {
+    pub source: LayoutSource,                  // Builtin | Storage
+    pub name: String,
+    pub orientation: Orientation,
+    pub pages: u32,                            // Page count
+    pub page: Option<u32>,                     // index of the Page on screen
 }
 pub struct NewBoard { pub id: DeviceId, pub port: String, pub probe: BoardProbe, pub seen_ms: u64 }
 pub enum BoardProbe { Silent, Busy { detail: String }, OtherFirmware { product: String, detail: String } }
 ```
 
+`layout` is what the Device shows, from the Layout the live router reads from it
+(below, under Rules for several Devices) and the Page the Device reports with
+`v2.page` ([link v2](../schema/protocol/link-v2.md#page-on-screen)). `source` is
+`builtin` when the Device runs its built-in Layout because none is stored for its
+orientation, and `storage` otherwise. `name`, `orientation` and `pages` describe
+that Layout. `page` is the index in `pages` of the Page on screen; it is null
+until the Device reports a Page of this Layout, and always on Firmware that
+doesn't send `v2.page`. `layout` is null on protocol 1, while offline and until
+the first read of a session completes, which is within one live round of
+connecting. A link change clears it. A Layout push or orientation change keeps
+the previous summary until the next read lands, so it never goes null mid-push.
+Changes increment `rev` and publish `device.updated`. `name` is the Device's own
+and untrusted, like the strings below.
+
 `diagnostics` is null until the Device has answered `hello`. Otherwise it is
 `{ product: string, running_from: string, sinks: string[], current_layout: string }`,
 from `hello.product`, `hello.running`, `hello.sinks` and `hello.layout`. `current_layout`
-is the Firmware's Layout id, separate from the Layout JSON in `DeviceSummary.layout`.
+is the Firmware's Layout source as `hello` reports it, separate from `DeviceSummary.layout`.
 Changes increment `rev` and publish `device.updated`. These strings, and the Firmware's
 `version` and `build`, are the Device's own and untrusted. The API returns them as sent,
 and clients show control, format and line or paragraph separator characters as escapes.

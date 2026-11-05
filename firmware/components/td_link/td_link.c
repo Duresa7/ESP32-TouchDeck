@@ -6,6 +6,7 @@
 #include "td_rx_sync.h"
 #include "td_input.h"
 #include "ui.h"
+#include "ui_page_report.h"
 #include <stdio.h>
 #include <string.h>
 #include "esp_timer.h"
@@ -245,6 +246,30 @@ static void send_input(void)
     if (len > 0 && (size_t)len < sizeof json) td_link_send(TD_FRAME_MESSAGE, 0, TD_FRAME_EVENT, (const uint8_t *)json, (size_t)len);
 }
 
+static void send_page(void)
+{
+    static ui_page_report_t report;
+    if (!td_link_v2_selected() || !ui_ready()) {
+        return;
+    }
+    uint32_t layout = 0;
+    const uint8_t page = ui_page_shown(&layout);
+    const uint32_t session = td_link_v2_session();
+    if (!ui_page_report_due(&report, session, layout, page)) {
+        return;
+    }
+    char id[32];
+    if (!ui_page_id(page, id, sizeof id)) {
+        report.sent = false;
+        return;
+    }
+    char json[64];
+    int len = snprintf(json, sizeof json, "{\"m\":\"v2.page\",\"page\":\"%s\"}", id);
+    if (len > 0 && (size_t)len < sizeof json) {
+        td_link_send(TD_FRAME_MESSAGE, 0, TD_FRAME_EVENT, (const uint8_t *)json, (size_t)len);
+    }
+}
+
 /* Events go out only while the app is connected. Otherwise they are thrown away, and their seq leaves a gap. */
 static void send_events(void)
 {
@@ -284,6 +309,7 @@ static void link_task(void *arg)
         handle_frame(pdMS_TO_TICKS(TD_LINK_POLL_MS));
         td_link_files_service((uint32_t)(esp_timer_get_time() / 1000));
         send_input();
+        send_page();
         send_events();
     }
 }

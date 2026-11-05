@@ -239,6 +239,52 @@ impl Default for ControlLayout {
         }
     }
 }
+/// What a Device shows: the Layout this Companion last read from it and the Page on its screen.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct LayoutSummary {
+    pub source: LayoutSource,
+    pub name: String,
+    pub orientation: td_core::Orientation,
+    pub pages: u32,
+    /// The index of the Page on screen. Unknown until the Device reports a Page of this Layout, and always on Firmware
+    /// that doesn't report Pages.
+    pub page: Option<u32>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum LayoutSource {
+    /// The Firmware's built-in Layout, because no Layout is stored for its orientation.
+    Builtin,
+    Storage,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ShownLayout {
+    source: LayoutSource,
+    name: String,
+    orientation: td_core::Orientation,
+    pages: Vec<String>,
+}
+impl ShownLayout {
+    pub(crate) fn new(layout: &td_core::Layout, source: LayoutSource) -> Self {
+        Self {
+            source,
+            name: layout.name.clone(),
+            orientation: layout.orientation,
+            pages: layout.pages.iter().map(|p| p.id().to_owned()).collect(),
+        }
+    }
+    fn summary(&self, page: Option<&str>) -> LayoutSummary {
+        LayoutSummary {
+            source: self.source,
+            name: self.name.clone(),
+            orientation: self.orientation,
+            pages: self.pages.len() as u32,
+            page: page
+                .and_then(|page| self.pages.iter().position(|id| id == page))
+                .map(|index| index as u32),
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct DeviceSummary {
     pub id: DeviceId,
@@ -250,7 +296,7 @@ pub struct DeviceSummary {
     pub diagnostics: Option<DeviceDiagnostics>,
     pub capabilities: Option<Capabilities>,
     pub orientation: Option<String>,
-    pub layout: Option<serde_json::Value>,
+    pub layout: Option<LayoutSummary>,
     pub control_layout: ControlLayout,
     pub key_mirror: KeyMirrorState,
     pub stable_id: bool,
@@ -455,6 +501,8 @@ struct Entry {
     /// Off after Disconnect, until replug or Connect.
     auto: bool,
     quick_drops: u32,
+    shown: Option<ShownLayout>,
+    reported_page: Option<String>,
 }
 struct PortRecord {
     info: PortInfo,
@@ -518,13 +566,30 @@ impl Inner {
         change(&mut next);
         if next.link != entry.summary.link {
             next.control_layout = ControlLayout::default();
+            entry.shown = None;
+            entry.reported_page = None;
         }
+        next.layout = entry
+            .shown
+            .as_ref()
+            .map(|shown| shown.summary(entry.reported_page.as_deref()));
         if next == entry.summary {
             return;
         }
         next.rev = entry.summary.rev + 1;
         entry.summary = next;
         self.events.publish(&DeviceUpdated(entry.summary.clone()));
+    }
+    fn page_shown(&self, id: &DeviceId, generation: u64, page: &str) {
+        let mut reg = self.reg.lock();
+        let Some(entry) = reg.devices.get_mut(id) else {
+            return;
+        };
+        if entry.actor.as_ref().map(|a| a.generation) != Some(generation) {
+            return;
+        }
+        entry.reported_page = Some(page.to_owned());
+        self.update(&mut reg, id, |_| {});
     }
     fn set_link(&self, reg: &mut Registry, id: &DeviceId, link: LinkState) {
         self.update(reg, id, |d| d.link = link);
@@ -617,6 +682,8 @@ impl DeviceManager {
                         actor: None,
                         auto: true,
                         quick_drops: 0,
+                        shown: None,
+                        reported_page: None,
                     },
                 );
             }
@@ -646,6 +713,21 @@ impl DeviceManager {
                 d.control_layout = status;
             }
         });
+    }
+    pub(crate) fn layout_shown(&self, device: &str, session: u64, shown: ShownLayout) {
+        let Some(id) = DeviceId::parse(device) else {
+            return;
+        };
+        let mut reg = self.inner.reg.lock();
+        let Some(entry) = reg.devices.get_mut(&id) else {
+            return;
+        };
+        if !matches!(entry.summary.link, LinkState::Connected { since_ms, .. } if since_ms == session)
+        {
+            return;
+        }
+        entry.shown = Some(shown);
+        self.inner.update(&mut reg, &id, |_| {});
     }
     pub fn summaries(&self) -> Vec<DeviceSummary> {
         let reg = self.inner.reg.lock();

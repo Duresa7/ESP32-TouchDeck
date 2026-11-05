@@ -43,6 +43,29 @@ describe('Home', () => {
     expect(after).not.toContain('is-off');
     expect(after).toContain('device-spill');
   });
+  it('draws the Page the Device shows when its summary names this Layout', () => {
+    const layout = demoLayout();
+    const shown = { source: 'storage', name: 'Demo Layout', orientation: 'landscape', pages: 2, page: 1 } as const;
+    expect(previewOf(layout, shown)?.index).toBe(1);
+    const html = renderToStaticMarkup(<DevicePreview preview={previewOf(layout, shown)} live />);
+    expect(html).toContain('data-page="work"');
+    expect(html).toContain('Copy');
+    expect(previewOf(layout, { ...shown, page: null })?.index).toBe(0);
+    expect(previewOf(layout, { ...shown, page: 2 })?.index).toBe(0);
+    expect(previewOf(layout, { ...shown, name: 'Studio' })?.index).toBe(0);
+    expect(previewOf(layout, { ...shown, pages: 3 })?.index).toBe(0);
+    expect(previewOf(layout, { ...shown, orientation: 'portrait' })?.index).toBe(0);
+    expect(previewOf(layout, { ...shown, source: 'builtin' })?.index).toBe(0);
+    expect(previewOf(layout, null)?.index).toBe(0);
+  });
+  it('says there is no Layout instead of drawing a blank screen', () => {
+    const empty = renderToStaticMarkup(<DevicePreview preview={null} live empty />);
+    expect(empty).toContain('No Layout yet');
+    expect(empty).toContain('Click to make one');
+    expect(empty).not.toContain('data-page');
+    expect(renderToStaticMarkup(<DevicePreview preview={null} live />)).not.toContain('No Layout yet');
+    expect(renderToStaticMarkup(<DevicePreview preview={previewOf(demoLayout())} live empty />)).not.toContain('No Layout yet');
+  });
   it('does not invent a Page or a last-seen time', () => {
     expect(previewOf(null)).toBeNull();
     expect(previewOf({ ...demoLayout(), pages: [] })).toBeNull();
