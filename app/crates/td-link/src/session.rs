@@ -1388,21 +1388,32 @@ mod tests {
     #[test]
     fn closing_the_connection_wakes_a_layout_state_waiter() {
         let deck = MockDeck::new();
-        deck.stop();
+        deck.lose_console_replies(1);
         let (session, _events) = Session::open(Box::new(deck.connect()), quiet()).unwrap();
         let session = Arc::new(session);
         let query = {
             let session = session.clone();
             thread::spawn(move || session.layout_state(Duration::from_secs(5)))
         };
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while session.shared.layout_reply.lock().unwrap().is_none() {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while deck.lines().is_empty() {
             assert!(Instant::now() < deadline, "the query did not start");
             thread::sleep(Duration::from_millis(1));
         }
         session.close();
         let result = query.join().unwrap();
         assert!(matches!(result, Err(LinkError::Closed(_))), "{result:?}");
+    }
+
+    #[test]
+    fn a_layout_state_query_after_close_returns_closed() {
+        let deck = MockDeck::new();
+        let (session, _events) = Session::open(Box::new(deck.connect()), quiet()).unwrap();
+        session.close();
+        assert!(matches!(
+            session.layout_state(Duration::from_secs(5)),
+            Err(LinkError::Closed(_))
+        ));
     }
 
     #[test]
