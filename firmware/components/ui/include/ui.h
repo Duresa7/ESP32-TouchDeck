@@ -50,6 +50,12 @@ bool ui_layout_reload(bool use_builtin, td_layout_error_t *err);
 /* True once ui_build() has drawn a deck. */
 bool ui_ready(void);
 
+/* The index of the Page on screen, and in *layout a count that changes with every Layout load. Takes no lock. */
+uint8_t ui_page_shown(uint32_t *layout);
+
+/* Copies the id of Page `index` of the Layout on screen, under the layout lock. False when it has no such Page. */
+bool ui_page_id(uint8_t index, char *out, size_t size);
+
 /* The orientation the deck booted in, which names the layout file a put replaces and a reload reads. */
 const char *ui_layout_slot(void);
 
