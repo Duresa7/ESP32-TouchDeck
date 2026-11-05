@@ -123,6 +123,14 @@ impl Shared {
 pub struct Live(Arc<Shared>);
 
 impl Live {
+    pub(crate) fn cover_assets(&self, device: &str) -> BTreeSet<String> {
+        self.0.router.lock().cover_assets(device)
+    }
+
+    pub(crate) fn forget_cover(&self, device: &str, id: &str) {
+        self.0.router.lock().forget_cover(device, id);
+    }
+
     pub fn start(devices: DeviceManager, links: Links, integrations: Service) -> Live {
         let live = Live(Arc::default());
         let _ = live.0.devices.set(devices.clone());

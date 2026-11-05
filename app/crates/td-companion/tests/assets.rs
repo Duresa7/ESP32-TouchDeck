@@ -368,3 +368,63 @@ async fn a_running_layout_push_pins_its_assets_against_a_sweep() {
     assert_eq!(pushed.state, JobState::Succeeded, "{pushed:?}");
     assert!(td.deck(&device).assets().contains_key(&pinned_id));
 }
+
+#[tokio::test]
+async fn prune_skips_an_unknown_cover_in_use_and_finishes_on_repeat() {
+    let td = TestCompanion::start().await;
+    let device = td.plug_device("mock0001").await;
+    let deck = td.deck(&device);
+    let mut files: Vec<_> = (0..3u8)
+        .map(|n| {
+            let bytes = vec![0xff, 0xd8, 0xff, n];
+            (td_link::asset::asset_id(&bytes), bytes)
+        })
+        .collect();
+    files.sort();
+    let cover = files[1].0.clone();
+    let unused = vec![files[0].0.clone(), files[2].0.clone()];
+    for (id, bytes) in files {
+        deck.seed_asset(bytes, id == cover);
+    }
+    for expected in [json!(unused), json!([])] {
+        let job = td
+            .call::<Prune>(
+                DevicePath {
+                    device: device.clone(),
+                },
+                NoQuery,
+                PruneRequest::default(),
+            )
+            .await
+            .unwrap();
+        let done = td.wait(&job).await;
+        assert_eq!(done.state, JobState::Succeeded, "{done:?}");
+        let result = done.result.unwrap();
+        assert_eq!(result["removed"], expected);
+        assert_eq!(result["kept_in_use"], 1);
+        assert_eq!(
+            deck.assets().keys().cloned().collect::<Vec<_>>(),
+            vec![cover.clone()]
+        );
+    }
+}
+
+#[tokio::test]
+async fn prune_still_fails_for_other_delete_refusals_with_a_delete_message() {
+    let td = TestCompanion::start().await;
+    let device = td.plug_device("mock0001").await;
+    let deck = td.deck(&device);
+    deck.seed_asset(vec![0xff, 0xd8, 0xff, 0], false);
+    deck.refuse_assets("v2.asset.delete", "busy", 1);
+    let job = td
+        .call::<Prune>(DevicePath { device }, NoQuery, PruneRequest::default())
+        .await
+        .unwrap();
+    let done = td.wait(&job).await;
+    assert_eq!(done.state, JobState::Failed);
+    let error = done.error.unwrap();
+    assert_eq!(error.code, "asset.refused");
+    assert_eq!(error.details.unwrap()["reason"], "busy");
+    assert_eq!(error.message, "The Device could not remove this Asset.");
+    assert_eq!(deck.assets().len(), 1);
+}

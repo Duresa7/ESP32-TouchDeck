@@ -249,6 +249,34 @@ enum Sent {
 }
 
 impl Router {
+    pub(super) fn cover_assets(&self, device: &str) -> BTreeSet<String> {
+        self.devices
+            .get(device)
+            .into_iter()
+            .flat_map(|state| state.tracks.values())
+            .flat_map(|track| {
+                track
+                    .held
+                    .as_ref()
+                    .map(|(_, value)| value)
+                    .into_iter()
+                    .chain(track.unanswered.as_ref().map(|(_, _, value)| value))
+            })
+            .filter_map(|value| match value {
+                LiveValue::Image(Some(reference)) => {
+                    reference.strip_prefix("sha256:").map(str::to_owned)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub(super) fn forget_cover(&mut self, device: &str, id: &str) {
+        if let Some(state) = self.devices.get_mut(device) {
+            state.covers.forget(id);
+        }
+    }
+
     /// The Controls behind some Integrations: their streams use the Control gap and are rechecked before each send.
     pub fn set_controls(&mut self, controls: Controls) {
         self.controls = controls;
@@ -1694,6 +1722,34 @@ mod tests {
         assert_eq!(errors.get("media").map(String::as_str), Some(OUT_OF_SPACE));
         assert!(media.shown("cover").is_null());
         assert!(media.deck.assets().is_empty());
+    }
+
+    #[test]
+    fn pruning_protects_current_covers_and_forgotten_covers_can_be_uploaded_again() {
+        let mut media = Media::new(1);
+        track(&media.fake, "First", Some("sha256:art1"));
+        media.deliver();
+        let first = media
+            .shown("cover")
+            .as_str()
+            .unwrap()
+            .strip_prefix("sha256:")
+            .unwrap()
+            .to_owned();
+        assert_eq!(
+            media.router.cover_assets("d"),
+            BTreeSet::from([first.clone()])
+        );
+        track(&media.fake, "Second", Some("sha256:art2"));
+        media.deliver();
+        assert!(!media.router.cover_assets("d").contains(&first));
+        td_link::asset::delete_asset(&media.session, &first).unwrap();
+        media.router.forget_cover("d", &first);
+        let puts = media.puts();
+        track(&media.fake, "First", Some("sha256:art1"));
+        media.deliver();
+        assert_eq!(media.puts(), puts + 1);
+        assert_eq!(media.shown("cover"), format!("sha256:{first}"));
     }
 
     #[test]

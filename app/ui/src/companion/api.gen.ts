@@ -197,7 +197,7 @@ export type PruneRequest = {
  * Layout being edited.
  */
 also_keep: Array<string>, };
-export type PruneResult = { removed: Array<string>, };
+export type PruneResult = { removed: Array<string>, kept_in_use: number, };
 export type PushProgress = { assets_sent: number, assets_total: number, bytes_sent: number, bytes_total: number, };
 export type PushReport = { state: DeviceLayoutState, bytes: number, chunks: number, retransmits: number, elapsed_ms: number, assets: AssetSync, 
 /**

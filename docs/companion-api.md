@@ -446,7 +446,7 @@ pub struct Job {
 | `firmware.update`, `firmware.repair`, `firmware.install` | `{phase: "checking" \| "sending" \| "rebooting" \| "confirming" \| "recovering", pct?, bytes}`, where `bytes` is how many bytes the phase has written so far, `0` when it has no `pct` | `{message, version}` | While waiting for confirmation; during `checking` or `sending` only when the image goes to the inactive OTA slot |
 | `layouts.push` | `{assets_sent, assets_total, bytes_sent, bytes_total}` | `PushReport {state, bytes, chunks, retransmits, elapsed_ms, assets: {sent, unavailable}}` | Before the Layout put starts |
 | `assets.render` | `{frames_done, frames_total}` | `AssetRef {id, kind, width, height, bytes}` | Yes |
-| `assets.prune` | `{removed, total}` | `{removed: AssetId[]}` | Yes |
+| `assets.prune` | `{removed, total}` | `{removed: AssetId[], kept_in_use: number}` | Yes |
 
 - **One active Job per Device or New board scope**, including `waiting_for_confirmation`. A second one gets 409 `device.busy` with `details.job` set to the active Job, so a double click can attach to it. There's no queue. Companion-scoped Asset render Jobs instead share the two-Job limit in Limits.
 - `GET /jobs` lists active Jobs and the last 50 finished ones, kept for 10 minutes. `GET /jobs/{id}` reads one. `DELETE /jobs/{id}` cancels one, or returns 409 `job.not_cancellable`.
@@ -558,7 +558,7 @@ Feature module `assets`. Assets reach a Device through `layouts.push` and the in
 As built in #75:
 
 - `assets.create` takes `app`, `upload` and `catalog` sources. Uploads accept PNG, JPEG and GIF images. GIF headers are admitted without decoding; full GIF validation runs in the preparation Job. An expired, consumed or foreign upload returns `upload.not_found`. Catalog picks accept `variant` (`base`, `light`, `dark`), pixel `padding`, RGBA `background` and RGB `tint`. `fit` is `"contain"` (the default: the whole image inside the Tile) or `"cover"` (cropped to a centered square first). The result's `kind` is `tdi1`, 64 by 64, identified by the full SHA-256 of its encoded bytes. A third render while two run gets 429 `limits.exceeded`.
-- `assets.prune` keeps the Assets that `also_keep` names, that the Companion's stored Layouts for the Device use, and that the Device's own stored Layouts use, as today's `remove_unused_icons` does.
+- `assets.prune` keeps the Assets that `also_keep` names, that the Companion's stored Layouts for the Device use, and that the Device's own stored Layouts use, as today's `remove_unused_icons` does. It also keeps live cover Assets the Companion last sent successfully or whose reply is still unanswered. Obsolete cached covers may be removed and are forgotten by the upload cache. A Device delete refusal with reason `in-use` keeps that Asset and continues; other delete errors still fail the Job. The result's `kept_in_use` counts distinct listed Assets protected as live covers or refused `in-use`, including on repeat runs. It excludes Assets kept only by Layouts or `also_keep`.
 - `assets.file` reads built-in icons and the Companion's Asset files, kept as `assets/<id>.bin` under its data folder. The generated client returns a `Blob` for it.
 
 ### Actions and approvals
