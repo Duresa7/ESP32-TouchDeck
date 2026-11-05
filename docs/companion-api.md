@@ -835,9 +835,9 @@ or log actions; the Companion's own tests cover those.
 `custom` starts with `{enabled: false, sources: []}` and persists non-secret
 settings in `custom.json`, beside `sources.json`. If `custom.json` is corrupt or
 fails validation at startup, the Companion moves it aside to
-`custom.corrupt.json`, starts `custom` empty (`{enabled: false, sources: []}`),
+`custom.corrupt.json` (or `custom.corrupt-2.json`, `custom.corrupt-3.json` and so on when an earlier backup exists, so no backup is replaced), starts `custom` empty (`{enabled: false, sources: []}`),
 and reports `error` status `"Couldn't read custom.json. Kept it as custom.corrupt.json and started empty."`
-without blocking other Integrations. If `custom.json` cannot be read or renamed,
+(naming the file it wrote) without blocking other Integrations. If `custom.json` cannot be read or renamed,
 it leaves the file in place, starts empty, and reports `"Couldn't read custom.json. Started empty."`.
 Saving valid settings writes a new `custom.json` and clears that startup error.
 The Integrations form exposes
