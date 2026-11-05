@@ -192,6 +192,10 @@ struct State {
     photo_refusals: Vec<(String, Option<u64>)>,
     photo_end: Option<(u8, Map<String, Value>)>,
     clock: Option<(u64, i32)>,
+    page: usize,
+    page_reports: bool,
+    selections: u64,
+    page_sent: Option<(u64, String, usize)>,
 }
 
 fn arrived(request: &Map<String, Value>) -> Value {
@@ -347,6 +351,10 @@ impl MockDeck {
                 photo_refusals: Vec::new(),
                 photo_end: None,
                 clock: None,
+                page: 0,
+                page_reports: true,
+                selections: 0,
+                page_sent: None,
             })),
         }
     }
@@ -493,6 +501,16 @@ impl MockDeck {
     /// Drops the next `count` console replies, as input or output lost on the wire.
     pub fn lose_console_replies(&self, count: u32) {
         self.state().lose_console_replies = count;
+    }
+
+    /// Shows the Page at `index` of the Layout on screen, as a swipe or a page action does.
+    pub fn show_page(&self, index: usize) {
+        self.state().page = index;
+    }
+
+    /// While off, the deck never sends `v2.page`, like Firmware that predates it. On by default.
+    pub fn set_page_reports(&self, enabled: bool) {
+        self.state().page_reports = enabled;
     }
 
     pub fn emit(&self, event: &Event) {
@@ -859,6 +877,40 @@ impl MockDeck {
 
     /// Sends the chunks of a get that are due: new ones inside the window and ones whose
     /// ack is 200 ms late. A chunk sent 5 times without an ack aborts the get.
+    fn report_page(&self, to_host: &Sender<Vec<u8>>) {
+        let wire = {
+            let mut state = self.state();
+            if !(state.page_reports && state.v2 && state.selected_v2 && state.online_since_hello) {
+                return;
+            }
+            let reference = state.layouts.get(&state.shown).map_or_else(
+                || crate::live::BUILTIN.to_owned(),
+                |bytes| layout_ref(bytes),
+            );
+            let now = (state.selections, reference, state.page);
+            if state.page_sent.as_ref() == Some(&now) {
+                return;
+            }
+            let layout = state
+                .layouts
+                .get(&state.shown)
+                .and_then(|bytes| Layout::parse(bytes).ok())
+                .unwrap_or_else(|| Layout::parse(BUILTIN).expect("builtin.json is valid"));
+            let Some(page) = layout.pages.get(state.page) else {
+                return;
+            };
+            let event = Event::Page {
+                page: page.id().to_owned(),
+            };
+            state.page_sent = Some(now);
+            let payload = serde_json::to_vec(&event).expect("events serialize");
+            Frame::message(Role::Event, payload)
+                .encode()
+                .expect("events fit one frame")
+        };
+        let _ = to_host.send(wire);
+    }
+
     fn pump(&self, to_host: &Sender<Vec<u8>>) {
         let mut wires = Vec::new();
         {
@@ -1141,6 +1193,7 @@ impl MockDeck {
         if orientation == state.shown {
             state.hello.layout = "storage".into();
             state.live.slots.clear();
+            state.page = 0;
         }
         drop(state);
         let fields = serde_json::to_value(self.layout_state()).expect("layout state serializes");
@@ -1192,6 +1245,7 @@ impl MockDeck {
                 }
             }
             self.pump(to_host);
+            self.report_page(to_host);
         }
     }
 
@@ -1229,6 +1283,7 @@ impl MockDeck {
                     let mut state = self.state();
                     state.reboots += 1;
                     state.shown = state.settings.orientation;
+                    state.page = 0;
                     state.booted = Instant::now();
                     state.online_since_hello = false;
                     state.inbound = None;
@@ -1346,6 +1401,7 @@ impl MockDeck {
                         ));
                     }
                     state.selected_v2 = proto == 2;
+                    state.selections += u64::from(proto == 2);
                     state.live = Live::new();
                     if matches!(
                         &state.inbound,

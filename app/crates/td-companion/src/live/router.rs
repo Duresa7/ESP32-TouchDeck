@@ -17,6 +17,7 @@ use td_link::live::{self, LiveError, LiveReason, LiveSet, LiveValue};
 use td_link::{Session, xfer};
 
 use super::covers::{COVER_SIDE_MIN, Cover, CoverStore};
+use crate::devices::{LayoutSource, ShownLayout};
 use crate::features::integrations::Controls;
 
 /// How long a Device's `layout state` reply may take.
@@ -308,6 +309,22 @@ impl Router {
             .filter_map(|(device, state)| {
                 let active = state.active.as_ref()?;
                 Some((device.clone(), (state.session, active.layout.clone())))
+            })
+            .collect()
+    }
+
+    pub(super) fn layouts(&self) -> Vec<(String, u64, ShownLayout)> {
+        self.devices
+            .iter()
+            .filter_map(|(device, state)| {
+                let active = state.active.as_ref()?;
+                let source = if active.reference == live::BUILTIN {
+                    LayoutSource::Builtin
+                } else {
+                    LayoutSource::Storage
+                };
+                let shown = ShownLayout::new(&active.layout, source);
+                Some((device.clone(), state.session, shown))
             })
             .collect()
     }

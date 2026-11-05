@@ -222,6 +222,10 @@ fn forward(
                         hub.push(&event);
                     }
                     let _ = touches.drags.try_send(());
+                } else if event["m"] == "v2.page"
+                    && let Some(page) = event["page"].as_str()
+                {
+                    inner.page_shown(id, generation, page);
                 }
                 if let Some(report) = Mirrored::parse(&event) {
                     key_report(inner, id, mirror.as_mut(), &report);

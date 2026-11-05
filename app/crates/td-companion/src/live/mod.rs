@@ -18,7 +18,9 @@ use td_host::integrations::{Delivery, LiveSample};
 
 pub use router::{Binding, LiveCaps, Report, Router, StreamKey, bindings, stream_source};
 
-use crate::devices::{ControlLayout, ControlLayoutUnavailable, DeviceManager, LinkState};
+use crate::devices::{
+    ControlLayout, ControlLayoutUnavailable, DeviceManager, LinkState, ShownLayout,
+};
 use crate::features::integrations::{Controls, Service};
 use crate::link::Links;
 use covers::CoverCache;
@@ -308,11 +310,16 @@ fn round(
             record(shared, integrations, &device, report);
         }
     }
-    let (jobs, shown) = {
+    let (jobs, shown, layouts) = {
         let router = shared.router.lock();
-        (router.cover_jobs(&samples), router.shown())
+        (
+            router.cover_jobs(&samples),
+            router.shown(),
+            router.layouts(),
+        )
     };
     publish_shown(shared, shown);
+    publish_layouts(shared, devices, layouts, generation);
     publish_status(shared, devices, generation);
     jobs
 }
@@ -358,6 +365,24 @@ fn publish_status(shared: &Shared, devices: &DeviceManager, generation: u64) {
             ),
         };
         devices.control_layout(&device.id, session, status);
+    }
+}
+
+fn publish_layouts(
+    shared: &Shared,
+    devices: &DeviceManager,
+    layouts: Vec<(String, u64, ShownLayout)>,
+    generation: u64,
+) {
+    let _publication = shared.publication.lock();
+    if shared.generation.load(std::sync::atomic::Ordering::SeqCst) != generation {
+        return;
+    }
+    let changed = shared.changed.lock().clone();
+    for (device, session, shown) in layouts {
+        if !changed.contains(&device) {
+            devices.layout_shown(&device, session, shown);
+        }
     }
 }
 

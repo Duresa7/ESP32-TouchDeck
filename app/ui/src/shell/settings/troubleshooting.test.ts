@@ -9,7 +9,7 @@ const connected: LinkState = { state: 'connected', port: 'COM7', since_ms: 0, pr
 describe('Troubleshooting', () => {
   test('a connected Device shows the eight fields under the copy labels', () => {
     const device = sampleDevice('a0b1', 'Desk', connected);
-    device.layout = { name: 'Streaming', pages: 3 };
+    device.layout = { source: 'storage', name: 'Streaming', orientation: 'landscape', pages: 3, page: 1 };
     expect(factsOf(device).map((f) => [f.label, f.value])).toEqual([
       ['Product', 'touchdeck'],
       ['Protocol', '2'],
@@ -23,7 +23,7 @@ describe('Troubleshooting', () => {
   });
 
   test('without Firmware details or a Layout summary nothing is invented', () => {
-    const device = { ...sampleDevice('a0b1', 'Desk', connected), firmware: null, diagnostics: null, layout: ['not', 'a', 'summary'] };
+    const device = { ...sampleDevice('a0b1', 'Desk', connected), firmware: null, diagnostics: null, layout: null };
     expect(factsOf(device).every((f) => f.value === null)).toBe(true);
   });
 

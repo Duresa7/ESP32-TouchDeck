@@ -93,7 +93,7 @@ export type DeviceSettingsPatch = { idle_timeout_s: number | null, orientation: 
  * A percentage, 0 to 100.
  */
 brightness: number | null, photo_frame: PhotoFramePatch | null, };
-export type DeviceSummary = { id: DeviceId, rev: number, name: string | null, setup: SetupState, link: LinkState, firmware: FirmwareInfo | null, diagnostics: DeviceDiagnostics | null, capabilities: Capabilities | null, orientation: string | null, layout: JsonValue | null, control_layout: ControlLayout, key_mirror: KeyMirrorState, stable_id: boolean, };
+export type DeviceSummary = { id: DeviceId, rev: number, name: string | null, setup: SetupState, link: LinkState, firmware: FirmwareInfo | null, diagnostics: DeviceDiagnostics | null, capabilities: Capabilities | null, orientation: string | null, layout: LayoutSummary | null, control_layout: ControlLayout, key_mirror: KeyMirrorState, stable_id: boolean, };
 export type DeviceUpdated = DeviceSummary;
 export type ErrorBody = { code: string, message: string, details: JsonValue | null, };
 export type FirmwareBuild = { version: string, build: string, };
@@ -144,6 +144,13 @@ export type LayoutRead = { layout: Layout,
  * The Device's CRC-32 of the stored Layout as 8 hex digits, also sent as `ETag`.
  */
 revision: string, };
+export type LayoutSource = "builtin" | "storage";
+export type LayoutSummary = { source: LayoutSource, name: string, orientation: Orientation, pages: number, 
+/**
+ * The index of the Page on screen. Unknown until the Device reports a Page of this Layout, and always on Firmware
+ * that doesn't report Pages.
+ */
+page: number | null, };
 export type LinkState = { "state": "connected", port: string, since_ms: number, protocol: number, } | { "state": "connecting", port: string, } | { "state": "offline" } | { "state": "lost", reason: LostReason, detail: string, at_ms: number, } | { "state": "disconnected" } | { "state": "busy", port: string, detail: string, } | { "state": "unresponsive", port: string, } | { "state": "updating", job: string, };
 export type LostReason = "unplugged" | "timeout" | "io-error" | "closed";
 export type Modifier = "ctrl" | "shift" | "alt" | "win";

@@ -407,6 +407,8 @@ impl Inner {
                         actor: Some(handle),
                         auto: true,
                         quick_drops: 0,
+                        shown: None,
+                        reported_page: None,
                     },
                 );
                 self.save(&reg);
