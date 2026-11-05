@@ -9,7 +9,7 @@ import { button } from '../shell/button.ts';
 import { useUi } from '../state/ui.ts';
 import { DevicePreview } from './DevicePreview.tsx';
 import { useDeviceLayout } from './home-layouts.ts';
-import { CHECKING_CONTROLS, deviceWidth, firmwareUpdate, lastSeen, NEEDS_SEND, orientationOf, previewOf, statusOf, uncheckedText } from './home-model.ts';
+import { CHECKING_CONTROLS, deviceWidth, firmwareUpdate, lastSeen, NEEDS_SEND, previewOf, shownOrientation, statusOf, uncheckedText } from './home-model.ts';
 import { boardCards, boardInstallFor, boardsUi, useBoardsUi } from './new-boards.ts';
 import { IgnoredBoards, NewBoardCard } from './NewBoardCard.tsx';
 import './home.css';
@@ -57,7 +57,7 @@ function DeviceCard({ device, width }: { device: DeviceSummary; width: number })
   const layout = useDeviceLayout(device);
   return <li className="device-figure" style={{ width }}>
     <button type="button" className="device-hit" title="Edit Layout" aria-label={`Edit ${name}`} onClick={() => openDevice(device.id)}>
-      <DevicePreview preview={previewOf(layout)} live={status.live} orientation={orientationOf(device)} />
+      <DevicePreview preview={previewOf(layout, device.layout)} live={status.live} orientation={shownOrientation(device)} empty={status.live && layout === null} />
     </button>
     <div className="device-caption">
       <span className="device-name" title={name}>{name}</span>

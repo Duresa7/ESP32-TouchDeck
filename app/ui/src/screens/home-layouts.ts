@@ -5,13 +5,15 @@ import type { DeviceSummary, Layout } from '../companion/api.ts';
 import { useCompanion } from '../companion/connection.ts';
 import { useDevices } from '../companion/devices.ts';
 import { isApiError } from '../companion/errors.ts';
-import { orientationOf } from './home-model.ts';
+import { shownOrientation } from './home-model.ts';
 
 const layoutsStore = createStore<{ seen: Record<string, Layout | null> }>()(() => ({ seen: {} }));
 
-export function useDeviceLayout(device: DeviceSummary): Layout | null {
+/** The stored Layout the Device shows: null when it has none, undefined until read. */
+export function useDeviceLayout(device: DeviceSummary): Layout | null | undefined {
   const companion = useCompanion();
-  const orientation = orientationOf(device);
+  const orientation = shownOrientation(device);
+  const shown = device.layout && `${device.layout.source}/${device.layout.pages}/${device.layout.name}`;
   const key = `${device.id}/${orientation}`;
   const connected = device.link.state === 'connected' ? device.link.since_ms : null;
   const pushed = useDevices((s) => s.layoutPushes[device.id]);
@@ -26,6 +28,6 @@ export function useDeviceLayout(device: DeviceSummary): Layout | null {
       (error: unknown) => { if (isApiError(error, 'layout.not_found')) keep(null); },
     );
     return () => { current = false; };
-  }, [companion, device.id, orientation, key, connected, pushed]);
-  return useStore(layoutsStore, (s) => s.seen[key] ?? null);
+  }, [companion, device.id, orientation, key, connected, pushed, shown]);
+  return useStore(layoutsStore, (s) => s.seen[key]);
 }

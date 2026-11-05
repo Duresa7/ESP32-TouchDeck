@@ -99,6 +99,8 @@ UI tickets copy strings from here. When a screen needs a string this guide doesn
 | Card name, a Device not named yet | Unnamed Device |
 | Device list label | Devices |
 | Card tooltip | Edit Layout |
+| Device screen, connected with no stored Layout | No Layout yet |
+| Device screen hint, no stored Layout | Click to make one |
 | Empty state title | Plug in your Device |
 | Empty state body | Connect an Open TouchDeck to this PC with a USB data cable. |
 | Empty state button | Connection help |

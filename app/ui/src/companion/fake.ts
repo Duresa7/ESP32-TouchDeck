@@ -266,6 +266,12 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     setLayout(id: string, layout: Layout) {
       layouts.pushed(id, layout);
     },
+    /** The Device loses its stored Layout and shows the built-in one, as after a Firmware erase. */
+    clearLayout(id: string) {
+      const orientation = devices.get(id)?.orientation === 'portrait' ? 'portrait' : 'landscape';
+      layouts.forget(id, orientation);
+      this.update(id, { layout: { source: 'builtin', name: 'Built-in', orientation, pages: 2, page: 0 } });
+    },
     /** A Device is forgotten: `device.removed`. */
     remove(id: string) {
       devices.delete(id);

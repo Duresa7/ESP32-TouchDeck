@@ -3,7 +3,7 @@ import type { Orientation } from '../companion/api.ts';
 import { geometry, screenSize } from '../lib/deck/geometry.ts';
 import { buildDots, buildPage, buildTitle, FONTS, type FontSize, type TextView } from '../lib/deck/scene.ts';
 import type { Line } from '../lib/deck/text.ts';
-import type { Preview } from './home-model.ts';
+import { NO_LAYOUT, NO_LAYOUT_HINT, type Preview } from './home-model.ts';
 
 const BOX_HEIGHT = 0.72;
 const BOX_EDGE = 2;
@@ -44,7 +44,7 @@ function SceneText({ view }: { view: TextView }) {
   </g>;
 }
 
-export function DevicePreview({ preview, live, orientation = 'landscape' }: { preview: Preview | null; live: boolean; orientation?: Orientation }) {
+export function DevicePreview({ preview, live, orientation = 'landscape', empty = false }: { preview: Preview | null; live: boolean; orientation?: Orientation; empty?: boolean }) {
   const g = geometry(screenSize(preview?.layout.orientation ?? orientation), preview?.layout.fullScreen);
   const page = preview && buildPage(preview.layout.pages[preview.index], g);
   const title = page && buildTitle(page.title, g);
@@ -61,6 +61,10 @@ export function DevicePreview({ preview, live, orientation = 'landscape' }: { pr
           </svg>)}
           {preview && buildDots(g, preview.layout.pages.length, preview.index).map((dot, i) => <rect key={i} x={dot.x} y={dot.y} width={dot.w} height={dot.h} rx={dot.h / 2} className={dot.active ? 'preview-active' : 'preview-idle'} />)}
         </svg>
+        {empty && !preview && <span className="device-empty" data-testid="device-empty">
+          <span className="device-empty-title">{NO_LAYOUT}</span>
+          <span className="device-empty-hint">{NO_LAYOUT_HINT}</span>
+        </span>}
       </span>
     </span>
   </span>;
