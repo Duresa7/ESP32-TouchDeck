@@ -995,7 +995,7 @@ App updates aren't API routes. They stay in Electron's preload as `openTouchDeck
 
 The preload calls always resolve with data, except successful `install()`, which quits without resolving. `UpdateCheck`, `UpdateProgress`, `UpdateDownload` and `UpdateInstall` in `app/ui/src/companion/session.ts` are the UI seam. Each update IPC handler uses the same top-frame, window and Companion-origin check as `session`. The renderer supplies no URL, path, key or installer arguments.
 
-The Windows x64 feed is the existing `plugins.updater.endpoints[0]` in `app/src-tauri/tauri.conf.json`, mirrored in Electron and checked by a test. Only a strictly newer SemVer version is offered. Manifest bodies are limited to 1 MiB and 15 seconds; installers to 256 MiB and 5 minutes, including redirects and reading the body. Every redirect is checked for HTTPS. Unpackaged builds alone honor `TOUCHDECK_UPDATE_TEST_FEED=http://127.0.0.1:PORT/latest.json`; this also permits numeric-loopback HTTP artifact URLs. Packaged builds ignore it.
+The Windows x64 feed is `UPDATE_FEED` in `app/electron/src/updates/index.ts`. Only a strictly newer SemVer version is offered. Manifest bodies are limited to 1 MiB and 15 seconds; installers to 256 MiB and 5 minutes, including redirects and reading the body. Every redirect is checked for HTTPS. Unpackaged builds alone honor `TOUCHDECK_UPDATE_TEST_FEED=http://127.0.0.1:PORT/latest.json`; this also permits numeric-loopback HTTP artifact URLs. Packaged builds ignore it.
 
 For #91 and #108: set `TOUCHDECK_UPDATER_PUBKEY` at build time to the existing base64-wrapped public key. Every Electron build generates the ignored `src/updates/key.gen.ts` before TypeScript compiles it. Unset means disabled, including ordinary source builds. No runtime environment, file or IPC supplies the trusted key. Release packaging must use this build entry point, supply the real public key, and protect app.asar integrity (including the Electron integrity fuse); that wiring belongs to #91/#108. The existing Tauri packaging scripts do not package Electron.
 
@@ -1049,7 +1049,7 @@ mock Devices; it cannot control a real player.
 
 ## Mapping from today's Tauri commands and events
 
-Release builds of `app/src-tauri` register 33 commands. `--features e2e` adds 7, marked e2e. Each one maps to a route above, moves to Electron, or goes away.
+History: release builds of the removed `app/src-tauri` crate registered 33 commands. `--features e2e` adds 7, marked e2e. Each one maps to a route above, moves to Electron, or goes away.
 
 | # | Today | Replacement | Notes |
 |---|---|---|---|
