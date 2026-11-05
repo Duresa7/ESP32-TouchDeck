@@ -193,6 +193,10 @@ impl MockPorts {
             changed();
         }
     }
+    pub fn plug_media_device(&self, serial: &str) {
+        self.plug(serial, BoardKind::Device);
+        self.deck(serial).unwrap().set_media_capabilities(true);
+    }
     /// Unplugs it: its stream ends and its port leaves the list.
     pub fn unplug(&self, serial: &str) {
         let changed = {
@@ -244,5 +248,33 @@ impl PortSource for MockPorts {
     }
     fn watch(&self, changed: Changed) {
         self.state.lock().changed = Some(changed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use td_link::{Session, SessionConfig};
+
+    #[test]
+    fn media_capabilities_are_ready_when_the_port_is_published() {
+        let ports = MockPorts::default();
+        let observed = ports.clone();
+        ports.watch(Arc::new(move || {
+            let port = observed.list().pop().unwrap();
+            let (session, _) = Session::open(
+                observed.open(&port.port).unwrap(),
+                SessionConfig {
+                    ping_every: None,
+                    ..SessionConfig::default()
+                },
+            )
+            .unwrap();
+            let identity = session.identity(Duration::from_secs(1)).unwrap();
+            assert_eq!(identity.capabilities.unwrap().live_images, Some(4));
+        }));
+        ports.plug_media_device("mock0001");
+        ports.watch(Arc::new(|| {}));
     }
 }
