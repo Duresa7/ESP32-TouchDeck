@@ -11,6 +11,7 @@
 .device-screen { display: block; overflow: hidden; border-radius: 1.2cqw; background: var(--screen-bg); }
 .device-scene { display: block; width: 100%; height: 100%; fill: var(--screen-ink); font-family: var(--screen-font); font-weight: var(--screen-weight-medium); transition: opacity var(--duration-screen-light) var(--ease-out); }
 .preview-title { fill: var(--screen-ink-2); font-stretch: var(--screen-stretch-plate); }
+.device-scene .is-value, .device-scene .is-big, .device-scene .is-title { font-weight: var(--screen-weight-semibold); }
 .preview-tile { fill: var(--screen-tile); }
 .preview-active { fill: var(--screen-accent); }
 .preview-idle { fill: var(--screen-pager-idle); }

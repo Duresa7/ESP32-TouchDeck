@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import type { Orientation } from '../companion/api.ts';
 import { geometry, screenSize } from '../lib/deck/geometry.ts';
-import { buildDots, buildPage, buildTitle, FONTS, type FontSize, type TextView } from '../lib/deck/scene.ts';
+import { buildDots, buildPage, buildTitle, FONTS, type FontRole, type TextView } from '../lib/deck/scene.ts';
 import type { Line } from '../lib/deck/text.ts';
 import type { Preview } from './home-model.ts';
 
@@ -13,9 +13,9 @@ function emptyBoxPath(x: number, y: number, w: number, h: number): string {
   return `M${x} ${y}h${w}v${h}h${-w}Z M${x + e} ${y + e}v${h - 2 * e}h${w - 2 * e}v${2 * e - h}Z`;
 }
 
-function SceneLine({ line, size }: { line: Line; size: FontSize }) {
-  const font = FONTS[size];
-  const height = Math.round(size * BOX_HEIGHT);
+function SceneLine({ line, role }: { line: Line; role: FontRole }) {
+  const font = FONTS[role];
+  const height = Math.round(font.size * BOX_HEIGHT);
   const top = line.y + font.lineHeight - font.baseLine - height;
   const runs: { x: number; text: string }[] = [];
   const boxes: string[] = [];
@@ -33,14 +33,14 @@ function SceneLine({ line, size }: { line: Line; size: FontSize }) {
     run.text += String.fromCodePoint(letter.letter);
   }
   return <>
-    {runs.map((run, index) => <text key={index} x={run.x} y={line.y} dominantBaseline="hanging" fontSize={size}>{run.text}</text>)}
+    {runs.map((run, index) => <text key={index} className={`is-${role}`} x={run.x} y={line.y} dominantBaseline="hanging" fontSize={font.size}>{run.text}</text>)}
     {boxes.length > 0 && <path className="preview-box" d={boxes.join(' ')} fillRule="evenodd" />}
   </>;
 }
 
 function SceneText({ view }: { view: TextView }) {
   return <g transform={`translate(${view.x} ${view.y})`} opacity={view.opacity / 255}>
-    {view.label.lines.map((line, index) => <SceneLine key={index} line={line} size={view.size} />)}
+    {view.label.lines.map((line, index) => <SceneLine key={index} line={line} role={view.font} />)}
   </g>;
 }
 

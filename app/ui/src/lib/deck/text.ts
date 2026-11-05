@@ -10,6 +10,8 @@ export interface FontData {
   rightClasses: number;
   glyphs: [codepoint: number, advance: number, left: number, right: number][];
   kerning: string;
+  /** The kerning of a font kerned by glyph pairs rather than classes. */
+  pairs?: [left: number, right: number, value: number][];
 }
 
 interface Glyph {
@@ -56,7 +58,12 @@ export function isMarker(letter: number): boolean {
 
 export function font(data: FontData): Font {
   const glyphs = new Map<number, Glyph>(data.glyphs.map(([cp, advance, left, right]) => [cp, { advance, left, right }]));
-  const pairs = decode(data.kerning);
+  const classes = decode(data.kerning);
+  const pairs = new Map((data.pairs ?? []).map(([left, right, value]) => [`${left} ${right}`, value]));
+  const kerning = (letter: number, next: number, glyph: Glyph, after: Glyph) => {
+    if (data.pairs) return pairs.get(`${letter} ${next}`) ?? 0;
+    return glyph.left > 0 && after.right > 0 ? classes[(glyph.left - 1) * data.rightClasses + (after.right - 1)] : 0;
+  };
   const placeholder = Math.trunc(data.lineHeight / 2) + 2;
   return {
     size: data.size,
@@ -67,9 +74,8 @@ export function font(data: FontData): Font {
       if (isMarker(letter)) return 0;
       const glyph = glyphs.get(letter);
       if (!glyph) return placeholder;
-      let kern = 0;
       const after = next ? glyphs.get(next) : undefined;
-      if (after && glyph.left > 0 && after.right > 0) kern = pairs[(glyph.left - 1) * data.rightClasses + (after.right - 1)];
+      const kern = after ? kerning(letter, next, glyph, after) : 0;
       const advance = Math.max(0, glyph.advance + ((kern * data.kernScale) >> 4));
       return (advance + 8) >> 4;
     },
