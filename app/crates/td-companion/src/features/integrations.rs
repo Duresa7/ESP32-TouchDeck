@@ -628,7 +628,13 @@ mod control_tests {
             integration.to_owned(),
             fake.clone() as Arc<dyn Control>,
         )]));
-        let live = Live::start(devices.clone(), links, service.clone());
+        let data = tempfile::tempdir().unwrap();
+        let authority = crate::layouts::LayoutAuthority::new(
+            crate::store::LayoutStore::new(data.path().to_owned()),
+            Arc::new(|_| false),
+            devices.clone(),
+        );
+        let live = Live::start(devices.clone(), links, service.clone(), authority);
         Running {
             service,
             fake,

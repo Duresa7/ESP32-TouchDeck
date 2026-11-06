@@ -421,7 +421,7 @@ impl Endpoint for SettingsPatch {
         let devices = ctx.devices.clone();
         let device = id.clone();
         let idle_frame = frame.clone();
-        let live = ctx.live.clone();
+        let authority = ctx.authority.clone();
         #[cfg(any(test, feature = "test-hooks"))]
         let checkpoints = ctx.checkpoints.clone();
         let (settings, restart_required, idle) = ctx
@@ -436,19 +436,31 @@ impl Endpoint for SettingsPatch {
                     settings.idle_timeout_s =
                         patch.idle_timeout_s.unwrap_or(settings.idle_timeout_s);
                     settings.orientation = orientation.unwrap_or(settings.orientation);
+                    let mut reply = None;
+                    let mut write = || {
+                        #[cfg(any(test, feature = "test-hooks"))]
+                        if orientation.is_some() {
+                            let _ = checkpoints
+                                .pass(crate::checkpoints::Checkpoint::BeforeOrientationPut);
+                        }
+                        reply = Some(s.request(&Request::SettingsPut(settings), SETTINGS_TIMEOUT));
+                        Ok::<_, LinkError>(None)
+                    };
                     if orientation.is_some() {
-                        live.layout_changed(device.as_str());
+                        authority
+                            .replace(device.as_str(), write)
+                            .map_err(|error| match error {
+                                crate::layouts::authority::ReplaceError::Write(error) => {
+                                    DeviceError::from(error)
+                                }
+                                crate::layouts::authority::ReplaceError::Save(_) => {
+                                    DeviceError::from(CommonError::Internal)
+                                }
+                            })?;
+                    } else {
+                        write()?;
                     }
-                    #[cfg(any(test, feature = "test-hooks"))]
-                    if orientation.is_some() {
-                        let _ =
-                            checkpoints.pass(crate::checkpoints::Checkpoint::BeforeOrientationPut);
-                    }
-                    let reply = s.request(&Request::SettingsPut(settings), SETTINGS_TIMEOUT);
-                    if orientation.is_some() {
-                        live.layout_changed(device.as_str());
-                    }
-                    let reply = reply?;
+                    let reply = reply.unwrap()?;
                     let fields = serde_json::Value::Object(reply.fields.clone());
                     restart = fields["reboot_required"].as_bool().unwrap_or(false);
                     settings = Settings::from_value(&fields);

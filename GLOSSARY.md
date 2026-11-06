@@ -49,6 +49,10 @@ _Avoid_: widget
 An icon, image or animation prepared for a Device and stored on it.
 _Avoid_: resource, media file
 
+**Pushed copy**:
+The Layout this Companion last sent to a Device, kept on the PC. Controls on a Tile only act when the Device shows exactly its Pushed copy.
+_Avoid_: trusted copy, authority copy
+
 ### Integrations
 
 **Integration**:

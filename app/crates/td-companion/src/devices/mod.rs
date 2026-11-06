@@ -440,7 +440,7 @@ impl Event for DeviceEvent {
 pub(crate) type ActionHandler = Arc<dyn Fn(&DeviceId, &serde_json::Value) + Send + Sync>;
 /// Where a Device's drags go, once each session's hub has checked and coalesced them.
 pub(crate) trait InputHandler: Send + Sync {
-    fn generation(&self) -> u64;
+    fn generation(&self, device: &DeviceId) -> u64;
     /// Sets the Integration stream the drag's Tile binds. None when the drag binds nothing, so it is dropped.
     fn set(&self, device: &DeviceId, input: &Input) -> Option<Result<(), String>>;
     /// A gesture ended: its outcome, the first failed set if any. Called once per gesture.
