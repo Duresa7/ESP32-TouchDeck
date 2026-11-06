@@ -5,7 +5,7 @@ import { ToggleGroup } from '@base-ui/react/toggle-group';
 import { Check, Eye, MoreHorizontal, Plus, RectangleHorizontal, RectangleVertical, Upload } from 'lucide-react';
 import type { DeviceSummary } from '../../lib/companion/api.ts';
 import { saveState, type EditorStore } from '../../lib/editor/store.ts';
-import type { Orientation } from '../../lib/editor/validate.ts';
+import type { Orientation } from '../../lib/layout/model.ts';
 import { button } from '../../shell/button.ts';
 import { statusOf } from '../home-model.ts';
 import { DevicePanel } from './DevicePanel.tsx';

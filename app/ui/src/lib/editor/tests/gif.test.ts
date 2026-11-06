@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { GIF_CAPS } from '../companion/samples.ts';
-import { ApiError } from '../companion/errors.ts';
-import { fittedText, gifProblem, gifPushProblem, gifTarget, offersGif, readGif } from './gif.ts';
-import { parseLayout, setGif, starterLayout } from './validate.ts';
+import { GIF_CAPS } from '../../companion/samples.ts';
+import { ApiError } from '../../companion/errors.ts';
+import { fittedText, gifProblem, gifPushProblem, gifTarget, offersGif, readGif } from '../gifs.ts';
+import { parseLayout, setGif, starterLayout } from '../../layout/model.ts';
 
 const HEADER = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61];
 const LOOP = [0x21, 0xff, 0x0b, ...[...'NETSCAPE2.0'].map((c) => c.charCodeAt(0)), 0x03, 0x01, 0x00, 0x00, 0x00];
@@ -175,7 +175,7 @@ describe('every GIF refusal has its sentence', () => {
 
 describe('turning a Live tile into a GIF Tile', () => {
   test('drops what the Live tile bound, so the GIF Tile stays valid', () => {
-    const parsed = parseLayout(readFileSync(join(import.meta.dirname, '..', '..', '..', '..', '..', 'schema', 'examples', 'media.json'), 'utf8'));
+    const parsed = parseLayout(readFileSync(join(import.meta.dirname, '..', '..', '..', '..', '..', '..', 'schema', 'examples', 'media.json'), 'utf8'));
     if (!parsed.ok) throw new Error('media.json breaks the Layout rules');
     const page = parsed.layout.pages[0].id;
     const done = setGif(parsed.layout, page, 'volume', 'b'.repeat(64));

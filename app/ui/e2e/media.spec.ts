@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Capabilities } from '../src/lib/companion/api.ts';
-import type { Layout } from '../src/lib/editor/validate.ts';
+import type { Layout } from '../src/lib/layout/model.ts';
 import { gridPage, importText, openLayout, tile, waitEvent } from './layout-helpers.ts';
 
 const folder = process.env.TD_SHOTS;

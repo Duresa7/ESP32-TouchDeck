@@ -1,4 +1,4 @@
-import { canonical, parseLayout, type Layout, type Orientation } from '../../editor/validate.ts';
+import { canonical, parseLayout, type Layout, type Orientation } from '../../layout/model.ts';
 import type { DeviceSummary, ErrorBody, Job, JobMap, JobScope, Layout as StoredLayout, LinkState, PushReport } from '../api.ts';
 
 type Frame = Record<string, unknown> & { type: string };

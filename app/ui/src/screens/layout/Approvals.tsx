@@ -4,8 +4,8 @@ import type { AllowedAction, ApprovalRequest } from '../../lib/companion/api.ts'
 import { actionsStore, useActions } from '../../lib/companion/actions.ts';
 import { useCompanion } from '../../lib/companion/connection.ts';
 import { isApiError, toApiError } from '../../lib/companion/errors.ts';
-import { commandLine, escapeInvisible, processOf, sameProcess, type Started } from '../../lib/editor/actions.ts';
-import type { Action, Layout } from '../../lib/editor/validate.ts';
+import { commandLine, escapeInvisible, processOf, sameProcess, type Started } from '../../lib/layout/actions.ts';
+import type { Action, Layout } from '../../lib/layout/model.ts';
 import { button } from '../../shell/button.ts';
 
 const UNREACHABLE = "Can't reach the Companion. Check that Open TouchDeck is running in the tray, then retry.";

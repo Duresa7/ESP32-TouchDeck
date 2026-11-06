@@ -1,5 +1,5 @@
 import type { DeviceSummary } from '../../lib/companion/api.ts';
-import { escapeInvisible } from '../../lib/editor/actions.ts';
+import { escapeInvisible } from '../../lib/layout/actions.ts';
 
 export interface Fact {
   key: 'product' | 'proto' | 'elf_sha256' | 'version' | 'running' | 'sinks' | 'recovery' | 'layout';

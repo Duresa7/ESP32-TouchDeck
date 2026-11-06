@@ -18,7 +18,7 @@ import {
   VolumeX,
   type LucideProps,
 } from 'lucide-react';
-import type { ActionType } from '../../lib/editor/validate.ts';
+import type { ActionType } from '../../lib/layout/model.ts';
 
 export const KINDS: Record<ActionType, { name: string; line: string; noun: string; icon: ComponentType<LucideProps> }> = {
   key: { name: 'Keyboard shortcut', line: 'Press keys on this PC', noun: 'Keyboard shortcut', icon: Keyboard },

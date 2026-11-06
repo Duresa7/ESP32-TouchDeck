@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import { ACTION_GROUPS, commandLine, escapeInvisible, freshAction, needsApproval, processOf, sameProcess, spellShortcut, splitArgs, switchKind } from './actions.ts';
-import { friendlyRefusal } from './messages.ts';
-import { setAction, starterLayout, type Action } from './validate.ts';
+import { ACTION_GROUPS, commandLine, escapeInvisible, freshAction, needsApproval, processOf, sameProcess, spellShortcut, splitArgs, switchKind } from '../actions.ts';
+import { friendlyRefusal } from '../messages.ts';
+import { setAction, starterLayout, type Action } from '../model.ts';
 
 const PAGES = ['media', 'shortcuts'];
 

@@ -1,9 +1,9 @@
-import type { AnimationCapabilities, Capabilities, GifTarget } from '../companion/api.ts';
-import { toApiError } from '../companion/errors.ts';
-import { geometry, screenSize, tileRect } from '../deck/geometry.ts';
-import { THEME } from '../deck/theme.ts';
-import { UNREACHABLE } from '../icons/pick.ts';
-import type { Layout } from './validate.ts';
+import type { AnimationCapabilities, Capabilities, GifTarget } from '../../companion/api.ts';
+import { toApiError } from '../../companion/errors.ts';
+import { geometry, screenSize, tileRect } from '../../deck/geometry.ts';
+import { THEME } from '../../deck/theme.ts';
+import { UNREACHABLE } from '../../icons/pick.ts';
+import type { Layout } from '../../layout/model.ts';
 
 export type GifCaps = Capabilities & { anim: AnimationCapabilities };
 

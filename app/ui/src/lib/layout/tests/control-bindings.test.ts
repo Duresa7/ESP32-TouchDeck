@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { controlBindings, controlWords, type KnownIntegration } from './control-bindings.ts';
-import type { Layout, Tile } from './validate.ts';
+import { controlBindings, controlWords, type KnownIntegration } from '../controls.ts';
+import type { Layout, Tile } from '../model.ts';
 
 const INTEGRATIONS: KnownIntegration[] = [
   { id: 'volume', name: 'Volume', streams: [{ id: 'level', kind: 'numeric', unit: '%', settable: true }, { id: 'muted', kind: 'numeric', unit: null, settable: false }] },

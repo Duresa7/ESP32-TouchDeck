@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import type { Action, Layout } from '../src/lib/editor/validate.ts';
+import type { Action, Layout } from '../src/lib/layout/model.ts';
 import { openLayout, waitEvent } from './layout-helpers.ts';
 
 export const DESK = 'mock0001';

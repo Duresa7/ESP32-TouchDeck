@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { AlertDialog } from '@base-ui/react/alert-dialog';
-import { describeLayout } from '../../lib/editor/messages.ts';
+import { describeLayout } from '../../lib/layout/messages.ts';
 import type { EditorStore } from '../../lib/editor/store.ts';
 import { button } from '../../shell/button.ts';
 import { useEditorState } from './editor.ts';

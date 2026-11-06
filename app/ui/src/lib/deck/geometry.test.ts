@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'vitest';
-import { parseLayout, type GridPage } from '../editor/validate.ts';
+import { parseLayout, type GridPage } from '../layout/model.ts';
 import { cellAt, dotX, geometry, screenSize, tileRect, type Orientation, type Rect } from './geometry.ts';
 
 const parsed = parseLayout(readFileSync(join(import.meta.dirname, '..', '..', '..', '..', '..', 'schema', 'examples', 'builtin.json'), 'utf8'));

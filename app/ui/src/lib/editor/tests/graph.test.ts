@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
-import type { IntegrationSummary } from '../companion/api.ts';
-import { fakeMedia, fakeVolume } from '../companion/fake.ts';
-import { fakeThisPc } from '../companion/fake.ts';
-import { barFor, graphBinding, graphSources, placedLook, presetLive, sourceKey } from './graph.ts';
-import { graphTile, liveTile, newTile, parseLayout, type Layout, type Tile } from './validate.ts';
+import type { IntegrationSummary } from '../../companion/api.ts';
+import { fakeMedia, fakeVolume } from '../../companion/fake.ts';
+import { fakeThisPc } from '../../companion/fake.ts';
+import { barFor, graphBinding, graphSources, placedLook, presetLive, sourceKey } from '../graph.ts';
+import { graphTile, liveTile, newTile, parseLayout, type Layout, type Tile } from '../../layout/model.ts';
 
 const thisPc = fakeThisPc().summary;
 

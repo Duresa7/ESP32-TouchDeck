@@ -33,9 +33,9 @@ import {
   type Layout,
   type Page,
   type Tile,
-} from './validate.ts';
+} from '../model.ts';
 
-const schema = join(import.meta.dirname, '..', '..', '..', '..', '..', 'schema');
+const schema = join(import.meta.dirname, '..', '..', '..', '..', '..', '..', 'schema');
 const examples = join(schema, 'examples');
 const invalid = join(examples, 'invalid');
 

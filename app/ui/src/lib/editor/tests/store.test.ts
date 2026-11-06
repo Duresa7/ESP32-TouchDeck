@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { createClient, type Companion } from '../companion/client.ts';
-import { createDevicesStore } from '../companion/devices.ts';
-import { ApiError } from '../companion/errors.ts';
-import { openEvents, type Events } from '../companion/events.ts';
-import { createFakeCompanion, type FakeCompanion } from '../companion/fake.ts';
-import { createJobsStore, waitForJob, type JobsStore } from '../companion/jobs.ts';
-import { sampleDevice } from '../companion/samples.ts';
-import { windowSession } from '../companion/session.ts';
-import { draftKey, type DraftStorage } from './drafts.ts';
-import { createEditorStore, firstProblem, refusedActionField, saveState, tileProblems, type EditorDeps, type EditorStore } from './store.ts';
-import { canonical, newLayout, starterLayout, type GridPage, type Layout, type Page } from './validate.ts';
+import { createClient, type Companion } from '../../companion/client.ts';
+import { createDevicesStore } from '../../companion/devices.ts';
+import { ApiError } from '../../companion/errors.ts';
+import { openEvents, type Events } from '../../companion/events.ts';
+import { createFakeCompanion, type FakeCompanion } from '../../companion/fake.ts';
+import { createJobsStore, waitForJob, type JobsStore } from '../../companion/jobs.ts';
+import { sampleDevice } from '../../companion/samples.ts';
+import { windowSession } from '../../companion/session.ts';
+import { draftKey, type DraftStorage } from '../store.ts';
+import { createEditorStore, firstProblem, refusedActionField, saveState, tileProblems, type EditorDeps, type EditorStore } from '../store.ts';
+import { canonical, newLayout, starterLayout, type GridPage, type Layout, type Page } from '../../layout/model.ts';
 
 const BASE = 'http://127.0.0.1:51234';
 const DESK = { id: 'mock0001', name: 'Desk' };

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { counts, validateSource, type Layout } from '../src/lib/editor/validate.ts';
+import { counts, validateSource, type Layout } from '../src/lib/layout/model.ts';
 import { worstCase } from './fixtures/worst-case.ts';
 import { drag, exportText, gridPage, importText, layoutOf, menu, openLayout, placeOf, sorted, status, swipe, tile, waitEvent } from './layout-helpers.ts';
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import { nameBreak } from '../../device/settings.ts';
-import { parseLayout } from '../../editor/validate.ts';
+import { parseLayout } from '../../layout/model.ts';
 import { LONG_WORD, WORST_DEVICE_NAMES, WORST_LABELS, worstDevices, worstLayout, worstLayouts } from '../fake.ts';
 
 test('every worst Device name is one the Device accepts', () => {

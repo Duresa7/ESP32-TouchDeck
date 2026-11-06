@@ -7,7 +7,7 @@ import { useCompanion } from '../../lib/companion/connection.ts';
 import { toApiError } from '../../lib/companion/errors.ts';
 import { jobsStore, waitForJob } from '../../lib/companion/jobs.ts';
 import type { EditorStore } from '../../lib/editor/store.ts';
-import { assetOf, type Tile } from '../../lib/editor/validate.ts';
+import { assetOf, type Tile } from '../../lib/layout/model.ts';
 import { catalogTint, createCatalogSearch, monogram, SOURCE_NAMES, type CatalogSearch, type SearchState } from '../../lib/icons/catalog.ts';
 import { moveSpot, type Spot } from '../../lib/icons/grid.ts';
 import { appProblem, catalogProblem, ICONS_FAILED, renderApp, renderCatalog, renderUpload, searchProblem, uploadProblem, type PickDeps } from '../../lib/icons/pick.ts';

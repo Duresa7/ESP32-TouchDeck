@@ -1,12 +1,12 @@
 import { createStore } from 'zustand/vanilla';
-import type { AssetRef, Fit, GifTarget, Job } from '../companion/api.ts';
-import type { Companion } from '../companion/client.ts';
-import type { DevicesStore } from '../companion/devices.ts';
-import { ApiError, toApiError } from '../companion/errors.ts';
-import type { JobsStore } from '../companion/jobs.ts';
+import type { AssetRef, Fit, GifTarget, Job } from '../../companion/api.ts';
+import type { Companion } from '../../companion/client.ts';
+import type { DevicesStore } from '../../companion/devices.ts';
+import { ApiError, toApiError } from '../../companion/errors.ts';
+import type { JobsStore } from '../../companion/jobs.ts';
 import { gifProblem, gifTarget, offersGif, REFIT_NEEDS_FILE } from './gif.ts';
 import type { EditorState, EditorStore } from './store.ts';
-import { assetOf, type Orientation, type Tile } from './validate.ts';
+import { assetOf, type Orientation, type Tile } from '../../layout/model.ts';
 
 export type GifWork =
   | { state: 'queued' | 'preparing'; file: string }

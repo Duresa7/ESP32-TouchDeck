@@ -7,7 +7,7 @@ import { useIntegrations } from '../../lib/companion/integrations.ts';
 import { needsFirmwareField } from '../../lib/device/needs-firmware.ts';
 import { barFor, graphBinding, graphSources, sourceKey, type GraphSource } from '../../lib/editor/graph.ts';
 import type { EditorStore } from '../../lib/editor/store.ts';
-import type { Tile } from '../../lib/editor/validate.ts';
+import type { Tile } from '../../lib/layout/model.ts';
 import { useOfferedFirmware } from './device.ts';
 import { useDeviceShows, useEditorState } from './editor.ts';
 import { GifInput } from './GifField.tsx';

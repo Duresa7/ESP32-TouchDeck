@@ -7,7 +7,7 @@ import { buildDots, buildPage, buildTitle, FONTS, sampleRows, sampleSeries, samp
 import type { Line } from '../../lib/deck/text.ts';
 import { THEME } from '../../lib/deck/theme.ts';
 import type { EditorStore, Target } from '../../lib/editor/store.ts';
-import type { GridPage, Layout, Tile } from '../../lib/editor/validate.ts';
+import type { GridPage, Layout, Tile } from '../../lib/layout/model.ts';
 import { AssetImage } from './AssetImage.tsx';
 import { GifImage } from './GifImage.tsx';
 import { BuiltinIcon } from './glyphs.tsx';

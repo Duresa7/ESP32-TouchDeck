@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import { Plus } from 'lucide-react';
 import type { EditorStore } from '../../lib/editor/store.ts';
-import { PAGES_MAX, type Layout } from '../../lib/editor/validate.ts';
+import { PAGES_MAX, type Layout } from '../../lib/layout/model.ts';
 import { Tip } from './Tip.tsx';
 
 export function PageTabs({ store, layout, page }: { store: EditorStore; layout: Layout; page: string | null }) {
