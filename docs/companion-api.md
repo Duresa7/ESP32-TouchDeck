@@ -330,7 +330,7 @@ pub struct DeviceSummary {
     pub firmware: Option<FirmwareInfo>,        // {version, protocol, build, recovery, update_available: Option<String>}
     pub diagnostics: Option<DeviceDiagnostics>,
     pub capabilities: Option<Capabilities>,    // v2 hello: screen, storage_free, tile_kinds, live_hz, live_total_hz, series, text_bytes. None on v1
-    pub orientation: Option<Orientation>,     // the shown Layout's; null whenever `layout` is
+    pub orientation: Option<Orientation>,      // the shown Layout's; null whenever `layout` is
     pub layout: Option<LayoutSummary>,         // what the Device shows; see below
     pub control_layout: ControlLayout,
     pub key_mirror: KeyMirrorState,            // {enabled, reason}
@@ -359,8 +359,8 @@ the first read of a session completes, which is within one live round of
 connecting. A link change clears it. A Layout push or orientation change keeps
 the previous summary until the next read lands, so it never goes null mid-push.
 `orientation` is the orientation of that Layout, so it is null whenever `layout`
-is. Changes increment `rev` and publish `device.updated`. `name` is the Device's own
-and untrusted, like the strings below.
+is. Changes increment `rev` and publish `device.updated`. `name` is the Device's
+own and untrusted, like the strings below.
 
 `diagnostics` is null until the Device has answered `hello`. Otherwise it is
 `{ product: string, running_from: string, sinks: string[], current_layout: string }`,

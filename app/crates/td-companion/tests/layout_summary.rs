@@ -26,12 +26,16 @@ fn two_pages(name: &str) -> Layout {
     .unwrap()
 }
 
-async fn summary(td: &TestCompanion, id: &DeviceId) -> Value {
+async fn device(td: &TestCompanion, id: &DeviceId) -> Value {
     let device = td
         .call::<Get>(DevicePath { device: id.clone() }, NoQuery, ())
         .await
         .unwrap();
-    serde_json::to_value(device).unwrap()["layout"].clone()
+    serde_json::to_value(device).unwrap()
+}
+
+async fn summary(td: &TestCompanion, id: &DeviceId) -> Value {
+    device(td, id).await["layout"].clone()
 }
 
 async fn until_layout(td: &TestCompanion, id: &DeviceId, want: impl Fn(&Value) -> bool) -> Value {
@@ -133,14 +137,6 @@ async fn a_push_starts_the_new_layout_on_its_first_page() {
     push(&td, &id, &two_pages("Studio")).await;
     let shown = until_layout(&td, &id, |layout| layout["name"] == "Studio").await;
     assert_eq!(shown["page"], 0);
-}
-
-async fn device(td: &TestCompanion, id: &DeviceId) -> Value {
-    let device = td
-        .call::<Get>(DevicePath { device: id.clone() }, NoQuery, ())
-        .await
-        .unwrap();
-    serde_json::to_value(device).unwrap()
 }
 
 #[tokio::test]
