@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
+import type { LayoutSummary } from '../src/lib/companion/api.ts';
 
 const demo = (page: Page) => ({
   push: (id: string, order: string[]) =>
@@ -12,7 +13,19 @@ const demo = (page: Page) => ({
       if (!window.touchdeckDemo) throw new Error('The demo controls are missing.');
       window.touchdeckDemo.offline(id);
     }, id),
+  shows: (id: string, layout: LayoutSummary) =>
+    page.evaluate(([id, layout]) => {
+      if (!window.touchdeckDemo) throw new Error('The demo controls are missing.');
+      window.touchdeckDemo.device(id, { layout });
+    }, [id, layout] as const),
+  clearLayout: (id: string) =>
+    page.evaluate((id) => {
+      if (!window.touchdeckDemo) throw new Error('The demo controls are missing.');
+      window.touchdeckDemo.clearLayout(id);
+    }, id),
 });
+
+const DEMO_SHOWN: LayoutSummary = { source: 'storage', name: 'Demo Layout', orientation: 'landscape', pages: 2, page: 0 };
 
 for (const count of [0, 1, 2, 3, 4, 5]) {
   test(`${count} Devices keep their size and wrap with the design gap`, async ({ page }) => {
@@ -60,6 +73,34 @@ test('a pushed Layout reaches the miniature without reloading', async ({ page })
   expect(await page.evaluate(() => document.documentElement.dataset.notReloaded)).toBe('yes');
 });
 
+test('the miniature draws the Page the Device shows', async ({ page }) => {
+  await page.goto('/');
+  const scene = page.locator('.device-figure').first().locator('.device-scene');
+  await expect(scene).toHaveAttribute('data-page', 'media');
+  await demo(page).shows('mock0001', { ...DEMO_SHOWN, page: 1 });
+  await expect(scene).toHaveAttribute('data-page', 'work');
+  await expect(scene).toContainText('Copy');
+  await demo(page).shows('mock0001', { ...DEMO_SHOWN, page: null });
+  await expect(scene).toHaveAttribute('data-page', 'media');
+});
+
+test('a Device with no stored Layout says so instead of a blank screen', async ({ page }) => {
+  await page.goto('/');
+  const device = page.locator('.device-figure').first();
+  await expect(device.locator('.device-scene')).toHaveAttribute('data-page', 'media');
+  await demo(page).clearLayout('mock0001');
+  await expect(device.getByTestId('device-empty')).toContainText('No Layout yet');
+  await expect(device.getByTestId('device-empty')).toContainText('Click to make one');
+  await expect(device.locator('.device-scene')).not.toHaveAttribute('data-page');
+  await expect(page.locator('.device-figure').nth(1).getByTestId('device-empty')).toHaveCount(0);
+  await demo(page).push('mock0001', ['work']);
+  await expect(device.locator('.device-scene')).toHaveAttribute('data-page', 'work');
+  await expect(device.getByTestId('device-empty')).toHaveCount(0);
+  await demo(page).clearLayout('mock0001');
+  await demo(page).offline('mock0001');
+  await expect(device.getByTestId('device-empty')).toHaveCount(0);
+});
+
 for (const method of ['click', 'Enter', 'Space']) {
   test(`${method} opens the selected Device Layout`, async ({ page }) => {
     await page.goto('/');
@@ -100,6 +141,13 @@ for (const theme of ['light', 'dark'] as const) {
       await page.evaluate(() => document.fonts.ready);
       await page.screenshot({ path: join(process.env.TD_SHOTS!, `home-${count}-${theme}.png`) });
       if (count === 1) {
+        await demo(page).shows('mock0001', { ...DEMO_SHOWN, page: 1 });
+        await expect(page.locator('.device-scene')).toHaveAttribute('data-page', 'work');
+        await page.screenshot({ path: join(process.env.TD_SHOTS!, `home-page-2-${theme}.png`) });
+        await demo(page).clearLayout('mock0001');
+        await expect(page.getByTestId('device-empty')).toBeVisible();
+        await page.screenshot({ path: join(process.env.TD_SHOTS!, `home-no-layout-${theme}.png`) });
+        await demo(page).push('mock0001', ['media', 'work']);
         await demo(page).offline('mock0001');
         await expect(page.getByText('Not connected', { exact: true })).toBeVisible();
         await page.screenshot({ path: join(process.env.TD_SHOTS!, `home-offline-${theme}.png`) });

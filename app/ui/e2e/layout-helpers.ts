@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { expect, type Locator, type Page } from '@playwright/test';
 import { geometry, screenSize, type Orientation } from '../src/lib/deck/geometry.ts';
-import { parseLayout, type GridPage, type Layout, type Page as LayoutPage } from '../src/lib/editor/validate.ts';
+import { parseLayout, type GridPage, type Layout, type Page as LayoutPage } from '../src/lib/layout/model.ts';
 
 export async function openLayout(page: Page, path = '/') {
   await page.addInitScript(() => {

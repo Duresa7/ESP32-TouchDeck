@@ -2,7 +2,7 @@ import { useId, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { Popover } from '@base-ui/react/popover';
 import type { EditorStore } from '../../lib/editor/store.ts';
-import { assetOf, type ActionType, type Tile } from '../../lib/editor/validate.ts';
+import { assetOf, type ActionType, type Tile } from '../../lib/layout/model.ts';
 import { readRecent, recentKey } from '../../lib/icons/recent.ts';
 import { button } from '../../shell/button.ts';
 import { TileIcon } from './AssetImage.tsx';

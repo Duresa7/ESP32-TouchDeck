@@ -5,9 +5,9 @@
   "type": "module",
   "packageManager": "pnpm@12.12.1",
   "scripts": {
-    "gen:api": "cargo run -p td-companion --features test-hooks -- --emit-ts ui/src/companion/api.gen.ts",
+    "gen:api": "cargo run -p td-companion --features test-hooks -- --emit-ts ui/src/lib/companion/api.gen.ts",
     "package:windows": "python scripts/package_windows.py build",
-    "lint": "pnpm --filter touchdeck-ui typecheck && pnpm --filter @touchdeck/electron lint",
+    "lint": "pnpm --filter touchdeck-ui typecheck && pnpm --filter touchdeck-ui lint:boundaries && pnpm --filter @touchdeck/electron lint",
     "test": "pnpm test:ui && pnpm --filter @touchdeck/electron test",
     "dev:ui": "pnpm --filter touchdeck-ui dev",
     "dev:ui:demo": "pnpm --filter touchdeck-ui dev:demo",
@@ -16,8 +16,5 @@
     "e2e:ui": "pnpm --filter touchdeck-ui e2e",
     "e2e:ui:companion": "pnpm --filter touchdeck-ui e2e:companion",
     "dev:electron": "pnpm --filter @touchdeck/electron dev"
-  },
-  "devDependencies": {
-    "@tauri-apps/cli": "^2.12.4"
   }
 }

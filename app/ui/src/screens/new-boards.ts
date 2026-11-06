@@ -1,8 +1,8 @@
 import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
-import type { DeviceSummary, NewBoard } from '../companion/api.ts';
-import type { Companion } from '../companion/client.ts';
-import { jobsStore } from '../companion/jobs.ts';
+import type { DeviceSummary, NewBoard } from '../lib/companion/api.ts';
+import type { Companion } from '../lib/companion/client.ts';
+import { jobsStore } from '../lib/companion/jobs.ts';
 import { createBoardInstall, type BoardInstallStore } from '../lib/device/new-board.ts';
 
 export interface BoardsUiState {

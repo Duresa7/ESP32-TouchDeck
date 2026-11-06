@@ -1,9 +1,9 @@
 import { createStore, type StoreApi } from 'zustand/vanilla';
-import type { DeviceSettingsPatch, DeviceSummary, Job, PushReport } from '../../companion/api.ts';
-import type { Companion } from '../../companion/client.ts';
-import { toApiError } from '../../companion/errors.ts';
-import { readDraft, writeDraft, type DraftStorage } from '../editor/drafts.ts';
-import { canonical, counts, newLayout, parseLayout, starterLayout, type Layout, type Orientation } from '../editor/validate.ts';
+import type { DeviceSettingsPatch, DeviceSummary, Job, PushReport } from '../companion/api.ts';
+import type { Companion } from '../companion/client.ts';
+import { toApiError } from '../companion/errors.ts';
+import { readDraft, writeDraft, type DraftStorage } from '../editor/store.ts';
+import { canonical, counts, newLayout, parseLayout, starterLayout, type Layout, type Orientation } from '../layout/model.ts';
 import { NAME_BYTES, nameBreak, SPECIAL_CHARACTERS, type DeviceSettingsStore } from './settings.ts';
 
 export type StepId = 'name' | 'orientation' | 'layout' | 'firmware' | 'done';

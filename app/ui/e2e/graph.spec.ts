@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import type { Capabilities } from '../src/companion/api.ts';
+import type { Capabilities } from '../src/lib/companion/api.ts';
 import { exportText, gridPage, layoutOf, openLayout, tile } from './layout-helpers.ts';
 
 const folder = process.env.TD_SHOTS;

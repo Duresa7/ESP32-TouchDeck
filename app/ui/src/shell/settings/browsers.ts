@@ -1,6 +1,6 @@
 import { createStore } from 'zustand/vanilla';
-import type { SessionInfo } from '../../companion/api.ts';
-import type { Companion } from '../../companion/client.ts';
+import type { SessionInfo } from '../../lib/companion/api.ts';
+import type { Companion } from '../../lib/companion/client.ts';
 import { problemText } from './problems.ts';
 
 export type BrowsersView = { kind: 'loading' } | { kind: 'ready'; browsers: SessionInfo[] } | { kind: 'failed' };

@@ -1,10 +1,10 @@
 import { useEffect } from 'react';
-import type { ActionLog } from '../../companion/api.ts';
-import { actionsStore, useActions } from '../../companion/actions.ts';
-import { useCompanion } from '../../companion/connection.ts';
-import { useDevices } from '../../companion/devices.ts';
-import { plural } from '../../lib/editor/messages.ts';
-import type { Layout } from '../../lib/editor/validate.ts';
+import type { ActionLog } from '../../lib/companion/api.ts';
+import { actionsStore, useActions } from '../../lib/companion/actions.ts';
+import { useCompanion } from '../../lib/companion/connection.ts';
+import { useDevices } from '../../lib/companion/devices.ts';
+import { plural } from '../../lib/layout/messages.ts';
+import type { Layout } from '../../lib/layout/model.ts';
 
 const NONE: ActionLog[] = [];
 

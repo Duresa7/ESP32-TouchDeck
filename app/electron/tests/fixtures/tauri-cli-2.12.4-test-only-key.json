@@ -1,0 +1,12 @@
+{
+  "testOnly": "TEST ONLY. Disposable key made by `tauri signer generate --ci --password \"\"` (Tauri CLI 2.12.4) for signer compatibility tests. Empty password. It signs nothing real and nothing trusts it.",
+  "tauriCli": "2.12.4",
+  "privateKey": "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5WnBkL2V0Vkc5NkNTWTVMTUNJMnZ4REpQVlBISU8rQlJDMlRCVk9oMTdqVUFBQkFBQUFBQUFBQUFBQUlBQUFBQUNtekpUZmdLQWxYeitoa3Q5LzIwdDQ2OFlRclE3TGlsb2ltancwS0ZtRU9LdDZ0UENsOGhZZ1lpb3BiWHlmUXRnVjZMNTB1eklWMmQ0T3p2ZnJsNk81TFE1L0lTVEx3bjJUSmx6dGc5L3RyN0VSTEVxTEtNdHZseXluRHRVNGMweXdTWktmVE1kaEk9Cg==",
+  "password": "",
+  "publicKey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQxRjgyQjQwNDRGNTY4MzUKUldRMWFQVkVRQ3Y0UWM0NzJVR0FJSHZ1SWIxRXRTaG1hWjNSenVEUUZsR1dwL1c1VHNCL3RNQmcK",
+  "file": "OpenTouchDeck-windows-x64-TEST-ONLY-setup.exe",
+  "data": "Open TouchDeck signer fixture. Test only, not an installer.\n",
+  "version": "1.2.3",
+  "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRMWFQVkVRQ3Y0UWU3SkRza05NRENFOW1wVHdVSmNEUFJIUlRTWDErZ294dFhMaVkzTENzaXpKb05GRzFPaVIrZktPSXJlMmVJL3RMRTNVUGhuTHVqZlhrMjh3bmdqelFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzODk4MzM4CWZpbGU6T3BlblRvdWNoRGVjay13aW5kb3dzLXg2NC1URVNULU9OTFktc2V0dXAuZXhlCXZlcnNpb246MS4yLjMKWlA5U29HR0IrZFBYRGdFRXVKV2ZlSnk0QzV6UnFzUUsvbjlmbjdURjI1dkhEZVE0YXczcER3dFg4T2pRU2dvVnJZdUwvSkM5MGsycldFdzVqVWJhRGc9PQo=",
+  "signatureCommand": "tauri signer sign --app-version 1.2.3 --private-key-path <key> <file>"
+}

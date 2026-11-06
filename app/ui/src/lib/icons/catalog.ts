@@ -1,6 +1,6 @@
-import type { AssetSource, CatalogHit } from '../../companion/api.ts';
-import { isAbort } from '../../companion/client.ts';
-import { toApiError, type ApiError } from '../../companion/errors.ts';
+import type { AssetSource, CatalogHit } from '../companion/api.ts';
+import { isAbort } from '../companion/client.ts';
+import { toApiError, type ApiError } from '../companion/errors.ts';
 
 export const SEARCH_DELAY_MS = 200;
 export const HITS_SHOWN = 48;

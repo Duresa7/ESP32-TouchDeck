@@ -2,9 +2,9 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent } f
 import { Toggle } from '@base-ui/react/toggle';
 import { ToggleGroup } from '@base-ui/react/toggle-group';
 import { useStore } from 'zustand';
-import type { DeviceSummary } from '../../companion/api.ts';
-import { consoleCommands } from '../../companion/console.ts';
-import { useCompanion, useEvents } from '../../companion/connection.ts';
+import type { DeviceSummary } from '../../lib/companion/api.ts';
+import { consoleCommands } from '../../lib/companion/console.ts';
+import { useCompanion, useEvents } from '../../lib/companion/connection.ts';
 import { button } from '../button.ts';
 import { createConsoleStore, type ConsoleNotice } from './console.ts';
 import { nameOf } from './troubleshooting.ts';

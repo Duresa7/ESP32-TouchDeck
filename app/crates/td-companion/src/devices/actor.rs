@@ -4,27 +4,23 @@
 //! only be open once.
 use super::{
     DeviceConsole, DeviceEvent, DeviceId, DeviceKeyMirror, Inner, InputFactory, KeyMirrorState,
-    input::{InputHub, PressGate},
 };
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, Sender},
+        mpsc::{self, Sender},
     },
     thread,
-    time::{Duration, Instant},
+    time::Instant,
 };
 use td_host::{Mirror, Mirrored, Outcome};
 use td_link::{Incoming, Session};
 
 pub type Work = Box<dyn FnOnce(&Session) + Send>;
 
-const INPUT_PACE: Duration = Duration::from_millis(20);
-
 /// Dropping the handle ends the work thread, which closes the session and frees the port.
 pub(super) struct Handle {
-    pub generation: u64,
+    pub connection: u64,
     pub opened: Instant,
     work: Sender<Work>,
     session: Arc<Session>,
@@ -42,7 +38,8 @@ impl Handle {
 pub(super) fn spawn(
     inner: Arc<Inner>,
     id: DeviceId,
-    generation: u64,
+    connection: u64,
+    session_id: u64,
     session: Session,
     incoming: td_link::IncomingReceiver,
     mirror: Option<Mirror>,
@@ -60,22 +57,6 @@ pub(super) fn spawn(
             }
         }
     });
-    let (parts, part_taps) = PartSender::channel();
-    let part_inner = inner.clone();
-    let part_id = id.clone();
-    thread::spawn(move || {
-        for event in part_taps {
-            if let Some(handler) = part_inner.actions.get() {
-                handler(&part_id, &event.value);
-            }
-        }
-    });
-    let (drags, inputs) = mpsc::sync_channel::<()>(1);
-    let hub = Arc::new(parking_lot::Mutex::new(InputHub::default()));
-    let input_hub = hub.clone();
-    let input_inner = inner.clone();
-    let input_id = id.clone();
-    thread::spawn(move || run_inputs(&input_inner, &input_id, &inputs, &input_hub));
     thread::Builder::new()
         .name(format!("td-device-{id}"))
         .spawn(move || {
@@ -91,20 +72,16 @@ pub(super) fn spawn(
             forward(
                 &inner,
                 &id,
-                generation,
+                connection,
+                session_id,
                 incoming,
                 mirror,
-                Touches {
-                    presses,
-                    parts,
-                    drags,
-                    hub,
-                },
+                Touches { presses },
             )
         })
         .expect("the Device forwarder starts");
     Handle {
-        generation,
+        connection,
         opened: Instant::now(),
         work,
         session: shared,
@@ -142,104 +119,19 @@ pub(super) fn mirror(
     }
 }
 
-fn run_inputs(
-    inner: &Inner,
-    id: &DeviceId,
-    inputs: &Receiver<()>,
-    hub: &parking_lot::Mutex<InputHub>,
-) {
-    while inputs.recv().is_ok() {
-        thread::sleep(INPUT_PACE);
-        let _ = inputs.try_recv();
-        if let Some(handler) = inner.inputs.get() {
-            let generation = handler.generation();
-            let batch = {
-                let mut hub = hub.lock();
-                hub.reset(generation);
-                hub.take()
-            };
-            for input in batch {
-                if handler.generation() != generation || !hub.lock().is_current(&input) {
-                    break;
-                }
-                let Some(result) = handler.set(id, &input) else {
-                    hub.lock().dropped(&input);
-                    continue;
-                };
-                let outcome = {
-                    let mut hub = hub.lock();
-                    hub.reset(handler.generation());
-                    if handler.generation() != generation {
-                        break;
-                    }
-                    hub.settled(&input, result, Instant::now())
-                };
-                if let Some(outcome) = outcome {
-                    handler.gesture(id, &input, outcome);
-                }
-            }
-        }
-    }
-}
-
-struct PartTap {
-    value: serde_json::Value,
-    busy: Arc<AtomicBool>,
-}
-
-impl Drop for PartTap {
-    fn drop(&mut self) {
-        self.busy.store(false, Ordering::Release);
-    }
-}
-
-struct PartSender {
-    send: mpsc::SyncSender<PartTap>,
-    busy: Arc<AtomicBool>,
-}
-
-impl PartSender {
-    fn channel() -> (Self, Receiver<PartTap>) {
-        let (send, receive) = mpsc::sync_channel(1);
-        (
-            Self {
-                send,
-                busy: Arc::default(),
-            },
-            receive,
-        )
-    }
-
-    fn try_send(&self, value: serde_json::Value) -> bool {
-        if self.busy.swap(true, Ordering::AcqRel) {
-            return false;
-        }
-        self.send
-            .try_send(PartTap {
-                value,
-                busy: self.busy.clone(),
-            })
-            .is_ok()
-    }
-}
-
 struct Touches {
-    parts: PartSender,
     presses: mpsc::SyncSender<serde_json::Value>,
-    drags: mpsc::SyncSender<()>,
-    hub: Arc<parking_lot::Mutex<InputHub>>,
 }
 
 fn forward(
     inner: &Inner,
     id: &DeviceId,
-    generation: u64,
+    connection: u64,
+    session_id: u64,
     incoming: impl IntoIterator<Item = Incoming>,
     mut mirror: Option<Mirror>,
     touches: Touches,
 ) {
-    let mut gate = PressGate::default();
-    let mut dropped_parts = 0_u64;
     for item in incoming {
         match item {
             Incoming::Line(line) => inner.events.publish(&DeviceConsole {
@@ -249,21 +141,23 @@ fn forward(
             Incoming::Event(event) => {
                 if event["m"] == "press" {
                     if event.get("part").is_some() {
-                        if !gate.accept(&event, Instant::now())
-                            || !touches.parts.try_send(event.clone())
+                        if let Some(controls) =
+                            inner.controls.get().and_then(std::sync::Weak::upgrade)
                         {
-                            dropped_parts = dropped_parts.saturating_add(1);
+                            controls.event(id, session_id, &event);
                         }
                     } else {
                         let _ = touches.presses.try_send(event.clone());
                     }
                 } else if event["m"] == "v2.input" {
-                    if let Some(handler) = inner.inputs.get() {
-                        let mut hub = touches.hub.lock();
-                        hub.reset(handler.generation());
-                        hub.push(&event);
+                    if let Some(controls) = inner.controls.get().and_then(std::sync::Weak::upgrade)
+                    {
+                        controls.event(id, session_id, &event);
                     }
-                    let _ = touches.drags.try_send(());
+                } else if event["m"] == "v2.page"
+                    && let Some(page) = event["page"].as_str()
+                {
+                    inner.page_shown(id, connection, page);
                 }
                 if let Some(report) = Mirrored::parse(&event) {
                     key_report(inner, id, mirror.as_mut(), &report);
@@ -277,23 +171,22 @@ fn forward(
                 if let Some(mirror) = mirror.as_mut() {
                     mirror.release_all();
                 }
-                touches.hub.lock().cancel();
+                if let Some(controls) = inner.controls.get().and_then(std::sync::Weak::upgrade) {
+                    controls.overflow(id);
+                }
                 inner.events.publish(&DeviceConsole {
                     device: id.clone(),
                     line: "Dropped Device events: overflow".into(),
                 });
             }
             Incoming::Closed(reason) => {
-                if dropped_parts > 0 {
-                    inner.events.publish(&DeviceConsole {
-                        device: id.clone(),
-                        line: format!("Dropped control taps: {dropped_parts}"),
-                    });
+                if let Some(controls) = inner.controls.get().and_then(std::sync::Weak::upgrade) {
+                    controls.closed(id);
                 }
                 if let Some(mirror) = mirror.as_mut() {
                     mirror.release_all();
                 }
-                inner.closed(id, generation, &reason);
+                inner.closed(id, connection, &reason);
                 return;
             }
         }
@@ -335,30 +228,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_part_waits_for_worker_scheduling_but_never_queues_behind_another_part() {
-        let (parts, receive) = PartSender::channel();
-        let first = serde_json::json!({"part": "next"});
-        let second = serde_json::json!({"part": "previous"});
-        assert!(parts.try_send(first.clone()));
-        assert!(!parts.try_send(second.clone()));
-        let running = receive.try_recv().unwrap();
-        assert_eq!(running.value, first);
-        assert!(!parts.try_send(second.clone()));
-        drop(running);
-        assert!(receive.try_recv().is_err());
-        assert!(parts.try_send(second.clone()));
-        assert_eq!(receive.try_recv().unwrap().value, second);
-    }
-
-    #[test]
-    fn a_stopped_part_worker_refuses_taps() {
-        let (parts, receive) = PartSender::channel();
-        drop(receive);
-        assert!(!parts.try_send(serde_json::json!({"part": "next"})));
-        assert!(!parts.busy.load(Ordering::Acquire));
-    }
-
-    #[test]
     fn overflow_releases_held_keys_before_the_next_event() {
         let devices = super::super::DeviceManager::new(crate::api::Events::default());
         let sink = td_host::FakeSink::default();
@@ -386,13 +255,11 @@ mod tests {
             &devices.inner,
             &DeviceId::parse("mock0001").unwrap(),
             0,
+            0,
             incoming,
             Some(mirror),
             Touches {
-                parts: PartSender::channel().0,
                 presses: mpsc::sync_channel(16).0,
-                drags: mpsc::sync_channel(1).0,
-                hub: Arc::default(),
             },
         );
     }

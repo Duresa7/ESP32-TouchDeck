@@ -11,15 +11,14 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use parking_lot::{Condvar, Mutex};
-use td_core::Layout;
-use td_core::layout::Tile;
 use td_core::live::LiveValue;
 use td_host::integrations::{Delivery, LiveSample};
 
 pub use router::{Binding, LiveCaps, Report, Router, StreamKey, bindings, stream_source};
 
-use crate::devices::{ControlLayout, ControlLayoutUnavailable, DeviceManager, LinkState};
+use crate::devices::{DeviceManager, LinkState};
 use crate::features::integrations::{Controls, Service};
+use crate::layouts::LayoutAuthority;
 use crate::link::Links;
 use covers::CoverCache;
 use router::{CoverJob, Prepared};
@@ -30,19 +29,11 @@ const ROUND: Duration = Duration::from_millis(250);
 /// How long a round waits for a Device whose link is busy, such as with a Layout push, before it tries next round.
 const LINK_WAIT: Duration = Duration::from_millis(50);
 
-#[derive(Default)]
 struct Shared {
-    generation: std::sync::atomic::AtomicU64,
-    publication: Mutex<()>,
-    devices: std::sync::OnceLock<DeviceManager>,
-    settable: std::sync::OnceLock<crate::actions::controls::Settable>,
-    trusted: std::sync::OnceLock<crate::store::LayoutStore>,
+    authority: LayoutAuthority,
     wake: Mutex<bool>,
     woken: Condvar,
     router: Mutex<Router>,
-    /// Devices that showed a new Layout since the last round.
-    changed: Mutex<BTreeSet<String>>,
-    shown: Mutex<HashMap<String, (u64, Arc<Layout>)>>,
     /// The newest polled samples, kept for rounds when the Integrations are busy.
     samples: Mutex<HashMap<StreamKey, LiveSample>>,
     covers: Mutex<Prepared>,
@@ -55,63 +46,20 @@ struct Shared {
 }
 
 impl Shared {
-    fn assess(&self, device: &str, session: u64) -> (ControlLayout, Option<Layout>) {
-        let changed = self.changed.lock();
-        if changed.contains(device) {
-            return (ControlLayout::default(), None);
+    fn new(authority: LayoutAuthority) -> Self {
+        Self {
+            authority,
+            wake: Mutex::default(),
+            woken: Condvar::new(),
+            router: Mutex::default(),
+            samples: Mutex::default(),
+            covers: Mutex::default(),
+            sent: Mutex::default(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            injected: Mutex::default(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            rounds: Default::default(),
         }
-        let layout = match self.shown.lock().get(device) {
-            Some((read_in, layout)) if *read_in == session => layout.clone(),
-            _ => return (ControlLayout::default(), None),
-        };
-        let orientation = layout.orientation;
-        let has_controls = layout.pages.iter().any(|page| {
-            let td_core::layout::Page::Grid { tiles, .. } = page else {
-                return false;
-            };
-            tiles.iter().any(|tile| {
-                ["previous", "play_pause", "next", "mute"]
-                    .iter()
-                    .any(|part| td_host::actions::Plan::part(tile, part).is_some())
-                    || tile.streams.iter().flatten().any(|(stream, _)| {
-                        crate::actions::controls::takes_input(tile, stream)
-                            && stream_source(tile, stream).is_some_and(|source| {
-                                self.settable
-                                    .get()
-                                    .is_some_and(|settable| settable(&source))
-                            })
-                    })
-            })
-        });
-        let Some(trusted) = self
-            .trusted
-            .get()
-            .and_then(|store| store.get(device, layout.orientation))
-        else {
-            return (
-                ControlLayout::NoPushedCopy {
-                    orientation,
-                    has_controls,
-                },
-                None,
-            );
-        };
-        if trusted.to_canonical_json() != layout.to_canonical_json() {
-            return (
-                ControlLayout::Differs {
-                    orientation,
-                    has_controls,
-                },
-                None,
-            );
-        }
-        (
-            ControlLayout::Matches {
-                orientation,
-                has_controls,
-            },
-            Some(trusted),
-        )
     }
     fn wake(&self) {
         *self.wake.lock() = true;
@@ -131,9 +79,19 @@ impl Live {
         self.0.router.lock().forget_cover(device, id);
     }
 
-    pub fn start(devices: DeviceManager, links: Links, integrations: Service) -> Live {
-        let live = Live(Arc::default());
-        let _ = live.0.devices.set(devices.clone());
+    pub fn start(
+        devices: DeviceManager,
+        links: Links,
+        integrations: Service,
+        authority: LayoutAuthority,
+    ) -> Live {
+        let live = Live(Arc::new(Shared::new(authority)));
+        let shared = Arc::downgrade(&live.0);
+        live.0.authority.on_change(Arc::new(move || {
+            if let Some(shared) = shared.upgrade() {
+                shared.wake();
+            }
+        }));
         live.0
             .router
             .lock()
@@ -153,60 +111,6 @@ impl Live {
         let shared = Arc::downgrade(&live.0);
         thread::spawn(move || run(shared, devices, links, integrations, jobs));
         live
-    }
-
-    /// The Device now shows another Layout, so its bindings are read again and every value goes again.
-    pub fn layout_changed(&self, device: &str) {
-        let _publication = self.0.publication.lock();
-        let mut changed = self.0.changed.lock();
-        changed.insert(device.to_owned());
-        self.0
-            .generation
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.0.shown.lock().remove(device);
-        drop(changed);
-        if let Some(devices) = self.0.devices.get() {
-            let session = devices
-                .summaries()
-                .into_iter()
-                .find(|d| d.id.as_str() == device)
-                .and_then(|d| match d.link {
-                    LinkState::Connected { since_ms, .. } => Some(since_ms),
-                    _ => None,
-                });
-            devices.control_layout(device, session, ControlLayout::default());
-        }
-        self.0.wake();
-    }
-
-    pub(crate) fn generation(&self) -> u64 {
-        self.0.generation.load(std::sync::atomic::Ordering::SeqCst)
-    }
-
-    pub(crate) fn settable(&self, predicate: crate::actions::controls::Settable) {
-        let _ = self.0.settable.set(predicate);
-    }
-
-    pub(crate) fn trust(&self, layouts: crate::store::LayoutStore) {
-        let _ = self.0.trusted.set(layouts);
-    }
-
-    /// Returns a Tile from the Companion's pushed copy only when the active Layout matches in this session.
-    /// Returns None during replacement or before a matching Layout has been read. Never waits for a link.
-    pub fn tile(&self, device: &str, session: u64, page: &str, tile: &str) -> Option<Tile> {
-        self.binding(device, session, page, tile).ok().flatten()
-    }
-
-    pub(crate) fn binding(
-        &self,
-        device: &str,
-        session: u64,
-        page: &str,
-        tile: &str,
-    ) -> Result<Option<Tile>, ()> {
-        let (_, trusted) = self.0.assess(device, session);
-        let trusted = trusted.ok_or(())?;
-        Ok(td_host::actions::find_tile(&trusted, page, tile).cloned())
     }
 
     /// Adds a sample as if an Integration reported it, for tests without real Integration values.
@@ -256,7 +160,7 @@ fn round(
     links: &Links,
     integrations: &Service,
 ) -> Vec<CoverJob> {
-    let generation = shared.generation.load(std::sync::atomic::Ordering::SeqCst);
+    let (generation, changed) = shared.authority.begin_round();
     let connected: Vec<(String, u64, LiveCaps)> = devices
         .summaries()
         .into_iter()
@@ -273,14 +177,6 @@ fn round(
         })
         .collect();
     let covers = shared.covers.lock().clone();
-    let changed = {
-        let mut changed = shared.changed.lock();
-        let mut shown = shared.shown.lock();
-        for device in changed.iter() {
-            shown.remove(device);
-        }
-        std::mem::take(&mut *changed)
-    };
     let wanted = {
         let mut router = shared.router.lock();
         router.set_covers(covers);
@@ -305,74 +201,32 @@ fn round(
     samples.extend(integrations.control_live(&wanted));
     #[cfg(any(test, feature = "test-hooks"))]
     samples.extend(shared.injected.lock().clone());
-    for (device, session, caps) in connected {
-        let delivered = links.within(&device, LINK_WAIT, |link| {
+    for (device, session, caps) in &connected {
+        let delivered = links.within(device, LINK_WAIT, |link| {
             shared
                 .router
                 .lock()
-                .deliver(&device, session, link, caps, &samples, Instant::now())
+                .deliver(device, *session, link, *caps, &samples, Instant::now())
         });
         if let Some(Ok(report)) = delivered {
-            record(shared, integrations, &device, report);
+            record(shared, integrations, device, report);
         }
     }
-    let (jobs, shown) = {
+    let (jobs, shown, layouts) = {
         let router = shared.router.lock();
-        (router.cover_jobs(&samples), router.shown())
+        (
+            router.cover_jobs(&samples),
+            router.shown(),
+            router.layouts(),
+        )
     };
-    publish_shown(shared, shown);
-    publish_status(shared, devices, generation);
+    let failed = connected
+        .iter()
+        .filter(|(id, session, _)| shared.router.lock().read_failed(id, *session))
+        .map(|(id, session, _)| (id.clone(), *session))
+        .collect();
+    shared.authority.publish(generation, shown, layouts, failed);
     jobs
-}
-
-fn publish_status(shared: &Shared, devices: &DeviceManager, generation: u64) {
-    let _publication = shared.publication.lock();
-    if shared.generation.load(std::sync::atomic::Ordering::SeqCst) != generation {
-        return;
-    }
-    for device in devices.summaries() {
-        let (session, status) = match device.link {
-            LinkState::Connected {
-                since_ms,
-                protocol: 2,
-                ..
-            } if device
-                .capabilities
-                .as_ref()
-                .and_then(LiveCaps::of)
-                .is_some() =>
-            {
-                let mut status = shared.assess(&device.id, since_ms).0;
-                if matches!(status, ControlLayout::Unavailable { .. })
-                    && shared.router.lock().read_failed(&device.id, since_ms)
-                {
-                    status = ControlLayout::Unavailable {
-                        reason: ControlLayoutUnavailable::ReadFailed,
-                    };
-                }
-                (Some(since_ms), status)
-            }
-            LinkState::Connected { since_ms, .. } => (
-                Some(since_ms),
-                ControlLayout::Unavailable {
-                    reason: ControlLayoutUnavailable::Unsupported,
-                },
-            ),
-            _ => (
-                None,
-                ControlLayout::Unavailable {
-                    reason: ControlLayoutUnavailable::Offline,
-                },
-            ),
-        };
-        devices.control_layout(&device.id, session, status);
-    }
-}
-
-fn publish_shown(shared: &Shared, mut shown: HashMap<String, (u64, Arc<Layout>)>) {
-    let changed = shared.changed.lock();
-    shown.retain(|device, _| !changed.contains(device));
-    *shared.shown.lock() = shown;
 }
 
 fn make_covers(shared: Weak<Shared>, controls: Controls, queue: Receiver<Vec<CoverJob>>) {

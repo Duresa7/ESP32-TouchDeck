@@ -62,6 +62,7 @@ static struct {
     uint32_t slide_start_frames;
     atomic_bool built;
     atomic_uint page;
+    atomic_uint layouts;
     atomic_int pressed;
     atomic_uint taps;
     atomic_bool animating;
@@ -707,6 +708,7 @@ static void load_locked(const td_layout_t *layout, const ui_layout_info_t *info,
     s.info = *info;
     atomic_store(&s.pressed, -1);
     atomic_store(&s.page, 0);
+    atomic_fetch_add(&s.layouts, 1);
     ui_geo_set_full_screen(layout->full_screen);
     layout_unlock();
 
@@ -926,6 +928,23 @@ void ui_leave_recovery(const char *why)
 bool ui_ready(void)
 {
     return atomic_load(&s.built);
+}
+
+uint8_t ui_page_shown(uint32_t *layout)
+{
+    *layout = atomic_load(&s.layouts);
+    return (uint8_t)atomic_load(&s.page);
+}
+
+bool ui_page_id(uint8_t index, char *out, size_t size)
+{
+    layout_lock();
+    const bool found = index < s.page_count && s.pages[index].id != NULL;
+    if (found) {
+        snprintf(out, size, "%s", s.pages[index].id);
+    }
+    layout_unlock();
+    return found;
 }
 
 void ui_get_state(ui_state_t *out)

@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fakeCompanion } from './fake-companion.mjs';
-import type {} from '../../ui/src/companion/session';
+import type {} from '../../ui/src/lib/companion/session';
 
 const kinds = [['legacy', 'Ed'], ['prehashed', 'ED']] as const;
 

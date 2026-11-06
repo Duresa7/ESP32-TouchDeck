@@ -104,6 +104,10 @@ pub enum Event {
         seq: u32,
         t: u64,
     },
+    /// The Page on screen, by id: once after protocol 2 is selected, then whenever the Page or the Layout changes.
+    /// Only on a v2 session, and only from Firmware that reports Pages.
+    #[serde(rename = "v2.page")]
+    Page { page: String },
     #[serde(rename = "key.report")]
     KeyReport {
         seq: u32,

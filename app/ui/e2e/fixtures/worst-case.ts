@@ -1,4 +1,4 @@
-import type { Layout, Tile } from '../../src/lib/editor/validate.ts';
+import type { Layout, Tile } from '../../src/lib/layout/model.ts';
 
 const LABELS = [
   'Launch Photoshop',

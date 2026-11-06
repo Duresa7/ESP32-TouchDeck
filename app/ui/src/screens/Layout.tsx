@@ -2,9 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 're
 import clsx from 'clsx';
 import { Switch } from '@base-ui/react/switch';
 import { Tooltip } from '@base-ui/react/tooltip';
-import type { DeviceSummary } from '../companion/api.ts';
-import { useCompanion } from '../companion/connection.ts';
-import { useDevices } from '../companion/devices.ts';
+import type { DeviceSummary } from '../lib/companion/api.ts';
+import { useCompanion } from '../lib/companion/connection.ts';
+import { useDevices } from '../lib/companion/devices.ts';
 import type { EditorStore } from '../lib/editor/store.ts';
 import { needsFirmware, tileKind } from '../lib/device/needs-firmware.ts';
 import { statusOf } from './home-model.ts';

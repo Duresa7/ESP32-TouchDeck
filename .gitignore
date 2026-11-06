@@ -5,18 +5,18 @@ CLAUDE.local.md
 GEMINI.md
 .cursorrules
 .windsurfrules
-/.cursor/
+.cursor/
 /.github/copilot-instructions.md
 /.github/instructions/
 /docs/agents/
 
 # Local agent skills, settings and installation metadata
-/.agents/
-/.claude/
-/.codex/
-/.gemini/
-/.mcp.json
-/skills-lock.json
+.agents/
+.claude/
+.codex/
+.gemini/
+.mcp.json
+skills-lock.json
 
 # Maintainer docs and research, kept local
 /GLOSSARY.md

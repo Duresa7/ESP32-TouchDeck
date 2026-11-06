@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CatalogHit } from '../../companion/api.ts';
-import { RECORDED_HITS } from '../../companion/fake-catalog.data.ts';
+import type { CatalogHit } from '../companion/api.ts';
+import { RECORDED_HITS } from '../companion/fake.ts';
 import { catalogSource, catalogTint, createCatalogSearch, monogram, SEARCH_DELAY_MS, type SearchState } from './catalog.ts';
 
 function recorded(id: string) {

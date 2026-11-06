@@ -1,5 +1,5 @@
-import type { TileAction as Action, Page, Tile } from '../../companion/api.gen.ts';
-import { assetOf } from '../editor/validate.ts';
+import type { TileAction as Action, Page, Tile } from '../companion/api.gen.ts';
+import { assetOf } from '../layout/model.ts';
 import { ARCHIVO_MEDIUM_22, ARCHIVO_MEDIUM_26, ARCHIVO_MEDIUM_44, ARCHIVO_NAMEPLATE_26, ARCHIVO_SEMIBOLD_32, ARCHIVO_SEMIBOLD_40, MONTSERRAT_48 } from './fonts.data.ts';
 import { dotX, truncDiv, tileRect, type Geometry, type Rect } from './geometry.ts';
 import { graphPoints, type GraphPoint } from './graph.ts';

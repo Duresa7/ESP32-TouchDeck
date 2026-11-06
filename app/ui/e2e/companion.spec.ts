@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { expect, test, type APIRequestContext, type Locator, type Page, type Response } from '@playwright/test';
-import type { ActionLog, AllowedAction, ApprovalRequest, NewBoard } from '../src/companion/api.ts';
-import type { Layout } from '../src/lib/editor/validate.ts';
+import type { ActionLog, AllowedAction, ApprovalRequest, NewBoard } from '../src/lib/companion/api.ts';
+import type { Layout } from '../src/lib/layout/model.ts';
 import { exportText, menu, openLayout, sorted, status, tile, waitEvent } from './layout-helpers.ts';
 
 test.describe.configure({ mode: 'serial' });

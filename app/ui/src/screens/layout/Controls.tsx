@@ -1,12 +1,12 @@
 import { useId, useMemo } from 'react';
 import { useStore } from 'zustand';
-import { useDevices } from '../../companion/devices.ts';
-import { useIntegrations } from '../../companion/integrations.ts';
+import { useDevices } from '../../lib/companion/devices.ts';
+import { useIntegrations } from '../../lib/companion/integrations.ts';
 import { controlsStore, noticeOf, type ControlNotice, type NeedsSend } from '../../lib/device/controls.ts';
-import { controlBindings, controlWords, type ControlBinding } from '../../lib/editor/control-bindings.ts';
-import { plural } from '../../lib/editor/messages.ts';
+import { controlBindings, controlWords, type ControlBinding } from '../../lib/layout/controls.ts';
+import { plural } from '../../lib/layout/messages.ts';
 import type { EditorStore } from '../../lib/editor/store.ts';
-import type { Layout, Orientation } from '../../lib/editor/validate.ts';
+import type { Layout, Orientation } from '../../lib/layout/model.ts';
 import { button } from '../../shell/button.ts';
 import { CHECKING_CONTROLS, NEEDS_SEND, uncheckedText } from '../home-model.ts';
 import { reviewLayout, useEditorState } from './editor.ts';

@@ -41,7 +41,9 @@ cJSON *td_link_capabilities(void)
 }
 
 static bool s_v2;
+static uint32_t s_v2_session;
 bool td_link_v2_selected(void) { return s_v2 && td_link_state().online; }
+uint32_t td_link_v2_session(void) { return __atomic_load_n(&s_v2_session, __ATOMIC_RELAXED); }
 
 void td_link_v2_fail(cJSON *reply, const char *reason, const char *error)
 {
@@ -96,6 +98,9 @@ static void hello(const cJSON *request, cJSON *reply)
         return;
     }
     s_v2 = v2;
+    if (v2) {
+        __atomic_add_fetch(&s_v2_session, 1, __ATOMIC_RELAXED);
+    }
     td_link_input_cancel();
     td_link_files_select();
     ui_live_select();

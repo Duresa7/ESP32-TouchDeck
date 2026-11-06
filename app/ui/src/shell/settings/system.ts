@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { SystemInfo } from '../../companion/api.ts';
-import { useCompanion } from '../../companion/connection.ts';
+import type { SystemInfo } from '../../lib/companion/api.ts';
+import { useCompanion } from '../../lib/companion/connection.ts';
 
 export function useSystemInfo(): SystemInfo | 'unknown' | null {
   const companion = useCompanion();

@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { createClient, type Companion } from '../../companion/client.ts';
-import { createDevicesStore } from '../../companion/devices.ts';
-import { openEvents, type Events } from '../../companion/events.ts';
-import { createFakeCompanion, type FakeCompanion } from '../../companion/fake.ts';
-import { createIntegrationsStore, type IntegrationsStore } from '../../companion/integrations.ts';
-import { windowSession } from '../../companion/session.ts';
+import { createClient, type Companion } from '../companion/client.ts';
+import { createDevicesStore } from '../companion/devices.ts';
+import { openEvents, type Events } from '../companion/events.ts';
+import { createFakeCompanion, type FakeCompanion } from '../companion/fake.ts';
+import { createIntegrationsStore, type IntegrationsStore } from '../companion/integrations.ts';
+import { windowSession } from '../companion/session.ts';
 import { SecretField } from '../../screens/integrations/SecretField.tsx';
 import { createDetailStore, REFRESH_FLOOR_MS, type DetailStore } from './detail.ts';
 

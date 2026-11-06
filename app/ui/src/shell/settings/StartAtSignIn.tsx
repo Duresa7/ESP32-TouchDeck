@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 import { Switch } from '@base-ui/react/switch';
 import { useStore } from 'zustand';
-import { useCompanion } from '../../companion/connection.ts';
+import { useCompanion } from '../../lib/companion/connection.ts';
 import { createStartupStore } from './startup.ts';
 
 export function StartAtSignIn() {

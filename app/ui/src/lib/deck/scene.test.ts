@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'vitest';
-import { parseLayout, type GridPage, type Page } from '../editor/validate.ts';
+import { parseLayout, type GridPage, type Page } from '../layout/model.ts';
 import { geometry, screenSize, tileRect } from './geometry.ts';
 import { graphPoints } from './graph.ts';
 import { BAR, barLayout, nowPlayingLayout } from './live-tiles.ts';

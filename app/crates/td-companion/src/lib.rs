@@ -4,10 +4,12 @@ pub mod api;
 pub mod bindings;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod checkpoints;
+pub(crate) mod controls;
 pub mod devices;
 mod dialog_text;
 pub mod features;
 pub mod jobs;
+pub mod layouts;
 pub mod link;
 pub mod live;
 pub mod photos;

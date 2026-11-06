@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react';
 import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
-import type { OpenTouchDeckBridge, UpdateCheck, UpdateDownload, UpdateInstall } from '../companion/session.ts';
+import type { OpenTouchDeckBridge, UpdateCheck, UpdateDownload, UpdateInstall } from '../lib/companion/session.ts';
 
 export type UpdatesBridge = NonNullable<OpenTouchDeckBridge['updates']>;
 export type UpdateOffer = Extract<UpdateCheck, { state: 'available' }>;

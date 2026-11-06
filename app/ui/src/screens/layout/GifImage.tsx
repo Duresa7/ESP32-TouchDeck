@@ -1,8 +1,8 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
-import type { Companion } from '../../companion/client.ts';
-import { useCompanion } from '../../companion/connection.ts';
-import { isApiError } from '../../companion/errors.ts';
-import { readGif, type GifInfo } from '../../lib/editor/gif.ts';
+import type { Companion } from '../../lib/companion/client.ts';
+import { useCompanion } from '../../lib/companion/connection.ts';
+import { isApiError } from '../../lib/companion/errors.ts';
+import { readGif, type GifInfo } from '../../lib/editor/gifs.ts';
 
 export interface GifFile {
   url: string;

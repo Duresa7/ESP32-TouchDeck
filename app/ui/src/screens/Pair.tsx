@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { createCompanion } from '../companion/api.ts';
-import { BROWSER_SESSION_KEY } from '../companion/session.ts';
+import { createCompanion } from '../lib/companion/api.ts';
+import { BROWSER_SESSION_KEY } from '../lib/companion/session.ts';
 import './pair.css';
 
 export function takePairingCode(location: Location, history: History): string {

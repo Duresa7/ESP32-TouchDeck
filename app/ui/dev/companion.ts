@@ -13,8 +13,8 @@ import { readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import type { Plugin, ProxyOptions } from 'vite';
-import { createCompanion } from '../src/companion/api.gen.ts';
-import { DEV_SESSION_PATH } from '../src/companion/dev.ts';
+import { createCompanion } from '../src/lib/companion/api.gen.ts';
+import { DEV_SESSION_PATH } from '../src/lib/companion/dev.ts';
 
 const APP_ID = 'io.github.duresa7.touchdeck';
 

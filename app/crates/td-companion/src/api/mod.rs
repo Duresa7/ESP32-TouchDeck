@@ -35,6 +35,7 @@ pub struct Ctx {
     pub events: Events,
     pub jobs: crate::jobs::Jobs,
     pub links: crate::link::Links,
+    pub authority: crate::layouts::LayoutAuthority,
     pub live: crate::live::Live,
     pub photos: crate::photos::PhotoFrames,
     pub layouts: crate::store::LayoutStore,
@@ -84,20 +85,31 @@ impl Ctx {
         let lease_clock = clock.clone();
         let integrations = crate::features::integrations::Service::new(mock, events.clone());
         integrations.command_approval(Arc::new(actions.clone()));
-        let live = crate::live::Live::start(devices.clone(), links.clone(), integrations.clone());
         let settable = integrations.clone();
+        let settable: crate::controls::Settable = Arc::new(move |key| settable.settable(key));
+        let authority = crate::layouts::LayoutAuthority::new(
+            layouts.pushed(),
+            settable.clone(),
+            devices.clone(),
+        );
+        let live = crate::live::Live::start(
+            devices.clone(),
+            links.clone(),
+            integrations.clone(),
+            authority.clone(),
+        );
         let turned_on = integrations.clone();
         actions.attach(
-            live.clone(),
+            authority.clone(),
             integrations.controls.clone(),
-            Arc::new(move |key| settable.settable(key)),
+            settable,
             Arc::new(move |id| turned_on.enabled(id)),
-            layouts.pushed(),
         );
         Self {
             actions,
             integrations,
             live,
+            authority,
             firmware: crate::features::firmware::Firmware::new(mock),
             desktop: Arc::new(crate::tray::Desktop::new(mock)),
             jobs: crate::jobs::Jobs::new(

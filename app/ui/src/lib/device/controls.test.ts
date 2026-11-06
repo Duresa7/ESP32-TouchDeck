@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import type { ControlLayout, DeviceSummary, LinkState } from '../../companion/api.ts';
-import { createClient } from '../../companion/client.ts';
-import { createDevicesStore } from '../../companion/devices.ts';
-import { openEvents } from '../../companion/events.ts';
-import { createFakeCompanion } from '../../companion/fake.ts';
-import { createJobsStore, waitForJob } from '../../companion/jobs.ts';
-import { GIF_CAPS, sampleDevice } from '../../companion/samples.ts';
-import { windowSession } from '../../companion/session.ts';
+import type { ControlLayout, DeviceSummary, LinkState } from '../companion/api.ts';
+import { createClient } from '../companion/client.ts';
+import { createDevicesStore } from '../companion/devices.ts';
+import { openEvents } from '../companion/events.ts';
+import { createFakeCompanion } from '../companion/fake.ts';
+import { createJobsStore, waitForJob } from '../companion/jobs.ts';
+import { GIF_CAPS, sampleDevice } from '../companion/samples.ts';
+import { windowSession } from '../companion/session.ts';
 import { watchSends } from '../../screens/layout/editor.ts';
 import { createEditorStore } from '../editor/store.ts';
-import type { Layout } from '../editor/validate.ts';
+import type { Layout } from '../layout/model.ts';
 import { createControlsStore, noticeOf, observe, QUIET, sending, sent, type ControlWatch } from './controls.ts';
 
 const CONNECTED: LinkState = { state: 'connected', port: 'COM3', since_ms: 0, protocol: 2 };

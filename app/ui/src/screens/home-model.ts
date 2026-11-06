@@ -1,4 +1,4 @@
-import type { DeviceSummary, Layout, Orientation } from '../companion/api.ts';
+import type { DeviceSummary, Layout, LayoutSummary, Orientation } from '../lib/companion/api.ts';
 import type { Unchecked } from '../lib/device/controls.ts';
 
 export function statusOf(state: string) {
@@ -29,14 +29,24 @@ export function uncheckedText(reason: Unchecked, device: string) {
 export const deviceWidth = (count: number) => count === 1 ? 560 : 312;
 export const firmwareUpdate = (device: DeviceSummary) => Boolean(device.firmware?.update_available);
 export const orientationOf = (device: DeviceSummary): Orientation => device.orientation === 'portrait' ? 'portrait' : 'landscape';
+export const shownOrientation = (device: DeviceSummary): Orientation => device.layout?.orientation ?? orientationOf(device);
+
+export const NO_LAYOUT = 'No Layout yet';
+export const NO_LAYOUT_HINT = 'Click to make one';
 
 export interface Preview {
   layout: Layout;
   index: number;
 }
 
-export function previewOf(layout: Layout | null): Preview | null {
-  return layout?.pages.length ? { layout, index: 0 } : null;
+function isShowing(shown: LayoutSummary | null, layout: Layout): shown is LayoutSummary & { page: number } {
+  return shown?.source === 'storage' && shown.page !== null && shown.page < layout.pages.length
+    && shown.name === layout.name && shown.orientation === layout.orientation && shown.pages === layout.pages.length;
+}
+
+export function previewOf(layout: Layout | null | undefined, shown: LayoutSummary | null = null): Preview | null {
+  if (!layout?.pages.length) return null;
+  return { layout, index: isShowing(shown, layout) ? shown.page : 0 };
 }
 
 export function lastSeen(device: DeviceSummary) {

@@ -1,8 +1,8 @@
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { fakeGif } from '../src/companion/fake-gif.ts';
-import { GIF_CAPS } from '../src/companion/samples.ts';
-import type { Layout, Tile } from '../src/lib/editor/validate.ts';
+import { fakeGif } from '../src/lib/companion/fake.ts';
+import { GIF_CAPS } from '../src/lib/companion/samples.ts';
+import type { Layout, Tile } from '../src/lib/layout/model.ts';
 import { DESK, openStarter } from './inspector-helpers.ts';
 import { gridPage, importText, status, tile, waitEvent } from './layout-helpers.ts';
 

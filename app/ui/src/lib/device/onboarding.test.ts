@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { DeviceSummary, LinkState } from '../../companion/api.ts';
-import { createClient, type Companion } from '../../companion/client.ts';
-import { createDevicesStore, type DevicesStore } from '../../companion/devices.ts';
-import { openEvents, type Events } from '../../companion/events.ts';
-import { createFakeCompanion, type FakeCompanion } from '../../companion/fake.ts';
-import { freshDevice } from '../../companion/fake-new-boards.ts';
-import { createJobsStore, waitForJob, type JobsStore } from '../../companion/jobs.ts';
-import { sampleDevice } from '../../companion/samples.ts';
-import { windowSession } from '../../companion/session.ts';
-import { isSent, readDraft, writeDraft, type DraftStorage } from '../editor/drafts.ts';
-import { canonical, newLayout, starterLayout, type Orientation } from '../editor/validate.ts';
+import type { DeviceSummary, LinkState } from '../companion/api.ts';
+import { createClient, type Companion } from '../companion/client.ts';
+import { createDevicesStore, type DevicesStore } from '../companion/devices.ts';
+import { openEvents, type Events } from '../companion/events.ts';
+import { createFakeCompanion, type FakeCompanion } from '../companion/fake.ts';
+import { freshDevice } from '../companion/fake.ts';
+import { createJobsStore, waitForJob, type JobsStore } from '../companion/jobs.ts';
+import { sampleDevice } from '../companion/samples.ts';
+import { windowSession } from '../companion/session.ts';
+import { isSent, readDraft, writeDraft, type DraftStorage } from '../editor/store.ts';
+import { canonical, newLayout, starterLayout, type Orientation } from '../layout/model.ts';
 import { createSetup, describeOnDevice, flowStep, nameError, startFlow, stepCount, type Flow, type SetupStore } from './onboarding.ts';
 import { createDeviceSettings, type DeviceSettingsStore } from './settings.ts';
 

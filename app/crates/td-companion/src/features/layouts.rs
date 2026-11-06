@@ -386,17 +386,22 @@ fn push(
         }
         job.check()?;
         job.set_cancellable(false);
-        ctx.live.layout_changed(device);
-        let put = xfer::put_layout(session, layout.orientation, layout).map_err(link)?;
-        #[cfg(any(test, feature = "test-hooks"))]
-        let _ = ctx
-            .checkpoints
-            .pass(crate::checkpoints::Checkpoint::LayoutPut);
-        let _ = ctx.layouts.put(device, layout);
-        ctx.layouts
-            .pushed()
-            .put(device, layout)
-            .map_err(|_| CommonError::Internal)?;
+        let mut put = None;
+        ctx.authority
+            .replace(device, || {
+                put = Some(xfer::put_layout(session, layout.orientation, layout).map_err(link)?);
+                #[cfg(any(test, feature = "test-hooks"))]
+                let _ = ctx
+                    .checkpoints
+                    .pass(crate::checkpoints::Checkpoint::LayoutPut);
+                let _ = ctx.layouts.put(device, layout);
+                Ok::<_, Stop>(Some(layout.clone()))
+            })
+            .map_err(|error| match error {
+                crate::layouts::authority::ReplaceError::Write(error) => error,
+                crate::layouts::authority::ReplaceError::Save(_) => CommonError::Internal.into(),
+            })?;
+        let put = put.unwrap();
         let state = serde_json::from_value(serde_json::to_value(&put.state).unwrap())
             .map_err(|_| CommonError::Internal)?;
         Ok::<_, Stop>(PushReport {

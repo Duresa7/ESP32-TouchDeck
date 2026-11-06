@@ -2,11 +2,11 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Toggle } from '@base-ui/react/toggle';
 import { ToggleGroup } from '@base-ui/react/toggle-group';
 import { missingGlyphs } from '../../lib/deck/scene.ts';
-import { needsApproval, processOf } from '../../lib/editor/actions.ts';
-import { friendlyRefusal } from '../../lib/editor/messages.ts';
-import { gifWork } from '../../lib/editor/gif-tiles.ts';
+import { needsApproval, processOf } from '../../lib/layout/actions.ts';
+import { friendlyRefusal } from '../../lib/layout/messages.ts';
+import { gifWork } from '../../lib/editor/gifs.ts';
 import { tileProblems, type EditorStore } from '../../lib/editor/store.ts';
-import type { GridPage, Layout, Tile } from '../../lib/editor/validate.ts';
+import type { GridPage, Layout, Tile } from '../../lib/layout/model.ts';
 import { ActionForm } from './ActionForm.tsx';
 import { ActionLogPanel } from './ActionLog.tsx';
 import { AllowedActions, ApprovalNote } from './Approvals.tsx';
@@ -29,7 +29,7 @@ function LabelField({ store, tile, device, layout }: { store: EditorStore; tile:
   const ids = useFieldIds();
   const refused = useEditorState(store, (s) => tileProblems(s, tile.id)?.label);
   const value = refused?.value ?? tile.label;
-  const error = refused ? friendlyRefusal(refused.reason, layout, device) : null;
+  const error = refused ? friendlyRefusal(refused.reason, layout, device, refused.path) : null;
   const missing = missingGlyphs(value);
   const hint = `${[...value].length} of ${LABEL_MAX} characters. Long labels shrink on ${device}.`;
   return (
