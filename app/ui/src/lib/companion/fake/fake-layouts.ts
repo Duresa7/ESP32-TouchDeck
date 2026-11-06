@@ -115,7 +115,10 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
     return json(200, { layout: JSON.parse(text), revision }, { ETag: `"${revision}"` });
   }
 
-  /** `layouts.last_seen`: the fake keeps no separate PC copy, so the Device's stored Layout stands in for it. */
+  /**
+   * `layouts.last_seen`: the fake keeps no separate PC copy, so the Device's stored Layout stands in
+   * for it, and `forget` removes both.
+   */
   function lastSeenLayout(device: string, orientation: string) {
     const found = deviceOr404(device);
     if (found instanceof Response) return found;
