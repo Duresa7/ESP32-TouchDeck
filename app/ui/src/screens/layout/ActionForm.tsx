@@ -12,9 +12,8 @@ import {
   splitArgs,
   switchKind,
 } from '../../lib/layout/actions.ts';
-import { friendlyRefusal } from '../../lib/layout/messages.ts';
-import { refusedActionField, tileProblems, type EditorStore } from '../../lib/editor/store.ts';
-import { ACTION_TYPES, MODIFIERS, type Action, type ActionType, type GridPage, type Layout, type Tile } from '../../lib/layout/model.ts';
+import { effectiveTileEdit, type EditorStore } from '../../lib/editor/store.ts';
+import { ACTION_TYPES, MODIFIERS, type Action, type GridPage, type Layout, type Tile } from '../../lib/layout/model.ts';
 import { useEditorState } from './editor.ts';
 import { described, Field, FieldError, Select, useFieldIds } from './fields.tsx';
 
@@ -25,18 +24,6 @@ interface KindProps<T extends Action['type']> {
   commit(next: Action): void;
   error(field: string): string | null;
 }
-
-const SHOWN: Record<ActionType, readonly string[]> = {
-  key: ['usage'],
-  mod: [],
-  consumer: ['usage'],
-  page: ['page'],
-  launch: ['path', 'args', 'cwd'],
-  open: ['target'],
-  command: ['program', 'args', 'cwd'],
-  widget: ['source', 'field', 'account'],
-  none: [],
-};
 
 function TextField({ label, value, placeholder, hint, error, onChange, testId }: { label: string; value: string; placeholder?: string; hint?: ReactNode; error: string | null; onChange(value: string): void; testId: string }) {
   const ids = useFieldIds();
@@ -289,17 +276,15 @@ function KindFields({ action, commit, error, pages }: { action: Action; commit(n
 }
 
 export function ActionForm({ store, page, tile, layout, device }: { store: EditorStore; page: GridPage; tile: Tile; layout: Layout; device: string }) {
-  const refused = useEditorState(store, (s) => tileProblems(s, tile.id)?.action);
+  const edit = effectiveTileEdit(useEditorState(store, (s) => s), device, tile.id);
   const ids = useFieldIds();
-  const action = refused?.value ?? tile.action;
-  const message = refused ? friendlyRefusal(refused.reason, layout, device, refused.path) : null;
-  const at = refused ? refusedActionField(refused) : null;
+  if (!edit) return null;
+  const { value: action, error: message, field: at } = edit.action;
   const pageIds = layout.pages.map((p) => p.id);
   const commit = (next: Action) => void store.editAction(tile.id, next);
   const error = (field: string) => (at === field ? message : null);
-  const unplaced = message !== null && !(at !== null && SHOWN[action.type].includes(at));
   return (
-    <div className="action-form" data-testid="action-form" data-type={action.type} data-invalid={refused ? 'true' : undefined}>
+    <div className="action-form" data-testid="action-form" data-type={action.type} data-invalid={message !== null ? 'true' : undefined}>
       <Field ids={ids} label="When tapped">
         <Select
           id={ids.control}
@@ -323,7 +308,7 @@ export function ActionForm({ store, page, tile, layout, device }: { store: Edito
         </Select>
       </Field>
       <KindFields key={action.type} action={action} commit={commit} error={error} pages={layout.pages} />
-      {unplaced && <FieldError id={`${ids.error}-form`} error={message} />}
+      {edit.unplacedError && <FieldError id={`${ids.error}-form`} error={edit.unplacedError} />}
     </div>
   );
 }

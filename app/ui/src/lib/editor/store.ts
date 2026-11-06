@@ -14,6 +14,7 @@ export {
   type Target,
   createEditorStore,
   firstProblem,
+  effectiveTileEdit,
   refusedActionField,
   saveState,
   tileProblems,

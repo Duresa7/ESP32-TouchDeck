@@ -8,7 +8,8 @@ import { createJobsStore, waitForJob, type JobsStore } from '../../companion/job
 import { sampleDevice } from '../../companion/samples.ts';
 import { windowSession } from '../../companion/session.ts';
 import { draftKey, type DraftStorage } from '../store.ts';
-import { createEditorStore, firstProblem, refusedActionField, saveState, tileProblems, type EditorDeps, type EditorStore } from '../store.ts';
+import { createEditorStore, effectiveTileEdit, firstProblem, refusedActionField, saveState, tileProblems, type EditorDeps, type EditorStore } from '../store.ts';
+import { switchKind } from '../../layout/actions.ts';
 import { canonical, newLayout, starterLayout, type GridPage, type Layout, type Page } from '../../layout/model.ts';
 
 const BASE = 'http://127.0.0.1:51234';
@@ -389,6 +390,36 @@ describe('the invalid-Tile rule', () => {
     store.open(DESK);
     store.startStarter();
     store.setGrid(3, 3);
+  });
+
+  test('the effective edit follows a refusal, a kind switch and repair through sending', async () => {
+    const edit = () => effectiveTileEdit(state(store), DESK.name, 'next')!;
+    const command = { type: 'command' as const, program: '', args: [], cwd: '', shell: false };
+    store.editAction('next', command);
+    expect(edit()).toEqual({
+      label: { value: 'Next', error: null },
+      action: { value: command, error: 'Enter a program.', field: 'program' },
+      kind: 'command', unplacedError: null,
+    });
+    const open = switchKind(edit().action.value, 'open', draft(store).pages.map((p) => p.id), page(store).id);
+    store.editAction('next', open);
+    expect(edit()).toEqual({
+      label: { value: 'Next', error: null },
+      action: { value: open, error: 'Enter a file, folder or web address.', field: 'target' },
+      kind: 'open', unplacedError: null,
+    });
+    await store.push();
+    expect(fake.layouts.puts).toBe(0);
+    const repaired = { type: 'open' as const, target: 'https://example.com' };
+    store.editAction('next', repaired);
+    expect(edit()).toEqual({
+      label: { value: 'Next', error: null },
+      action: { value: repaired, error: null, field: null },
+      kind: 'open', unplacedError: null,
+    });
+    await store.push();
+    expect(state(store).status?.event).toBe('pushed');
+    expect(fake.layouts.puts).toBe(1);
   });
 
   test('an action the rules refuse stays on the Tile with its reason, and a valid one clears it', () => {

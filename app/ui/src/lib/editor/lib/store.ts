@@ -157,6 +157,40 @@ export function refusedActionField(refused: Refused<Action>): string | null {
   return at > 0 && at + 1 < segments.length ? segments[at + 1] : null;
 }
 
+/** Fields that can display an action refusal in the editor. */
+const ACTION_FIELDS: Record<Action['type'], readonly string[]> = {
+  key: ['usage'],
+  mod: [],
+  consumer: ['usage'],
+  page: ['page'],
+  launch: ['path', 'args', 'cwd'],
+  open: ['target'],
+  command: ['program', 'args', 'cwd'],
+  widget: ['source', 'field', 'account'],
+  none: [],
+};
+
+/** Values and placed messages for a Tile in the current orientation; null if absent. */
+export function effectiveTileEdit(state: EditorState, device: string, tileId: string) {
+  const layout = state.drafts[state.orientation]?.layout;
+  if (!layout) return null;
+  const page = layout.pages.find((page) => page.kind === 'grid' && page.tiles.some((tile) => tile.id === tileId));
+  const tile = page?.kind === 'grid' ? page.tiles.find((tile) => tile.id === tileId) : undefined;
+  if (!tile) return null;
+  const problems = tileProblems(state, tileId);
+  const label = problems?.label;
+  const refused = problems?.action;
+  const value = refused?.value ?? tile.action;
+  const error = refused ? friendlyRefusal(refused.reason, layout, device, refused.path) : null;
+  const field = refused ? refusedActionField(refused) : null;
+  return {
+    label: { value: label?.value ?? tile.label, error: label ? friendlyRefusal(label.reason, layout, device, label.path) : null },
+    action: { value, error, field },
+    kind: value.type,
+    unplacedError: field !== null && ACTION_FIELDS[value.type].includes(field) ? null : error,
+  };
+}
+
 export function firstProblem(state: EditorState): { page: string; tile: string; reason: string; path: string } | null {
   const layout = state.drafts[state.orientation]?.layout;
   for (const page of layout?.pages ?? []) {
