@@ -1,5 +1,9 @@
 use super::{CounterSample, CounterSource};
-use std::{collections::BTreeMap, ptr};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ptr,
+    time::{Duration, Instant},
+};
 use windows_sys::Win32::{
     NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2},
     System::{
@@ -8,6 +12,11 @@ use windows_sys::Win32::{
     },
 };
 
+/// How often `collect` looks for network adapters that appeared or went away. One adapter-table
+/// read every ten one-second samples costs next to nothing, and a newly plugged adapter starts
+/// counting within about ten seconds.
+const ADAPTER_RESCAN: Duration = Duration::from_secs(10);
+
 pub struct Counters {
     query: PDH_HQUERY,
     cpu: PDH_HCOUNTER,
@@ -15,7 +24,15 @@ pub struct Counters {
     read: PDH_HCOUNTER,
     write: PDH_HCOUNTER,
     gpu: PDH_HCOUNTER,
-    network: Vec<(PDH_HCOUNTER, PDH_HCOUNTER)>,
+    network: BTreeMap<String, Adapter>,
+    scanned: Instant,
+    /// Running receive and send byte totals across every adapter counted so far.
+    traffic: [u64; 2],
+}
+/// One physical adapter's receive and send counters and their last raw byte counts.
+struct Adapter {
+    counters: [PDH_HCOUNTER; 2],
+    last: [Option<u64>; 2],
 }
 // PDH handles have no thread affinity; the Integration owns them exclusively.
 unsafe impl Send for Counters {}
@@ -28,7 +45,9 @@ impl Counters {
             read: ptr::null_mut(),
             write: ptr::null_mut(),
             gpu: ptr::null_mut(),
-            network: Vec::new(),
+            network: BTreeMap::new(),
+            scanned: Instant::now(),
+            traffic: [0; 2],
         };
         if unsafe { PdhOpenQueryW(ptr::null(), 0, &mut this.query) } != 0 {
             return this;
@@ -38,13 +57,53 @@ impl Counters {
         this.read = this.add(r"\PhysicalDisk(_Total)\Disk Read Bytes/sec");
         this.write = this.add(r"\PhysicalDisk(_Total)\Disk Write Bytes/sec");
         this.gpu = this.add(r"\GPU Engine(*)\Utilization Percentage");
-        for name in physical_adapters() {
-            this.network.push((
-                this.add(&format!(r"\Network Interface({name})\Bytes Received/sec")),
-                this.add(&format!(r"\Network Interface({name})\Bytes Sent/sec")),
-            ));
-        }
+        this.rescan_adapters();
         this
+    }
+    fn rescan_adapters(&mut self) {
+        self.scanned = Instant::now();
+        // A failed adapter-table read keeps the current counters rather than dropping them all.
+        if let Some(present) = physical_adapters() {
+            self.count_adapters(&present);
+        }
+    }
+    /// Starts counting adapters in `present` that aren't counted yet and stops counting the ones
+    /// missing from it. The other counters in the query keep their history, so CPU, disk and GPU
+    /// values are not disturbed.
+    fn count_adapters(&mut self, present: &BTreeSet<String>) {
+        let counted: BTreeSet<String> = self.network.keys().cloned().collect();
+        let (added, removed) = adapter_changes(&counted, present);
+        for name in removed {
+            let Some(adapter) = self.network.remove(name) else {
+                continue;
+            };
+            for counter in adapter.counters {
+                if !counter.is_null() {
+                    // The handle came from PdhAddEnglishCounterW on this query and left the map
+                    // above, so nothing uses it after removal.
+                    unsafe {
+                        PdhRemoveCounter(counter);
+                    }
+                }
+            }
+        }
+        for name in added {
+            let counters = [
+                self.add(&format!(r"\Network Interface({name})\Bytes Received/sec")),
+                self.add(&format!(r"\Network Interface({name})\Bytes Sent/sec")),
+            ];
+            // An adapter PDH can't count yet stays out of the map, so the next scan retries it.
+            if counters.iter().all(|counter| counter.is_null()) {
+                continue;
+            }
+            self.network.insert(
+                name.clone(),
+                Adapter {
+                    counters,
+                    last: [None; 2],
+                },
+            );
+        }
     }
     fn add(&self, path: &str) -> PDH_HCOUNTER {
         let path: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
@@ -65,10 +124,32 @@ impl Drop for Counters {
         }
     }
 }
-fn physical_adapters() -> Vec<String> {
+/// Which adapter names to start counting and which to stop counting.
+fn adapter_changes<'a>(
+    counted: &'a BTreeSet<String>,
+    present: &'a BTreeSet<String>,
+) -> (Vec<&'a String>, Vec<&'a String>) {
+    (
+        present.difference(counted).collect(),
+        counted.difference(present).collect(),
+    )
+}
+/// Bytes an adapter moved since its last raw reading, recording `now` as the new baseline. A
+/// first reading, one after a missed reading and a counter that went backwards only set the
+/// baseline, so bytes an adapter moved before it was counted never show up as one huge second.
+fn bytes_since(last: &mut Option<u64>, now: Option<u64>) -> u64 {
+    let moved = match (*last, now) {
+        (Some(before), Some(now)) => now.saturating_sub(before),
+        _ => 0,
+    };
+    *last = now;
+    moved
+}
+/// PDH instance names of the physical adapters, or `None` when the adapter table can't be read.
+fn physical_adapters() -> Option<BTreeSet<String>> {
     let mut table = ptr::null_mut();
     if unsafe { GetIfTable2(&mut table) } != 0 || table.is_null() {
-        return Vec::new();
+        return None;
     }
     let rows = unsafe {
         std::slice::from_raw_parts((*table).Table.as_ptr(), (*table).NumEntries as usize)
@@ -91,7 +172,7 @@ fn physical_adapters() -> Vec<String> {
     unsafe {
         FreeMibTable(table.cast());
     }
-    names
+    Some(names)
 }
 fn formatted(counter: PDH_HCOUNTER) -> Option<f64> {
     if counter.is_null() {
@@ -179,7 +260,13 @@ impl CounterSource for Counters {
                 .values
                 .insert("ram_total_bytes".into(), memory.ullTotalPhys as f64);
         }
-        if self.query.is_null() || unsafe { PdhCollectQueryData(self.query) } != 0 {
+        if self.query.is_null() {
+            return sample;
+        }
+        if self.scanned.elapsed() >= ADAPTER_RESCAN {
+            self.rescan_adapters();
+        }
+        if unsafe { PdhCollectQueryData(self.query) } != 0 {
             return sample;
         }
         for (id, value) in [
@@ -202,19 +289,21 @@ impl CounterSource for Counters {
                 sample.totals.insert(id.into(), value);
             }
         }
-        if !self.network.is_empty() {
-            for (id, receive) in [
-                ("network_receive_bytes_s", true),
-                ("network_send_bytes_s", false),
-            ] {
-                let sum: Option<u64> = self
-                    .network
-                    .iter()
-                    .map(|(rx, tx)| raw(if receive { *rx } else { *tx }))
-                    .try_fold(0u64, |sum, value| sum.checked_add(value?));
-                if let Some(sum) = sum {
-                    sample.totals.insert(id.into(), sum);
-                }
+        // Adapters come and go, so the Integration gets running totals built from each adapter's
+        // own deltas rather than a sum of raw counts that would jump when an adapter joins.
+        for (direction, id) in ["network_receive_bytes_s", "network_send_bytes_s"]
+            .into_iter()
+            .enumerate()
+        {
+            let mut read_any = false;
+            for adapter in self.network.values_mut() {
+                let now = raw(adapter.counters[direction]);
+                read_any |= now.is_some();
+                self.traffic[direction] = self.traffic[direction]
+                    .wrapping_add(bytes_since(&mut adapter.last[direction], now));
+            }
+            if read_any {
+                sample.totals.insert(id.into(), self.traffic[direction]);
             }
         }
         sample
@@ -224,6 +313,40 @@ impl CounterSource for Counters {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn names(list: &[&str]) -> BTreeSet<String> {
+        list.iter().map(|name| (*name).to_owned()).collect()
+    }
+    #[test]
+    fn adapter_changes_add_new_and_remove_gone_adapters() {
+        let counted = names(&["Ethernet", "Wi-Fi"]);
+        let present = names(&["Ethernet", "USB Ethernet"]);
+        let (added, removed) = adapter_changes(&counted, &present);
+        assert_eq!(added, ["USB Ethernet"]);
+        assert_eq!(removed, ["Wi-Fi"]);
+        let (added, removed) = adapter_changes(&present, &present);
+        assert!(added.is_empty() && removed.is_empty());
+    }
+    #[test]
+    fn late_adapter_adds_only_bytes_moved_after_it_was_counted() {
+        let (mut ethernet, mut dongle) = (None, None);
+        let mut total = bytes_since(&mut ethernet, Some(1_000));
+        assert_eq!(total, 0);
+        total += bytes_since(&mut ethernet, Some(1_500));
+        // The dongle already moved 9 GB before it was plugged into this PC.
+        total += bytes_since(&mut dongle, Some(9_000_000_000));
+        assert_eq!(total, 500);
+        total += bytes_since(&mut ethernet, Some(1_600));
+        total += bytes_since(&mut dongle, Some(9_000_000_250));
+        assert_eq!(total, 850);
+    }
+    #[test]
+    fn missed_or_reset_reading_only_sets_a_new_baseline() {
+        let mut adapter = Some(5_000);
+        assert_eq!(bytes_since(&mut adapter, None), 0);
+        assert_eq!(bytes_since(&mut adapter, Some(8_000)), 0);
+        assert_eq!(bytes_since(&mut adapter, Some(100)), 0);
+        assert_eq!(bytes_since(&mut adapter, Some(400)), 300);
+    }
     #[test]
     fn windows_pdh_smoke() {
         let mut counters = Counters::new();
@@ -257,6 +380,42 @@ mod tests {
                     "unavailable"
                 }
             );
+        }
+    }
+    #[test]
+    fn windows_pdh_adapter_that_appears_later_counts_without_a_spike() {
+        let mut counters = Counters::new();
+        if counters.network.is_empty() {
+            eprintln!("no physical adapter PDH can count; skipped");
+            return;
+        }
+        let present: BTreeSet<String> = counters.network.keys().cloned().collect();
+        counters.collect();
+        // Every adapter goes away: its counters leave the query and network has no reading.
+        counters.count_adapters(&BTreeSet::new());
+        assert!(counters.network.is_empty());
+        let sample = counters.collect();
+        assert!(!sample.totals.contains_key("network_receive_bytes_s"));
+        assert!(sample.values.contains_key("cpu_pct"));
+        // The same adapters come back as if just plugged in. Their bytes since boot stay out.
+        let before = counters.traffic;
+        counters.count_adapters(&present);
+        assert_eq!(counters.network.len(), present.len());
+        let sample = counters.collect();
+        assert_eq!(
+            sample.totals.get("network_receive_bytes_s"),
+            Some(&before[0])
+        );
+        assert_eq!(sample.totals.get("network_send_bytes_s"), Some(&before[1]));
+        std::thread::sleep(Duration::from_secs(1));
+        let sample = counters.collect();
+        assert!(sample.values.contains_key("cpu_pct"));
+        for (direction, id) in ["network_receive_bytes_s", "network_send_bytes_s"]
+            .into_iter()
+            .enumerate()
+        {
+            let total = sample.totals[id];
+            eprintln!("{id}: {} bytes in about 1 s", total - before[direction]);
         }
     }
 }
