@@ -4,7 +4,7 @@ use td_companion::{
     api::NoQuery,
     features::{
         jobs::{Cancel, JobPath, List},
-        layouts::{Get, LayoutBody, LayoutPath, Push, PushReport},
+        layouts::{Get, LastSeen, LayoutBody, LayoutPath, Push, PushReport},
     },
     jobs::{Job, JobState},
     testing::TestCompanion,
@@ -111,6 +111,51 @@ async fn an_offline_device_refuses_a_layout_read_even_with_a_copy_on_this_pc() {
         (409, Some("device.not_connected"))
     );
     assert_eq!(error["details"]["link"]["state"], "lost");
+}
+
+#[tokio::test]
+async fn an_offline_device_shows_the_layout_this_pc_last_saw() {
+    let td = TestCompanion::start().await;
+    let id = td.plug_device("mock0001").await;
+    let desk = layout("Desk", Orientation::Landscape, None);
+    report(&td.wait(&push(&td, id.as_str(), &desk).await).await);
+    td.unplug("mock0001").await;
+
+    let seen = td
+        .call::<LastSeen>(path(id.as_str(), Orientation::Landscape), NoQuery, ())
+        .await
+        .unwrap();
+    assert_eq!(seen.layout, desk);
+    // No revision, so nobody can push against this copy with `If-Match`.
+    let body: Value = td
+        .request::<LastSeen>(path(id.as_str(), Orientation::Landscape), NoQuery, &())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        body.as_object().unwrap().keys().collect::<Vec<_>>(),
+        ["layout"]
+    );
+
+    // No copy of the other orientation was ever seen.
+    let (status, error) =
+        failure(td.request::<LastSeen>(path(id.as_str(), Orientation::Portrait), NoQuery, &()))
+            .await;
+    assert_eq!(
+        (status, error["code"].as_str()),
+        (404, Some("layout.not_found"))
+    );
+
+    let (status, error) =
+        failure(td.request::<LastSeen>(path("mock9999", Orientation::Landscape), NoQuery, &()))
+            .await;
+    assert_eq!(
+        (status, error["code"].as_str()),
+        (404, Some("device.not_found"))
+    );
 }
 
 #[tokio::test]
