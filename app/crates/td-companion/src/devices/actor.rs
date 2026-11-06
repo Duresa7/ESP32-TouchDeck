@@ -152,14 +152,14 @@ fn run_inputs(
         thread::sleep(INPUT_PACE);
         let _ = inputs.try_recv();
         if let Some(handler) = inner.inputs.get() {
-            let generation = handler.generation();
+            let generation = handler.generation(id);
             let batch = {
                 let mut hub = hub.lock();
                 hub.reset(generation);
                 hub.take()
             };
             for input in batch {
-                if handler.generation() != generation || !hub.lock().is_current(&input) {
+                if handler.generation(id) != generation || !hub.lock().is_current(&input) {
                     break;
                 }
                 let Some(result) = handler.set(id, &input) else {
@@ -168,8 +168,8 @@ fn run_inputs(
                 };
                 let outcome = {
                     let mut hub = hub.lock();
-                    hub.reset(handler.generation());
-                    if handler.generation() != generation {
+                    hub.reset(handler.generation(id));
+                    if handler.generation(id) != generation {
                         break;
                     }
                     hub.settled(&input, result, Instant::now())
@@ -260,7 +260,7 @@ fn forward(
                 } else if event["m"] == "v2.input" {
                     if let Some(handler) = inner.inputs.get() {
                         let mut hub = touches.hub.lock();
-                        hub.reset(handler.generation());
+                        hub.reset(handler.generation(id));
                         hub.push(&event);
                     }
                     let _ = touches.drags.try_send(());

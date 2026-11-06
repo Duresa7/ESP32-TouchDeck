@@ -8,6 +8,7 @@ pub mod devices;
 mod dialog_text;
 pub mod features;
 pub mod jobs;
+pub mod layouts;
 pub mod link;
 pub mod live;
 pub mod photos;

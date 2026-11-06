@@ -1,7 +1,8 @@
 use super::{ActionSpec, Actions, ApprovalRequest};
 use crate::devices::{DeviceId, Input, InputHandler, LinkState};
 use crate::features::integrations::Controls;
-use crate::live::{Live, StreamKey, stream_source};
+use crate::layouts::LayoutAuthority;
+use crate::live::{StreamKey, stream_source};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 use td_core::layout::{StreamType, TileRender};
@@ -26,7 +27,7 @@ pub(crate) type Settable = Arc<dyn Fn(&StreamKey) -> bool + Send + Sync>;
 pub(crate) type TurnedOn = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 pub(super) struct Wiring {
-    live: Live,
+    authority: LayoutAuthority,
     controls: Controls,
     settable: Settable,
     turned_on: TurnedOn,
@@ -36,16 +37,13 @@ pub(super) struct Wiring {
 impl Actions {
     pub(crate) fn attach(
         &self,
-        live: Live,
+        authority: LayoutAuthority,
         controls: Controls,
         settable: Settable,
         turned_on: TurnedOn,
-        layouts: crate::store::LayoutStore,
     ) {
-        live.trust(layouts);
-        live.settable(settable.clone());
         let _ = self.0.controls.set(Wiring {
-            live,
+            authority,
             controls,
             settable,
             turned_on,
@@ -74,7 +72,7 @@ impl Actions {
             return;
         };
         let request = integration_request(device, page, tile);
-        let found = wiring.live.tile(device, session, page, tile);
+        let found = wiring.authority.tile(device, session, page, tile);
         let Some(Plan::Integration {
             source,
             account,
@@ -113,7 +111,7 @@ impl Actions {
         let wiring = self.0.controls.get()?;
         let session = self.v2_session(device)?;
         let tile = match wiring
-            .live
+            .authority
             .binding(device, session, &input.page, &input.tile)
         {
             Ok(tile) => tile?,
@@ -150,10 +148,10 @@ impl Actions {
 struct Inputs(Weak<super::Inner>);
 
 impl InputHandler for Inputs {
-    fn generation(&self) -> u64 {
+    fn generation(&self, device: &DeviceId) -> u64 {
         self.0
             .upgrade()
-            .and_then(|inner| inner.controls.get().map(|w| w.live.generation()))
+            .and_then(|inner| inner.controls.get().map(|w| w.authority.generation(device)))
             .unwrap_or_default()
     }
     fn set(&self, device: &DeviceId, input: &Input) -> Option<Result<(), String>> {
@@ -208,7 +206,7 @@ mod tests {
     use crate::devices::{Config, DeviceManager};
     use crate::features::integrations::Service;
     use crate::link::Links;
-    use crate::live::fake::FakeControl;
+    use crate::live::{Live, fake::FakeControl};
     use serde_json::{Value, json};
     use std::collections::BTreeMap;
     use std::time::Instant;
@@ -234,6 +232,7 @@ mod tests {
         deck: MockDeck,
         devices: DeviceManager,
         live: Option<Live>,
+        authority: LayoutAuthority,
         volume: Arc<FakeControl>,
         media: Arc<FakeControl>,
         volume_on: Arc<std::sync::atomic::AtomicBool>,
@@ -326,12 +325,12 @@ mod tests {
         } else {
             DeviceManager::new(events.clone())
         };
-        let live = Live::start(watched, links.clone(), service);
+
         let actions = Actions::new(
             events,
             Clock::default(),
             devices.clone(),
-            links,
+            links.clone(),
             Arc::new(NoGrants),
             true,
         );
@@ -342,18 +341,22 @@ mod tests {
         if pushed {
             layouts.put(DEVICE, &layout).unwrap();
         }
+        let settable: Settable =
+            Arc::new(|key| key.integration == "volume" && key.stream == "level");
+        let authority = LayoutAuthority::new(layouts, settable.clone(), watched.clone());
+        let live = Live::start(watched, links.clone(), service, authority.clone());
         actions.attach(
-            live.clone(),
+            authority.clone(),
             controls,
-            Arc::new(|key: &StreamKey| key.integration == "volume" && key.stream == "level"),
+            settable,
             Arc::new(move |id| {
                 id != "volume" || turned_on.load(std::sync::atomic::Ordering::SeqCst)
             }),
-            layouts,
         );
         if cached && pushed {
             wait("the router reads the Layout", || {
-                live.tile(DEVICE, session().unwrap(), "media", "volume")
+                authority
+                    .tile(DEVICE, session().unwrap(), "media", "volume")
                     .is_some()
             });
         }
@@ -362,6 +365,7 @@ mod tests {
             deck,
             devices,
             live: Some(live),
+            authority,
             _data: data,
             volume,
             media,
@@ -701,7 +705,7 @@ mod tests {
             })
             .unwrap()
             .unwrap();
-        td.live.as_ref().unwrap().layout_changed(DEVICE);
+        td.authority.replace(DEVICE, || Ok::<_, ()>(None)).unwrap();
         std::thread::sleep(Duration::from_millis(600));
         td.deck
             .emit_press_part("media", "playing", "widget", "next");
@@ -744,7 +748,7 @@ mod tests {
         td.deck
             .emit_input("media", "volume", "value", InputPhase::Move, 0.2);
         wait("first move fails", || td.last_set() == Some(0.2));
-        td.live.as_ref().unwrap().layout_changed(DEVICE);
+        td.authority.replace(DEVICE, || Ok::<_, ()>(None)).unwrap();
         std::thread::sleep(Duration::from_millis(400));
         *td.volume.set_result.lock() = None;
         td.drag("volume", &[0.6, 0.7]);
