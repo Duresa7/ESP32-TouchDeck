@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useStore } from 'zustand';
 import type { Companion } from '../../lib/companion/client.ts';
 import { useCompanion } from '../../lib/companion/connection.ts';
@@ -7,7 +8,7 @@ import { showsKind, type TileKind } from '../../lib/device/needs-firmware.ts';
 import { offersGif } from '../../lib/editor/gifs.ts';
 import { createGifTiles, type GifTiles, type GifTilesState } from '../../lib/editor/gifs.ts';
 import { controlsStore, type ControlsStore } from '../../lib/device/controls.ts';
-import { createEditorStore, type EditorDevice, type EditorState, type EditorStore } from '../../lib/editor/store.ts';
+import { createEditorStore, effectiveTileEdit, type EditorDevice, type EditorState, type EditorStore } from '../../lib/editor/store.ts';
 import type { Orientation } from '../../lib/layout/model.ts';
 
 const stores = new WeakMap<Companion, EditorStore>();
@@ -78,6 +79,14 @@ export function useDeviceOffersGif(store: EditorStore): boolean {
 
 export function useEditorState<T>(store: EditorStore, select: (state: EditorState) => T): T {
   return useStore(store, select);
+}
+
+/** A Tile's effective edit, re-rendering only when its draft, its refusals or the orientation change. */
+export function useEffectiveTileEdit(store: EditorStore, device: string, tileId: string) {
+  const orientation = useEditorState(store, (s) => s.orientation);
+  const draft = useEditorState(store, (s) => s.drafts[s.orientation]);
+  const problems = useEditorState(store, (s) => s.invalid[s.orientation][tileId]);
+  return useMemo(() => effectiveTileEdit(store.getState(), device, tileId), [store, orientation, draft, problems, device, tileId]);
 }
 
 /** Whether the open Device's Firmware draws this kind of Tile. */

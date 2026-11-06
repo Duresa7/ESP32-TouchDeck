@@ -5,12 +5,12 @@ import { missingGlyphs } from '../../lib/deck/scene.ts';
 import { needsApproval, processOf } from '../../lib/layout/actions.ts';
 import { friendlyRefusal } from '../../lib/layout/messages.ts';
 import { gifWork } from '../../lib/editor/gifs.ts';
-import { tileProblems, type EditorStore } from '../../lib/editor/store.ts';
+import type { EditorStore } from '../../lib/editor/store.ts';
 import type { GridPage, Layout, Tile } from '../../lib/layout/model.ts';
 import { ActionForm } from './ActionForm.tsx';
 import { ActionLogPanel } from './ActionLog.tsx';
 import { AllowedActions, ApprovalNote } from './Approvals.tsx';
-import { useDeviceOffersGif, useEditorState, useGifState, useGifTiles } from './editor.ts';
+import { useDeviceOffersGif, useEditorState, useEffectiveTileEdit, useGifState, useGifTiles } from './editor.ts';
 import { described, Field, FieldError, useFieldIds } from './fields.tsx';
 import { GifField } from './GifField.tsx';
 import { GraphField } from './GraphField.tsx';
@@ -25,11 +25,11 @@ export interface TileFieldsProps {
 
 const LABEL_MAX = 16;
 
-function LabelField({ store, tile, device, layout }: { store: EditorStore; tile: Tile; device: string; layout: Layout }) {
+function LabelField({ store, tile, device }: { store: EditorStore; tile: Tile; device: string }) {
   const ids = useFieldIds();
-  const refused = useEditorState(store, (s) => tileProblems(s, tile.id)?.label);
-  const value = refused?.value ?? tile.label;
-  const error = refused ? friendlyRefusal(refused.reason, layout, device, refused.path) : null;
+  const edit = useEffectiveTileEdit(store, device, tile.id);
+  if (!edit) return null;
+  const { value, error } = edit.label;
   const missing = missingGlyphs(value);
   const hint = `${[...value].length} of ${LABEL_MAX} characters. Long labels shrink on ${device}.`;
   return (
@@ -155,20 +155,20 @@ const KEYBOARD: ReadonlySet<string> = new Set(['key', 'mod', 'consumer']);
 export function TileFields({ store, page, tile }: TileFieldsProps) {
   const device = useEditorState(store, (s) => s.device);
   const layout = useEditorState(store, (s) => s.drafts[s.orientation]?.layout);
-  const refused = useEditorState(store, (s) => tileProblems(s, tile.id)?.action);
+  const edit = useEffectiveTileEdit(store, device?.name ?? 'the Device', tile.id);
   const orientation = useEditorState(store, (s) => s.orientation);
   const gifs = useGifTiles();
   const offersGif = useDeviceOffersGif(store);
   const working = useGifState(gifs, (s) => gifWork(s, { device, orientation }, tile.id) !== undefined);
-  if (!layout || !device) return null;
-  const action = refused?.value ?? tile.action;
+  if (!layout || !device || !edit) return null;
+  const action = edit.action.value;
   const name = device.name;
   const live = tile.render === 'graph' || tile.render === 'bar' || tile.render === 'now-playing';
   const gif = tile.render === 'gif' || working;
   const showsGif = tile.render !== 'now-playing' && (offersGif || gif) ? { on: gif, choose: (file: File) => gifs.choose(tile.id, file), stop: () => gifs.cancel(tile.id) } : undefined;
   return (
     <div className="tile-fields" data-testid="tile-fields" data-id={tile.id}>
-      <LabelField key={`label-${tile.id}`} store={store} tile={tile} device={name} layout={layout} />
+      <LabelField key={`label-${tile.id}`} store={store} tile={tile} device={name} />
       <GraphField store={store} tile={tile} device={name} gif={showsGif} />
       {gif && <GifField store={store} gifs={gifs} tile={tile} device={name} />}
       {!live && !gif && <IconField store={store} tile={tile} kind={action.type} />}
