@@ -46,6 +46,20 @@ jobs:
       # Python on Windows decodes tool output with the ANSI code page unless told to use UTF-8.
       PYTHONUTF8: "1"
     steps:
+      # publish reads the notes from an annotated tag. Refuse a lightweight one here, before the
+      # build and the sign approval, instead of after them.
+      - name: Check the release tag is annotated
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ref = gh api "repos/$env:GH_REPO/git/ref/tags/$env:RELEASE_TAG" | ConvertFrom-Json
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if ($ref.object.type -ne 'tag') { throw "$env:RELEASE_TAG is a lightweight tag. Releases need an annotated, signed tag." }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.BUILD_REF }}
