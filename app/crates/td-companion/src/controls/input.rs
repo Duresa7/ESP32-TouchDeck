@@ -3,13 +3,13 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::{Duration, Instant};
 use td_core::{Event, InputPhase};
 
-pub(crate) const PENDING_MAX: usize = 64;
-pub(crate) const PER_SECOND: usize = 10;
+pub(super) const PENDING_MAX: usize = 64;
+pub(super) const PER_SECOND: usize = 10;
 
 type StreamOf = (String, String, String);
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Input {
+pub(super) struct Input {
     pub page: String,
     pub tile: String,
     pub stream: String,
@@ -81,7 +81,7 @@ impl Rate {
 }
 
 #[derive(Default)]
-pub(crate) struct InputHub {
+pub(super) struct InputHub {
     generation: u64,
     completed: Vec<Input>,
     cancelled_through: Option<u32>,
@@ -171,7 +171,7 @@ impl InputHub {
 }
 
 #[derive(Default)]
-pub(crate) struct PressGate {
+pub(super) struct PressGate {
     last_seq: Option<u32>,
     rate: Rate,
 }

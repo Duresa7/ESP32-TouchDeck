@@ -86,8 +86,7 @@ impl Ctx {
         let integrations = crate::features::integrations::Service::new(mock, events.clone());
         integrations.command_approval(Arc::new(actions.clone()));
         let settable = integrations.clone();
-        let settable: crate::actions::controls::Settable =
-            Arc::new(move |key| settable.settable(key));
+        let settable: crate::controls::Settable = Arc::new(move |key| settable.settable(key));
         let authority = crate::layouts::LayoutAuthority::new(
             layouts.pushed(),
             settable.clone(),

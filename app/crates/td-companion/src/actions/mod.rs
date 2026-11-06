@@ -1,4 +1,3 @@
-pub(crate) mod controls;
 mod prompt;
 use crate::{
     api::{Clock, Event, Events},
@@ -156,6 +155,7 @@ struct State {
     load_failed: bool,
 }
 struct Inner {
+    controls: OnceLock<Arc<crate::controls::DeviceControls>>,
     state: Mutex<State>,
     grant_writer: Mutex<()>,
     events: Events,
@@ -165,7 +165,6 @@ struct Inner {
     grants: Arc<dyn GrantStore>,
     prompter: Arc<dyn ApprovalPrompter>,
     running: AtomicUsize,
-    controls: OnceLock<controls::Wiring>,
     #[cfg(any(test, feature = "test-hooks"))]
     fake: Option<Arc<FakePrompter>>,
 }
@@ -193,6 +192,7 @@ impl Actions {
         let prompter: Arc<dyn ApprovalPrompter> = fake.clone().map_or(prompter, |p| p);
         let _ = mock;
         let inner = Arc::new(Inner {
+            controls: OnceLock::new(),
             state: Mutex::new(state),
             grant_writer: Mutex::new(()),
             events,
@@ -202,7 +202,6 @@ impl Actions {
             grants,
             prompter,
             running: AtomicUsize::new(0),
-            controls: OnceLock::new(),
             #[cfg(any(test, feature = "test-hooks"))]
             fake,
         });
@@ -384,10 +383,30 @@ impl Actions {
             },
         )))
     }
+    pub(crate) fn attach(
+        &self,
+        authority: crate::layouts::LayoutAuthority,
+        controls: crate::features::integrations::Controls,
+        settable: crate::controls::Settable,
+        turned_on: crate::controls::TurnedOn,
+    ) {
+        let weak = Arc::downgrade(&self.0);
+        let module = Arc::new(crate::controls::DeviceControls::new(
+            authority,
+            controls,
+            settable,
+            turned_on,
+            self.0.events.clone(),
+            Arc::new(move |request, status, detail| {
+                if let Some(inner) = weak.upgrade() {
+                    Actions(inner).logged(request, status, detail, None, None);
+                }
+            }),
+        ));
+        self.0.devices.controls(&module);
+        let _ = self.0.controls.set(module);
+    }
     fn press(&self, device: &DeviceId, event: &serde_json::Value) {
-        if event.get("part").is_some() {
-            return self.part(device, event);
-        }
         let page = event["page"].as_str().unwrap_or_default();
         let tile = event["tile"].as_str().unwrap_or_default();
         let mut request = ApprovalRequest {
