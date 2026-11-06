@@ -5,12 +5,12 @@ import { missingGlyphs } from '../../lib/deck/scene.ts';
 import { needsApproval, processOf } from '../../lib/layout/actions.ts';
 import { friendlyRefusal } from '../../lib/layout/messages.ts';
 import { gifWork } from '../../lib/editor/gifs.ts';
-import { effectiveTileEdit, type EditorStore } from '../../lib/editor/store.ts';
+import type { EditorStore } from '../../lib/editor/store.ts';
 import type { GridPage, Layout, Tile } from '../../lib/layout/model.ts';
 import { ActionForm } from './ActionForm.tsx';
 import { ActionLogPanel } from './ActionLog.tsx';
 import { AllowedActions, ApprovalNote } from './Approvals.tsx';
-import { useDeviceOffersGif, useEditorState, useGifState, useGifTiles } from './editor.ts';
+import { useDeviceOffersGif, useEditorState, useEffectiveTileEdit, useGifState, useGifTiles } from './editor.ts';
 import { described, Field, FieldError, useFieldIds } from './fields.tsx';
 import { GifField } from './GifField.tsx';
 import { GraphField } from './GraphField.tsx';
@@ -27,7 +27,7 @@ const LABEL_MAX = 16;
 
 function LabelField({ store, tile, device }: { store: EditorStore; tile: Tile; device: string }) {
   const ids = useFieldIds();
-  const edit = effectiveTileEdit(useEditorState(store, (s) => s), device, tile.id);
+  const edit = useEffectiveTileEdit(store, device, tile.id);
   if (!edit) return null;
   const { value, error } = edit.label;
   const missing = missingGlyphs(value);
@@ -155,7 +155,7 @@ const KEYBOARD: ReadonlySet<string> = new Set(['key', 'mod', 'consumer']);
 export function TileFields({ store, page, tile }: TileFieldsProps) {
   const device = useEditorState(store, (s) => s.device);
   const layout = useEditorState(store, (s) => s.drafts[s.orientation]?.layout);
-  const edit = effectiveTileEdit(useEditorState(store, (s) => s), device?.name ?? 'the Device', tile.id);
+  const edit = useEffectiveTileEdit(store, device?.name ?? 'the Device', tile.id);
   const orientation = useEditorState(store, (s) => s.orientation);
   const gifs = useGifTiles();
   const offersGif = useDeviceOffersGif(store);

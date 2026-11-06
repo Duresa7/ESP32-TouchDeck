@@ -12,9 +12,9 @@ import {
   splitArgs,
   switchKind,
 } from '../../lib/layout/actions.ts';
-import { effectiveTileEdit, type EditorStore } from '../../lib/editor/store.ts';
+import type { EditorStore } from '../../lib/editor/store.ts';
 import { ACTION_TYPES, MODIFIERS, type Action, type GridPage, type Layout, type Tile } from '../../lib/layout/model.ts';
-import { useEditorState } from './editor.ts';
+import { useEffectiveTileEdit } from './editor.ts';
 import { described, Field, FieldError, Select, useFieldIds } from './fields.tsx';
 
 type Of<T extends Action['type']> = Extract<Action, { type: T }>;
@@ -276,7 +276,7 @@ function KindFields({ action, commit, error, pages }: { action: Action; commit(n
 }
 
 export function ActionForm({ store, page, tile, layout, device }: { store: EditorStore; page: GridPage; tile: Tile; layout: Layout; device: string }) {
-  const edit = effectiveTileEdit(useEditorState(store, (s) => s), device, tile.id);
+  const edit = useEffectiveTileEdit(store, device, tile.id);
   const ids = useFieldIds();
   if (!edit) return null;
   const { value: action, error: message, field: at } = edit.action;

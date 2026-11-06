@@ -5,7 +5,7 @@ import { Film, Plus } from 'lucide-react';
 import { useIntegrations } from '../../lib/companion/integrations.ts';
 import { missingGlyphs } from '../../lib/deck/scene.ts';
 import { placedLook } from '../../lib/editor/graph.ts';
-import { ADD_KINDS, effectiveTileEdit, type EditorStore, type Target } from '../../lib/editor/store.ts';
+import { ADD_KINDS, type EditorStore, type Target } from '../../lib/editor/store.ts';
 import { plural } from '../../lib/layout/messages.ts';
 import { PAGES_MAX, type GridPage, type Layout, type Page } from '../../lib/layout/model.ts';
 import { offersPresets } from '../../lib/integrations/model.ts';
@@ -15,7 +15,7 @@ import { usePresetNeeds } from '../integrations/addToLayout.ts';
 import { PresetButton } from '../integrations/PresetPreview.tsx';
 import { PendingApprovals } from './Approvals.tsx';
 import { ControlReview } from './Controls.tsx';
-import { useDeviceOffersGif, useDeviceShows, useEditorState, useGifTiles } from './editor.ts';
+import { useDeviceOffersGif, useDeviceShows, useEditorState, useEffectiveTileEdit, useGifTiles } from './editor.ts';
 import { GifInput } from './GifField.tsx';
 import { TileIcon } from './AssetImage.tsx';
 import { KINDS } from './glyphs.tsx';
@@ -194,8 +194,8 @@ function Details({ store, layout, page, device }: { store: EditorStore; layout: 
 
 function TileInspector({ store, page, tileId }: { store: EditorStore; page: GridPage; tileId: string }) {
   const tile = page.tiles.find((t) => t.id === tileId);
-  const state = useEditorState(store, (s) => s);
-  const edit = effectiveTileEdit(state, state.device?.name ?? 'the Device', tileId);
+  const device = useEditorState(store, (s) => s.device?.name ?? 'the Device');
+  const edit = useEffectiveTileEdit(store, device, tileId);
   if (!tile || !edit) return null;
   const kind = edit.kind;
   return (
