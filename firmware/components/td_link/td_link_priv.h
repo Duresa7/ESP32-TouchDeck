@@ -34,6 +34,10 @@ void td_link_files_service(uint32_t now_ms);
 /* A protocol selection, v1 or v2, discards an open v2 upload. */
 void td_link_files_select(void);
 
+/* A protocol selection starts a new session: discards the open upload, and clears the live values and the Live tile
+ * touch, whose reset drops the queued input. Taps queued before it are dropped by their live-table generation. */
+void td_link_session_reset(void);
+
 /* Message handlers. Each fills the reply, or calls td_link_fail. */
 void td_link_layout_put(const cJSON *request, cJSON *reply);
 void td_link_layout_get(const cJSON *request, cJSON *reply);

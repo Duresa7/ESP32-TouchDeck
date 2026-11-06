@@ -70,8 +70,10 @@ typedef void (*ui_press_hook_t)(const char *page, const char *tile, const char *
 void ui_set_press_hook(ui_press_hook_t hook);
 
 /* Called on the LVGL task instead of the press hook for a tap on a part of a bar or now-playing Tile, with the part's
- * wire name: "previous", "play_pause", "next" or "mute". The hook must not block. */
-typedef void (*ui_part_hook_t)(const char *page, const char *tile, const char *kind, const char *part);
+ * wire name: "previous", "play_pause", "next" or "mute", and the live-table generation the part was named in. The
+ * tap must not go out once ui_live_generation() has left that generation. The hook must not block. */
+typedef void (*ui_part_hook_t)(const char *page, const char *tile, const char *kind, const char *part,
+                               uint32_t generation);
 void ui_set_part_hook(ui_part_hook_t hook);
 
 /* Called on the LVGL task while a finger drags a bar Tile that takes input: `input` with the value it sets, 0 to 1,
@@ -89,12 +91,12 @@ void ui_set_link_online(bool (*online)(void));
  * UI_LIVE_OK. *retry_ms is set for UI_LIVE_RATE. */
 ui_live_result_t ui_live_update(const ui_live_set_t *set, uint32_t *retry_ms);
 
-/* A new protocol 2 selection: clears every live value and counter and restarts the rate windows. */
+/* A new protocol 2 selection: clears every live value and counter, restarts the rate windows, ends the Live tile
+ * touch the old session held and drops its queued input through the input hooks. */
 void ui_live_select(void);
 
-/* The live-table generation now, or the generation the last ui_live_part() tap matched. */
+/* The live-table generation now. Every Layout and session change advances it. */
 uint32_t ui_live_generation(void);
-uint32_t ui_live_tap_generation(void);
 
 /* True when the online source says the app is connected. */
 bool ui_link_online(void);

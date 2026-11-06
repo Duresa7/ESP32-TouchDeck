@@ -17,6 +17,7 @@
 #include "ui_live_bar.h"
 #include "ui_live_now_playing.h"
 #include "ui_theme.h"
+#include "ui_tile_keys.h"
 
 static const char *TAG = "live";
 
@@ -86,6 +87,13 @@ typedef struct {
     };
 } view_t;
 
+static void touch_input(void *ctx, const char *page, const char *tile, double value, bool end);
+static void touch_cancel(void *ctx);
+static void touch_part(void *ctx, const char *page, const ui_tile_t *tile, const char *part, uint32_t generation);
+
+static const ui_live_touch_out_t k_touch_out = { .input = touch_input, .cancel = touch_cancel, .part = touch_part };
+
+/* `touch` changes only under `lock`. */
 static struct {
     SemaphoreHandle_t lock;
     ui_live_table_t table;
@@ -93,11 +101,11 @@ static struct {
     cover_t **undrawn;
     view_t *views;
     uint16_t view_count;
-    int16_t dragging;
+    ui_live_touch_t touch;
     lv_timer_t *timer;
     void (*input)(const char *page, const char *tile, double value, bool end);
     void (*cancel)(void);
-} s = { .dragging = -1 };
+} s = { .touch = { .out = &k_touch_out } };
 
 static ui_live_slot_t s_view_slots[UI_LIVE_TILE_STREAMS];
 static uint32_t s_view_generation;
@@ -251,19 +259,39 @@ void ui_set_input_hooks(void (*input)(const char *page, const char *tile, double
     s.cancel = cancel;
 }
 
-static void cancel_input(void)
+static void touch_input(void *ctx, const char *page, const char *tile, double value, bool end)
 {
+    (void)ctx;
+    if (s.input != NULL) {
+        s.input(page, tile, value, end);
+    }
+}
+
+static void touch_cancel(void *ctx)
+{
+    (void)ctx;
     if (s.cancel != NULL) {
         s.cancel();
     }
 }
 
-static void drop_capture(void)
+static void touch_part(void *ctx, const char *page, const ui_tile_t *tile, const char *part, uint32_t generation)
 {
-    if (s.dragging >= 0) {
-        ui_bar_cancel(&s.views[s.dragging].bar.live.bar);
-        s.dragging = -1;
-        cancel_input();
+    (void)ctx;
+    ui_tile_keys_press_part(page, tile, part, generation);
+}
+
+static void lock_touch(void)
+{
+    if (s.lock != NULL) {
+        xSemaphoreTake(s.lock, portMAX_DELAY);
+    }
+}
+
+static void unlock_touch(void)
+{
+    if (s.lock != NULL) {
+        xSemaphoreGive(s.lock);
     }
 }
 
@@ -355,9 +383,13 @@ static void update_bar(view_t *v)
     const ui_live_slot_t *muted = stream(v, "muted");
     b->set = value != NULL && value->set;
     b->muted = muted != NULL && muted->set && ui_live_latest(muted) != 0;
-    if (ui_live_bar_feed(&b->live, s_view_generation, value) && s.dragging >= 0 && &s.views[s.dragging] == v) {
+    lock_touch();
+    const bool held = ui_live_touch_holds(&s.touch, &b->live);
+    ui_live_touch_feed(&s.touch, &b->live, s_view_generation, value);
+    const bool ended = held && !ui_live_touch_holds(&s.touch, &b->live);
+    unlock_touch();
+    if (ended) {
         ESP_LOGI(TAG, "drag on %s ended: value stale", v->tile->id);
-        drop_capture();
     }
     draw_bar(b);
 }
@@ -556,8 +588,9 @@ void ui_live_begin(const td_layout_t *layout)
     if (s.lock == NULL) {
         s.lock = xSemaphoreCreateMutex();
     }
-    drop_capture();
-    cancel_input();
+    lock_touch();
+    ui_live_touch_reset(&s.touch);
+    unlock_touch();
     size_t want = ui_live_streams(layout->pages, layout->page_count);
     want = want > UI_LIVE_SLOTS_MAX ? UI_LIVE_SLOTS_MAX : want;
     const uint16_t view_count = count_views(layout);
@@ -801,95 +834,76 @@ static view_t *view_of(const ui_tile_t *tile)
     return NULL;
 }
 
+static bar_view_t *bar_of(const ui_live_bar_t *live)
+{
+    for (uint16_t i = 0; live != NULL && i < s.view_count; i++) {
+        if (s.views[i].kind == VIEW_BAR && &s.views[i].bar.live == live) {
+            return &s.views[i].bar;
+        }
+    }
+    return NULL;
+}
+
 bool ui_live_capture(const ui_tile_t *tile, int16_t x, int16_t y)
 {
-    drop_capture();
     view_t *v = view_of(tile);
-    if (v == NULL || v->kind != VIEW_BAR ||
-        ui_bar_hit(&v->bar.layout, x, y, v->bar.live.fresh, tile->input) != UI_BAR_ZONE_VALUE) {
-        return false;
-    }
-    if (!ui_live_bar_press(&v->bar.live, table_generation(), x, y)) {
-        return false;
-    }
-    s.dragging = (int16_t)(v - s.views);
-    return true;
+    bar_view_t *b = v != NULL && v->kind == VIEW_BAR ? &v->bar : NULL;
+    lock_touch();
+    const bool held = ui_live_touch_press(&s.touch, b != NULL ? &b->live : NULL, b != NULL ? &b->layout : NULL,
+                                          v != NULL ? v->page : NULL, tile, s.table.generation, x, y);
+    unlock_touch();
+    return held;
 }
 
 void ui_live_drag(int16_t x, int16_t y)
 {
-    if (s.dragging < 0) {
-        return;
-    }
-    view_t *v = &s.views[s.dragging];
-    xSemaphoreTake(s.lock, portMAX_DELAY);
-    const bool moved =
-        ui_live_bar_move(&v->bar.live, s.table.generation, &v->bar.layout, x, y, ui_geo()->slop);
-    if (moved && s.input != NULL) {
-        s.input(v->page, v->tile->id, v->bar.live.bar.finger, false);
-    }
-    xSemaphoreGive(s.lock);
-    if (moved) {
-        draw_bar(&v->bar);
+    lock_touch();
+    bar_view_t *moved = bar_of(ui_live_touch_move(&s.touch, s.table.generation, x, y, ui_geo()->slop));
+    unlock_touch();
+    if (moved != NULL) {
+        draw_bar(moved);
     }
 }
 
 void ui_live_drop(void)
 {
-    if (s.dragging < 0) {
-        return;
-    }
-    view_t *v = &s.views[s.dragging];
-    s.dragging = -1;
-    xSemaphoreTake(s.lock, portMAX_DELAY);
-    const bool ended = ui_live_bar_release(&v->bar.live, s.table.generation, now_ms());
-    if (ended && s.input != NULL) {
-        s.input(v->page, v->tile->id, v->bar.live.bar.finger, true);
-    }
-    xSemaphoreGive(s.lock);
-    if (ended) {
-        draw_bar(&v->bar);
+    lock_touch();
+    bar_view_t *ended = bar_of(ui_live_touch_release(&s.touch, s.table.generation, now_ms()));
+    unlock_touch();
+    if (ended != NULL) {
+        draw_bar(ended);
     }
 }
-
-static uint32_t s_tap_generation;
 
 uint32_t ui_live_generation(void)
 {
     return s.lock != NULL ? table_generation() : s.table.generation;
 }
 
-uint32_t ui_live_tap_generation(void)
-{
-    return s_tap_generation;
-}
-
-const char *ui_live_part(const ui_tile_t *tile, int16_t x, int16_t y)
+bool ui_live_tap(const char *page, const ui_tile_t *tile, int16_t x, int16_t y)
 {
     const view_t *v = view_of(tile);
     if (v == NULL || v->kind == VIEW_GRAPH) {
-        return NULL;
+        return false;
     }
     const uint32_t generation = table_generation();
-    const char *part =
-        ui_part_name(v->kind == VIEW_BAR ? ui_live_bar_part(&v->bar.live, generation, &v->bar.layout, x, y)
-                                         : ui_live_np_part(&v->np.tap, generation, &v->np.layout, x, y));
-    if (part != NULL) {
-        s_tap_generation = generation;
-    }
-    return part;
+    return v->kind == VIEW_BAR ? ui_live_touch_tap_bar(&s.touch, &v->bar.live, &v->bar.layout, page, tile,
+                                                       generation, x, y)
+                               : ui_live_touch_tap_np(&s.touch, &v->np.tap, &v->np.layout, page, tile, generation,
+                                                      x, y);
 }
 
 void ui_live_select(void)
 {
     if (s.lock == NULL) {
         s.table.generation++;
+        ui_live_touch_reset(&s.touch);
         return;
     }
     xSemaphoreTake(s.lock, portMAX_DELAY);
     ui_live_session(&s.table, now_ms());
+    ui_live_touch_reset(&s.touch);
     xSemaphoreGive(s.lock);
-    cancel_input();
     ui_live_release(&s.table, &k_ops);
 }
 

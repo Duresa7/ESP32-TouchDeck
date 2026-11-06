@@ -131,9 +131,10 @@ void ui_live_drag(int16_t x, int16_t y);
  * nothing. */
 void ui_live_drop(void);
 
-/* The part a tap at Tile point (x, y) names on a bar or now-playing Tile, from the shared vectors, or NULL. A Tile not
- * redrawn since the last session or Layout change names none. */
-const char *ui_live_part(const ui_tile_t *tile, int16_t x, int16_t y);
+/* A tap at Tile point (x, y) on a bar or now-playing Tile of Page `page`. When it names a part, from the shared vectors,
+ * the part hook gets it with the live-table generation it was named in, and the call returns true. A Tile not redrawn
+ * since the last session or Layout change names none. */
+bool ui_live_tap(const char *page, const ui_tile_t *tile, int16_t x, int16_t y);
 
 /* Called without the LVGL lock. Decodes the next Layout's posters while the shown Layout keeps playing. */
 void ui_gif_prepare(const td_layout_t *layout);

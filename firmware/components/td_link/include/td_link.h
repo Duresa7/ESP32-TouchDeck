@@ -32,9 +32,10 @@ esp_err_t td_link_start(void);
 void td_link_idle_boot(void);
 
 /* Queues a `press` event for a tap on an app or widget tile, from any task and without blocking. It is dropped when
- * the queue is full or the app is not connected. */
+ * the queue is full or the app is not connected, and when the live-table generation has moved on by the time it would
+ * go out: td_link_press takes the generation as it is now, and td_link_press_part the one its part was named in. */
 void td_link_press(const char *page, const char *tile, const char *kind);
-void td_link_press_part(const char *page, const char *tile, const char *kind, const char *part);
+void td_link_press_part(const char *page, const char *tile, const char *kind, const char *part, uint32_t generation);
 /* Called by the bar renderer after drag slop. Cancel on Layout changes. */
 void td_link_input(const char *page, const char *tile, double value, bool end);
 void td_link_input_cancel(void);

@@ -1,5 +1,6 @@
 #pragma once
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 typedef struct {
@@ -37,3 +38,5 @@ void td_input_cancel(td_input_mailbox_t *box);
 bool td_press_init(td_press_t *out, const char *page, const char *tile, const char *kind, const char *part,
                    bool v2_selected, uint32_t generation, uint32_t now);
 bool td_press_ready(const td_press_t *press, bool online, bool v2_selected, uint32_t generation);
+/* The `press` event JSON for `press`, with its `part` when it has one. Its length, or 0 when it does not fit `cap`. */
+size_t td_press_json(const td_press_t *press, char *out, size_t cap);

@@ -1,5 +1,6 @@
 #include <string.h>
 #include "unity.h"
+#include "ui_live_bar.h"
 #include "ui_live_now_playing.h"
 
 static const ui_stream_t k_streams[] = { { "state", UI_STREAM_NUMBER } };
@@ -66,4 +67,46 @@ TEST_CASE("live now playing: a tap after a reset names no part until the new ses
     TEST_ASSERT_EQUAL(UI_PART_NEXT, tap(2));
     ui_live_bind(&s_table, s_slots, 1, "other", k_pages, 1);
     TEST_ASSERT_EQUAL(UI_PART_NONE, tap(1));
+}
+
+static struct {
+    uint8_t count;
+    char part[16];
+    uint32_t generation;
+} s_taps;
+
+static void queue_part(void *ctx, const char *page, const ui_tile_t *tile, const char *part, uint32_t generation)
+{
+    (void)ctx;
+    TEST_ASSERT_EQUAL_STRING("media", page);
+    TEST_ASSERT_EQUAL_PTR(&k_tiles[0], tile);
+    s_taps.count++;
+    strcpy(s_taps.part, part);
+    s_taps.generation = generation;
+}
+
+static bool touch_tap(uint8_t zone)
+{
+    static const ui_live_touch_out_t out = { .part = queue_part };
+    ui_live_touch_t touch;
+    ui_live_touch_init(&touch, &out);
+    const ui_rect_t r = s_layout.zones[zone];
+    return ui_live_touch_tap_np(&touch, &s_np, &s_layout, "media", &k_tiles[0], s_table.generation,
+                                (int16_t)(r.x + r.w / 2), (int16_t)(r.y + r.h / 2));
+}
+
+TEST_CASE("live now playing: a tap goes out with the generation its state was fed in, and none after a reset",
+          "[ui_live_now_playing]")
+{
+    start();
+    memset(&s_taps, 0, sizeof s_taps);
+    state(1, UI_NP_PLAYING, 1000);
+    feed();
+    TEST_ASSERT_TRUE(touch_tap(2));
+    TEST_ASSERT_EQUAL_UINT8(1, s_taps.count);
+    TEST_ASSERT_EQUAL_STRING("next", s_taps.part);
+    TEST_ASSERT_EQUAL_UINT32(s_table.generation, s_taps.generation);
+    ui_live_session(&s_table, 2000);
+    TEST_ASSERT_FALSE(touch_tap(2));
+    TEST_ASSERT_EQUAL_UINT8(1, s_taps.count);
 }
