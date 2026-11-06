@@ -33,7 +33,7 @@ pnpm e2e:ui e2e/home.spec.ts
 
 ### Preview fonts
 
-`src/lib/deck/fonts.extract.mjs` generates `src/lib/deck/fonts.data.ts`, the Montserrat 14, 28 and 48 metrics the Layout preview uses to measure Tile labels. It is a one-off script, not part of any build. Run it from `app/ui` with the path to LVGL 9's `src/font` folder, then commit the new `fonts.data.ts`:
+`src/lib/deck/fonts.extract.mjs` generates `src/lib/deck/fonts.data.ts`, the glyph metrics the Layout preview uses to measure Tile labels. It reads the six Archivo Firmware fonts from `firmware/components/ui/fonts` (`ui_font_medium_44`, `_26` and `_22`, `ui_font_semibold_32` and `_40`, `ui_font_nameplate_26`) and LVGL's `lv_font_montserrat_48.c`. Only the Montserrat 48 file comes from the LVGL path. It is a one-off script, not part of any build. Run it from `app/ui` with the path to LVGL 9's `src/font` folder, then commit the new `fonts.data.ts`:
 
 ```powershell
 node src/lib/deck/fonts.extract.mjs <lvgl>/src/font
