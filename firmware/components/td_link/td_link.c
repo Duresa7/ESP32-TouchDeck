@@ -194,24 +194,35 @@ static void handle_frame(TickType_t wait)
     }
 }
 
-void td_link_press(const char *page, const char *tile, const char *kind)
+static void queue_press(const char *page, const char *tile, const char *kind, const char *part, uint32_t generation)
 {
-    td_link_press_part(page, tile, kind, NULL);
-}
-
-void td_link_press_part(const char *page, const char *tile, const char *kind, const char *part)
-{
-    if (!s_presses) {
-        return;
-    }
     press_t press;
-    const uint32_t generation = part ? ui_live_tap_generation() : ui_live_generation();
     if (!td_press_init(&press, page, tile, kind, part, td_link_v2_selected(), generation,
                        (uint32_t)(esp_timer_get_time() / 1000))) {
         return;
     }
     press.seq = __atomic_add_fetch(&s_press_seq, 1, __ATOMIC_RELAXED);
     xQueueSend(s_presses, &press, 0);
+}
+
+void td_link_press(const char *page, const char *tile, const char *kind)
+{
+    if (s_presses) {
+        queue_press(page, tile, kind, NULL, ui_live_generation());
+    }
+}
+
+void td_link_press_part(const char *page, const char *tile, const char *kind, const char *part, uint32_t generation)
+{
+    if (s_presses) {
+        queue_press(page, tile, kind, part, generation);
+    }
+}
+
+void td_link_session_reset(void)
+{
+    td_link_files_select();
+    ui_live_select();
 }
 
 void td_link_input_cancel(void)
@@ -278,15 +289,10 @@ static void send_events(void)
     press_t press;
     for (int turn = 0; turn < TD_LINK_EVENTS_PER_TURN && xQueueReceive(s_presses, &press, 0) == pdTRUE; turn++) {
         if (td_press_ready(&press, online, td_link_v2_selected(), ui_live_generation())) {
-            int len = snprintf(json, sizeof json,
-                               "{\"m\":\"press\",\"page\":\"%s\",\"tile\":\"%s\",\"kind\":\"%s\",\"seq\":%u,\"t\":%u}",
-                               press.page, press.tile, press.kind, (unsigned)press.seq, (unsigned)press.t);
-            if (press.part[0] && len > 0 && (size_t)len < sizeof json) {
-                int tail = snprintf(json + len - 1, sizeof json - (size_t)len + 1, ",\"part\":\"%s\"}", press.part);
-                len = tail < 0 ? -1 : len - 1 + tail;
+            const size_t len = td_press_json(&press, json, sizeof json);
+            if (len > 0) {
+                td_link_send(TD_FRAME_MESSAGE, 0, TD_FRAME_EVENT, (const uint8_t *)json, len);
             }
-            if (len > 0 && (size_t)len < sizeof json)
-                td_link_send(TD_FRAME_MESSAGE, 0, TD_FRAME_EVENT, (const uint8_t *)json, (size_t)len);
         }
     }
     if (!online) {

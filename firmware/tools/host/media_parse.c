@@ -80,78 +80,50 @@ const char *host_live(const char *json)
     return received;
 }
 
-#include <stdio.h>
-#include "key_sink_link.h"
-#include "td_frame.h"
-#include "td_link.h"
-#define TD_LINK_EVENTS_PER_TURN 16
-#define pdTRUE 1
-#define pdFALSE 0
-typedef td_press_t press_t;
-static press_t queue_buf[16];
-static size_t queue_head, queue_tail, queue_len;
-static int s_presses = 1;
-static uint32_t s_press_seq, sent_seq, live_gen, tap_gen, emitted_count, last_emitted_seq;
-static bool selected, online_flag;
-static bool td_link_v2_selected(void) { return selected; }
-uint32_t ui_live_generation(void) { return live_gen; }
-uint32_t ui_live_tap_generation(void) { return tap_gen; }
-td_link_state_t td_link_state(void) { return (td_link_state_t){ .online = online_flag }; }
-static int64_t esp_timer_get_time(void) { return 0; }
-#define __atomic_add_fetch(p, n, order) (*(p) += (n))
-static void xQueueReset(int queue) { (void)queue; queue_head = queue_tail = queue_len = 0; }
-static void xQueueSend(int queue, const press_t *press, int wait)
+/* The press queue as td_link drives it: a press takes the next seq only once td_press_init accepts it, and goes out
+ * only while the live-table generation is the one it was queued with. */
+static uint32_t press_seq, emitted_count, last_emitted_seq;
+static char emitted[256];
+
+static bool queue_press(td_press_t *press, const char *part, bool selected, uint32_t generation)
 {
-    (void)queue; (void)wait;
-    sent_seq = press->seq;
-    if (queue_len < 16) { queue_buf[queue_tail] = *press; queue_tail = (queue_tail + 1) % 16; queue_len++; }
-}
-static int xQueueReceive(int queue, press_t *out, int wait)
-{
-    (void)queue; (void)wait;
-    if (queue_len == 0) return pdFALSE;
-    *out = queue_buf[queue_head];
-    queue_head = (queue_head + 1) % 16;
-    queue_len--;
-    return pdTRUE;
-}
-void key_sink_link_discard(void) {}
-size_t key_sink_link_next(char *out, size_t cap) { (void)out; (void)cap; return 0; }
-bool td_link_send(uint8_t type, uint8_t seq, uint8_t flags, const uint8_t *payload, size_t len)
-{
-    (void)type; (void)seq; (void)flags; (void)len;
-    emitted_count++;
-    const char *p = strstr((const char *)payload, "\"seq\":");
-    if (p) last_emitted_seq = (uint32_t)strtoul(p + 6, NULL, 10);
+    if (!td_press_init(press, "p", "t", "widget", part, selected, generation, 7)) return false;
+    press->seq = ++press_seq;
     return true;
 }
-#include "press_part.c"
+
+static void send_press(const td_press_t *press, bool selected, uint32_t generation)
+{
+    if (!td_press_ready(press, true, selected, generation)) return;
+    if (td_press_json(press, emitted, sizeof emitted) == 0) return;
+    emitted_count++;
+    last_emitted_seq = press->seq;
+}
+
 int host_press(void)
 {
-    xQueueReset(s_presses);
-    s_press_seq = sent_seq = emitted_count = last_emitted_seq = 0;
-    live_gen = tap_gen = 1;
-    online_flag = true;
-    selected = false;
-    td_link_press_part("p", "t", "widget", "mute");
-    selected = true;
-    td_link_press_part("p", "t", "widget", "invalid!");
-    td_link_press_part("p", "t", "widget", "");
-    td_link_press_part("p", "t", "widget", "mute");
-    if (sent_seq != 1) return 1;
-    send_events();
+    td_press_t press;
+    press_seq = emitted_count = last_emitted_seq = 0;
+    if (queue_press(&press, "mute", false, 1)) return 1;
+    if (queue_press(&press, "invalid!", true, 1) || queue_press(&press, "", true, 1)) return 1;
+    if (!queue_press(&press, "mute", true, 1) || press.seq != 1) return 1;
+    send_press(&press, true, 1);
     if (emitted_count != 1 || last_emitted_seq != 1) return 2;
+    if (strcmp(emitted, "{\"m\":\"press\",\"page\":\"p\",\"tile\":\"t\",\"kind\":\"widget\",\"seq\":1,\"t\":7,"
+                       "\"part\":\"mute\"}")) return 2;
 
-    td_link_press("p", "t", "widget");
-    tap_gen = 1;
-    live_gen = 2;
-    xQueueReset(s_presses);
-    td_link_press_part("p", "t", "widget", "mute");
-    send_events();
-    if (emitted_count != 1) return 3;
+    td_press_t plain;
+    if (!queue_press(&plain, NULL, true, 1)) return 3;
+    send_press(&plain, true, 1);
+    if (strcmp(emitted, "{\"m\":\"press\",\"page\":\"p\",\"tile\":\"t\",\"kind\":\"widget\",\"seq\":2,\"t\":7}")) return 3;
 
-    tap_gen = 2;
-    td_link_press_part("p", "t", "widget", "mute");
-    send_events();
-    return (emitted_count == 2 && last_emitted_seq == 4) ? 0 : 4;
+    /* A tap named in generation 1 that would go out after the table moved to generation 2. */
+    if (!queue_press(&press, "mute", true, 1)) return 3;
+    send_press(&press, true, 2);
+    if (emitted_count != 2) return 3;
+
+    if (!queue_press(&press, "mute", true, 2)) return 4;
+    send_press(&press, true, 2);
+    if (td_press_json(&press, emitted, 16) != 0) return 4;
+    return (emitted_count == 3 && last_emitted_seq == 4) ? 0 : 4;
 }

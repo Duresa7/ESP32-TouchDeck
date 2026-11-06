@@ -769,6 +769,19 @@ while the bar holds a fresh value of the current generation. Between a session
 or Layout change and the redraw that follows it, the glyph names no part. Mute
 is drawn only as the Companion reports it.
 
+One module owns a Live tile touch from finger-down to what it queues for the
+Companion: `ui_live_touch_t` in `td_ui_core/ui_live_bar.h`. It takes each press,
+move, lift, fed value and tap with the live table's generation, decides whether
+the touch can still act, and writes what it queues through a small output struct
+(`ui_live_touch_out_t`: `input`, `cancel` and `part`). It drops a held
+drag's queued input itself when the value goes stale, another press starts or the
+touch resets. A part tap goes out with the generation it was named in, and the
+link drops it when the table has moved on by the time it would be sent. The
+LVGL handlers in `ui_live_tiles.c` and the link's input mailbox and press queue
+are adapters around it, and its host tests in `test_ui_live_bar.c` drive it with
+a fake link. A `hello` makes one call, `td_link_session_reset`, which discards
+the open upload and resets the Live tile values and the touch.
+
 A `now-playing` Tile draws, from `schema/live/now-playing-vectors.json`, the
 cover, the title and the artist. A tall, wide Tile adds the previous,
 play/pause and next controls in a row below them, and a tap on one sends its
@@ -799,7 +812,7 @@ released, so the LVGL task never waits on the storage lock.
 
 Taps come first. The touch and LVGL tasks never wait on a decode: the live-value
 lock is held only to check, commit and copy values, to read the generation for a
-bar press or a tap on a part, and to send a bar drag's value, and the storage
+tap on a part, and to drive the held bar's touch and send its value, and the storage
 lock only to read the file. The link task runs at priority 3, below the LVGL
 task at 6. The decode sleeps a tick after each row of JPEG blocks, 16 rows for a
 256 by 256 cover, so the idle tasks run and feed the task watchdog. A decoded

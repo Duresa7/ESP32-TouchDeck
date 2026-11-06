@@ -389,10 +389,8 @@ static void on_release(lv_event_t *e)
     const int ref = tile_ref(tile);
     const ui_page_t *page = ref >= 0 ? &s.pages[ref / 256] : NULL;
     const ui_rect_t r = tile_screen_rect(tile);
-    const char *part = ui_live_part(tile, (int16_t)(s.pager.x0 - r.x), (int16_t)(s.pager.y0 - r.y));
-    if (part != NULL) {
-        ui_tile_keys_press_part(page, tile, part);
-    } else {
+    const char *page_id = page != NULL ? page->id : "?";
+    if (!ui_live_tap(page_id, tile, (int16_t)(s.pager.x0 - r.x), (int16_t)(s.pager.y0 - r.y))) {
         ui_tile_keys_click(page, tile);
     }
 }

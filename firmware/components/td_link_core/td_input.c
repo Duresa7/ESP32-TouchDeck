@@ -66,3 +66,14 @@ bool td_press_ready(const td_press_t *press, bool online, bool v2_selected, uint
 {
     return press && online && press->generation == generation && (!press->part[0] || v2_selected);
 }
+
+size_t td_press_json(const td_press_t *press, char *out, size_t cap)
+{
+    int len = snprintf(out, cap, "{\"m\":\"press\",\"page\":\"%s\",\"tile\":\"%s\",\"kind\":\"%s\",\"seq\":%u,\"t\":%u}",
+                       press->page, press->tile, press->kind, (unsigned)press->seq, (unsigned)press->t);
+    if (press->part[0] && len > 0 && (size_t)len < cap) {
+        int tail = snprintf(out + len - 1, cap - (size_t)len + 1, ",\"part\":\"%s\"}", press->part);
+        len = tail < 0 ? -1 : len - 1 + tail;
+    }
+    return len > 0 && (size_t)len < cap ? (size_t)len : 0;
+}

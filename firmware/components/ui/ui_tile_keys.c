@@ -137,12 +137,11 @@ void ui_set_part_hook(ui_part_hook_t hook)
     s_part_hook = hook;
 }
 
-void ui_tile_keys_press_part(const ui_page_t *page, const ui_tile_t *tile, const char *part)
+void ui_tile_keys_press_part(const char *page_id, const ui_tile_t *tile, const char *part, uint32_t generation)
 {
-    const char *page_id = page != NULL ? page->id : "?";
     const char *kind = td_action_name(&tile->action);
     if (s_part_hook != NULL) {
-        s_part_hook(page_id, tile->id, kind, part);
+        s_part_hook(page_id, tile->id, kind, part, generation);
     } else {
         ESP_LOGI("ui", "press %s/%s %s %s", page_id, tile->id, kind, part);
     }
