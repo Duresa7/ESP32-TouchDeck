@@ -533,7 +533,7 @@ Feature module `layouts`.
 
 | Name | Method and path | Request → Response |
 |---|---|---|
-| `layouts.get` | `GET /devices/{device}/layouts/{orientation}` | → `{layout: Layout, revision}`. `revision` is the Device's CRC32 from `GetReport`, also sent as `ETag` |
+| `layouts.get` | `GET /devices/{device}/layouts/{orientation}` | → `{layout: Layout, revision}`. `revision` is the Device's CRC32 from `GetReport`, also sent as `ETag`. It reads the Device, so a Device that isn't connected gets 409 `device.not_connected` even when the Layout store holds a copy, which has no revision |
 | `layouts.push` | `PUT /devices/{device}/layouts/{orientation}` | `Layout` as typed JSON, optional `If-Match: <revision>` → 202 Job `layouts.push`. 422 `layout.orientation_mismatch` when the path and body disagree. 412 `layout.changed` when the revision moved |
 
 The `Layout` body extractor runs `td_core::Layout` validation once. On failure it returns 422 `layout.invalid` with `details.issues: [{path, message}]`.
