@@ -1207,6 +1207,7 @@ mod tests {
     fn a_restart_closes_the_session_only_when_asked() {
         for close_on_restart in [true, false] {
             let deck = MockDeck::new();
+            deck.set_uptime(Duration::from_secs(10));
             let config = SessionConfig {
                 ping_every: Some(Duration::from_millis(50)),
                 ping_timeout: Duration::from_millis(500),
@@ -1214,7 +1215,20 @@ mod tests {
                 close_on_drop: false,
             };
             let (session, events) = Session::open(Box::new(deck.connect()), config).unwrap();
-            thread::sleep(Duration::from_millis(200));
+            let pings = || {
+                deck.received()
+                    .iter()
+                    .filter(|request| request["m"] == "ping")
+                    .count()
+            };
+            let pinged = |count: usize| {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while pings() < count {
+                    assert!(Instant::now() < deadline, "the session stopped pinging");
+                    thread::sleep(Duration::from_millis(1));
+                }
+            };
+            pinged(2);
             session.send_line("reboot").unwrap();
             if close_on_restart {
                 let reason = until(&events, |item| match item {
@@ -1223,7 +1237,7 @@ mod tests {
                 });
                 assert_eq!(reason, "the deck restarted");
             } else {
-                thread::sleep(Duration::from_millis(300));
+                pinged(pings() + 3);
                 assert!(session.is_open());
             }
         }

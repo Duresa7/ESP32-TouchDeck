@@ -500,6 +500,14 @@ impl MockDeck {
         self.state().reply_delay = delay;
     }
 
+    /// Reports uptime as if the deck booted `uptime` ago, like a Device that ran before the
+    /// host connected.
+    pub fn set_uptime(&self, uptime: Duration) {
+        self.state().booted = Instant::now()
+            .checked_sub(uptime)
+            .expect("the host clock reaches back that far");
+    }
+
     /// Drops the next `count` console replies, as input or output lost on the wire.
     pub fn lose_console_replies(&self, count: u32) {
         self.state().lose_console_replies = count;
