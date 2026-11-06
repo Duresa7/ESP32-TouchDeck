@@ -10,7 +10,6 @@ on:
       - app/scripts/tests/test_upgrade_from_02.py
       - app/scripts/package_windows.py
       - app/electron/build/**
-      - docs/usage.md
 
 permissions:
   contents: read
