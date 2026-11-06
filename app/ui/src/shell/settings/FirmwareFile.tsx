@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import clsx from 'clsx';
 import { useStore } from 'zustand';
-import type { DeviceSummary } from '../../companion/api.ts';
+import type { DeviceSummary } from '../../lib/companion/api.ts';
 import { inProgress } from '../../lib/device/firmware.ts';
 import { useDeviceStores } from '../../screens/layout/device.ts';
 import { button } from '../button.ts';

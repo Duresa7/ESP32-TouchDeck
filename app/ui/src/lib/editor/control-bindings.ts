@@ -1,4 +1,4 @@
-import type { IntegrationSummary } from '../../companion/api.ts';
+import type { IntegrationSummary } from '../companion/api.ts';
 import type { Layout, Tile } from './validate.ts';
 
 export type ControlPart = 'drag' | 'previous' | 'play_pause' | 'next' | 'mute';

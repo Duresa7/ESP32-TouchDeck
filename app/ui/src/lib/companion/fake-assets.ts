@@ -1,4 +1,4 @@
-import { encodeTdi1, TDI1_SIDE } from '../lib/icons/tdi1.ts';
+import { encodeTdi1, TDI1_SIDE } from '../icons/tdi1.ts';
 import type { AssetRef, AssetSource, Builtin, CatalogHit, CreateAsset, ErrorBody, Fit, Job } from './api.ts';
 import { RECORDED_BUILTINS, RECORDED_HITS } from './fake-catalog.data.ts';
 import { fakeGif } from './fake-gif.ts';

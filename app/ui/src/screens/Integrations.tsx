@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Tooltip } from '@base-ui/react/tooltip';
-import { useIntegrations } from '../companion/integrations.ts';
+import { useIntegrations } from '../lib/companion/integrations.ts';
 import { useAddToLayout } from './integrations/addToLayout.ts';
 import { IntegrationDetail } from './integrations/IntegrationDetail.tsx';
 import { IntegrationList } from './integrations/IntegrationList.tsx';

@@ -1,4 +1,4 @@
-import type { IntegrationSummary, PresetTile } from '../../companion/api.ts';
+import type { IntegrationSummary, PresetTile } from '../companion/api.ts';
 import { parseAction, presetLabel } from '../integrations/model.ts';
 import { RENDER_STREAMS, type BarStreams, type GraphBinding, type LiveLook, type Renderer, type StreamType, type Tile, type WidgetAction } from './validate.ts';
 

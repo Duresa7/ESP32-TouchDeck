@@ -1,10 +1,10 @@
 import { useEffect } from 'react';
 import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
-import type { DeviceSummary, Layout } from '../companion/api.ts';
-import { useCompanion } from '../companion/connection.ts';
-import { useDevices } from '../companion/devices.ts';
-import { isApiError } from '../companion/errors.ts';
+import type { DeviceSummary, Layout } from '../lib/companion/api.ts';
+import { useCompanion } from '../lib/companion/connection.ts';
+import { useDevices } from '../lib/companion/devices.ts';
+import { isApiError } from '../lib/companion/errors.ts';
 import { shownOrientation } from './home-model.ts';
 
 const layoutsStore = createStore<{ seen: Record<string, Layout | null> }>()(() => ({ seen: {} }));

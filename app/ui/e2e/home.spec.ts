@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import type { LayoutSummary } from '../src/companion/api.ts';
+import type { LayoutSummary } from '../src/lib/companion/api.ts';
 
 const demo = (page: Page) => ({
   push: (id: string, order: string[]) =>

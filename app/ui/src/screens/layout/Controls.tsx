@@ -1,7 +1,7 @@
 import { useId, useMemo } from 'react';
 import { useStore } from 'zustand';
-import { useDevices } from '../../companion/devices.ts';
-import { useIntegrations } from '../../companion/integrations.ts';
+import { useDevices } from '../../lib/companion/devices.ts';
+import { useIntegrations } from '../../lib/companion/integrations.ts';
 import { controlsStore, noticeOf, type ControlNotice, type NeedsSend } from '../../lib/device/controls.ts';
 import { controlBindings, controlWords, type ControlBinding } from '../../lib/editor/control-bindings.ts';
 import { plural } from '../../lib/editor/messages.ts';

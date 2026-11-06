@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createClient } from '../../companion/client.ts';
-import { createFakeCompanion } from '../../companion/fake.ts';
-import { RECORDED_HITS } from '../../companion/fake-catalog.data.ts';
-import { createJobsStore, waitForJob } from '../../companion/jobs.ts';
-import { windowSession } from '../../companion/session.ts';
+import { createClient } from '../companion/client.ts';
+import { createFakeCompanion } from '../companion/fake.ts';
+import { RECORDED_HITS } from '../companion/fake-catalog.data.ts';
+import { createJobsStore, waitForJob } from '../companion/jobs.ts';
+import { windowSession } from '../companion/session.ts';
 import { decodeTdi1 } from './tdi1.ts';
 import { catalogProblem, renderCatalog, type PickDeps } from './pick.ts';
 

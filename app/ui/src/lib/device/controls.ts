@@ -1,7 +1,7 @@
 import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
-import type { ControlLayout, DeviceSummary, Orientation } from '../../companion/api.ts';
-import { devicesStore, type DevicesStore } from '../../companion/devices.ts';
+import type { ControlLayout, DeviceSummary, Orientation } from '../companion/api.ts';
+import { devicesStore, type DevicesStore } from '../companion/devices.ts';
 
 export type NeedsSend = 'no-pushed-copy' | 'differs';
 

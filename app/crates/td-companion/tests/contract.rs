@@ -4,12 +4,12 @@ use td_companion::{api::Access, bindings};
 fn api_bindings_are_current() {
     assert_eq!(
         bindings::generate(),
-        include_str!("../../../ui/src/companion/api.gen.ts"),
+        include_str!("../../../ui/src/lib/companion/api.gen.ts"),
         "run `pnpm gen:api`"
     );
     assert_eq!(
         bindings::generate_test(),
-        include_str!("../../../ui/src/companion/api.test.gen.ts"),
+        include_str!("../../../ui/src/lib/companion/api.test.gen.ts"),
         "run `pnpm gen:api`"
     );
     // The product client never carries the test routes.

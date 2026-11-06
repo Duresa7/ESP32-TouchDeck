@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { readGif } from '../lib/editor/gif.ts';
+import { readGif } from '../editor/gif.ts';
 import { fakeGif } from './fake-gif.ts';
 
 test('the fake GIF is a looping GIF of the size asked for, at 10 fps', () => {

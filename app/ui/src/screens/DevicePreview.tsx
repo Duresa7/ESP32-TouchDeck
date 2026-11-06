@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import type { Orientation } from '../companion/api.ts';
+import type { Orientation } from '../lib/companion/api.ts';
 import { geometry, screenSize } from '../lib/deck/geometry.ts';
 import { buildDots, buildPage, buildTitle, FONTS, type FontRole, type TextView } from '../lib/deck/scene.ts';
 import type { Line } from '../lib/deck/text.ts';

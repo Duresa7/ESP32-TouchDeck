@@ -1,6 +1,6 @@
 import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
-import type { DeviceSummary } from '../companion/api.ts';
+import type { DeviceSummary } from '../lib/companion/api.ts';
 import { readSkipped, writeSkipped, type SkipStorage } from '../lib/device/setup-trigger.ts';
 
 export interface SetupUiState {

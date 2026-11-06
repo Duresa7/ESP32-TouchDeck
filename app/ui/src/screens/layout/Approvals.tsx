@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import clsx from 'clsx';
-import type { AllowedAction, ApprovalRequest } from '../../companion/api.ts';
-import { actionsStore, useActions } from '../../companion/actions.ts';
-import { useCompanion } from '../../companion/connection.ts';
-import { isApiError, toApiError } from '../../companion/errors.ts';
+import type { AllowedAction, ApprovalRequest } from '../../lib/companion/api.ts';
+import { actionsStore, useActions } from '../../lib/companion/actions.ts';
+import { useCompanion } from '../../lib/companion/connection.ts';
+import { isApiError, toApiError } from '../../lib/companion/errors.ts';
 import { commandLine, escapeInvisible, processOf, sameProcess, type Started } from '../../lib/editor/actions.ts';
 import type { Action, Layout } from '../../lib/editor/validate.ts';
 import { button } from '../../shell/button.ts';

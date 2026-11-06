@@ -1,4 +1,4 @@
-import { isApiError } from '../../companion/errors.ts';
+import { isApiError } from '../../lib/companion/errors.ts';
 
 export const UNREACHABLE = "Can't reach the Companion. Check that Open TouchDeck is running in the tray, then retry.";
 

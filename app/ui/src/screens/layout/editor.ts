@@ -1,8 +1,8 @@
 import { useStore } from 'zustand';
-import type { Companion } from '../../companion/client.ts';
-import { useCompanion } from '../../companion/connection.ts';
-import { devicesStore, useDevices } from '../../companion/devices.ts';
-import { jobsStore, waitForJob } from '../../companion/jobs.ts';
+import type { Companion } from '../../lib/companion/client.ts';
+import { useCompanion } from '../../lib/companion/connection.ts';
+import { devicesStore, useDevices } from '../../lib/companion/devices.ts';
+import { jobsStore, waitForJob } from '../../lib/companion/jobs.ts';
 import { showsKind, type TileKind } from '../../lib/device/needs-firmware.ts';
 import { offersGif } from '../../lib/editor/gif.ts';
 import { createGifTiles, type GifTiles, type GifTilesState } from '../../lib/editor/gif-tiles.ts';

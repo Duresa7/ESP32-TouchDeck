@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type {} from '../../ui/src/companion/session';
+import type {} from '../../ui/src/lib/companion/session';
 
 // Build with `cargo build -p td-companion --features test-hooks` in app/, or point TOUCHDECK_COMPANION_BIN at a build.
 const binary = process.env.TOUCHDECK_COMPANION_BIN ||

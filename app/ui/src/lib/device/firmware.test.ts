@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { DeviceSummary, FirmwareProgress, Job } from '../../companion/api.ts';
-import { createClient, type Companion } from '../../companion/client.ts';
-import { ApiError } from '../../companion/errors.ts';
-import { createFakeCompanion, type FakeCompanion } from '../../companion/fake.ts';
-import type { FakePick } from '../../companion/fake-firmware.ts';
-import { createJobsStore, type JobsStore } from '../../companion/jobs.ts';
-import { sampleDevice } from '../../companion/samples.ts';
-import { windowSession } from '../../companion/session.ts';
+import type { DeviceSummary, FirmwareProgress, Job } from '../companion/api.ts';
+import { createClient, type Companion } from '../companion/client.ts';
+import { ApiError } from '../companion/errors.ts';
+import { createFakeCompanion, type FakeCompanion } from '../companion/fake.ts';
+import type { FakePick } from '../companion/fake-firmware.ts';
+import { createJobsStore, type JobsStore } from '../companion/jobs.ts';
+import { sampleDevice } from '../companion/samples.ts';
+import { windowSession } from '../companion/session.ts';
 import { createFirmwareUpdate, doneText, failureText, phaseText, viewOf, type FirmwareUpdateStore, type PhaseProgress } from './firmware.ts';
 
 const BASE = 'http://127.0.0.1:51234';

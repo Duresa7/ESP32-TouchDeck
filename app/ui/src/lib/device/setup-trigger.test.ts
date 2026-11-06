@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import type { DeviceSummary, LinkState } from '../../companion/api.ts';
-import { sampleDevice } from '../../companion/samples.ts';
+import type { DeviceSummary, LinkState } from '../companion/api.ts';
+import { sampleDevice } from '../companion/samples.ts';
 import { readSkipped, setupCandidate, SKIPPED_KEY, writeSkipped, type SkipStorage } from './setup-trigger.ts';
 
 const connected = { state: 'connected', port: 'COM3', since_ms: 0, protocol: 2 } satisfies LinkState;

@@ -838,7 +838,7 @@ private metadata; with a current player, it toggles play/pause twice.
 
 These sections define steps B through I; step A adds contracts and mocks only.
 
-The UI fake (`app/ui/src/companion/fake-live.ts`) stands in for steps B, C, E
+The UI fake (`app/ui/src/lib/companion/fake-live.ts`) stands in for steps B, C, E
 and F in demo mode. It lists Volume and Media with the Presets above, and keeps
 a Volume level (0.64, unmuted) and one track ("Night Drive" by "Tidal Lines",
 playing). A connected mock Device whose `tile_kinds` include a Tile's renderer
@@ -1014,7 +1014,7 @@ App updates aren't API routes. They stay in Electron's preload as `openTouchDeck
 
 ### Electron signed updater (87A)
 
-The preload calls always resolve with data, except successful `install()`, which quits without resolving. `UpdateCheck`, `UpdateProgress`, `UpdateDownload` and `UpdateInstall` in `app/ui/src/companion/session.ts` are the UI seam. Each update IPC handler uses the same top-frame, window and Companion-origin check as `session`. The renderer supplies no URL, path, key or installer arguments.
+The preload calls always resolve with data, except successful `install()`, which quits without resolving. `UpdateCheck`, `UpdateProgress`, `UpdateDownload` and `UpdateInstall` in `app/ui/src/lib/companion/session.ts` are the UI seam. Each update IPC handler uses the same top-frame, window and Companion-origin check as `session`. The renderer supplies no URL, path, key or installer arguments.
 
 The Windows x64 feed is `UPDATE_FEED` in `app/electron/src/updates/index.ts`. Only a strictly newer SemVer version is offered. Manifest bodies are limited to 1 MiB and 15 seconds; installers to 256 MiB and 5 minutes, including redirects and reading the body. Every redirect is checked for HTTPS. Unpackaged builds alone honor `TOUCHDECK_UPDATE_TEST_FEED=http://127.0.0.1:PORT/latest.json`; this also permits numeric-loopback HTTP artifact URLs. Packaged builds ignore it.
 
@@ -1249,7 +1249,7 @@ pub struct Req<E: Endpoint> { pub path: E::Path, pub query: E::Query, pub body: 
 
 ### Generated TypeScript
 
-ts-rs derives each type. The Companion's generator writes `<ui>/src/companion/api.gen.ts` with every type, an endpoint table, typed wrappers `companion.<feature>.<action>()`, the `EventMap`, the `JobMap`, the `ErrorCode` union and `SyncData`. Each wrapper takes optional request headers after the bearer, such as `If-Match`. A response that isn't JSON comes back as a `Blob`. The file starts with `// Generated from td-companion. Do not edit.` and uses LF endings. `pnpm gen:api` runs `cargo run -p td-companion --features test-hooks -- --emit-ts <path>`.
+ts-rs derives each type. The Companion's generator writes `<ui>/src/lib/companion/api.gen.ts` with every type, an endpoint table, typed wrappers `companion.<feature>.<action>()`, the `EventMap`, the `JobMap`, the `ErrorCode` union and `SyncData`. Each wrapper takes optional request headers after the bearer, such as `If-Match`. A response that isn't JSON comes back as a `Blob`. The file starts with `// Generated from td-companion. Do not edit.` and uses LF endings. `pnpm gen:api` runs `cargo run -p td-companion --features test-hooks -- --emit-ts <path>`.
 
 `td-core` gains an optional `ts` feature that adds `#[cfg_attr(feature = "ts", derive(TS))]` to `Layout`, `Hello`, `Settings`, `Orientation` and the other types the API carries.
 

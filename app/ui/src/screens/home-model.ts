@@ -1,4 +1,4 @@
-import type { DeviceSummary, Layout, LayoutSummary, Orientation } from '../companion/api.ts';
+import type { DeviceSummary, Layout, LayoutSummary, Orientation } from '../lib/companion/api.ts';
 import type { Unchecked } from '../lib/device/controls.ts';
 
 export function statusOf(state: string) {

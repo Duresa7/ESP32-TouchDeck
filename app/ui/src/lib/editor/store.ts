@@ -1,7 +1,7 @@
 import { createStore } from 'zustand/vanilla';
-import type { Job, JobMap, PresetTile } from '../../companion/api.ts';
-import type { Companion } from '../../companion/client.ts';
-import { toApiError, type ApiError } from '../../companion/errors.ts';
+import type { Job, JobMap, PresetTile } from '../companion/api.ts';
+import type { Companion } from '../companion/client.ts';
+import { toApiError, type ApiError } from '../companion/errors.ts';
 import { parseAction, presetLabel } from '../integrations/model.ts';
 import { isSent, readDraft, writeDraft, type Draft, type DraftStorage } from './drafts.ts';
 import { freshAction } from './actions.ts';

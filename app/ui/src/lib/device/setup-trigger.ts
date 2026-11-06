@@ -1,4 +1,4 @@
-import type { DeviceSummary } from '../../companion/api.ts';
+import type { DeviceSummary } from '../companion/api.ts';
 
 export function setupCandidate(devices: readonly DeviceSummary[], skipped: ReadonlySet<string>): DeviceSummary | null {
   return devices.find((d) => d.setup === 'needs-setup' && d.link.state === 'connected' && !skipped.has(d.id)) ?? null;

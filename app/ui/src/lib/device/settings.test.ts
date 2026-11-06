@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { DeviceSettings, DeviceSummary, SettingsPatched } from '../../companion/api.ts';
-import { createClient, type Companion } from '../../companion/client.ts';
-import { ApiError } from '../../companion/errors.ts';
-import { createFakeCompanion, type FakeCompanion } from '../../companion/fake.ts';
-import { sampleDevice } from '../../companion/samples.ts';
-import { windowSession } from '../../companion/session.ts';
+import type { DeviceSettings, DeviceSummary, SettingsPatched } from '../companion/api.ts';
+import { createClient, type Companion } from '../companion/client.ts';
+import { ApiError } from '../companion/errors.ts';
+import { createFakeCompanion, type FakeCompanion } from '../companion/fake.ts';
+import { sampleDevice } from '../companion/samples.ts';
+import { windowSession } from '../companion/session.ts';
 import { createDeviceSettings, nameProblem, type DeviceSettingsDeps, type DeviceSettingsStore } from './settings.ts';
 
 const BASE = 'http://127.0.0.1:51234';

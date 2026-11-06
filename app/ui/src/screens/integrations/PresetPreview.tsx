@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import { Activity, Braces, Cpu, Gauge, Monitor, Music2, Pause, Play, Plug, Server, Type, Volume2, Wifi, type LucideProps } from 'lucide-react';
-import type { DataStream, PresetTile } from '../../companion/api.ts';
+import type { DataStream, PresetTile } from '../../lib/companion/api.ts';
 import { presetLabel, presetLook } from '../../lib/integrations/model.ts';
 import { Tip } from '../layout/Tip.tsx';
 import '../../styles/integrations.css';

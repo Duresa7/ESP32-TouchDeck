@@ -1,5 +1,5 @@
 import { expect, test, vi } from 'vitest';
-import type { Layout, Tile } from '../lib/editor/validate.ts';
+import type { Layout, Tile } from '../editor/validate.ts';
 import type { ControlLayout, DeviceSummary, LinkState } from './api.ts';
 import { hasControls, type Settable } from './fake-controls.ts';
 import { createFakeCompanion } from './fake.ts';

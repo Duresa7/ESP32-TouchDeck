@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { createClient } from '../companion/client.ts';
-import { isApiError } from '../companion/errors.ts';
-import { createFakeCompanion } from '../companion/fake.ts';
-import { demoLayout, sampleDevice } from '../companion/samples.ts';
-import { windowSession } from '../companion/session.ts';
+import { createClient } from '../lib/companion/client.ts';
+import { isApiError } from '../lib/companion/errors.ts';
+import { createFakeCompanion } from '../lib/companion/fake.ts';
+import { demoLayout, sampleDevice } from '../lib/companion/samples.ts';
+import { windowSession } from '../lib/companion/session.ts';
 import { createUiStore } from '../state/ui.ts';
 import { DevicePreview } from './DevicePreview.tsx';
 import { deviceWidth, firmwareUpdate, lastSeen, previewOf, statusOf } from './home-model.ts';

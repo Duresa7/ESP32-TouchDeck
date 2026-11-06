@@ -1,6 +1,6 @@
 import { createStore } from 'zustand/vanilla';
-import type { Companion } from '../../companion/client.ts';
-import { isApiError } from '../../companion/errors.ts';
+import type { Companion } from '../../lib/companion/client.ts';
+import { isApiError } from '../../lib/companion/errors.ts';
 import { problemText } from './problems.ts';
 
 export type ConsoleEntry = { kind: 'sent' | 'line'; text: string };

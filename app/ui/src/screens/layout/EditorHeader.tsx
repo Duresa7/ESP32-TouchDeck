@@ -3,7 +3,7 @@ import { Menu } from '@base-ui/react/menu';
 import { Toggle } from '@base-ui/react/toggle';
 import { ToggleGroup } from '@base-ui/react/toggle-group';
 import { Check, Eye, MoreHorizontal, Plus, RectangleHorizontal, RectangleVertical, Upload } from 'lucide-react';
-import type { DeviceSummary } from '../../companion/api.ts';
+import type { DeviceSummary } from '../../lib/companion/api.ts';
 import { saveState, type EditorStore } from '../../lib/editor/store.ts';
 import type { Orientation } from '../../lib/editor/validate.ts';
 import { button } from '../../shell/button.ts';

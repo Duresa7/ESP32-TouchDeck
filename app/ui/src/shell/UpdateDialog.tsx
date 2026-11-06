@@ -1,6 +1,6 @@
 import { useId, useLayoutEffect, useRef, type RefObject } from 'react';
 import { Dialog } from '@base-ui/react/dialog';
-import { useDevices } from '../companion/devices.ts';
+import { useDevices } from '../lib/companion/devices.ts';
 import { useUpdates, type UpdateOffer, type UpdateStep } from '../state/updates.ts';
 import { button } from './button.ts';
 import { changeLines, downloadingText, failureText, percent, sizeText, waitText } from './update-text.ts';

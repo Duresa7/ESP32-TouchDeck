@@ -1,5 +1,5 @@
 import { createStore } from 'zustand/vanilla';
-import type { Companion } from '../../companion/client.ts';
+import type { Companion } from '../../lib/companion/client.ts';
 import { problemText } from './problems.ts';
 
 export type StartupView =

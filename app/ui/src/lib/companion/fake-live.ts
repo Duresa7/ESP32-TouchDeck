@@ -1,5 +1,5 @@
-import { fitText } from '../lib/deck/live-text.ts';
-import { parseLayout, type Orientation, type Tile } from '../lib/editor/validate.ts';
+import { fitText } from '../deck/live-text.ts';
+import { parseLayout, type Orientation, type Tile } from '../editor/validate.ts';
 import type { DeviceSummary } from './api.ts';
 
 /** One live value a mock Device holds, as `v2.live.set` last gave it. */

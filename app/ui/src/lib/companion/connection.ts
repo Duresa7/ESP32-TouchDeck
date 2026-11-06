@@ -6,7 +6,7 @@ import { openEvents, openWebSocket, type Events, type OpenSocket } from './event
 import { integrationsStore, type IntegrationsStore } from './integrations.ts';
 import { jobsStore, type JobsStore } from './jobs.ts';
 import { pickSession, type Session } from './session.ts';
-import type { UpdatesBridge } from '../state/updates.ts';
+import type { UpdatesBridge } from '../../state/updates.ts';
 
 export interface Environment {
   base: string;

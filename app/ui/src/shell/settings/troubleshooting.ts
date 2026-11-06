@@ -1,4 +1,4 @@
-import type { DeviceSummary } from '../../companion/api.ts';
+import type { DeviceSummary } from '../../lib/companion/api.ts';
 import { escapeInvisible } from '../../lib/editor/actions.ts';
 
 export interface Fact {

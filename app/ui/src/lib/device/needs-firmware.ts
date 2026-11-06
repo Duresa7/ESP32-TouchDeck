@@ -1,4 +1,4 @@
-import type { DeviceSummary } from '../../companion/api.ts';
+import type { DeviceSummary } from '../companion/api.ts';
 
 const TILE_KINDS = ['static', 'gif', 'graph', 'bar', 'now-playing', 'photo-frame', 'clock'] as const;
 export type TileKind = (typeof TILE_KINDS)[number];

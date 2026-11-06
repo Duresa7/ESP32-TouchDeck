@@ -1,7 +1,7 @@
 import { createStore } from 'zustand/vanilla';
-import type { DeviceSettings, DeviceSettingsPatch, DeviceSummary, Orientation, PhotoFrameSettings, SettingsPatched } from '../../companion/api.ts';
-import type { Companion } from '../../companion/client.ts';
-import { toApiError, type ApiError } from '../../companion/errors.ts';
+import type { DeviceSettings, DeviceSettingsPatch, DeviceSummary, Orientation, PhotoFrameSettings, SettingsPatched } from '../companion/api.ts';
+import type { Companion } from '../companion/client.ts';
+import { toApiError, type ApiError } from '../companion/errors.ts';
 
 export type Field = 'name' | 'orientation' | 'brightness' | 'photo_frame';
 export type Unsupported = { since: string | null };

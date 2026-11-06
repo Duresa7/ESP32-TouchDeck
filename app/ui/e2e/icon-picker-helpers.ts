@@ -1,6 +1,6 @@
 import { expect, type Page } from '@playwright/test';
-import type { AssetSource } from '../src/companion/api.ts';
-import type { FakeSearch } from '../src/companion/fake-assets.ts';
+import type { AssetSource } from '../src/lib/companion/api.ts';
+import type { FakeSearch } from '../src/lib/companion/fake-assets.ts';
 import { openStarter } from './inspector-helpers.ts';
 
 export async function openCopyTile(page: Page, path = '/') {

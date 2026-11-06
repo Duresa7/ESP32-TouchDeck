@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { GIF_CAPS } from '../../companion/samples.ts';
-import { ApiError } from '../../companion/errors.ts';
+import { GIF_CAPS } from '../companion/samples.ts';
+import { ApiError } from '../companion/errors.ts';
 import { fittedText, gifProblem, gifPushProblem, gifTarget, offersGif, readGif } from './gif.ts';
 import { parseLayout, setGif, starterLayout } from './validate.ts';
 

@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type RefObject } from 'react';
 import clsx from 'clsx';
 import { AppWindow, Search, Upload } from 'lucide-react';
-import type { AssetRef, Builtin, CatalogHit } from '../../companion/api.ts';
-import type { Companion } from '../../companion/client.ts';
-import { useCompanion } from '../../companion/connection.ts';
-import { toApiError } from '../../companion/errors.ts';
-import { jobsStore, waitForJob } from '../../companion/jobs.ts';
+import type { AssetRef, Builtin, CatalogHit } from '../../lib/companion/api.ts';
+import type { Companion } from '../../lib/companion/client.ts';
+import { useCompanion } from '../../lib/companion/connection.ts';
+import { toApiError } from '../../lib/companion/errors.ts';
+import { jobsStore, waitForJob } from '../../lib/companion/jobs.ts';
 import type { EditorStore } from '../../lib/editor/store.ts';
 import { assetOf, type Tile } from '../../lib/editor/validate.ts';
 import { catalogTint, createCatalogSearch, monogram, SOURCE_NAMES, type CatalogSearch, type SearchState } from '../../lib/icons/catalog.ts';
