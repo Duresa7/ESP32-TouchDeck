@@ -1,11 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import type { DeviceSummary } from './api.ts';
-import { createFakeLive } from './fake-live.ts';
-import { GIF_CAPS, sampleDevice } from './samples.ts';
+import type { DeviceSummary } from '../api.ts';
+import { createFakeLive } from '../fake.ts';
+import { GIF_CAPS, sampleDevice } from '../samples.ts';
 
-const media = readFileSync(join(import.meta.dirname, '..', '..', '..', '..', 'schema', 'examples', 'media.json'), 'utf8');
+const media = readFileSync(join(import.meta.dirname, '..', '..', '..', '..', '..', '..', 'schema', 'examples', 'media.json'), 'utf8');
 const CONNECTED = { state: 'connected', port: 'COM3', since_ms: 0, protocol: 2 } as const;
 
 function live(kinds: string[]) {

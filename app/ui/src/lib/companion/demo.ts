@@ -1,12 +1,12 @@
 import type { AssetSource, ControlLayout, Delivery, DeviceSummary, ErrorBody, Fit } from './api.ts';
 import type { Environment } from './connection.ts';
 import { createFakeCompanion } from './fake.ts';
-import type { FakeSearch } from './fake-assets.ts';
-import { worstCaseHits } from './fake-catalog-worst.ts';
-import type { FakePick } from './fake-firmware.ts';
-import { freshDevice, newBoard, type Answer, type BoardKind } from './fake-new-boards.ts';
-import { createFakeUpdates, sampleOffer, type FakeUpdates } from './fake-updates.ts';
-import { worstAccounts, worstBrowsers, worstCustom, worstDelivery, worstDevices, worstFolder, worstHubError, worstLayouts, worstNewBoards, worstOffer } from './fake-worst.ts';
+import type { FakeSearch } from './fake/fake-assets.ts';
+import { worstCaseHits } from './fake/fake-catalog-worst.ts';
+import type { FakePick } from './fake/fake-firmware.ts';
+import { freshDevice, newBoard, type Answer, type BoardKind } from './fake/fake-new-boards.ts';
+import { createFakeUpdates, sampleOffer, type FakeUpdates } from './fake/fake-updates.ts';
+import { worstAccounts, worstBrowsers, worstCustom, worstDelivery, worstDevices, worstFolder, worstHubError, worstLayouts, worstNewBoards, worstOffer } from './fake/fake-worst.ts';
 import { demoLayout, demoScenario } from './samples.ts';
 import { windowSession, type UpdateCheck } from './session.ts';
 

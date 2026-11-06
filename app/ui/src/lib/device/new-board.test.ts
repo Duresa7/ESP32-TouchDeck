@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { FirmwareProgress, Job } from '../companion/api.ts';
 import { createClient, type Companion } from '../companion/client.ts';
 import { createFakeCompanion, type FakeCompanion } from '../companion/fake.ts';
-import { newBoard } from '../companion/fake-new-boards.ts';
+import { newBoard } from '../companion/fake.ts';
 import { createJobsStore, type JobsStore } from '../companion/jobs.ts';
 import { windowSession } from '../companion/session.ts';
 import { viewOf, type PhaseProgress } from './firmware.ts';

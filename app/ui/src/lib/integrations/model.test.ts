@@ -1,4 +1,4 @@
-import { createFakeIntegrations } from '../companion/fake-integrations.ts';
+import { createFakeIntegrations } from '../companion/fake.ts';
 import type { IntegrationView } from '../companion/api.ts';
 import { describe, expect, it } from 'vitest';
 import type { ConfigField, DataStream, IntegrationSummary } from '../companion/api.ts';

@@ -1,4 +1,4 @@
-import type { IntegrationView } from './api.gen.ts';
+import type { IntegrationView } from '../api.gen.ts';
 
 /** The Volume Integration as docs/companion-api.md describes it: the PC's level, settable, and whether it is muted. */
 export function fakeVolume(enabled = true): IntegrationView {

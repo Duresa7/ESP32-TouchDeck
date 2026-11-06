@@ -3,7 +3,7 @@ import type { DeviceSummary, FirmwareProgress, Job } from '../companion/api.ts';
 import { createClient, type Companion } from '../companion/client.ts';
 import { ApiError } from '../companion/errors.ts';
 import { createFakeCompanion, type FakeCompanion } from '../companion/fake.ts';
-import type { FakePick } from '../companion/fake-firmware.ts';
+import type { FakePick } from '../companion/fake.ts';
 import { createJobsStore, type JobsStore } from '../companion/jobs.ts';
 import { sampleDevice } from '../companion/samples.ts';
 import { windowSession } from '../companion/session.ts';

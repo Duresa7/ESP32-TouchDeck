@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createFakeUpdates, sampleOffer, type FakeUpdatesScript } from '../lib/companion/fake-updates.ts';
+import { createFakeUpdates, sampleOffer, type FakeUpdatesScript } from '../lib/companion/fake.ts';
 import { CHECK_EVERY_MS, createUpdatesStore, watchForUpdates, type UpdatesBridge, type UpdateStep } from './updates.ts';
 
 function setup(script: Partial<FakeUpdatesScript> = {}) {

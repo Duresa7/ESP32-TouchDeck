@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'vitest';
-import { newBoard } from '../lib/companion/fake-new-boards.ts';
+import { newBoard } from '../lib/companion/fake.ts';
 import { boardCards, boardsUi } from './new-boards.ts';
 
 const a = newBoard({ id: 'mock00aa', port: 'COM7' });

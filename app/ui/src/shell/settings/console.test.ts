@@ -3,7 +3,7 @@ import type { LinkState } from '../../lib/companion/api.ts';
 import { createClient } from '../../lib/companion/client.ts';
 import { consoleCommands } from '../../lib/companion/console.ts';
 import { createFakeCompanion, type FakeCompanion } from '../../lib/companion/fake.ts';
-import { isAllowedConsoleLine } from '../../lib/companion/fake-console.ts';
+import { isAllowedConsoleLine } from '../../lib/companion/fake.ts';
 import { sampleDevice } from '../../lib/companion/samples.ts';
 import { windowSession } from '../../lib/companion/session.ts';
 import { CONSOLE_KEEPS, createConsoleStore, type ConsoleStore } from './console.ts';

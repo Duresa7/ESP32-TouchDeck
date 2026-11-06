@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
-import { createFakeCompanion } from './fake.ts';
-import { fakeThisPc } from './fake-this-pc.ts';
+import { createFakeCompanion } from '../fake.ts';
+import { fakeThisPc } from '../fake.ts';
 
 test('This PC is discoverable with ten ordered Presets through the fake API', async () => {
   const fake = createFakeCompanion();

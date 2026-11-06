@@ -1,4 +1,4 @@
-import type { DeviceSummary, ErrorBody, FirmwareBuild, FirmwareProgress, FirmwareResult, Job, NewBoard } from './api.ts';
+import type { DeviceSummary, ErrorBody, FirmwareBuild, FirmwareProgress, FirmwareResult, Job, NewBoard } from '../api.ts';
 
 type Frame = Record<string, unknown> & { type: string };
 

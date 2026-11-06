@@ -1,9 +1,9 @@
 import { expect, test, vi } from 'vitest';
-import type { Layout, Tile } from '../editor/validate.ts';
-import type { ControlLayout, DeviceSummary, LinkState } from './api.ts';
-import { hasControls, type Settable } from './fake-controls.ts';
-import { createFakeCompanion } from './fake.ts';
-import { GIF_CAPS, sampleDevice } from './samples.ts';
+import type { Layout, Tile } from '../../editor/validate.ts';
+import type { ControlLayout, DeviceSummary, LinkState } from '../api.ts';
+import { hasControls, type Settable } from '../fake.ts';
+import { createFakeCompanion } from '../fake.ts';
+import { GIF_CAPS, sampleDevice } from '../samples.ts';
 
 const CONNECTED: LinkState = { state: 'connected', port: 'COM3', since_ms: 0, protocol: 2 };
 const LOST: LinkState = { state: 'lost', reason: 'unplugged', detail: '', at_ms: 1 };

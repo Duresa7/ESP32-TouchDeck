@@ -1,6 +1,6 @@
 import { fakeMedia, fakeVolume } from './fake-media.ts';
 import { fakeThisPc } from './fake-this-pc.ts';
-import type { AccountUsage, Delivery, IntegrationSummary, IntegrationView } from './api.ts';
+import type { AccountUsage, Delivery, IntegrationSummary, IntegrationView } from '../api.ts';
 
 type Frame = Record<string, unknown> & { type: string };
 

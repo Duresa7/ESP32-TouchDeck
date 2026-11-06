@@ -1,17 +1,17 @@
 import type { DeviceSummary, FirmwareBuild, Layout, NewBoard, SystemInfo } from './api.ts';
 import { CLOSE_SESSION, type EventSocket } from './events.ts';
-import { createFakeActions } from './fake-actions.ts';
-import { createFakeAssets, type FakeAssetsOptions } from './fake-assets.ts';
-import { createFakeConsole } from './fake-console.ts';
-import { createFakeControls } from './fake-controls.ts';
-import { createFakeDeviceSettings } from './fake-device-settings.ts';
-import { createFakeFirmware } from './fake-firmware.ts';
-import { createFakeIntegrations, type FakeIntegrationsOptions } from './fake-integrations.ts';
-import { createFakeLayouts } from './fake-layouts.ts';
-import { createFakeLive } from './fake-live.ts';
-import { createFakeNewBoards } from './fake-new-boards.ts';
-import { createFakeSessions, type FakeBrowser } from './fake-sessions.ts';
-import { createFakeStartup } from './fake-startup.ts';
+import { createFakeActions } from './fake/fake-actions.ts';
+import { createFakeAssets, type FakeAssetsOptions } from './fake/fake-assets.ts';
+import { createFakeConsole } from './fake/fake-console.ts';
+import { createFakeControls } from './fake/fake-controls.ts';
+import { createFakeDeviceSettings } from './fake/fake-device-settings.ts';
+import { createFakeFirmware } from './fake/fake-firmware.ts';
+import { createFakeIntegrations, type FakeIntegrationsOptions } from './fake/fake-integrations.ts';
+import { createFakeLayouts } from './fake/fake-layouts.ts';
+import { createFakeLive } from './fake/fake-live.ts';
+import { createFakeNewBoards } from './fake/fake-new-boards.ts';
+import { createFakeSessions, type FakeBrowser } from './fake/fake-sessions.ts';
+import { createFakeStartup } from './fake/fake-startup.ts';
 import type { OpenTouchDeckBridge } from './session.ts';
 
 // An in-memory Companion for tests and the demo mode of `pnpm dev:ui`. It answers
@@ -291,3 +291,19 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
 }
 
 export type FakeCompanion = ReturnType<typeof createFakeCompanion>;
+
+// Explicit fake helpers shared by tests and browser scenarios.
+export { createFakeAssets, type FakeSearch } from './fake/fake-assets.ts';
+export { RECORDED_HITS } from './fake/fake-catalog.data.ts';
+export { isAllowedConsoleLine } from './fake/fake-console.ts';
+export { hasControls, type Settable } from './fake/fake-controls.ts';
+export { type FakePick } from './fake/fake-firmware.ts';
+export { fakeGif } from './fake/fake-gif.ts';
+export { createFakeIntegrations } from './fake/fake-integrations.ts';
+export { createFakeLive } from './fake/fake-live.ts';
+export { fakeMedia, fakeVolume } from './fake/fake-media.ts';
+export { freshDevice, newBoard } from './fake/fake-new-boards.ts';
+export { createFakeSessions } from './fake/fake-sessions.ts';
+export { fakeThisPc } from './fake/fake-this-pc.ts';
+export { createFakeUpdates, sampleOffer, type FakeUpdatesScript } from './fake/fake-updates.ts';
+export { LONG_WORD, WORST_DEVICE_NAMES, WORST_LABELS, worstDevices, worstLayout, worstLayouts } from './fake/fake-worst.ts';

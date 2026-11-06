@@ -838,7 +838,7 @@ private metadata; with a current player, it toggles play/pause twice.
 
 These sections define steps B through I; step A adds contracts and mocks only.
 
-The UI fake (`app/ui/src/lib/companion/fake-live.ts`) stands in for steps B, C, E
+The UI fake (`app/ui/src/lib/companion/fake/fake-live.ts`) stands in for steps B, C, E
 and F in demo mode. It lists Volume and Media with the Presets above, and keeps
 a Volume level (0.64, unmuted) and one track ("Night Drive" by "Tidal Lines",
 playing). A connected mock Device whose `tile_kinds` include a Tile's renderer

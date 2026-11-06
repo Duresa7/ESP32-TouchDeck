@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { fakeGif } from '../src/lib/companion/fake-gif.ts';
+import { fakeGif } from '../src/lib/companion/fake.ts';
 import { GIF_CAPS } from '../src/lib/companion/samples.ts';
 import type { Layout, Tile } from '../src/lib/editor/validate.ts';
 import { DESK, openStarter } from './inspector-helpers.ts';

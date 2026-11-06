@@ -1,4 +1,4 @@
-import type { BundleInfo, DeviceSummary, ErrorBody, FirmwareBuild, FirmwareProgress, FirmwareResult, Job, LinkState } from './api.ts';
+import type { BundleInfo, DeviceSummary, ErrorBody, FirmwareBuild, FirmwareProgress, FirmwareResult, Job, LinkState } from '../api.ts';
 
 type Frame = Record<string, unknown> & { type: string };
 

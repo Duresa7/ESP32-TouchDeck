@@ -1,4 +1,4 @@
-import type { CatalogHit } from './api.ts';
+import type { CatalogHit } from '../api.ts';
 
 // Catalog metadata from Simple Icons 16.36.0 (CC0 1.0) and selfh.st/icons 02dd039 (CC BY 4.0).
 export const RECORDED_HITS: readonly CatalogHit[] = [

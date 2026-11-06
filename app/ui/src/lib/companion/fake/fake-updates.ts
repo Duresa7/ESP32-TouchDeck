@@ -1,5 +1,5 @@
-import type { UpdateOffer, UpdatesBridge } from '../../state/updates.ts';
-import type { UpdateCheck, UpdateDownload, UpdateInstall } from './session.ts';
+import type { UpdateOffer, UpdatesBridge } from '../../../state/updates.ts';
+import type { UpdateCheck, UpdateDownload, UpdateInstall } from '../session.ts';
 
 export interface FakeUpdatesScript {
   check: UpdateCheck;

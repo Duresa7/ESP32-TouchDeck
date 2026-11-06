@@ -4,7 +4,7 @@ import { createClient, type Companion } from '../companion/client.ts';
 import { createDevicesStore, type DevicesStore } from '../companion/devices.ts';
 import { openEvents, type Events } from '../companion/events.ts';
 import { createFakeCompanion, type FakeCompanion } from '../companion/fake.ts';
-import { freshDevice } from '../companion/fake-new-boards.ts';
+import { freshDevice } from '../companion/fake.ts';
 import { createJobsStore, waitForJob, type JobsStore } from '../companion/jobs.ts';
 import { sampleDevice } from '../companion/samples.ts';
 import { windowSession } from '../companion/session.ts';

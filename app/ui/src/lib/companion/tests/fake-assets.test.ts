@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { createFakeAssets } from './fake-assets.ts';
+import { createFakeAssets } from '../fake.ts';
 
 const source = { kind: 'gif', upload: 'upl_0000000000000001', device: 'mock0001', target: { width: 128, height: 128, background: [20, 30, 40] } };
 const request = (path: string, body: unknown) => new Request(`http://example.invalid${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

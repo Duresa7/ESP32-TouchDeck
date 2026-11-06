@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { createActionsStore, type ActionsStore } from './actions.ts';
-import type { ApprovalRequest, Job } from './api.ts';
-import { createDevicesStore, type DevicesStore } from './devices.ts';
-import { CLOSE_TOO_SLOW, openEvents, PROBE_MS, type Events, type EventSocket } from './events.ts';
-import { createFakeCompanion, type FakeCompanion } from './fake.ts';
-import { newBoard } from './fake-new-boards.ts';
-import { demoLayout, sampleDevice } from './samples.ts';
-import { browserSession, windowSession } from './session.ts';
+import { createActionsStore, type ActionsStore } from '../actions.ts';
+import type { ApprovalRequest, Job } from '../api.ts';
+import { createDevicesStore, type DevicesStore } from '../devices.ts';
+import { CLOSE_TOO_SLOW, openEvents, PROBE_MS, type Events, type EventSocket } from '../events.ts';
+import { createFakeCompanion, type FakeCompanion } from '../fake.ts';
+import { newBoard } from '../fake.ts';
+import { demoLayout, sampleDevice } from '../samples.ts';
+import { browserSession, windowSession } from '../session.ts';
 
 const URL = 'ws://127.0.0.1:51234/api/v1/events';
 const names = (store: DevicesStore) => store.getState().devices.map((d) => d.name);

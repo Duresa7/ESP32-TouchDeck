@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { createFakeSessions } from './fake-sessions.ts';
+import { createFakeSessions } from '../fake.ts';
 
 function setup() {
   const sessions = createFakeSessions({ browsers: [{ label: 'Edge on Windows', created_ms: 1, last_used_ms: 1 }], onRevoke: () => {} });

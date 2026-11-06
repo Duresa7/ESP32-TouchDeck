@@ -1,4 +1,4 @@
-import type { IntegrationView } from './api.gen.ts';
+import type { IntegrationView } from '../api.gen.ts';
 
 const streams: { id: string; name: string; unit: string }[] = [
   { id: 'cpu_pct', name: 'CPU usage', unit: '%' },

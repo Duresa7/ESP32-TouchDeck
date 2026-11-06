@@ -1,7 +1,7 @@
-import type { AccountUsage, Capabilities, Delivery, DeviceSummary, IntegrationView, Layout, LinkState, NewBoard, Page, Tile } from './api.ts';
+import type { AccountUsage, Capabilities, Delivery, DeviceSummary, IntegrationView, Layout, LinkState, NewBoard, Page, Tile } from '../api.ts';
 import type { FakeBrowser } from './fake-sessions.ts';
-import { sampleDevice } from './samples.ts';
-import type { UpdateCheck } from './session.ts';
+import { sampleDevice } from '../samples.ts';
+import type { UpdateCheck } from '../session.ts';
 
 export const LONG_WORD = 'Supercalifragilisticexpialidocious-StreamingSetupForTheSaturdayEveningShowInHD4K';
 

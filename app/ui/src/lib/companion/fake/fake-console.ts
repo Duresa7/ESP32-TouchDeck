@@ -1,5 +1,5 @@
-import type { DeviceSummary } from './api.ts';
-import { consoleCommands } from './console.ts';
+import type { DeviceSummary } from '../api.ts';
+import { consoleCommands } from '../console.ts';
 
 type Frame = Record<string, unknown> & { type: string };
 

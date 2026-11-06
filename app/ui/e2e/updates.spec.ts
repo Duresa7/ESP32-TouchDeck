@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import type { FakeUpdatesScript } from '../src/lib/companion/fake-updates.ts';
+import type { FakeUpdatesScript } from '../src/lib/companion/fake.ts';
 
 const demo = (page: Page) => ({
   script: (next: Partial<FakeUpdatesScript>) => page.evaluate((next) => window.touchdeckDemo?.updates.script(next), next),

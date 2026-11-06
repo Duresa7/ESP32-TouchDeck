@@ -1,4 +1,4 @@
-import type { DeviceSettings, DeviceSummary, LinkState, PhotoFrameSettings } from './api.ts';
+import type { DeviceSettings, DeviceSummary, LinkState, PhotoFrameSettings } from '../api.ts';
 
 type Frame = Record<string, unknown> & { type: string };
 

@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { createClient } from './client.ts';
-import { ApiError, isApiError, toApiError } from './errors.ts';
-import { createFakeCompanion, type FakeCompanion } from './fake.ts';
-import { sampleDevice } from './samples.ts';
-import { BROWSER_SESSION_KEY, browserSession, windowSession } from './session.ts';
+import { createClient } from '../client.ts';
+import { ApiError, isApiError, toApiError } from '../errors.ts';
+import { createFakeCompanion, type FakeCompanion } from '../fake.ts';
+import { sampleDevice } from '../samples.ts';
+import { BROWSER_SESSION_KEY, browserSession, windowSession } from '../session.ts';
 
 const BASE = 'http://127.0.0.1:51234';
 

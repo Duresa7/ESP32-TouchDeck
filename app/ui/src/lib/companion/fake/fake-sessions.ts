@@ -1,4 +1,4 @@
-import type { SessionInfo, SessionKind } from './api.ts';
+import type { SessionInfo, SessionKind } from '../api.ts';
 
 export interface FakeBrowser {
   label: string;

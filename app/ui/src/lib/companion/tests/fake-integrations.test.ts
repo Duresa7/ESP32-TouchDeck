@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { createFakeIntegrations } from './fake-integrations.ts';
+import { createFakeIntegrations } from '../fake.ts';
 
 test('detail is null until a poll and carries typed account usage and named Preset tiles', async () => {
   const frames: unknown[] = [];

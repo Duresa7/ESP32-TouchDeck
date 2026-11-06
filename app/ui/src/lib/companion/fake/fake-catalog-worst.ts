@@ -1,4 +1,4 @@
-import type { CatalogHit } from './api.ts';
+import type { CatalogHit } from '../api.ts';
 
 const NAMES: readonly [string, 'simple-icons' | 'selfhst', string | null][] = [
   ['Calibre-Web-Automated-Book-Downloader', 'selfhst', null],

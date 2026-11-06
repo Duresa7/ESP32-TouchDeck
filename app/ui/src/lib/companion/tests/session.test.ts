@@ -1,5 +1,5 @@
 import { expect, test, vi } from 'vitest';
-import { windowSession, type OpenTouchDeckBridge } from './session';
+import { windowSession, type OpenTouchDeckBridge } from '../session';
 
 test('renewal names the stale token and notifications only read the session', async () => {
   let changed = () => {};
