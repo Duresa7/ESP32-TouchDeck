@@ -312,8 +312,8 @@ mod tests {
 
     #[test]
     fn review_sweep_reaches_past_sixty_four_icons() {
-        let (deck, session) = deck();
         let last = (0..100).map(cover).max_by_key(|c| c.id.clone()).unwrap();
+        let (deck, session) = deck();
         let mut count = 0;
         for seed in 0..=255u8 {
             let mut bytes = b"TDI1".to_vec();

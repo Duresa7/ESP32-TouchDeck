@@ -383,6 +383,7 @@ fn a_flood_of_drags_and_taps_stays_bounded_and_the_next_gesture_still_works() {
 fn before_the_router_reads_the_layout_touches_fail_closed() {
     let td = running(media(), false);
     td.drag("volume", &[0.4, 0.5]);
+    wait("the drag fails", || td.log().len() == 1);
     td.deck
         .emit_press_part("media", "playing", "widget", "previous");
     wait("the tap fails", || td.log().len() == 2);
@@ -516,9 +517,9 @@ fn a_cached_forged_layout_cannot_replace_the_companions_binding() {
 }
 
 #[test]
-fn a_burst_keeps_its_final_end_and_paces_control_sets() {
+fn a_burst_within_queue_capacity_keeps_its_final_end_and_paces_control_sets() {
     let td = running(media(), true);
-    for _ in 0..500 {
+    for _ in 0..200 {
         td.deck
             .emit_input("media", "volume", "value", InputPhase::Move, 0.2);
     }

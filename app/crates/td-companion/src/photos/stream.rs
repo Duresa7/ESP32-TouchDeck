@@ -220,6 +220,7 @@ mod tests {
 
     #[test]
     fn the_stream_backs_off_on_busy_and_waits_out_rate_before_the_picture_goes() {
+        let dir = folder(2);
         let deck = MockDeck::v2();
         let session = session(&deck);
         deck.set_idle(true);
@@ -229,7 +230,6 @@ mod tests {
             ("busy", None),
             ("rate", Some(300)),
         ]);
-        let dir = folder(2);
         let mut stream = Streamer::new(dir.path().to_owned());
         let waits: Vec<Duration> = (0..5)
             .map(|_| stream.step(&TARGET, send(&session)))
@@ -254,10 +254,10 @@ mod tests {
 
     #[test]
     fn an_awake_device_stops_the_stream_until_it_is_idle_again() {
+        let dir = folder(3);
         let deck = MockDeck::v2();
         let session = session(&deck);
         deck.set_photo_interval(Duration::ZERO);
-        let dir = folder(3);
         let mut stream = Streamer::new(dir.path().to_owned());
         for _ in 0..3 {
             assert_eq!(stream.step(&TARGET, send(&session)), IDLE_RETRY);
@@ -285,13 +285,13 @@ mod tests {
 
     #[test]
     fn unreadable_and_refused_pictures_are_skipped() {
+        let dir = folder(1);
+        std::fs::write(dir.path().join("broken.jpg"), b"not a jpeg").unwrap();
+        std::fs::write(dir.path().join("2.png"), noise_png(90, 60, 9)).unwrap();
         let deck = MockDeck::v2();
         let session = session(&deck);
         deck.set_idle(true);
         deck.set_photo_interval(Duration::ZERO);
-        let dir = folder(1);
-        std::fs::write(dir.path().join("broken.jpg"), b"not a jpeg").unwrap();
-        std::fs::write(dir.path().join("2.png"), noise_png(90, 60, 9)).unwrap();
         let mut stream = Streamer::new(dir.path().to_owned());
         assert_eq!(stream.step(&TARGET, send(&session)), TARGET.interval);
         deck.refuse_photos([("format", None)]);
@@ -305,12 +305,12 @@ mod tests {
 
     #[test]
     fn every_picture_sent_fits_the_device_limit_and_screen() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("big.png"), noise_png(640, 400, 4)).unwrap();
         let deck = MockDeck::v2();
         let session = session(&deck);
         deck.set_idle(true);
         deck.set_photo_interval(Duration::ZERO);
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("big.png"), noise_png(640, 400, 4)).unwrap();
         let target = Target {
             limit: 6000,
             ..TARGET
