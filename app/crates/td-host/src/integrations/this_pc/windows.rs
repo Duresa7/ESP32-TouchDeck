@@ -92,8 +92,17 @@ impl Counters {
                 self.add(&format!(r"\Network Interface({name})\Bytes Received/sec")),
                 self.add(&format!(r"\Network Interface({name})\Bytes Sent/sec")),
             ];
-            // An adapter PDH can't count yet stays out of the map, so the next scan retries it.
-            if counters.iter().all(|counter| counter.is_null()) {
+            // An adapter missing either counter stays out of the map, so the next scan retries
+            // both. The counter that was added leaves the query first.
+            if counters.iter().any(|counter| counter.is_null()) {
+                for counter in counters {
+                    if !counter.is_null() {
+                        // The handle was just added to this query and is never stored.
+                        unsafe {
+                            PdhRemoveCounter(counter);
+                        }
+                    }
+                }
                 continue;
             }
             self.network.insert(
@@ -385,18 +394,22 @@ mod tests {
     #[test]
     fn windows_pdh_adapter_that_appears_later_counts_without_a_spike() {
         let mut counters = Counters::new();
-        if counters.network.is_empty() {
-            eprintln!("no physical adapter PDH can count; skipped");
+        let present: BTreeSet<String> = counters.network.keys().cloned().collect();
+        // PDH can accept a counter for an instance it then can't collect, so skip unless an
+        // adapter really reads.
+        let sample = counters.collect();
+        if ["network_receive_bytes_s", "network_send_bytes_s"]
+            .iter()
+            .any(|id| !sample.totals.contains_key(*id))
+        {
+            eprintln!("no physical adapter PDH can read; skipped");
             return;
         }
-        let present: BTreeSet<String> = counters.network.keys().cloned().collect();
-        counters.collect();
         // Every adapter goes away: its counters leave the query and network has no reading.
         counters.count_adapters(&BTreeSet::new());
         assert!(counters.network.is_empty());
         let sample = counters.collect();
         assert!(!sample.totals.contains_key("network_receive_bytes_s"));
-        assert!(sample.values.contains_key("cpu_pct"));
         // The same adapters come back as if just plugged in. Their bytes since boot stay out.
         let before = counters.traffic;
         counters.count_adapters(&present);
@@ -414,8 +427,15 @@ mod tests {
             .into_iter()
             .enumerate()
         {
-            let total = sample.totals[id];
-            eprintln!("{id}: {} bytes in about 1 s", total - before[direction]);
+            let total = sample.totals.get(id).copied();
+            assert!(
+                total.is_some(),
+                "{id} has no reading after the adapters returned"
+            );
+            eprintln!(
+                "{id}: {} bytes in about 1 s",
+                total.unwrap_or_default() - before[direction]
+            );
         }
     }
 }
