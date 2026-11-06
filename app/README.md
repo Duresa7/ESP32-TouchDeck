@@ -148,3 +148,5 @@ For the real Companion API tests:
 pnpm build:ui
 pnpm e2e:ui:companion
 ```
+
+UI package boundaries and entry-point conventions: [UI packages](ui/src/lib/README.md).

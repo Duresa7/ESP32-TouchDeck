@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef, useState, type MouseEvent } from 'react';
 import { AlertDialog } from '@base-ui/react/alert-dialog';
 import { useStore } from 'zustand';
-import type { SessionInfo } from '../../companion/api.ts';
-import { useCompanion } from '../../companion/connection.ts';
+import type { SessionInfo } from '../../lib/companion/api.ts';
+import { useCompanion } from '../../lib/companion/connection.ts';
 import { button } from '../button.ts';
 import { createBrowsersStore, type BrowsersStore } from './browsers.ts';
 

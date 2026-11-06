@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import type { IntegrationSummary, PresetTile } from '../../companion/api.ts';
+import type { IntegrationSummary, PresetTile } from '../../lib/companion/api.ts';
 import { plural } from '../../lib/editor/messages.ts';
 import { lineOf, statusOf } from '../../lib/integrations/model.ts';
 import { button } from '../../shell/button.ts';

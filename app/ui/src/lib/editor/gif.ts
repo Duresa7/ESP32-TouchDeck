@@ -1,5 +1,5 @@
-import type { AnimationCapabilities, Capabilities, GifTarget } from '../../companion/api.ts';
-import { toApiError } from '../../companion/errors.ts';
+import type { AnimationCapabilities, Capabilities, GifTarget } from '../companion/api.ts';
+import { toApiError } from '../companion/errors.ts';
 import { geometry, screenSize, tileRect } from '../deck/geometry.ts';
 import { THEME } from '../deck/theme.ts';
 import { UNREACHABLE } from '../icons/pick.ts';

@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fakeCompanion } from './fake-companion.mjs';
-import type {} from '../../ui/src/companion/session';
+import type {} from '../../ui/src/lib/companion/session';
 
 test('isolated shell, exact preload, navigation, renewal, single instance and close', async () => {
   const fake = await fakeCompanion();

@@ -1,6 +1,6 @@
-import type { NewBoard } from '../../companion/api.ts';
-import type { Companion } from '../../companion/client.ts';
-import type { JobsStore } from '../../companion/jobs.ts';
+import type { NewBoard } from '../companion/api.ts';
+import type { Companion } from '../companion/client.ts';
+import type { JobsStore } from '../companion/jobs.ts';
 import { createFirmwareJob, type FirmwareWords, type PhaseProgress, type UpdateView } from './firmware.ts';
 
 export type BoardStep = 'detected' | 'waiting' | 'installing' | 'done' | 'declined' | 'failed';

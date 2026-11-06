@@ -1,9 +1,9 @@
 import { useEffect, useMemo } from 'react';
 import clsx from 'clsx';
 import { ArrowUpCircle, Cable } from 'lucide-react';
-import type { DeviceSummary } from '../companion/api.ts';
-import { useCompanion } from '../companion/connection.ts';
-import { useDevices } from '../companion/devices.ts';
+import type { DeviceSummary } from '../lib/companion/api.ts';
+import { useCompanion } from '../lib/companion/connection.ts';
+import { useDevices } from '../lib/companion/devices.ts';
 import { useControlNotice } from '../lib/device/controls.ts';
 import { button } from '../shell/button.ts';
 import { useUi } from '../state/ui.ts';

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { useDevices } from '../../companion/devices.ts';
+import { useDevices } from '../../lib/companion/devices.ts';
 import { setupCandidate } from '../../lib/device/setup-trigger.ts';
 import { setupUi, useSetupUi } from '../../state/setup.ts';
 import { useUi } from '../../state/ui.ts';

@@ -185,7 +185,7 @@ test('feed stays on the release endpoint and seam types stay equal', async () =>
   const { UPDATE_FEED } = await import('../dist/updates/index.js');
   assert.equal(UPDATE_FEED, 'https://github.com/Duresa7/OpenTouchDeck/releases/latest/download/latest.json');
   const types = await readFile(new URL('../src/updates/types.ts', import.meta.url), 'utf8');
-  const ui = await readFile(new URL('../../ui/src/companion/session.ts', import.meta.url), 'utf8');
+  const ui = await readFile(new URL('../../ui/src/lib/companion/session.ts', import.meta.url), 'utf8');
   const declarations = text => text.replace(/\/\/[^\n]*/g, '').replace(/\s+/g, ' ').trim();
   assert.ok(declarations(ui).includes(declarations(types)));
 });

@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { LinkState } from '../../companion/api.ts';
-import { createClient } from '../../companion/client.ts';
-import { consoleCommands } from '../../companion/console.ts';
-import { createFakeCompanion, type FakeCompanion } from '../../companion/fake.ts';
-import { isAllowedConsoleLine } from '../../companion/fake-console.ts';
-import { sampleDevice } from '../../companion/samples.ts';
-import { windowSession } from '../../companion/session.ts';
+import type { LinkState } from '../../lib/companion/api.ts';
+import { createClient } from '../../lib/companion/client.ts';
+import { consoleCommands } from '../../lib/companion/console.ts';
+import { createFakeCompanion, type FakeCompanion } from '../../lib/companion/fake.ts';
+import { isAllowedConsoleLine } from '../../lib/companion/fake.ts';
+import { sampleDevice } from '../../lib/companion/samples.ts';
+import { windowSession } from '../../lib/companion/session.ts';
 import { CONSOLE_KEEPS, createConsoleStore, type ConsoleStore } from './console.ts';
 
 const BASE = 'http://127.0.0.1:51234';

@@ -1,6 +1,6 @@
-import type { AssetRef, CatalogHit, Job } from '../../companion/api.ts';
-import type { Companion } from '../../companion/client.ts';
-import { isApiError } from '../../companion/errors.ts';
+import type { AssetRef, CatalogHit, Job } from '../companion/api.ts';
+import type { Companion } from '../companion/client.ts';
+import { isApiError } from '../companion/errors.ts';
 import { catalogSource } from './catalog.ts';
 
 export interface PickDeps {

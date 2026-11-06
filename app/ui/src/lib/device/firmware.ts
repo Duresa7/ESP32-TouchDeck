@@ -1,8 +1,8 @@
 import { createStore } from 'zustand/vanilla';
-import type { ErrorBody, FirmwareProgress, FirmwareRequest, FirmwareResult, Job, PickResult } from '../../companion/api.ts';
-import type { Companion } from '../../companion/client.ts';
-import { toApiError } from '../../companion/errors.ts';
-import type { JobsStore } from '../../companion/jobs.ts';
+import type { ErrorBody, FirmwareProgress, FirmwareRequest, FirmwareResult, Job, PickResult } from '../companion/api.ts';
+import type { Companion } from '../companion/client.ts';
+import { toApiError } from '../companion/errors.ts';
+import type { JobsStore } from '../companion/jobs.ts';
 
 export type JobView =
   | { step: 'waiting'; text: string; raw: string }

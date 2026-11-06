@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import type { LinkState } from '../../companion/api.ts';
-import { sampleDevice } from '../../companion/samples.ts';
+import type { LinkState } from '../../lib/companion/api.ts';
+import { sampleDevice } from '../../lib/companion/samples.ts';
 import { createUiStore } from '../../state/ui.ts';
 import { connectionText, factsOf, lastError } from './troubleshooting.ts';
 

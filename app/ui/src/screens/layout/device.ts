@@ -1,10 +1,10 @@
 import { useEffect } from 'react';
 import { useStore } from 'zustand';
 import { createStore, type StoreApi } from 'zustand/vanilla';
-import type { DeviceSummary } from '../../companion/api.ts';
-import type { Companion } from '../../companion/client.ts';
-import { useCompanion } from '../../companion/connection.ts';
-import { jobsStore } from '../../companion/jobs.ts';
+import type { DeviceSummary } from '../../lib/companion/api.ts';
+import type { Companion } from '../../lib/companion/client.ts';
+import { useCompanion } from '../../lib/companion/connection.ts';
+import { jobsStore } from '../../lib/companion/jobs.ts';
 import { createFirmwareUpdate, type FirmwareUpdateStore } from '../../lib/device/firmware.ts';
 import { newerFirmware } from '../../lib/device/needs-firmware.ts';
 import { createDeviceSettings, type DeviceSettingsStore } from '../../lib/device/settings.ts';

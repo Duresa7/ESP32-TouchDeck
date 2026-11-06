@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { createClient } from '../../companion/client.ts';
-import { createFakeCompanion, type FakeCompanion } from '../../companion/fake.ts';
-import { windowSession } from '../../companion/session.ts';
+import { createClient } from '../../lib/companion/client.ts';
+import { createFakeCompanion, type FakeCompanion } from '../../lib/companion/fake.ts';
+import { windowSession } from '../../lib/companion/session.ts';
 import { UNREACHABLE } from './problems.ts';
 import { createStartupStore } from './startup.ts';
 

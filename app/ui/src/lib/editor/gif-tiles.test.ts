@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { AssetSource, Capabilities, DeviceSummary } from '../../companion/api.ts';
-import { createClient, type Companion } from '../../companion/client.ts';
-import { createDevicesStore, type DevicesStore } from '../../companion/devices.ts';
-import { createFakeCompanion, type FakeCompanion } from '../../companion/fake.ts';
-import { createJobsStore, waitForJob, type JobsStore } from '../../companion/jobs.ts';
-import { GIF_CAPS, sampleDevice } from '../../companion/samples.ts';
-import { windowSession } from '../../companion/session.ts';
+import type { AssetSource, Capabilities, DeviceSummary } from '../companion/api.ts';
+import { createClient, type Companion } from '../companion/client.ts';
+import { createDevicesStore, type DevicesStore } from '../companion/devices.ts';
+import { createFakeCompanion, type FakeCompanion } from '../companion/fake.ts';
+import { createJobsStore, waitForJob, type JobsStore } from '../companion/jobs.ts';
+import { GIF_CAPS, sampleDevice } from '../companion/samples.ts';
+import { windowSession } from '../companion/session.ts';
 import { createGifTiles, gifWork, type GifTiles } from './gif-tiles.ts';
 import { createEditorStore, type EditorStore } from './store.ts';
 import { assetOf, starterLayout, type GridPage, type Tile } from './validate.ts';

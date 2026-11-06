@@ -1,6 +1,6 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
-import type { DeviceKeyMirror } from '../../companion/api.ts';
-import { actionsStore, useActions } from '../../companion/actions.ts';
+import type { DeviceKeyMirror } from '../../lib/companion/api.ts';
+import { actionsStore, useActions } from '../../lib/companion/actions.ts';
 import { button } from '../../shell/button.ts';
 
 const EVENTS_KEPT = 2000;

@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import type { Capabilities, ControlLayout } from '../src/companion/api.ts';
+import type { Capabilities, ControlLayout } from '../src/lib/companion/api.ts';
 import type { GridPage, Layout, Tile } from '../src/lib/editor/validate.ts';
 import { consoleErrors, sideScroll, spills, underDock } from './break-helpers.ts';
 import { layoutOf, waitEvent } from './layout-helpers.ts';

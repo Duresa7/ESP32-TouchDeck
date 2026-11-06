@@ -1,7 +1,7 @@
 import { createStore } from 'zustand/vanilla';
-import type { IntegrationView } from '../../companion/api.ts';
-import type { Companion } from '../../companion/client.ts';
-import { toApiError } from '../../companion/errors.ts';
+import type { IntegrationView } from '../companion/api.ts';
+import type { Companion } from '../companion/client.ts';
+import { toApiError } from '../companion/errors.ts';
 import { formOf, parseUsage, sameValues, serialize, validate, valuesOf, type FormField, type FormValues, type Usage } from './model.ts';
 
 /** Refresh asks the hub at most this often, the same floor the Companion keeps. */

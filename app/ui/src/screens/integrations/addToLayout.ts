@@ -1,9 +1,9 @@
 import { useCallback } from 'react';
 import { toast } from 'sonner';
-import type { DeviceSummary, PresetTile } from '../../companion/api.ts';
-import { useCompanion } from '../../companion/connection.ts';
-import { useDevices } from '../../companion/devices.ts';
-import { useIntegrations } from '../../companion/integrations.ts';
+import type { DeviceSummary, PresetTile } from '../../lib/companion/api.ts';
+import { useCompanion } from '../../lib/companion/connection.ts';
+import { useDevices } from '../../lib/companion/devices.ts';
+import { useIntegrations } from '../../lib/companion/integrations.ts';
 import { needsFirmware, showsKind } from '../../lib/device/needs-firmware.ts';
 import { placedLook } from '../../lib/editor/graph.ts';
 import { useUi } from '../../state/ui.ts';

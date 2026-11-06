@@ -5,7 +5,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Pair, takePairingCode } from './screens/Pair.tsx';
 import { App } from './App.tsx';
-import { CompanionContext, connect, EventsContext, FolderPickerContext, pageEnvironment, type Environment } from './companion/connection.ts';
+import { CompanionContext, connect, EventsContext, FolderPickerContext, pageEnvironment, type Environment } from './lib/companion/connection.ts';
 import { createUpdatesStore, UpdatesContext, watchForUpdates } from './state/updates.ts';
 
 const isPair = window.location.pathname === '/pair';
@@ -14,9 +14,9 @@ const initialCode = isPair ? takePairingCode(window.location, window.history) : 
 // The demo and dev branches are dropped from production builds, fake Companion and all.
 const env: Environment =
   import.meta.env.MODE === 'demo'
-    ? (await import('./companion/demo.ts')).demoEnvironment(window)
+    ? (await import('./lib/companion/demo.ts')).demoEnvironment(window)
     : import.meta.env.DEV
-      ? (await import('./companion/dev.ts')).devEnvironment(window)
+      ? (await import('./lib/companion/dev.ts')).devEnvironment(window)
       : pageEnvironment(window);
 
 const connection = isPair ? null : connect(env);

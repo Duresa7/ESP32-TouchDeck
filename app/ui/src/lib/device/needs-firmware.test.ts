@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import type { Capabilities } from '../../companion/api.ts';
-import { sampleDevice } from '../../companion/samples.ts';
+import type { Capabilities } from '../companion/api.ts';
+import { sampleDevice } from '../companion/samples.ts';
 import { compareVersions, needsFirmware, needsFirmwareField, newerFirmware, shortVersion, showsKind, tileKind } from './needs-firmware.ts';
 
 const caps = (tile_kinds: string[]): Capabilities => ({
