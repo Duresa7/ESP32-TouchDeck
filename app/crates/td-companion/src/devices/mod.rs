@@ -293,7 +293,8 @@ pub struct DeviceSummary {
     pub firmware: Option<FirmwareInfo>,
     pub diagnostics: Option<DeviceDiagnostics>,
     pub capabilities: Option<Capabilities>,
-    pub orientation: Option<String>,
+    /// The orientation the Device shows, from the Layout it shows. Null whenever `layout` is.
+    pub orientation: Option<td_core::Orientation>,
     pub layout: Option<LayoutSummary>,
     pub control_layout: ControlLayout,
     pub key_mirror: KeyMirrorState,
@@ -563,6 +564,7 @@ impl Inner {
             .shown
             .as_ref()
             .map(|shown| shown.summary(entry.reported_page.as_deref()));
+        next.orientation = next.layout.as_ref().map(|layout| layout.orientation);
         if next == entry.summary {
             return;
         }

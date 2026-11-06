@@ -93,7 +93,11 @@ export type DeviceSettingsPatch = { idle_timeout_s: number | null, orientation: 
  * A percentage, 0 to 100.
  */
 brightness: number | null, photo_frame: PhotoFramePatch | null, };
-export type DeviceSummary = { id: DeviceId, rev: number, name: string | null, setup: SetupState, link: LinkState, firmware: FirmwareInfo | null, diagnostics: DeviceDiagnostics | null, capabilities: Capabilities | null, orientation: string | null, layout: LayoutSummary | null, control_layout: ControlLayout, key_mirror: KeyMirrorState, stable_id: boolean, };
+export type DeviceSummary = { id: DeviceId, rev: number, name: string | null, setup: SetupState, link: LinkState, firmware: FirmwareInfo | null, diagnostics: DeviceDiagnostics | null, capabilities: Capabilities | null, 
+/**
+ * The orientation the Device shows, from the Layout it shows. Null whenever `layout` is.
+ */
+orientation: Orientation | null, layout: LayoutSummary | null, control_layout: ControlLayout, key_mirror: KeyMirrorState, stable_id: boolean, };
 export type DeviceUpdated = DeviceSummary;
 export type ErrorBody = { code: string, message: string, details: JsonValue | null, };
 export type FirmwareBuild = { version: string, build: string, };

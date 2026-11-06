@@ -98,6 +98,22 @@ async fn two_devices_keep_their_own_layouts() {
 }
 
 #[tokio::test]
+async fn an_offline_device_refuses_a_layout_read_even_with_a_copy_on_this_pc() {
+    let td = TestCompanion::start().await;
+    let id = td.plug_device("mock0001").await;
+    let desk = layout("Desk", Orientation::Landscape, None);
+    report(&td.wait(&push(&td, id.as_str(), &desk).await).await);
+    td.unplug("mock0001").await;
+    let (status, error) =
+        failure(td.request::<Get>(path(id.as_str(), Orientation::Landscape), NoQuery, &())).await;
+    assert_eq!(
+        (status, error["code"].as_str()),
+        (409, Some("device.not_connected"))
+    );
+    assert_eq!(error["details"]["link"]["state"], "lost");
+}
+
+#[tokio::test]
 async fn revisions_orientation_and_validation_are_checked() {
     let td = TestCompanion::start().await;
     let a = td.plug_device("mock0001").await;

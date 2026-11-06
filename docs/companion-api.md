@@ -330,7 +330,7 @@ pub struct DeviceSummary {
     pub firmware: Option<FirmwareInfo>,        // {version, protocol, build, recovery, update_available: Option<String>}
     pub diagnostics: Option<DeviceDiagnostics>,
     pub capabilities: Option<Capabilities>,    // v2 hello: screen, storage_free, tile_kinds, live_hz, live_total_hz, series, text_bytes. None on v1
-    pub orientation: Option<Orientation>,
+    pub orientation: Option<Orientation>,      // the shown Layout's; null whenever `layout` is
     pub layout: Option<LayoutSummary>,         // what the Device shows; see below
     pub control_layout: ControlLayout,
     pub key_mirror: KeyMirrorState,            // {enabled, reason}
@@ -358,8 +358,9 @@ doesn't send `v2.page`. `layout` is null on protocol 1, while offline and until
 the first read of a session completes, which is within one live round of
 connecting. A link change clears it. A Layout push or orientation change keeps
 the previous summary until the next read lands, so it never goes null mid-push.
-Changes increment `rev` and publish `device.updated`. `name` is the Device's own
-and untrusted, like the strings below.
+`orientation` is the orientation of that Layout, so it is null whenever `layout`
+is. Changes increment `rev` and publish `device.updated`. `name` is the Device's
+own and untrusted, like the strings below.
 
 `diagnostics` is null until the Device has answered `hello`. Otherwise it is
 `{ product: string, running_from: string, sinks: string[], current_layout: string }`,
@@ -532,7 +533,7 @@ Feature module `layouts`.
 
 | Name | Method and path | Request → Response |
 |---|---|---|
-| `layouts.get` | `GET /devices/{device}/layouts/{orientation}` | → `{layout: Layout, revision}`. `revision` is the Device's CRC32 from `GetReport`, also sent as `ETag` |
+| `layouts.get` | `GET /devices/{device}/layouts/{orientation}` | → `{layout: Layout, revision}`. `revision` is the Device's CRC32 from `GetReport`, also sent as `ETag`. It reads the Device, so a Device that isn't connected gets 409 `device.not_connected` even when the Layout store holds a copy, which has no revision |
 | `layouts.push` | `PUT /devices/{device}/layouts/{orientation}` | `Layout` as typed JSON, optional `If-Match: <revision>` → 202 Job `layouts.push`. 422 `layout.orientation_mismatch` when the path and body disagree. 412 `layout.changed` when the revision moved |
 
 The `Layout` body extractor runs `td_core::Layout` validation once. On failure it returns 422 `layout.invalid` with `details.issues: [{path, message}]`.
