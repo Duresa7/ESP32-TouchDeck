@@ -1,5 +1,5 @@
-import { isWebAddress, processOf } from '../../editor/actions.ts';
-import { parseLayout, type Orientation } from '../../editor/validate.ts';
+import { isWebAddress, processOf } from '../../layout/actions.ts';
+import { parseLayout, type Orientation } from '../../layout/model.ts';
 import type { ActionLog, AllowedAction, Answer, ApprovalRequest, DeviceSummary } from '../api.ts';
 import { revisionOf } from './fake-layouts.ts';
 

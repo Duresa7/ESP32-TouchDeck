@@ -8,8 +8,8 @@ import { freshDevice } from '../companion/fake.ts';
 import { createJobsStore, waitForJob, type JobsStore } from '../companion/jobs.ts';
 import { sampleDevice } from '../companion/samples.ts';
 import { windowSession } from '../companion/session.ts';
-import { isSent, readDraft, writeDraft, type DraftStorage } from '../editor/drafts.ts';
-import { canonical, newLayout, starterLayout, type Orientation } from '../editor/validate.ts';
+import { isSent, readDraft, writeDraft, type DraftStorage } from '../editor/store.ts';
+import { canonical, newLayout, starterLayout, type Orientation } from '../layout/model.ts';
 import { createSetup, describeOnDevice, flowStep, nameError, startFlow, stepCount, type Flow, type SetupStore } from './onboarding.ts';
 import { createDeviceSettings, type DeviceSettingsStore } from './settings.ts';
 

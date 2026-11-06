@@ -11,10 +11,10 @@ import {
   spellShortcut,
   splitArgs,
   switchKind,
-} from '../../lib/editor/actions.ts';
-import { friendlyRefusal } from '../../lib/editor/messages.ts';
+} from '../../lib/layout/actions.ts';
+import { friendlyRefusal } from '../../lib/layout/messages.ts';
 import { refusedActionField, tileProblems, type EditorStore } from '../../lib/editor/store.ts';
-import { ACTION_TYPES, MODIFIERS, type Action, type ActionType, type GridPage, type Layout, type Tile } from '../../lib/editor/validate.ts';
+import { ACTION_TYPES, MODIFIERS, type Action, type ActionType, type GridPage, type Layout, type Tile } from '../../lib/layout/model.ts';
 import { useEditorState } from './editor.ts';
 import { described, Field, FieldError, Select, useFieldIds } from './fields.tsx';
 

@@ -1,7 +1,7 @@
 import type { IntegrationView, UsageWindow as ApiUsageWindow } from '../companion/api.ts';
 import type { ConfigField, DataStream, IntegrationSummary, JsonValue, PresetTile } from '../companion/api.ts';
-import { plural } from '../editor/messages.ts';
-import { parseLayout, type Action } from '../editor/validate.ts';
+import { plural } from '../layout/messages.ts';
+import { parseLayout, type Action } from '../layout/model.ts';
 
 interface FieldCopy {
   label: string;

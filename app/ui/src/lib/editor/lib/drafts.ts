@@ -1,4 +1,4 @@
-import { canonical, parseLayout, type Layout, type Orientation } from './validate.ts';
+import { canonical, parseLayout, type Layout, type Orientation } from '../../layout/model.ts';
 
 export interface Draft {
   layout: Layout;

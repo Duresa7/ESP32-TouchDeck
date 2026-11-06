@@ -1,5 +1,5 @@
 import { sameAssessment } from '../../device/controls.ts';
-import { canonical, parseLayout, type Layout, type Orientation, type Tile } from '../../editor/validate.ts';
+import { canonical, parseLayout, type Layout, type Orientation, type Tile } from '../../layout/model.ts';
 import type { Capabilities, ControlLayout, DeviceSummary } from '../api.ts';
 
 type Frame = Record<string, unknown> & { type: string };

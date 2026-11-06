@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import type { ControlLayout } from '../src/lib/companion/api.ts';
-import type { GridPage, Layout, Tile } from '../src/lib/editor/validate.ts';
+import type { GridPage, Layout, Tile } from '../src/lib/layout/model.ts';
 import { consoleErrors } from './break-helpers.ts';
 import { waitEvent } from './layout-helpers.ts';
 

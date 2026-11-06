@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Companion } from '../../lib/companion/client.ts';
 import { useCompanion } from '../../lib/companion/connection.ts';
 import { isApiError } from '../../lib/companion/errors.ts';
-import { assetOf, type ActionType, type Tile } from '../../lib/editor/validate.ts';
+import { assetOf, type ActionType, type Tile } from '../../lib/layout/model.ts';
 import { decodeTdi1, TDI1_SIDE } from '../../lib/icons/tdi1.ts';
 import { GifImage } from './GifImage.tsx';
 import { TileGlyph } from './glyphs.tsx';

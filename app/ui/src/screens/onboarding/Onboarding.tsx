@@ -9,7 +9,7 @@ import { jobsStore, waitForJob } from '../../lib/companion/jobs.ts';
 import { inProgress, type FirmwareUpdateStore } from '../../lib/device/firmware.ts';
 import { needsFirmwareField } from '../../lib/device/needs-firmware.ts';
 import { createSetup, describeOnDevice, stepCount, type Busy, type LayoutChoice, type SetupState, type SetupStore } from '../../lib/device/onboarding.ts';
-import { newLayout, starterLayout, type Layout, type Orientation } from '../../lib/editor/validate.ts';
+import { newLayout, starterLayout, type Layout, type Orientation } from '../../lib/layout/model.ts';
 import { button } from '../../shell/button.ts';
 import { DevicePreview } from '../DevicePreview.tsx';
 import { statusOf } from '../home-model.ts';

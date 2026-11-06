@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'vitest';
-import { friendlyFileError, friendlyRefusal, plural } from './messages.ts';
-import { parseLayout } from './validate.ts';
+import { friendlyFileError, friendlyRefusal, plural } from '../messages.ts';
+import { parseLayout } from '../model.ts';
 
-const parsed = parseLayout(readFileSync(join(import.meta.dirname, '..', '..', '..', '..', '..', 'schema', 'examples', 'dev.json')));
+const parsed = parseLayout(readFileSync(join(import.meta.dirname, '..', '..', '..', '..', '..', '..', 'schema', 'examples', 'dev.json')));
 assert.ok(parsed.ok);
 const dev = parsed.layout;
 

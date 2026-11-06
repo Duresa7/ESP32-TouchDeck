@@ -9,7 +9,7 @@ import { GIF_CAPS, sampleDevice } from '../companion/samples.ts';
 import { windowSession } from '../companion/session.ts';
 import { watchSends } from '../../screens/layout/editor.ts';
 import { createEditorStore } from '../editor/store.ts';
-import type { Layout } from '../editor/validate.ts';
+import type { Layout } from '../layout/model.ts';
 import { createControlsStore, noticeOf, observe, QUIET, sending, sent, type ControlWatch } from './controls.ts';
 
 const CONNECTED: LinkState = { state: 'connected', port: 'COM3', since_ms: 0, protocol: 2 };

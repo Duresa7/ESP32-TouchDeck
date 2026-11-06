@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { AssetSource, Capabilities, DeviceSummary } from '../companion/api.ts';
-import { createClient, type Companion } from '../companion/client.ts';
-import { createDevicesStore, type DevicesStore } from '../companion/devices.ts';
-import { createFakeCompanion, type FakeCompanion } from '../companion/fake.ts';
-import { createJobsStore, waitForJob, type JobsStore } from '../companion/jobs.ts';
-import { GIF_CAPS, sampleDevice } from '../companion/samples.ts';
-import { windowSession } from '../companion/session.ts';
-import { createGifTiles, gifWork, type GifTiles } from './gif-tiles.ts';
-import { createEditorStore, type EditorStore } from './store.ts';
-import { assetOf, starterLayout, type GridPage, type Tile } from './validate.ts';
+import type { AssetSource, Capabilities, DeviceSummary } from '../../companion/api.ts';
+import { createClient, type Companion } from '../../companion/client.ts';
+import { createDevicesStore, type DevicesStore } from '../../companion/devices.ts';
+import { createFakeCompanion, type FakeCompanion } from '../../companion/fake.ts';
+import { createJobsStore, waitForJob, type JobsStore } from '../../companion/jobs.ts';
+import { GIF_CAPS, sampleDevice } from '../../companion/samples.ts';
+import { windowSession } from '../../companion/session.ts';
+import { createGifTiles, gifWork, type GifTiles } from '../gifs.ts';
+import { createEditorStore, type EditorStore } from '../store.ts';
+import { assetOf, starterLayout, type GridPage, type Tile } from '../../layout/model.ts';
 
 const BASE = 'http://127.0.0.1:51234';
 const connected = { state: 'connected' as const, port: 'COM3', since_ms: 0, protocol: 2 };
