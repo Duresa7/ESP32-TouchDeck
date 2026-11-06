@@ -1,9 +1,9 @@
 use serde_json::{Value, json};
 use td_companion::{
     api::NoQuery,
-    devices::DeviceId,
+    devices::{DeviceId, LinkState},
     features::{
-        devices::{DevicePath, Get},
+        devices::{DevicePath, DeviceSettingsPatch, Get, Restart, SettingsPatch},
         layouts::{LayoutBody, LayoutPath, Push},
     },
     jobs::JobState,
@@ -133,4 +133,56 @@ async fn a_push_starts_the_new_layout_on_its_first_page() {
     push(&td, &id, &two_pages("Studio")).await;
     let shown = until_layout(&td, &id, |layout| layout["name"] == "Studio").await;
     assert_eq!(shown["page"], 0);
+}
+
+async fn device(td: &TestCompanion, id: &DeviceId) -> Value {
+    let device = td
+        .call::<Get>(DevicePath { device: id.clone() }, NoQuery, ())
+        .await
+        .unwrap();
+    serde_json::to_value(device).unwrap()
+}
+
+#[tokio::test]
+async fn the_device_orientation_follows_the_layout_it_shows() {
+    let td = TestCompanion::start().await;
+    let id = td.plug_device("mock0001").await;
+    until_layout(&td, &id, |layout| layout["orientation"] == "landscape").await;
+    assert_eq!(device(&td, &id).await["orientation"], "landscape");
+
+    let mut upright = two_pages("Upright");
+    upright.orientation = td_core::Orientation::Portrait;
+    push(&td, &id, &upright).await;
+    let patch = DeviceSettingsPatch {
+        orientation: Some("portrait".into()),
+        ..Default::default()
+    };
+    let patched = td
+        .call::<SettingsPatch>(DevicePath { device: id.clone() }, NoQuery, patch)
+        .await
+        .unwrap();
+    assert!(patched.restart_required);
+    td.call::<Restart>(DevicePath { device: id.clone() }, NoQuery, ())
+        .await
+        .unwrap();
+    // The restart closes the link; reconnecting takes up to one settle on its own.
+    td.until(|td| !matches!(td.device(&id).unwrap().link, LinkState::Connected { .. }))
+        .await;
+    td.until(|td| matches!(td.device(&id).unwrap().link, LinkState::Connected { .. }))
+        .await;
+    until_layout(&td, &id, |layout| layout["orientation"] == "portrait").await;
+    assert_eq!(device(&td, &id).await["orientation"], "portrait");
+
+    td.unplug("mock0001").await;
+    let offline = device(&td, &id).await;
+    assert_eq!(offline["layout"], Value::Null);
+    assert_eq!(offline["orientation"], Value::Null);
+}
+
+#[tokio::test]
+async fn protocol_1_firmware_reports_no_orientation() {
+    let td = TestCompanion::start().await;
+    let id = td.plug_device_v1("mock0001").await;
+    td.let_live_rounds_run(4).await;
+    assert_eq!(device(&td, &id).await["orientation"], Value::Null);
 }
