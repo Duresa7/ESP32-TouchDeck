@@ -271,7 +271,7 @@ Image uploads for Assets stay on the API (`POST /uploads`). The Companion decode
 
 | Collection | Members | Lifetime |
 |---|---|---|
-| `/devices` | Every known Device: connected, offline, or needing setup | Saved in `devices.json` with its id, name and last Layout summary. `DELETE /devices/{id}` forgets one |
+| `/devices` | Every known Device: connected, offline, or needing setup | Saved in `devices.json` with its id, name and setup state. `DELETE /devices/{id}` forgets one |
 | `/new-boards` | Ports with the Espressif USB VID and PID whose serial isn't a known Device and that don't answer as Open TouchDeck | Present only while plugged in |
 | `/ports` | Raw probe results for troubleshooting | Live |
 
