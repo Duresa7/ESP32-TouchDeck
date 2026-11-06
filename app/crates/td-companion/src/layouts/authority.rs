@@ -1,6 +1,6 @@
 //! Device Layout authority: controls resolve only from the Pushed copy on disk.
 use crate::{
-    actions::controls::Settable,
+    controls::Settable,
     devices::{ControlLayout, ControlLayoutUnavailable, DeviceManager, LinkState, ShownLayout},
     live::{LiveCaps, stream_source},
     store::LayoutStore,
@@ -52,7 +52,7 @@ impl State {
                     .iter()
                     .any(|part| td_host::actions::Plan::part(tile, part).is_some())
                     || tile.streams.iter().flatten().any(|(stream, _)| {
-                        crate::actions::controls::takes_input(tile, stream)
+                        crate::controls::takes_input(tile, stream)
                             && stream_source(tile, stream)
                                 .is_some_and(|source| (self.settable)(&source))
                     })

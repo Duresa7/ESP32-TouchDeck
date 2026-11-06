@@ -335,17 +335,19 @@ impl Inner {
         reg.generation += 1;
         let generation = reg.generation;
         let (mirror, key_mirror) = actor::mirror(&self.config().input, &hello);
+        let session_id = crate::now_ms();
         let handle = actor::spawn(
             self.clone(),
             id.clone(),
             generation,
+            session_id,
             session,
             incoming,
             mirror,
         );
         let link = LinkState::Connected {
             port: port.into(),
-            since_ms: crate::now_ms(),
+            since_ms: session_id,
             protocol: identity.protocol,
         };
         let firmware = FirmwareInfo {
@@ -454,7 +456,7 @@ impl Inner {
         let Some(entry) = reg.devices.get_mut(id) else {
             return;
         };
-        if entry.actor.as_ref().map(|a| a.generation) != Some(generation) {
+        if entry.actor.as_ref().map(|a| a.connection) != Some(generation) {
             return;
         }
         let actor = entry.actor.take();
