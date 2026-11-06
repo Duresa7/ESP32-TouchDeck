@@ -115,6 +115,16 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
     return json(200, { layout: JSON.parse(text), revision }, { ETag: `"${revision}"` });
   }
 
+  /** `layouts.last_seen`: the fake keeps no separate PC copy, so the Device's stored Layout stands in for it. */
+  function lastSeenLayout(device: string, orientation: string) {
+    const found = deviceOr404(device);
+    if (found instanceof Response) return found;
+    if (!ORIENTATIONS.includes(orientation)) return failure(400, 'request.invalid', 'Unknown orientation.', { part: 'path', reason: orientation });
+    const text = stored.get(slot(device, orientation));
+    if (text === undefined) return failure(404, 'layout.not_found', "This PC has no copy of the Device's Layout for this orientation.");
+    return json(200, { layout: JSON.parse(text) });
+  }
+
   async function pushLayout(request: Request, device: string, orientation: string) {
     const body = await request.text();
     const parsed = parseLayout(body);
@@ -176,6 +186,10 @@ export function createFakeLayouts(options: FakeLayoutsOptions) {
         if (method === 'GET') return readLayout(device, orientation);
         if (method === 'PUT') return pushLayout(request, device, orientation);
         return failure(405, 'route.method_not_allowed', 'Use GET or PUT.');
+      }
+      if ((match = /^\/devices\/([^/]+)\/layouts\/([^/]+)\/last-seen$/.exec(path))) {
+        if (method !== 'GET') return failure(405, 'route.method_not_allowed', 'Use GET.');
+        return lastSeenLayout(decodeURIComponent(match[1]), decodeURIComponent(match[2]));
       }
       if ((match = /^\/devices\/([^/]+)\/assets\/prune$/.exec(path))) {
         if (method !== 'POST') return failure(405, 'route.method_not_allowed', 'Use POST.');

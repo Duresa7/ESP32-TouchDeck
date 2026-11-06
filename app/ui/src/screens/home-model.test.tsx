@@ -7,6 +7,7 @@ import { demoLayout, sampleDevice } from '../lib/companion/samples.ts';
 import { windowSession } from '../lib/companion/session.ts';
 import { createUiStore } from '../state/ui.ts';
 import { DevicePreview } from './DevicePreview.tsx';
+import { lastSeenLayout } from './home-layouts.ts';
 import { deviceWidth, firmwareUpdate, lastSeen, previewOf, statusOf } from './home-model.ts';
 
 describe('Home', () => {
@@ -101,5 +102,34 @@ describe("a Device's Layout from the fake Companion", () => {
     expect(isApiError(await read('nope'), 'device.not_found')).toBe(true);
     fake.setLayout('b', demoLayout(['work']));
     expect(await read('b')).toMatchObject({ layout: { pages: [{ id: 'work' }] } });
+  });
+
+  it("answers layouts.last_seen with this PC's copy, connected or not, and no revision", async () => {
+    const connected = { state: 'connected', port: 'COM3', since_ms: 0, protocol: 2 } as const;
+    const fake = createFakeCompanion({
+      devices: [sampleDevice('a', 'Desk', connected), sampleDevice('c', 'Away')],
+      layouts: { a: demoLayout(), c: demoLayout() },
+    });
+    vi.stubGlobal('fetch', fake.fetch);
+    const companion = createClient('http://127.0.0.1:51234', windowSession(fake.bridge));
+    const read = (device: string, orientation: 'landscape' | 'portrait' = 'landscape') =>
+      companion.layouts.last_seen({ device, orientation }).catch((e: unknown) => e);
+    expect(await read('a')).toEqual({ layout: demoLayout() });
+    expect(await read('c')).toEqual({ layout: demoLayout() });
+    expect(isApiError(await read('c', 'portrait'), 'layout.not_found')).toBe(true);
+    expect(isApiError(await read('nope'), 'device.not_found')).toBe(true);
+  });
+
+  it("finds an offline Device's Layout in the orientation the PC last saw", async () => {
+    const tall = { ...demoLayout(['work']), orientation: 'portrait' } as const;
+    const fake = createFakeCompanion({
+      devices: [sampleDevice('wide', 'Desk'), sampleDevice('tall', 'Studio'), sampleDevice('none', 'Away')],
+      layouts: { wide: demoLayout(), tall },
+    });
+    vi.stubGlobal('fetch', fake.fetch);
+    const companion = createClient('http://127.0.0.1:51234', windowSession(fake.bridge));
+    expect(await lastSeenLayout(companion, 'wide', 'landscape')).toEqual(demoLayout());
+    expect(await lastSeenLayout(companion, 'tall', 'landscape')).toEqual(tall);
+    expect(await lastSeenLayout(companion, 'none', 'landscape')).toBeNull();
   });
 });

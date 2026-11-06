@@ -61,6 +61,16 @@ test('an unplugged Device keeps its Page and shows last seen', async ({ page }) 
   await expect(page.getByText('Firmware update', { exact: true })).toHaveCount(1);
 });
 
+test("after a restart an offline Device draws the Layout this PC last saw, dimmed", async ({ page }) => {
+  await page.goto('/?offline=all');
+  const device = page.locator('.device-figure').first();
+  await expect(device).toContainText('Not connected');
+  await expect(device.locator('.device-scene')).toHaveAttribute('data-page', 'media');
+  await expect(device.locator('.device-scene')).toContainText('Play/Pause');
+  await expect(device.locator('.device-scene')).toHaveCSS('filter', 'grayscale(1)');
+  await expect(device.getByTestId('device-empty')).toHaveCount(0);
+});
+
 test('a pushed Layout reaches the miniature without reloading', async ({ page }) => {
   await page.goto('/');
   const scenes = page.locator('.device-scene');
