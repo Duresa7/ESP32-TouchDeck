@@ -147,7 +147,7 @@ function Keys({ store }: { store: BrandfetchStore }) {
           />
           <KeyField
             label="API key"
-            hint={`Turns a picked logo into a Tile icon. Stored in ${keychain}; Open TouchDeck never shows it again. Each pick, and each Test key, uses one Brand API request.`}
+            hint={`Turns a picked logo into a Tile icon. Stored in ${keychain}; Open TouchDeck never shows it again. Each pick uses one Brand API request; Test key is free.`}
             shown={status.key_set ? 'Set' : null}
             secret
             busy={busy}
