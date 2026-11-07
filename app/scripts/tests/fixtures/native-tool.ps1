@@ -27,7 +27,6 @@ switch ($Tool) {
                     Copy-Item "$root/staged/rustc.cmd" "$root/installed/rustc.cmd"
                 }
                 'Microsoft.VisualStudio.2022.BuildTools' { if (!$config.noInstalledMsvc) { Set-Content "$root/msvc" 'installed' } }
-                'Microsoft.EdgeWebView2Runtime' { if (!$config.noInstalledWebView) { Set-Content "$root/webview" 'installed' } }
                 default { throw "Unexpected installer: $id" }
             }
             Set-Content "$root/path-installed" 'registered PATH'

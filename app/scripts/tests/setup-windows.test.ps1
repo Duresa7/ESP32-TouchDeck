@@ -27,7 +27,6 @@ $cases = @(
     @{ name = 'winget missing'; config = @{ absent = @('node', 'winget') }; error = 'winget was not found.*Node.js 24' },
     @{ name = 'rustup installer failure'; config = @{ absent = @('rustup'); failTool = 'winget'; failArgument = 'Rustlang.Rustup' }; error = 'winget install.*Rustlang.Rustup.*exit code 17' },
     @{ name = 'MSVC installer failure'; config = @{ missingMsvc = $true; failTool = 'winget'; failArgument = 'Microsoft.VisualStudio.2022.BuildTools' }; error = 'winget install.*BuildTools.*exit code 17' },
-    @{ name = 'WebView installer failure'; config = @{ missingWebView = $true; failTool = 'winget'; failArgument = 'Microsoft.EdgeWebView2Runtime' }; error = 'winget install.*WebView2Runtime.*exit code 17' },
     @{ name = 'LTS no longer offers Node24'; config = @{ absent = @('node'); noNode24 = $true }; error = 'no Node.js 24 LTS version'; noInstall = $true },
     @{ name = 'Node absent after successful installer'; config = @{ absent = @('node'); noInstalledNode = $true }; error = 'node was not found.*new PowerShell' },
     @{ name = 'npm native failure'; config = @{ absent = @('pnpm'); failTool = 'npm'; failArgument = 'install' }; error = 'npm install.*exit code 17.*Repair npm' },
@@ -39,9 +38,8 @@ $cases = @(
     @{ name = 'rustup default native failure'; config = @{ failTool = 'rustup'; failArgument = 'default' }; error = 'rustup default.*exit code 17.*Repair rustup' },
     @{ name = 'rustup component native failure'; config = @{ failTool = 'rustup'; failArgument = 'component' }; error = 'rustup component.*exit code 17' },
     @{ name = 'rustc native failure'; config = @{ failTool = 'rustc' }; error = 'rustc --version.*exit code 17' },
-    @{ name = 'missing MSVC and WebView installed'; config = @{ missingMsvc = $true; missingWebView = $true }; ok = $true },
-    @{ name = 'MSVC not detected after installer'; config = @{ missingMsvc = $true; noInstalledMsvc = $true }; error = 'MSVC tools still not detected.*Windows SDK' },
-    @{ name = 'WebView not detected after installer'; config = @{ missingWebView = $true; noInstalledWebView = $true }; error = 'WebView2 Runtime still not detected' }
+    @{ name = 'missing MSVC installed'; config = @{ missingMsvc = $true }; ok = $true },
+    @{ name = 'MSVC not detected after installer'; config = @{ missingMsvc = $true; noInstalledMsvc = $true }; error = 'MSVC tools still not detected.*Windows SDK' }
 )
 $failed = 0
 foreach ($case in $cases) {

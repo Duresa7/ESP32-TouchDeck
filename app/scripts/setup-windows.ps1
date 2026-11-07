@@ -57,18 +57,6 @@ function Get-MsvcInstallation {
     }
 }
 
-function Get-WebViewVersion {
-    # Microsoft's Evergreen detection: per-machine (32/64 bit) or per-user, pv > 0.
-    $client = 'Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-    foreach ($key in @("HKLM:\SOFTWARE\WOW6432Node\$client", "HKLM:\SOFTWARE\$client", "HKCU:\SOFTWARE\$client")) {
-        $item = Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue
-        $version = $null
-        if ($item -and [version]::TryParse([string]$item.pv, [ref]$version) -and $version -gt [version]'0.0.0.0') {
-            return $item.pv
-        }
-    }
-}
-
 function Invoke-TouchDeckSetup {
     $ErrorActionPreference = 'Stop'
     # Handle native exit codes ourselves, including when the caller enables PS7's preference.
@@ -143,13 +131,7 @@ function Invoke-TouchDeckSetup {
         $msvc = Get-MsvcInstallation
         if (-not $msvc) { throw 'MSVC tools still not detected. Complete/restart the Visual Studio Installer with Desktop development with C++ and a Windows SDK, then rerun setup.' }
     }
-    $webview = Get-WebViewVersion
-    if (-not $webview) {
-        Install-WingetPackage 'Microsoft.EdgeWebView2Runtime'
-        $webview = Get-WebViewVersion
-        if (-not $webview) { throw 'WebView2 Runtime still not detected. Complete the Evergreen Runtime installation from Microsoft, open a new PowerShell, then rerun setup.' }
-    }
-    [pscustomobject]@{ rustc = $rustc.Trim(); node = $node.Trim(); pnpm = $pnpm.Trim(); msvc = $msvc; webview = $webview } | ConvertTo-Json
+    [pscustomobject]@{ rustc = $rustc.Trim(); node = $node.Trim(); pnpm = $pnpm.Trim(); msvc = $msvc } | ConvertTo-Json
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
