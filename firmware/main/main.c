@@ -79,6 +79,25 @@ static void boot_crash_task(void *arg)
 }
 #endif
 
+#if CONFIG_TD_RADIO_BUILD
+#define HEARTBEAT_US 2000000
+
+/* The radio build's heartbeat runs on the esp_timer task, so app_main can return and give its 6.5 KB stack back to
+ * the internal heap that the Wi-Fi station and the panel share. Same log line as the loop below. */
+static void heartbeat(void *arg)
+{
+    static int ticks;
+    (void)arg;
+#if CONFIG_TD_PERF_TOOLS
+    display_perf_mem_sample();
+#endif
+    ESP_LOGI(TAG, "alive %d, free heap %" PRIu32 " bytes", ticks++, esp_get_free_heap_size());
+    if (ticks == 5) {
+        BOOT_MARK("alive_10s");
+    }
+}
+#endif
+
 void app_main(void)
 {
     BOOT_MARK("app_main");
@@ -230,6 +249,13 @@ void app_main(void)
     BOOT_MARK("radio");
 #endif
 
+#if CONFIG_TD_RADIO_BUILD
+    static const esp_timer_create_args_t heartbeat_args = { .callback = heartbeat, .name = "td_heartbeat" };
+    esp_timer_handle_t heartbeat_timer;
+    ESP_ERROR_CHECK(esp_timer_create(&heartbeat_args, &heartbeat_timer));
+    heartbeat(NULL);
+    ESP_ERROR_CHECK(esp_timer_start_periodic(heartbeat_timer, HEARTBEAT_US));
+#else
     int ticks = 0;
     while (true) {
 #if CONFIG_TD_PERF_TOOLS
@@ -242,4 +268,5 @@ void app_main(void)
             BOOT_MARK("alive_10s");
         }
     }
+#endif
 }
