@@ -24,6 +24,10 @@ _Avoid_: deck software
 The background program on the user's computer that runs the Devices, Integrations and actions, and serves the app's UI to the desktop window or a browser.
 _Avoid_: daemon, service, backend, host
 
+**Carrier**:
+How the Companion reaches a Device: USB today, Wi-Fi and Bluetooth later. Every carrier moves the same link frames, so everything the Companion does with a Device works the same on each.
+_Avoid_: transport, connection type
+
 ### Layout
 
 **Layout**:

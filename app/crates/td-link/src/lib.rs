@@ -1,5 +1,6 @@
 pub mod asset;
 pub mod bundle;
+pub mod carrier;
 pub mod discover;
 pub mod live;
 pub mod mock;
@@ -13,6 +14,7 @@ use std::io::{self, Read, Write};
 use std::time::Duration;
 
 pub use asset::{AssetError, AssetFormat, AssetReason};
+pub use carrier::{Carrier, FrameReader, FrameWriter, Outbound, Received, SendWindow, UsbCarrier};
 pub use discover::{Candidate, Probe, discover, probe_transport};
 pub use live::{LiveError, LiveReason, LiveSet, LiveValue};
 pub use mock::MockDeck;
@@ -27,7 +29,7 @@ const BAUD: u32 = 115_200;
 /// How long a read waits before it reports `TimedOut`, so a reader can notice a close.
 pub const READ_TICK: Duration = Duration::from_millis(20);
 
-/// A byte stream to one deck. The read half returns `TimedOut` when no byte arrives within
+/// A byte stream to one deck, which a [`UsbCarrier`] frames. The read half returns `TimedOut` when no byte arrives within
 /// [`READ_TICK`] and `Ok(0)` once the stream has ended.
 pub trait Transport: Send {
     fn split(self: Box<Self>) -> io::Result<(Box<dyn Read + Send>, Box<dyn Write + Send>)>;
