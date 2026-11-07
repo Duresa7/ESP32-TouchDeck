@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type RefObject } from 'react';
 import clsx from 'clsx';
-import { AppWindow, Search, Upload } from 'lucide-react';
+import { AppWindow, PackagePlus, Search, Upload } from 'lucide-react';
 import type { AssetRef, Builtin, CatalogHit } from '../../lib/companion/api.ts';
 import type { Companion } from '../../lib/companion/client.ts';
 import { useCompanion } from '../../lib/companion/connection.ts';
@@ -15,10 +15,14 @@ import { appProblem, catalogProblem, ICONS_FAILED, renderApp, renderCatalog, ren
 import { forget, readRecent, recentKey, remember, writeRecent, type RecentIcon } from '../../lib/icons/recent.ts';
 import { pickProblem as brandProblem, RECENT_NAME as BRAND_RECENT, renderBrandfetch } from '../../lib/brandfetch/pick.ts';
 import type { BrandHit } from '../../lib/brandfetch/search.ts';
+import { useIconPacks } from '../../lib/icon-packs/hooks.ts';
+import { credits, packPrefixOf, sourceName } from '../../lib/icon-packs/model.ts';
+import { useUi } from '../../state/ui.ts';
 import { button } from '../../shell/button.ts';
 import { AssetImage } from './AssetImage.tsx';
 import { BrandSearchStatus, BrandThumb, brandName, useBrandSearch } from './BrandfetchResults.tsx';
 import { BuiltinIcon, SYMBOL_NAMES } from './glyphs.tsx';
+import { PackThumbnail } from './PackThumbnail.tsx';
 
 const COLS = 4;
 
@@ -95,6 +99,8 @@ function Glyph({ item, onMissing }: { item: Item; onMissing(): void }) {
     case 'brand':
       return <BrandThumb hit={item.hit} />;
     case 'hit': {
+      const pack = packPrefixOf(item.hit.source);
+      if (pack !== null) return <PackThumbnail prefix={pack} name={item.hit.id} size={32} />;
       const tint = catalogTint(item.hit);
       return (
         <span className="icon-cell-mark" style={tint ? ({ color: hex(tint) } satisfies CSSProperties) : undefined} aria-hidden>
@@ -130,6 +136,8 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
   const file = useRef<HTMLInputElement>(null);
   const brand = useBrandSearch(companion);
   const platform = usePlatform();
+  const packList = useIconPacks(companion, (s) => s.packs);
+  const openIconPacks = useUi((s) => s.openIconPacks);
   const deps = useMemo<PickDeps>(() => ({ companion, wait: (job, signal) => waitForJob<'assets.render'>(jobsStore, companion, job, { signal }) }), [companion]);
 
   useEffect(() => {
@@ -346,7 +354,7 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
             <div className="icon-cells">
               {section.items.map((item, i) => {
                 const here = active.section === s && active.index === i;
-                const source = item.kind === 'hit' ? SOURCE_NAMES[item.hit.source] ?? item.hit.source : item.kind === 'brand' ? 'Brandfetch' : null;
+                const source = item.kind === 'hit' ? sourceName(item.hit, SOURCE_NAMES) : item.kind === 'brand' ? 'Brandfetch' : null;
                 return (
                   <button
                     key={item.key}
@@ -423,10 +431,22 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
             Use app icon
           </button>
         )}
+        <button
+          type="button"
+          className={button({ size: 'small' })}
+          onClick={() => {
+            onDone();
+            openIconPacks();
+          }}
+          data-testid="icon-more"
+        >
+          <PackagePlus size={14} strokeWidth={1.9} aria-hidden />
+          Get more icons
+        </button>
         <input
           ref={file}
           type="file"
-          accept="image/png,image/jpeg"
+          accept="image/png,image/jpeg,image/svg+xml"
           hidden
           onChange={(event) => {
             const chosen = event.target.files?.[0];
@@ -446,16 +466,20 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
           selfh.st/icons
         </a>{' '}
         (CC BY 4.0, modified)
-        {brand.clientId && (
-          <>
+        {credits(packList ?? [], brand.clientId !== null).map((credit) => (
+          <span key={credit.key} data-testid="icon-credit" data-prefix={credit.key}>
             {' '}
             ·{' '}
-            <a href="https://brandfetch.com" target="_blank" rel="noreferrer">
-              Brandfetch
-            </a>{' '}
-            (your keys)
-          </>
-        )}{' '}
+            {credit.url ? (
+              <a href={credit.url} target="_blank" rel="noreferrer">
+                {credit.name}
+              </a>
+            ) : (
+              credit.name
+            )}{' '}
+            {credit.note}
+          </span>
+        ))}{' '}
         · Logos belong to their owners
       </p>
     </div>

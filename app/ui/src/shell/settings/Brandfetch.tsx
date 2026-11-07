@@ -117,7 +117,7 @@ function Keys({ store }: { store: BrandfetchStore }) {
   );
 }
 
-/** The General view's row that opens this section. */
+/** The General view's row that opens this section, in the group beside Icon packs. */
 export function BrandfetchEntry({ onOpen, focus }: { onOpen(): void; focus: boolean }) {
   const companion = useCompanion();
   const store = brandfetchStore(companion);
@@ -131,17 +131,13 @@ export function BrandfetchEntry({ onOpen, focus }: { onOpen(): void; focus: bool
   }, [focus]);
   const on = view.kind === 'ready' && view.status.client_id !== null;
   return (
-    <section className="settings-section">
-      <div className="group">
-        <button ref={entry} type="button" className="row row-button" onClick={onOpen} data-testid="brandfetch-entry">
-          <span className="row-text">
-            <span className="row-title">Brandfetch logos</span>
-            <span className="row-sub">{on ? 'On. The icon picker searches Brandfetch with your client ID.' : 'Off. Add your own Brandfetch keys to search brand logos.'}</span>
-          </span>
-          <ChevronRight className="row-chevron" size={18} strokeWidth={1.9} aria-hidden />
-        </button>
-      </div>
-    </section>
+    <button ref={entry} type="button" className="row row-button" onClick={onOpen} data-testid="brandfetch-entry">
+      <span className="row-text">
+        <span className="row-title">Brandfetch logos</span>
+        <span className="row-sub">{on ? 'On. The icon picker searches Brandfetch with your client ID.' : 'Off. Add your own Brandfetch keys to search brand logos.'}</span>
+      </span>
+      <ChevronRight className="row-chevron" size={18} strokeWidth={1.9} aria-hidden />
+    </button>
   );
 }
 

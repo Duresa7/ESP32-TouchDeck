@@ -69,6 +69,7 @@ declare global {
         holdGifs(on: boolean): void;
         failGif(error: ErrorBody): void;
       };
+      iconPacks: { failInstall(prefix: string, error: ErrorBody): void; installed(): string[] };
     };
   }
 }
@@ -143,6 +144,8 @@ export function demoEnvironment(target: Window): Environment {
       ...(worst ? { accounts: worstAccounts, hubMessage: worstHubError, extra: { custom: worstCustom } } : {}),
     },
     assets: { ...(params.get('icons') === 'worst' ? { hits: worstCaseHits() } : {}), ...renderMs(params.get('render-ms')) },
+    // `?packs=logos,mdi` starts with those Icon packs installed.
+    iconPacks: { installed: params.get('packs')?.split(',') ?? [] },
     // `?brandfetch=on` starts with fake keys set. Search still goes to Brandfetch, which e2e
     // specs intercept; nobody's real keys are involved. `?keychain=off` acts like Linux with no
     // Secret Service running.
@@ -192,6 +195,7 @@ export function demoEnvironment(target: Window): Environment {
       holdGifs: (on) => fake.assets.holdGifs(on),
       failGif: (error) => fake.assets.failGif(error),
     },
+    iconPacks: { failInstall: (prefix, error) => fake.iconPacks.failInstall(prefix, error), installed: () => fake.iconPacks.installed() },
   };
   const network = target.fetch.bind(target);
   target.fetch = (input, init) => {

@@ -3,7 +3,7 @@ import { createStore } from 'zustand/vanilla';
 import type { Appearance } from './theme.ts';
 
 export type Section = 'home' | 'layout' | 'integrations';
-export type SettingsSection = 'general' | 'troubleshooting' | 'brandfetch';
+export type SettingsSection = 'general' | 'troubleshooting' | 'icon-packs' | 'brandfetch';
 
 export interface UiState {
   section: Section;
@@ -12,6 +12,7 @@ export interface UiState {
   settingsSection: SettingsSection;
   openDevice(id: string): void;
   openTroubleshooting(): void;
+  openIconPacks(): void;
   showSettingsSection(section: SettingsSection): void;
   appearance: Appearance;
   go(section: Section): void;
@@ -26,6 +27,7 @@ export function createUiStore() {
     settingsSection: 'general',
     openDevice: (deviceId) => set({ section: 'layout', deviceId }),
     openTroubleshooting: () => set({ settingsOpen: true, settingsSection: 'troubleshooting' }),
+    openIconPacks: () => set({ settingsOpen: true, settingsSection: 'icon-packs' }),
     showSettingsSection: (settingsSection) => set({ settingsSection }),
     settingsOpen: false,
     appearance: 'system',
@@ -40,7 +42,7 @@ export const uiStore = createUiStore();
 export type UiStore = ReturnType<typeof createUiStore>;
 
 const REOPEN_KEY = 'touchdeck.reopen-settings';
-const SECTIONS: readonly SettingsSection[] = ['general', 'troubleshooting', 'brandfetch'];
+const SECTIONS: readonly SettingsSection[] = ['general', 'troubleshooting', 'icon-packs', 'brandfetch'];
 
 function sessionStorageOrNull(): Storage | null {
   try {

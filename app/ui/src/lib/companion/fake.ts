@@ -7,6 +7,7 @@ import { createFakeConsole } from './fake/fake-console.ts';
 import { createFakeControls } from './fake/fake-controls.ts';
 import { createFakeDeviceSettings } from './fake/fake-device-settings.ts';
 import { createFakeFirmware } from './fake/fake-firmware.ts';
+import { createFakeIconPacks, type FakeIconPacksOptions } from './fake/fake-icon-packs.ts';
 import { createFakeIntegrations, type FakeIntegrationsOptions } from './fake/fake-integrations.ts';
 import { createFakeLayouts } from './fake/fake-layouts.ts';
 import { createFakeLive } from './fake/fake-live.ts';
@@ -40,6 +41,7 @@ export interface FakeCompanionOptions {
   /** How CLIProxyAPI starts: not set up unless `configured`. */
   integrations?: Omit<FakeIntegrationsOptions, 'publish'>;
   assets?: Omit<FakeAssetsOptions, 'publish' | 'brandfetch'>;
+  iconPacks?: Omit<FakeIconPacksOptions, 'publish'>;
   brandfetch?: FakeBrandfetchOptions;
 }
 
@@ -129,8 +131,9 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
   const startup = createFakeStartup(options.startAtSignIn);
   const consoles = createFakeConsole({ devices, publish });
   const integrations = createFakeIntegrations({ publish, ...options.integrations });
+  const iconPacks = createFakeIconPacks({ publish, ...options.iconPacks });
   const brandfetch = createFakeBrandfetch(options.brandfetch);
-  const assets = createFakeAssets({ publish, ...options.assets, brandfetch });
+  const assets = createFakeAssets({ publish, packHits: iconPacks.hits, ...options.assets, brandfetch });
 
   function mint() {
     minted += 1;
@@ -194,6 +197,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
       return found ? json(200, found) : failure(404, 'device.not_found', 'No Device with that id.');
     }
     return (
+      (await iconPacks.handle(request, path)) ??
       (await assets.handle(request, path)) ??
       (await brandfetch.handle(request, path)) ??
       (await settings.handle(request, path)) ??
@@ -218,7 +222,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     socket.push({ type: 'hello', api: 'v1', build: system.build, session: { id: 'fake-session', kind: 'window' } });
     socket.push({
       type: 'sync',
-      data: { devices: [...devices.values()], jobs: [...layouts.jobs(), ...firmware.jobs(), ...assets.jobs(), ...newBoards.jobs()], new_boards: newBoards.boards(), approvals: actions.pending(), integrations: integrations.list() },
+      data: { devices: [...devices.values()], jobs: [...layouts.jobs(), ...firmware.jobs(), ...assets.jobs(), ...iconPacks.jobs(), ...newBoards.jobs()], new_boards: newBoards.boards(), approvals: actions.pending(), integrations: integrations.list() },
     });
     return socket;
   }
@@ -237,6 +241,7 @@ export function createFakeCompanion(options: FakeCompanionOptions = {}) {
     consoles,
     integrations,
     assets,
+    iconPacks,
     brandfetch,
     /** Sessions minted so far through the bridge. */
     get minted() {
@@ -300,6 +305,7 @@ export type FakeCompanion = ReturnType<typeof createFakeCompanion>;
 // Explicit fake helpers shared by tests and browser scenarios.
 export { createFakeAssets, type FakeSearch } from './fake/fake-assets.ts';
 export { createFakeBrandfetch, type FakeBrandfetchOptions } from './fake/fake-brandfetch.ts';
+export { createFakeIconPacks, fakeSvg, FAKE_PACKS } from './fake/fake-icon-packs.ts';
 export { RECORDED_HITS } from './fake/fake-catalog.data.ts';
 export { isAllowedConsoleLine } from './fake/fake-console.ts';
 export { hasControls, type Settable } from './fake/fake-controls.ts';
