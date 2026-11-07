@@ -81,7 +81,7 @@ function AddressForm({ name, wifi }: Omit<WifiFieldProps, 'device'>) {
         id={id}
         className="input"
         value={address}
-        placeholder="192.168.1.20"
+        placeholder="IP address or name"
         spellCheck={false}
         autoComplete="off"
         onChange={(event) => wifi.getState().type(event.target.value)}
