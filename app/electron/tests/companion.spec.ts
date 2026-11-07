@@ -1,6 +1,6 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { createWriteStream, existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -11,13 +11,29 @@ const binary = process.env.TOUCHDECK_COMPANION_BIN ||
   resolve('../target/debug/td-companion' + (process.platform === 'win32' ? '.exe' : ''));
 const evidence = process.env.TOUCHDECK_EVIDENCE_DIR || resolve('../../.verify/72');
 
+/** Keeps a process's output with the spec's results, so a CI failure shows what the Companion or Electron said. */
+function record(child: ChildProcess, name: string) {
+  const log = createWriteStream(test.info().outputPath(name));
+  child.stdout?.on('data', chunk => log.write(chunk));
+  child.stderr?.on('data', chunk => log.write(chunk));
+  child.once('close', () => log.end());
+}
+
+/** Launches the Electron window and records its main-process output. */
+async function launch(env: NodeJS.ProcessEnv): Promise<ElectronApplication> {
+  const app = await electron.launch({ args: [resolve('.')], env });
+  record(app.process(), 'electron.log');
+  return app;
+}
+
 /** Runs `td-companion --mock-devices 1` in a scratch data dir for the length of `body`. */
 async function withCompanion(body: (env: NodeJS.ProcessEnv, origin: string) => Promise<void>) {
   expect(existsSync(binary), `Companion binary missing at ${binary}`).toBe(true);
   const dir = await mkdtemp(join(tmpdir(), 'touchdeck-companion-'));
   const env = { ...process.env, TOUCHDECK_APP_DATA_DIR: dir, TOUCHDECK_COMPANION_BIN: binary };
   delete env.ELECTRON_RUN_AS_NODE;
-  const companion = spawn(binary, ['--mock-devices', '1'], { env, windowsHide: true, stdio: 'ignore' });
+  const companion = spawn(binary, ['--mock-devices', '1'], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  record(companion, 'companion.log');
   const runtimeFile = join(dir, 'runtime', 'companion.json');
   try {
     await expect.poll(() => existsSync(runtimeFile), { timeout: 10_000 }).toBe(true);
@@ -31,7 +47,7 @@ async function withCompanion(body: (env: NodeJS.ProcessEnv, origin: string) => P
 
 test('window loads from the real Companion and its session lists the mock Device', async () => {
   await withCompanion(async (env, origin) => {
-    const app = await electron.launch({ args: [resolve('.')], env });
+    const app = await launch(env);
     try {
       const page = await app.firstWindow();
       await page.waitForURL(origin + '/');
@@ -63,7 +79,7 @@ test('in development the window shows Home from the UI dev server with the mock 
         { cwd: resolve('../ui'), env, windowsHide: true, stdio: 'ignore' });
       await expect.poll(async () => { try { return (await fetch(ui)).ok; } catch { return false; } },
         { timeout: 30_000 }).toBe(true);
-      const app = await electron.launch({ args: [resolve('.')], env: { ...env, TOUCHDECK_UI_DEV_URL: ui } });
+      const app = await launch({ ...env, TOUCHDECK_UI_DEV_URL: ui });
       try {
         const page = await app.firstWindow();
         await page.waitForURL(ui);
@@ -81,7 +97,7 @@ test('in development the window shows Home from the UI dev server with the mock 
 
 test('reading a session preserves in-flight requests and stale renewals share one replacement', async () => {
   await withCompanion(async env => {
-    const app = await electron.launch({ args: [resolve('.')], env });
+    const app = await launch(env);
     try {
       const page = await app.firstWindow();
       await page.waitForLoadState();

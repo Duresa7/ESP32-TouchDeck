@@ -8,7 +8,14 @@ import { UPDATER_PUBLIC_KEY } from './updates/key.gen';
 import { trustedSender } from './trusted-sender';
 
 app.setName('Open TouchDeck');
-if (process.platform === 'win32') app.setAppUserModelId('io.github.duresa7.touchdeck');
+if (process.platform === 'win32') {
+  app.setAppUserModelId('io.github.duresa7.touchdeck');
+  // On Windows 11 22H2 and later, Chromium's TcpPortRandomizationWin makes about one loopback connect in a
+  // few thousand fail at once with net::ERR_NO_BUFFER_SPACE. The window loads the UI from the Companion over
+  // loopback, so one such failure leaves a blank page or a failed load and the error box. Nothing else sets
+  // --disable-features here; Chromium would keep only the last one.
+  app.commandLine.appendSwitch('disable-features', 'TcpPortRandomizationWin');
+}
 if (process.env.TOUCHDECK_APP_DATA_DIR) app.setPath('userData', join(process.env.TOUCHDECK_APP_DATA_DIR, 'electron'));
 let window: BrowserWindow | undefined;
 let current: WindowSession | undefined;
@@ -159,6 +166,8 @@ else {
   app.on('window-all-closed', () => app.quit());
   void app.whenReady().then(openWindow).catch(error => {
     if (closing) return;
+    // The dialog blocks until someone dismisses it; the log says why the window never opened.
+    console.error('Open TouchDeck could not open its window:', error);
     dialog.showErrorBox('Open TouchDeck', error instanceof Error && error.message === restartMessage
       ? restartMessage : 'Could not verify or start the Companion. Try restarting Open TouchDeck.');
     app.quit();
