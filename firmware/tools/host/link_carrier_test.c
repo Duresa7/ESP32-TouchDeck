@@ -328,7 +328,7 @@ static void reset(void)
     g_usb_handler = NULL;
     g_usb_context = NULL;
     memset(&g_fake, 0, sizeof g_fake);
-    g_fake.carrier = (td_link_carrier_t){ .name = "fake", .send = fake_send };
+    g_fake.carrier = (td_link_carrier_t){ .send = fake_send };
     g_now_ms = 100000;
 }
 
@@ -419,7 +419,7 @@ static void test_carrier_add_rules(void)
     start(true);
     CHECK(td_link_carrier_add(&g_fake.carrier) == ESP_ERR_INVALID_STATE);
     static fake_carrier_t second, third;
-    second.carrier = third.carrier = (td_link_carrier_t){ .name = "other", .send = fake_send };
+    second.carrier = third.carrier = (td_link_carrier_t){ .send = fake_send };
     CHECK(td_link_carrier_add(&second.carrier) == ESP_OK);
     CHECK(td_link_carrier_add(&third.carrier) == ESP_ERR_NO_MEM);
     CHECK(td_link_start() == ESP_ERR_INVALID_STATE);

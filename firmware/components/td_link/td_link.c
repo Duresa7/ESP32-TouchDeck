@@ -110,7 +110,7 @@ static bool usb_send(const td_link_carrier_t *carrier, const td_frame_t *frame)
     return wire_len && td_console_write((const char *)wire, wire_len);
 }
 
-static const td_link_carrier_t s_usb = { .name = "usb", .send = usb_send };
+static const td_link_carrier_t s_usb = { .send = usb_send };
 
 /* USB goes first, into the empty table that td_link_start finds, and every other carrier after it. */
 static esp_err_t add_carrier(const td_link_carrier_t *carrier)

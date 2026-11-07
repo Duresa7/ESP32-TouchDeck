@@ -22,7 +22,6 @@ extern "C" {
 typedef struct td_link_carrier td_link_carrier_t;
 
 struct td_link_carrier {
-    const char *name;
     /* Sends one frame, on the td_link task. Returns false when the frame did not go out whole. A carrier with state
      * of its own embeds this struct and finds its state from the pointer. */
     bool (*send)(const td_link_carrier_t *carrier, const td_frame_t *frame);
@@ -31,8 +30,9 @@ struct td_link_carrier {
 #define TD_LINK_CARRIERS_MAX 3
 
 /*
- * Adds a carrier after td_link_start, behind the carriers already added. The carrier must stay valid for good.
- * Returns ESP_ERR_INVALID_STATE before td_link_start or when it was added already, and ESP_ERR_NO_MEM when
+ * Adds a carrier after td_link_start, behind the carriers already added. The carrier must stay valid for good. Call it
+ * from a task, never from an ISR. Returns ESP_OK, ESP_ERR_INVALID_ARG for a NULL carrier or one without `send`,
+ * ESP_ERR_INVALID_STATE before td_link_start or when it was added already, and ESP_ERR_NO_MEM when
  * TD_LINK_CARRIERS_MAX are in use.
  */
 esp_err_t td_link_carrier_add(const td_link_carrier_t *carrier);
