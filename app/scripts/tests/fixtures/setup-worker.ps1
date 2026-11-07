@@ -27,7 +27,6 @@ if ($config.placeholderPnpm) {
 # handling use real child processes; every resolved executable must be a fixture.
 function Get-InstalledPaths { if (Test-Path "$FixtureRoot/path-installed") { "$FixtureRoot/installed" } }
 function Get-MsvcInstallation { if (!$config.missingMsvc -or (Test-Path "$FixtureRoot/msvc")) { 'fixture-msvc' } }
-function Get-WebViewVersion { if (!$config.missingWebView -or (Test-Path "$FixtureRoot/webview")) { '130.0.0.0' } }
 $findTool = ${function:Find-Tool}
 function Find-Tool($name) {
     $command = & $findTool $name
