@@ -132,6 +132,21 @@ jobs:
       - run: pnpm test
       - name: Test the packaging recipe's disposable signing
         run: python -B -m unittest discover -s scripts/tests -p "test_package_signing.py" -v
+      - name: Test the packaging and catalog scripts
+        run: |
+          python -B -m unittest discover -s scripts/tests -p "test_package_windows.py" -v
+          python -B -m unittest discover -s scripts/tests -p "test_generate_catalog.py" -v
+      - name: Test the release workflow steps
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -B -m unittest discover -s scripts/tests -p "test_release_workflow.py" -v 2>&1 | tee "$RUNNER_TEMP/release-workflow-tests.log"
+          # These tests skip when bash, jq or node is missing. A skip here would hide a broken release workflow.
+          if grep -q skipped "$RUNNER_TEMP/release-workflow-tests.log"; then
+            echo "::error::A release workflow test was skipped; it needs bash, jq and node"
+            exit 1
+          fi
       - name: Build the UI that the Companion embeds
         run: pnpm build:ui
       - run: cargo fmt --check
