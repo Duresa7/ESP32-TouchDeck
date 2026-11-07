@@ -80,7 +80,7 @@ and link frame checks from `protocol.mjs`. `vectors-v2.mjs` regenerates
 builds its link bodies from [golden-frames-v2.json](../golden-frames-v2.json).
 
 ```powershell
-node --test schema/protocol/net-ref/net-v2.test.mjs
+node --test schema/protocol/net-ref/net-v2.test.mjs schema/protocol/net-ref/net-v2-negative.test.mjs
 node schema/protocol/net-ref/vectors-v2.mjs --write
 ```
 
@@ -88,3 +88,20 @@ Every key, code and identity in those vectors is a synthetic test value. The
 test also checks X25519 against RFC 7748's own vectors and HKDF against Node's
 built-in implementation. There is no net-v2 socket peer yet; the Firmware and
 Companion tickets bring their own.
+
+For per-peer backoff and pairing, `closeOutcome` tells a close the peer starts
+from a radio loss, `PeerBackoff.admits` lets a `session.open` naming a stored
+`companion_id` past a backoff, and `PairFailures` counts failed proofs and
+dropped pairing windows toward the pairing lockout. `HANGUL_FILLERS` extends
+the `companion_name` rule.
+
+`net-v2.mjs` also models three rules the Firmware and Companion must match:
+`nameAllowed` with the pinned `FORMAT_RANGES` table for `companion_name`,
+`receiveLimit` for the largest BLE fragment a receiver accepts (514 when its
+ATT_MTU is unknown), and `PeerBackoff`, which counts only the peer-caused
+outcomes in `COUNTED` toward per-peer backoff.
+
+`net-v2-negative.test.mjs` runs every shared negative vector through the
+reference: `DeviceSession` and `CompanionSession` answer and check the session
+items, `verifyPairProof` checks a pairing proof, `canonicalShare` applies the
+X25519 share rule, and `FlowCredit` is the Device's side of BLE credit.

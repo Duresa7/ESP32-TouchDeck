@@ -4,8 +4,9 @@ import { hkdfSync } from 'node:crypto';
 import { ascii, bytes, concat, hash512, minimum, extract, validateFrame } from './protocol.mjs';
 import {
   derive, handshake, parseHandshake, acceptKey, share, x25519, sessionKeys,
-  RecordSender, RecordReceiver, fragment, Reassembler, creditValue, gatt,
-  MAX_ITEM, MIN_INITIAL_CREDIT,
+  RecordSender, RecordReceiver, fragment, Reassembler, receiveLimit, creditValue, gatt,
+  MAX_ITEM, MIN_INITIAL_CREDIT, FORMAT_RANGES, nameAllowed, PeerBackoff, COUNTED, NOT_COUNTED,
+  HANGUL_FILLERS, closeOutcome, PairFailures,
 } from './net-v2.mjs';
 import { inputs, goldenFrames, pairing, session, buildVectors, readVectors } from './vectors-v2.mjs';
 
@@ -100,6 +101,34 @@ test('net-v2: pair.request names refuse control characters and bidi overrides', 
     assert.throws(() => request(`Desk${String.fromCodePoint(code)}PC`), /control character/);
   }
   assert.equal(parseHandshake(request(`Desk${String.fromCodePoint(0x2065)}PC`)).kind, 0x10);
+});
+
+test('net-v2: the shared name vectors accept and refuse the same pair.request items', () => {
+  const { accepted, rejected } = fixture.companion_names;
+  for (const { label, request } of accepted) assert.equal(parseHandshake(bytes(request), 0x10).kind, 0x10, label);
+  for (const { label, request, expected } of rejected) {
+    assert.equal(expected, 'close');
+    assert.throws(() => parseHandshake(bytes(request), 0x10), /control character/, label);
+  }
+  const labels = rejected.map(({ label }) => label);
+  for (const mark of ['U+200E', 'U+200F', 'U+061C', 'U+200B', 'U+200C', 'U+200D', 'U+2060', 'U+FEFF',
+    'U+115F', 'U+1160', 'U+3164', 'U+FFA0']) {
+    assert.ok(labels.includes(mark), mark);
+  }
+});
+
+test('net-v2: the pinned format table is exactly Unicode General_Category Cf', () => {
+  const table = new Set();
+  for (const [first, last] of FORMAT_RANGES) for (let cp = first; cp <= last; cp++) table.add(cp);
+  for (let cp = 0; cp <= 0x10ffff; cp++) {
+    if (cp >= 0xd800 && cp <= 0xdfff) continue;
+    const character = String.fromCodePoint(cp);
+    assert.equal(table.has(cp), /\p{Cf}/u.test(character), `U+${cp.toString(16)}`);
+    if (table.has(cp)) assert.equal(nameAllowed(`a${character}b`), false);
+  }
+  assert.deepEqual(fixture.companion_names.format_ranges, FORMAT_RANGES.map(([first, last]) =>
+    (first === last ? first.toString(16).padStart(4, '0')
+      : `${first.toString(16).padStart(4, '0')}-${last.toString(16).padStart(4, '0')}`)));
 });
 
 test('net-v2: records open each way and carry the golden link-v2 bodies', () => {
@@ -212,4 +241,173 @@ test('net-v2: BLE service constants and initial credit', () => {
   assert.equal(MAX_ITEM, 1050);
   assert.ok(fixture.ble.initial_credit >= MIN_INITIAL_CREDIT);
   assert.equal(creditValue(fixture.ble.initial_credit).toString('hex'), fixture.ble.initial_credit_value);
+});
+
+test('net-v2: a Companion with an unknown ATT_MTU sends 20-byte fragments and accepts up to 514', () => {
+  assert.equal(receiveLimit(), 514);
+  assert.equal(receiveLimit(247), 244);
+  assert.equal(receiveLimit(23), 20);
+  assert.throws(() => receiveLimit(22), /ATT_MTU/);
+
+  const request = bytes(fixture.records[2].wire);
+  fragment(request).forEach((part, i, parts) => assert.ok(i === parts.length - 1 ? part.length <= 20 : part.length === 20));
+
+  const response = fixture.records[3];
+  const fromDevice = new Reassembler(receiveLimit());
+  fromDevice.records();
+  const parts = response.ble_fragments.att_mtu_247.map(bytes);
+  assert.ok(parts[0].length === 244);
+  assert.deepEqual(parts.map((part) => fromDevice.push(part)).filter(Boolean), [bytes(response.wire)]);
+
+  const maxItem = concat(Buffer.from([0x04, 0x18]), Buffer.alloc(1048, 0x5a));
+  const largest = new Reassembler(receiveLimit());
+  largest.records();
+  const largestParts = fragment(maxItem, 517);
+  assert.deepEqual(largestParts.map((part) => part.length), [514, 514, 22]);
+  assert.deepEqual(largestParts.map((part) => largest.push(part)).filter(Boolean), [maxItem]);
+
+  const tooLarge = new Reassembler(receiveLimit());
+  tooLarge.records();
+  assert.throws(() => tooLarge.push(maxItem.subarray(0, 515)), /fragment size/);
+  const known = new Reassembler(receiveLimit(23));
+  known.records();
+  assert.throws(() => known.push(parts[0]), /fragment size/);
+});
+
+test('net-v2: per-peer backoff doubles on peer-caused failures up to 60 s and resets on session.ready', () => {
+  const backoff = new PeerBackoff();
+  let now = 0;
+  const delays = [];
+  for (const outcome of ['deadline', 'auth', 'proof', 'malformed', 'deadline', 'auth', 'proof', 'malformed']) {
+    backoff.end('peer-a', outcome, now);
+    delays.push(backoff.refusal('peer-a', now));
+    now += backoff.refusal('peer-a', now);
+    assert.equal(backoff.refusal('peer-a', now), 0);
+  }
+  assert.deepEqual(delays, [1000, 2000, 4000, 8000, 16000, 32000, 60000, 60000]);
+  backoff.end('peer-a', 'ready', now);
+  assert.equal(backoff.failures('peer-a'), 0);
+  backoff.end('peer-a', 'auth', now);
+  assert.equal(backoff.refusal('peer-a', now), 1000);
+  assert.throws(() => backoff.end('peer-a', 'mystery', now), /unknown connection outcome/);
+});
+
+test('net-v2: a taken-over handshake, busy and a refusal while USB is online never count', () => {
+  const backoff = new PeerBackoff();
+  // The real Companion keeps starting session.open; a stranger who copied its
+  // cleartext companion_id keeps taking the handshake over.
+  for (let i = 0; i < 20; i++) {
+    backoff.end('companion', 'takeover', i * 100);
+    assert.equal(backoff.refusal('companion', i * 100), 0);
+  }
+  for (let i = 0; i < 20; i++) backoff.end('companion', 'busy', 3000 + i);
+  for (let i = 0; i < 20; i++) backoff.end('companion', 'usb-online', 4000 + i);
+  assert.equal(backoff.failures('companion'), 0);
+  assert.equal(backoff.refusal('companion', 5000), 0);
+
+  // Busy refusals during a backoff don't extend it.
+  backoff.end('companion', 'deadline', 10000);
+  for (let t = 10000; t < 11000; t += 100) backoff.end('companion', 'busy', t);
+  assert.equal(backoff.refusal('companion', 11000), 0);
+  backoff.end('companion', 'takeover', 11000);
+  backoff.end('companion', 'usb-online', 11000);
+  backoff.end('companion', 'deadline', 12000);
+  assert.equal(backoff.refusal('companion', 12000), 2000);
+
+  for (const outcome of NOT_COUNTED) {
+    const fresh = new PeerBackoff();
+    fresh.end('peer', outcome, 0);
+    assert.equal(fresh.refusal('peer', 0), 0, outcome);
+  }
+  assert.deepEqual([...COUNTED].sort(), ['auth', 'deadline', 'malformed', 'peer-closed', 'proof']);
+});
+
+test('net-v2: per-peer backoff keeps at least eight peers and evicts the oldest', () => {
+  const backoff = new PeerBackoff();
+  for (let i = 0; i < 8; i++) backoff.end(`peer-${i}`, 'deadline', i);
+  for (let i = 0; i < 8; i++) assert.equal(backoff.failures(`peer-${i}`), 1);
+  backoff.end('peer-0', 'auth', 10);
+  backoff.end('peer-8', 'deadline', 11);
+  assert.equal(backoff.failures('peer-1'), 0);
+  assert.equal(backoff.failures('peer-0'), 2);
+  assert.equal(backoff.failures('peer-8'), 1);
+});
+
+test('net-v2: names refuse the Hangul fillers', () => {
+  for (const codePoint of HANGUL_FILLERS) {
+    assert.equal(nameAllowed(`Desk${String.fromCodePoint(codePoint)}PC`), false);
+    assert.match(String.fromCodePoint(codePoint), /\p{Lo}/u);
+  }
+  assert.equal(nameAllowed('\ud55c\uae00 PC'), true);
+});
+
+test('net-v2: a close the peer starts counts toward backoff, a radio loss does not', () => {
+  assert.equal(closeOutcome('tcp', 'fin'), 'peer-closed');
+  assert.equal(closeOutcome('tcp', 'rst'), 'peer-closed');
+  for (const reason of [0x13, 0x14, 0x15]) assert.equal(closeOutcome('ble', reason), 'peer-closed');
+  for (const reason of [0x08, 0x22, 0x3d, 0x3e]) assert.equal(closeOutcome('ble', reason), 'radio-lost');
+  assert.throws(() => closeOutcome('tcp', 'timeout'), /unknown/);
+
+  // Connect, idle 1.9 s, drop, repeat: each drop now costs the peer.
+  const backoff = new PeerBackoff();
+  let now = 0;
+  const delays = [];
+  for (let i = 0; i < 4; i++) {
+    now += 1900;
+    backoff.end('idler', closeOutcome('tcp', i % 2 ? 'rst' : 'fin'), now);
+    delays.push(backoff.refusal('idler', now));
+    now += backoff.refusal('idler', now);
+  }
+  assert.deepEqual(delays, [1000, 2000, 4000, 8000]);
+
+  const ble = new PeerBackoff();
+  for (let i = 0; i < 5; i++) ble.end('flaky', closeOutcome('ble', 0x08), i * 5000);
+  assert.equal(ble.failures('flaky'), 0);
+  ble.end('flaky', closeOutcome('ble', 0x13), 30000);
+  assert.equal(ble.refusal('flaky', 30000), 1000);
+});
+
+test('net-v2: a session.open naming a stored companion_id skips per-peer backoff', () => {
+  const backoff = new PeerBackoff();
+  // An attacker sends from the real Companion's public BLE address with an
+  // unknown id, once a minute, keeping that address at the cap.
+  for (let minute = 0; minute < 8; minute++) backoff.end('victim', 'auth', minute * 60000);
+  const now = 7 * 60000 + 1;
+  assert.equal(backoff.refusal('victim', now), 60000 - 1);
+  assert.equal(backoff.admits('victim', now, { kind: 0x20, storedCompanion: true }), true);
+  assert.equal(backoff.admits('victim', now, { kind: 0x20, storedCompanion: false }), false);
+  assert.equal(backoff.admits('victim', now, { kind: 0x10 }), false);
+  assert.equal(backoff.admits('victim', now, { kind: 0x10, storedCompanion: true }), false);
+  assert.equal(backoff.admits('stranger', now, { kind: 0x10 }), true);
+  // The real Companion reaches session.ready, which clears the address.
+  backoff.end('victim', 'ready', now + 500);
+  assert.equal(backoff.admits('victim', now + 500, { kind: 0x10 }), true);
+});
+
+test('net-v2: a dropped pairing window counts toward pair_failures', () => {
+  const failures = new PairFailures();
+  failures.windowEnded('peer-closed');
+  failures.windowEnded('radio-lost');
+  assert.equal(failures.lockMs(), 0);
+  failures.windowEnded('deadline');
+  assert.equal(failures.count, 3);
+  assert.equal(failures.lockMs(), 30000);
+  failures.windowEnded('malformed');
+  assert.equal(failures.lockMs(), 60000);
+  for (const outcome of ['cancelled', 'window-expired', 'storage', 'paired']) failures.windowEnded(outcome);
+  assert.equal(failures.count, 4);
+  assert.throws(() => failures.windowEnded('busy'), /unknown window outcome/);
+
+  // Three failed proofs in one window count three times, not four.
+  const proofs = new PairFailures();
+  proofs.proofFailed();
+  proofs.proofFailed();
+  proofs.proofFailed();
+  proofs.windowEnded('auth');
+  assert.equal(proofs.count, 3);
+  proofs.committed();
+  assert.equal(proofs.lockMs(), 0);
+
+  const restored = new PairFailures(40);
+  assert.equal(restored.lockMs(), 900000);
 });

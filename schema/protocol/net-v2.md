@@ -127,14 +127,53 @@ Unauthenticated connections are kept short:
 * On BLE, the Companion MUST enable both notifications within 5000 ms of the LE
   connection, or the Device disconnects. An LE connection that hasn't started a
   carrier connection is not an owner, but it does use a connection slot.
-* **Per-peer backoff.** A peer is a TCP source address or a BLE address. When a
-  peer's carrier connection ends before `session.ready` or a verified
-  `client_proof`, the Device refuses that peer's next connections with `busy`
-  for a delay that starts at 1000 ms, doubles on each further failure up to
-  60000 ms, and resets when that peer reaches `session.ready`. The Device keeps
-  at least eight peers, evicting the oldest entry. Addresses are easy to
-  change, so this limits nuisance, not guessing; the pairing rules below do
-  that.
+* **Per-peer backoff.** A peer is a TCP source address or a BLE address. The
+  Device counts a **failure** against a peer only when that peer's carrier
+  connection, or its BLE LE connection that never started one, ends for one
+  of these reasons, all caused by the peer:
+  * a missed deadline: the first handshake item (2000 ms), both BLE
+    notifications (5000 ms), session setup (10000 ms) or a pairing attempt
+    (10000 ms);
+  * `auth`, which includes an unknown `companion_id` and the failed pairing
+    proof that ends the connection;
+  * a bad proof: a `client_proof` or `commit_proof` that fails its check;
+  * a malformed item: anything this document says closes the carrier
+    connection for its bytes, including `version`, `args`, a wrong length,
+    kind, field or state transition, invalid UTF-8 or a refused name, an
+    invalid public value or an all-zero `Z`, a broken fragment rule, a
+    prepared write or write with response, a write beyond the credit or
+    before the carrier connection starts, and disabling notifications;
+  * a close the peer starts before the Device has sent a terminal error or
+    decided to close: a TCP FIN or RST, or a BLE disconnect whose reason is
+    one a peer sends when it terminates, 0x13 (remote user terminated),
+    0x14 (low resources) or 0x15 (power off). Otherwise a peer could
+    connect, idle until just before the first-item deadline, drop and
+    repeat for free.
+
+  Nothing else counts. In particular these never count against the peer
+  whose connection ends: a connection that another `session.open` takes over,
+  a `busy` refusal (including one sent because of this backoff), and a
+  `session.open` refused because USB is online. Neither do `closed`, `full`,
+  `cancelled`, `storage`, an expired pairing window, a committed Pairing, a
+  peer closing after the Device's terminal error, or a radio loss: any other
+  BLE disconnect reason the Device didn't cause, such as supervision timeout
+  (0x08). A modified controller can report any reason, so, like the address,
+  this limits nuisance rather than a determined attacker.
+
+  Each failure refuses that peer for a delay from the failure that starts at
+  1000 ms, doubles on each further failure up to 60000 ms, and resets when
+  that peer reaches `session.ready`. The Device applies the refusal to the
+  peer's first handshake item, as it does a takeover: a `session.open` that
+  names a stored `companion_id` skips the backoff and goes on to the
+  handshake, and any other first item gets `busy`. So someone who sends from
+  the real Companion's public BLE address with an unknown id, which gets
+  `auth` and counts against that address, can't keep the real Companion
+  out. The Device keeps at least eight peers, evicting the one whose last
+  failure is oldest. Because takeovers and refusals don't count, someone who
+  copies the cleartext `companion_id` from a `session.open` on BLE can delay
+  the real Companion's handshake but can't push its address into backoff.
+  Addresses are easy to change, so this limits nuisance, not guessing; the
+  pairing rules below do that.
 
 USB wins. While the USB link is online (a valid `hello` within the last
 5000 ms, as in link-v1), the Device:
@@ -206,6 +245,11 @@ notification is one **fragment**:
   Device always knows its ATT_MTU. A Companion on WinRT can read it from the
   GATT session; one on BlueZ through btleplug may not be told, and then sends
   20-byte fragments. Neither side requires a larger MTU.
+* A receiver accepts fragments up to its own `ATT_MTU - 3`. One that doesn't
+  know its ATT_MTU accepts up to 514 bytes, the most an ATT_MTU of 517
+  allows, because the MTU exchange may have succeeded below a stack that
+  doesn't report it. So a Companion with an unknown MTU sends 20-byte
+  fragments and still receives the Device's 244-byte notifications.
 * Each sender fixes its `F` when the carrier connection starts and keeps it
   for that connection, even if it learns a larger MTU later.
 * Because `F` is at least 20, an item's first fragment always holds its whole
@@ -213,7 +257,8 @@ notification is one **fragment**:
 * A receiver doesn't know the sender's `F` in advance. It learns it from the
   first fragment that isn't an item's last, and from then on checks it. It
   closes the carrier connection on:
-  * an empty fragment, or one longer than its own `ATT_MTU - 3` (514 at most);
+  * an empty fragment, or one longer than its own `ATT_MTU - 3`, or 514 when
+    it doesn't know its ATT_MTU;
   * a first fragment shorter than 2 bytes;
   * a fragment that isn't its item's last and is shorter than 20 bytes or
     differs from the learned `F`;
@@ -311,11 +356,24 @@ leaves the display or the SRP computation. `pair.offer` reports the time left
 in the window.
 
 `companion_id` is a random 16-byte id, stable for one Companion installation.
-`companion_name` is 1 to 64 bytes of valid UTF-8 with no NUL or Unicode control
-characters; `name_len` counts bytes. The name labels the Pairing for a person
-and grants no authority. Besides control characters (`\p{Cc}`), the name MUST
-NOT contain the bidirectional overrides and isolates U+202A to U+202E and
-U+2066 to U+2069, which can make one name look like another on screen.
+`companion_name` is 1 to 64 bytes of valid UTF-8; `name_len` counts bytes.
+The name labels the Pairing for a person and grants no authority. It MUST NOT
+contain a control character (`\p{Cc}`, which includes NUL) or a format
+character (`\p{Cf}`). Format characters are invisible or reorder text, so
+they can make one name look like another on screen: the bidirectional marks
+LRM, RLM and ALM, the overrides and isolates U+202A to U+202E and U+2066 to
+U+2069, the zero-width characters U+200B to U+200D and U+2060, the byte order
+mark U+FEFF (also as the first character), the soft hyphen and the tag
+characters. Rejecting U+200D also rejects emoji joined into one glyph; single
+emoji are fine. So that a receiver needs no Unicode database, the `\p{Cf}` set
+is pinned to Unicode 17.0's, these inclusive hex ranges, also in the vectors'
+`companion_names.format_ranges`: `00ad`, `0600-0605`, `061c`, `06dd`, `070f`,
+`0890-0891`, `08e2`, `180e`, `200b-200f`, `202a-202e`, `2060-2064`,
+`2066-206f`, `feff`, `fff9-fffb`, `110bd`, `110cd`, `13430-1343f`,
+`1bca0-1bca3`, `1d173-1d17a`, `e0001` and `e0020-e007f`. `\p{Cc}` is
+U+0000 to U+001F and U+007F to U+009F. The name also MUST NOT contain the
+Hangul fillers U+115F, U+1160, U+3164 and U+FFA0, letters (`\p{Lo}`) that
+render as blank space. A refused name closes the carrier connection.
 `window_id` is a fresh random 16-byte value. A new request can't replace or
 extend an open window. Three failed client proofs close the window and the
 carrier connection.
@@ -335,6 +393,14 @@ Device also limits code guesses across windows and reboots:
 * `pair_failures` is a counter in NVS. Each failed client proof increments it,
   and the Device commits it to NVS before it sends `auth`. A storage failure
   closes the window as if it were locked out.
+* A dropped window counts too. When the carrier connection bound to a window
+  ends before a commit for any reason other than Cancel on the Device, the
+  window expiring, a storage failure or a failed proof already counted, the
+  Device increments `pair_failures` once and commits it to NVS, and the
+  lockout below applies. That covers a peer close, a radio loss, a missed
+  deadline and a malformed item, so binding a fresh window and dropping it
+  isn't a free retry. A radio loss counts here, unlike in per-peer backoff,
+  because a dropped window costs the person at the Device a new window.
 * When `pair_failures` reaches 3 or more after an increment, the Device closes
   the window and the carrier connection and locks pairing for
   `min(30000 ms * 2^(pair_failures - 3), 900000 ms)`. That is 30 s, 60 s,
@@ -470,10 +536,30 @@ client_proof = MAC(kc, T_session || device_proof)
 ready_proof = MAC(kr, T_session || client_proof)
 ```
 
-The Device checks `device_id` against its own and looks up `companion_id`. An
-unknown id gets `auth` before any X25519 work. Both sides MUST reject an
-all-zero `Z` (RFC 7748 section 6.1), which a low-order share produces, by
-closing the carrier connection. The Companion checks `device_proof` before it
+The Device checks `device_id` against its own and looks up `companion_id`. A
+different `device_id` or an unknown `companion_id` gets `auth` before any
+X25519 work.
+
+**Share checks.** Every implementation follows this one rule for the peer's
+share, so a bad share fails the same way whatever its X25519 library does:
+
+1. The share MUST be canonical: bit 255 clear and `u < p`, where
+   `p = 2^255 - 19`. `X25519(e, 9)` always produces such a share. The
+   receiver checks this itself before any library call, because RFC 7748
+   masks bit 255 while libraries differ on values at or above `p`.
+2. Then the receiver computes `Z`. It treats a share its library refuses on
+   import and an all-zero `Z` (RFC 7748 section 6.1) as the same failure.
+   Mbed TLS PSA refuses some small-order points on import; x25519-dalek
+   accepts them and returns an all-zero `Z`, which
+   `SharedSecret::was_contributory()` reports. Either way the session fails.
+
+A failed share check closes the carrier connection with no error item and
+counts as a malformed item for per-peer backoff. The Device sends no
+`session.challenge`, and the Companion sends no `session.proof`. Pairings are
+unchanged. The vectors' `negative.x25519` lists all twelve small-order
+encodings and an honest share with bit 255 set; each MUST close.
+
+The Companion checks `device_proof` before it
 sends its proof. The Device checks `client_proof` before `session.ready`. The
 Companion checks `ready_proof` before it sends a record. A failed check closes
 the carrier connection and erases the ephemeral keys, without deleting the
@@ -581,8 +667,20 @@ each image:
    same session within the 60000 ms opens the transfer, with link-v1's normal
    reply. The rest of the update, its checks and its rollback are link-v1's.
 4. Cancel, the prompt timing out, the session closing, or a repeat with a
-   different `bytes` or `sha256` ends the prompt. The next matching repeat gets
-   `reason:"declined"`; any later `update.begin` starts a new prompt.
+   different `bytes` or `sha256` ends the prompt unapproved. The next
+   matching repeat gets `reason:"declined"`.
+5. **Prompt cooldown.** A prompt that ends unapproved starts a cooldown for
+   its Pairing when it ends: 60000 ms for the first, doubling for each
+   further unapproved prompt up to 3600000 ms. During the cooldown every
+   `update.begin` from that Pairing, on any session, gets
+   `reason:"declined"` at once and shows nothing. The first `update.begin` after the cooldown ends starts a new
+   prompt. Tapping Install resets the cooldown. The Device keeps it in RAM per
+   Pairing, so a paired peer can hold the screen for at most one 60000 ms
+   prompt per hour once the cap is reached, and reconnecting doesn't help it.
+
+A Companion that gets `declined` tells the person the update was declined on
+the Device and doesn't repeat `update.begin` by itself; the person can try
+again later or update over USB.
 
 `confirm` and `declined` are added to link-v1's update reasons for network
 sessions only. Over USB, `update.begin` works as before.
@@ -602,14 +700,16 @@ sessions only. Over USB, `update.begin` works as before.
 | Handshake body | 512 bytes |
 | Record body (`len`) | 24 to 1048 bytes |
 | Item on the wire | at most 1050 bytes |
-| BLE fragment | 1 to `ATT_MTU - 3` bytes, 20 when the MTU is unknown |
+| BLE fragment sent | 1 to `ATT_MTU - 3` bytes, at most 20 when the MTU is unknown |
+| BLE fragment received | 1 to `ATT_MTU - 3` bytes, at most 514 when the MTU is unknown |
 | BLE initial credit | at least 1050 bytes, 2100 recommended |
 | Records per direction per session | `2^32` |
 | Stored Pairings | 4 |
 | Failed proofs per pairing window | 3 |
 | Pairing lockout after the third and later failures | 30000 ms doubling, at most 900000 ms |
-| Per-peer backoff | 1000 ms doubling, at most 60000 ms |
+| Per-peer backoff, peer-caused failures only, skipped by a stored `companion_id` | 1000 ms doubling, at most 60000 ms |
 | Firmware update prompt on the Device | 60000 ms |
+| Update prompt cooldown per Pairing after an unapproved prompt | 60000 ms doubling, at most 3600000 ms |
 
 ## Storage, management and secrets
 
@@ -692,7 +792,7 @@ the vectors from fixed public inputs; the test checks the committed file
 without rewriting it. Run from the repository root with Node 22 or later:
 
 ```powershell
-node --test schema/protocol/net-ref/net-v2.test.mjs
+node --test schema/protocol/net-ref/net-v2.test.mjs schema/protocol/net-ref/net-v2-negative.test.mjs
 node schema/protocol/net-ref/vectors-v2.mjs --write
 ```
 
@@ -708,11 +808,33 @@ node schema/protocol/net-ref/vectors-v2.mjs --write
   include their BLE fragments at ATT_MTU 23 and 247.
 * `tampered_record`, which MUST close the receiver, and
   `non_contributory_share`, an all-zero share that MUST close the handshake.
+* `companion_names`: the pinned `\p{Cf}` ranges, `pair.request` items whose
+  names every receiver MUST accept, and items with one control or format
+  character or Hangul filler, labelled by code point, that MUST close the
+  carrier connection.
 * `errors.busy` and `errors.closed`, and the `ble` UUIDs and recommended
   initial credit.
+* `negative`: inputs every implementation MUST refuse, each with its
+  receiver and expected outcome (`auth`, `close`, or `accept` for the
+  boundary case):
+  * `wrong_code`: a `pair.proof` from the wrong code after the fixture's
+    pairing items. The Device sends `auth`.
+  * `tampered_wrapped_key`: `pair.accept` with a flipped ciphertext or tag
+    byte. The Companion closes without an LTK.
+  * `swapped_client_share` and `swapped_device_share`: a share replaced under
+    an unchanged proof. The proof check fails and the receiver closes.
+  * `wrong_device_id` and `unknown_companion_id`: `session.open` that gets
+    `auth`.
+  * `counter_limit`: a record at counter `2^32 - 1`, which opens, and one at
+    `2^32` with a valid tag, which closes.
+  * `max_record`: a 1050-byte item, which opens, and `oversize_items`: length
+    prefixes one past each phase's bounds, which close before allocation.
+  * `write_before_credit` and `credit_overrun`: `rx` events, as enabled
+    notifications and write lengths, that end the carrier connection.
+  * `x25519`: the twelve small-order encodings and an honest share with bit
+    255 set, which all close under the share checks.
 
-Implementations also test wrong codes, wrong ids, bad public values,
-reflection, replay, reorder, truncation, counter exhaustion, maximum-size
-items, fragment boundaries and middle-fragment sizes at ATT_MTU 23, phase
-length bounds, credit overrun, the pairing lockout across a reboot, and the
-network message list.
+Implementations also test reflection, replay, reorder, truncation, fragment
+boundaries and middle-fragment sizes at ATT_MTU 23, the pairing lockout across
+a reboot, which outcomes count toward per-peer backoff, the update prompt
+cooldown, and the network message list.
