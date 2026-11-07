@@ -41,6 +41,8 @@ describe('Brandfetch search', () => {
     expect(url.searchParams.get('limit')).toBe(String(SEARCH_LIMIT));
     expect(init?.cache).toBe('no-store');
     expect(init?.credentials).toBe('omit');
+    // The page itself sends no Referer; Brandfetch hears which app searches, and no more.
+    expect(init?.referrerPolicy).toBe('origin');
     expect(states.at(-1)).toMatchObject({ kind: 'done', query: 'example' });
   });
 

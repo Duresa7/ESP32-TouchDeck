@@ -50,7 +50,12 @@ need_refresh: number,
 /**
  * Assets whose cached original was deleted after 30 days without a successful refresh.
  */
-expired: Array<string>, };
+expired: Array<string>, 
+/**
+ * Each Asset a refresh replaced with a changed logo, and the Asset that replaced it. The UI
+ * swaps them in its Layout drafts.
+ */
+replaced: { [key in string]?: string }, };
 export type BrandfetchTheme = "light" | "dark" | "auto";
 export type BrowserKind = "browser";
 export type Builtin = { name: string, label: string, tags: Array<string>, id: string, };
@@ -216,7 +221,7 @@ interval_s: number,
  */
 folder: string | null, };
 export type PickResult = { bundle: BundleInfo | null, };
-export type Platform = "windows" | "linux" | "macos" | "other";
+export type Platform = "windows" | "linux" | "other";
 export type PortProbe = { port: string, usb_serial: string | null, id: DeviceId, probed_ms: number | null, } & ({ "status": "pending" } | { "status": "device", protocol: number, version: string, } | { "status": "silent" } | { "status": "busy", detail: string, } | { "status": "other-firmware", product: string, detail: string, });
 export type PresetTile = { id: string, name: string, action: JsonValue, 
 /**

@@ -166,17 +166,6 @@ impl SecretStore for OsAppSecrets {
     }
 }
 
-/// What to tell the user when the OS credential store can't be reached: Windows Credential
-/// Manager on Windows, a Secret Service such as GNOME Keyring or KWallet on Linux. Credentials
-/// never fall back to a file.
-pub const KEYCHAIN_UNAVAILABLE: &str = if cfg!(windows) {
-    "Windows Credential Manager isn't available. Restart Open TouchDeck and try again."
-} else if cfg!(target_os = "macos") {
-    "The macOS Keychain isn't available. Unlock it and try again."
-} else {
-    "No system keychain is available. Start GNOME Keyring or KWallet and try again."
-};
-
 /// Shared with the legacy Tauri adapter. Pollers ask for their immutable URL, so a
 /// reconfiguration cannot give an old poller a new origin's credential.
 pub struct BoundKeys {

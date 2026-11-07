@@ -20,7 +20,7 @@ The [packaging guide](packaging.md) lists installed files and uninstall behavior
 
 Uninstall from Windows **Installed apps**. The uninstaller keeps Layouts and settings unless you choose to delete them. Its prompt asks: “Also delete your Open TouchDeck Layouts and settings, including Integration settings, from this PC?” Choosing **Yes** removes the app's local data. It does not erase the Layout or Assets on the Device, or exported files you saved elsewhere.
 
-Integration secrets and the Brandfetch API key stay in the OS credential store either way: Windows Credential Manager on Windows, your system keychain (GNOME Keyring or KWallet) on Linux. Before uninstalling, use **Forget** beside each saved secret in **Integrations** if you want to remove it too. A later reinstall turns **Start at sign-in** back on.
+Integration secrets and the Brandfetch API key stay in the system keychain either way: Windows Credential Manager on Windows, GNOME Keyring or KWallet on Linux. Before uninstalling, use **Forget** beside each saved secret in **Integrations** if you want to remove it too. A later reinstall turns **Start at sign-in** back on.
 
 ## First run and connection
 
@@ -105,17 +105,19 @@ The icon picker can also search [Brandfetch](https://brandfetch.com) for brand l
 
 1. Register at the [Brandfetch developer portal](https://developers.brandfetch.com/register). Copy your **client ID** and your **API key**.
 2. Open **Settings > Brandfetch logos**.
-3. Paste the client ID into **Client ID** and choose **Save**. The icon picker now shows a **Brandfetch** section with up to five results as you type.
+3. Paste the client ID into **Client ID** and choose **Save**. The window reloads so it may reach Brandfetch, and comes back to the same Settings. The icon picker now shows a **Brandfetch** section with up to five results as you type.
 4. Paste the API key into **API key** and choose **Save**. It shows **Set**. Choose **Test key** to check it.
 5. In the icon picker, type a brand name and choose a Brandfetch result. The Companion fetches its logo and prepares it as an Asset, like any other icon.
 
-**How your key is stored.** The API key goes to the OS credential store: Windows Credential Manager on Windows, your system keychain (GNOME Keyring or KWallet) on Linux. Open TouchDeck never shows it again, never writes it to a file and never sends it anywhere but Brandfetch's Brand API. If Linux has no keychain running, saving says "No system keychain is available. Start GNOME Keyring or KWallet and try again." Start one, then save again. The client ID isn't secret: it's part of every Brandfetch image address.
+**How the key is stored.** The API key goes to the system keychain: Windows Credential Manager on Windows, GNOME Keyring or KWallet on Linux. Open TouchDeck never shows it again, never writes it to a file and never sends it anywhere but Brandfetch's Brand API. If Linux has no keychain running, saving says "No system keychain is available. Start GNOME Keyring or KWallet and try again." Start one, then save again. **Details** under the message shows the Companion's own words. The client ID isn't secret: it's part of every Brandfetch image address.
 
-**What it costs.** Searches use your client ID and are free. Each pick uses one Brand API request, and so does each 30-day refresh below. The free developer plan includes about 100. **Test key** asks about Brandfetch itself, which Brandfetch doesn't count.
+**What it costs.** Searches use your client ID and are free. Each pick uses one Brand API request, and so does each refresh below. The free developer plan includes about 100. **Test key** asks about Brandfetch itself, which Brandfetch doesn't count.
 
-**The 30-day refresh.** Brandfetch lets an app keep a logo for 30 days. From day 25 the Companion fetches each Brandfetch logo again, at start and once a day. If the logo changed, it updates the Asset in your Layouts on this PC; send the Layout to show the new one on the Device. If a logo can't be fetched for 30 days, for example because the key was removed, this PC deletes its cached copy, and **Settings > Brandfetch logos** says how many logos need a refresh. Tiles keep showing their icons; pick a logo again to refresh it.
+**The 30-day refresh.** Brandfetch lets an app keep a logo for 30 days. From day 25 the Companion fetches each Brandfetch logo again. It checks at start and every hour, and makes at most 10 Brand API requests a run; the rest wait for the next hour. If a logo changed, the Companion prepares the new one as a new Asset, and the Layout editor puts it in your drafts in place of the old one. Send the Layout to show it on the Device.
 
-Searches and their results aren't kept. Recent icons remember only the prepared Asset. **Remove** beside the client ID turns search off; **Remove** beside the key deletes it from the credential store.
+A refresh that fails because Brandfetch didn't answer tries again the next day. If Brandfetch refuses the key, refreshes stop until you save a key again. If Brandfetch no longer knows a brand or has no logo for it, that logo isn't asked for again. A logo that can't be fetched for 30 days loses its cached copy on this PC, and **Settings > Brandfetch logos** says how many. It's never asked for again; Tiles keep showing it, and you can pick it again to start over. Logos whose Asset you removed from this PC are forgotten without a request.
+
+Searches and their results aren't kept. Recent icons remember only the prepared Asset. **Forget** beside the client ID turns search off and reloads the window; **Forget** beside the key deletes it from the keychain. Each asks first.
 
 ## Set up Integrations
 
@@ -142,11 +144,11 @@ Use your own CLIProxyAPI hub and its management key. Open TouchDeck does not sig
 5. Choose **Check now**. Check the account table before adding a Preset tile.
 6. Add a usage Tile, select its account and value, then **Send to Device**.
 
-Use HTTPS for a remote hub. Plain HTTP on a private network exposes the key in transit; public HTTP is refused. Keys are stored in the OS credential store: Windows Credential Manager on Windows, your system keychain (GNOME Keyring or KWallet) on Linux.
+Use HTTPS for a remote hub. Plain HTTP on a private network exposes the key in transit; public HTTP is refused. Keys are stored in the system keychain: Windows Credential Manager on Windows, GNOME Keyring or KWallet on Linux.
 
 Codex and Claude readings include 5-hour and 7-day usage limits and resets when available. Other providers can supply account status and request counts. An unavailable limit is not zero. **All accounts** uses the highest usage percentage for each window. Check-now requests share a cooldown. After repeated failed checks, readings become stale and Tiles grey out.
 
-Use **Forget** beside the key to remove it. Uninstalling the app does not remove Integration secrets from the credential store.
+Use **Forget** beside the key to remove it. Uninstalling the app does not remove Integration secrets from the keychain.
 
 ### Custom HTTP values
 

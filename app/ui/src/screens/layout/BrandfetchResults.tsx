@@ -17,7 +17,7 @@ export interface BrandSearchHook {
 }
 
 /** Live Brandfetch search for the icon picker. Hits stay in this component's state only. */
-export function useBrandSearch(companion: Pick<Companion, 'brandfetch'>): BrandSearchHook {
+export function useBrandSearch(companion: Pick<Companion, 'brandfetch' | 'system'>): BrandSearchHook {
   const store = brandfetchStore(companion);
   const clientId = useStore(store, (s) => clientIdOf(s.view));
   const [state, setState] = useState<BrandSearchState>({ kind: 'idle' });

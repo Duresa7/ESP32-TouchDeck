@@ -13,7 +13,7 @@ use crate::{
 use axum::http::{Method, StatusCode};
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 use td_host::{
     icon_pack,
     integrations::secrets::{MemorySecrets, OsAppSecrets, Secret, SecretStore},
@@ -21,7 +21,8 @@ use td_host::{
 use ts_rs::TS;
 
 pub use client::{API_BASE, ApiKey, FILE_ORIGINS};
-pub use refresh::{EXPIRE_AFTER_S, REFRESH_AFTER_S, RefreshReport};
+pub(crate) use refresh::run as refresh_loop;
+pub use refresh::{CALLS_PER_RUN, EXPIRE_AFTER_S, REFRESH_AFTER_S, REFRESH_TICK, RefreshReport};
 
 /// Which kind of logo a pick asks for, in Brandfetch's words.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -86,8 +87,9 @@ pub enum BrandfetchError {
     Unavailable(String),
     #[error("Couldn't save the Brandfetch settings: {0}")]
     Store(String),
-    /// The OS credential store can't be reached. The key never falls back to a file.
-    #[error("{}", td_host::integrations::secrets::KEYCHAIN_UNAVAILABLE)]
+    /// The system keychain can't be reached. The key never falls back to a file. The UI says
+    /// which keychain this platform uses and how to start it.
+    #[error("The system keychain isn't available.")]
     NoKeychain,
     #[error(transparent)]
     Common(#[from] CommonError),
@@ -185,7 +187,7 @@ impl Brandfetch {
                 dir,
                 false,
                 Arc::new(OsAppSecrets),
-                Arc::new(client::UreqHttp),
+                Arc::new(client::UreqHttp::https()),
             )
         }
     }
@@ -227,7 +229,7 @@ impl Brandfetch {
             .map(|u| u.origin().ascii_serialization())
             .unwrap_or_default();
         *self.0.net.write() = Net {
-            http: Arc::new(client::UreqHttp),
+            http: Arc::new(client::UreqHttp::local()),
             base: base.trim_end_matches('/').into(),
             files: vec![origin],
         };
@@ -274,7 +276,7 @@ impl Brandfetch {
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn use_live(&self) {
         *self.0.net.write() = Net {
-            http: Arc::new(client::UreqHttp),
+            http: Arc::new(client::UreqHttp::https()),
             base: API_BASE.into(),
             files: FILE_ORIGINS.iter().map(|o| (*o).to_owned()).collect(),
         };
@@ -289,8 +291,8 @@ impl Brandfetch {
             .filter(|s| s.origin == API_BASE)
             .map(|s| ApiKey::new(s.value)))
     }
-    /// Keeps the key in the credential store, bound to the Brand API's origin. Saving never
-    /// calls Brandfetch: each call costs a request.
+    /// Keeps the key in the keychain, bound to the Brand API's origin. Saving never calls
+    /// Brandfetch: each call costs a request. Logos the old key failed for refresh again.
     fn save_key(&self, value: String) -> Result<(), BrandfetchError> {
         let secret = Secret {
             origin: API_BASE.into(),
@@ -299,7 +301,11 @@ impl Brandfetch {
         self.0
             .secrets
             .put(OWNER, KEY_FIELD, secret)
-            .map_err(|_| BrandfetchError::NoKeychain)
+            .map_err(|_| BrandfetchError::NoKeychain)?;
+        if self.resume_after_new_key().is_err() {
+            eprintln!("Companion: couldn't resume Brandfetch refreshes after a new key.");
+        }
+        Ok(())
     }
     fn forget_key(&self) -> Result<(), BrandfetchError> {
         self.0
@@ -324,22 +330,36 @@ impl Brandfetch {
         *current = client_id;
         Ok(())
     }
-    pub fn status(&self) -> Result<BrandfetchStatus, BrandfetchError> {
-        let (logos, need_refresh, expired) = self.counts(refresh::unix_now());
+    /// What Settings shows at `now`, in Unix seconds by the Companion's clock.
+    pub fn status(&self, now: u64) -> Result<BrandfetchStatus, BrandfetchError> {
+        let summary = self.summary(now);
         Ok(BrandfetchStatus {
             client_id: self.0.client_id.read().clone(),
-            // A credential store that can't be reached reads as no key; saving one says why.
+            // A keychain that can't be reached reads as no key; saving one says why.
             key_set: matches!(self.key(), Ok(Some(_))),
-            logos,
-            need_refresh,
-            expired,
+            logos: summary.logos,
+            need_refresh: summary.need_refresh,
+            expired: summary.expired,
+            replaced: summary.replaced_by,
         })
     }
-    /// Calls the Brand API with the stored key and downloads the chosen logo file.
-    fn fetch(&self, logo: &BrandfetchLogo) -> Result<client::Original, BrandfetchError> {
+    /// Calls the Brand API with the stored key and downloads the chosen logo file, unless
+    /// `cancelled` says to stop first.
+    fn fetch(
+        &self,
+        logo: &BrandfetchLogo,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<client::Original, BrandfetchError> {
         let key = self.key()?.ok_or(BrandfetchError::NoKey)?;
         let net = self.0.net.read().clone();
-        client::fetch(net.http.as_ref(), &net.base, &net.files, &key, logo)
+        client::fetch(
+            net.http.as_ref(),
+            &net.base,
+            &net.files,
+            &key,
+            logo,
+            cancelled,
+        )
     }
 }
 
@@ -360,14 +380,15 @@ pub(crate) fn render(
     fit: Fit,
     job: &JobHandle<RenderJob>,
 ) -> Result<AssetRef, Stop> {
-    let original = ctx.brandfetch.fetch(&logo)?;
+    let original = ctx.brandfetch.fetch(&logo, &|| job.check().is_err());
     job.check()?;
+    let original = original?;
     let image = client::draw(&original, &logo, fit).map_err(AssetError::RenderFailed)?;
     let file = icon_pack::pack_any(&image);
     job.check()?;
     let id = ctx.assets.put(&file).map_err(assets::stored)?;
     ctx.brandfetch
-        .record(&id, &logo, fit, &original, refresh::unix_now())
+        .record(&id, &logo, fit, &original, ctx.clock.unix_s())
         .map_err(|e| BrandfetchError::Store(e.to_string()))?;
     job.progress(&RenderProgress {
         frames_done: 1,
@@ -402,6 +423,9 @@ pub struct BrandfetchStatus {
     pub need_refresh: u32,
     /// Assets whose cached original was deleted after 30 days without a successful refresh.
     pub expired: Vec<String>,
+    /// Each Asset a refresh replaced with a changed logo, and the Asset that replaced it. The UI
+    /// swaps them in its Layout drafts.
+    pub replaced: BTreeMap<String, String>,
 }
 #[derive(Serialize, Deserialize, TS)]
 pub struct ClientIdBody {
@@ -423,7 +447,7 @@ impl Endpoint for Get {
     type Ok = BrandfetchStatus;
     type Error = BrandfetchError;
     async fn handle(ctx: Ctx, _: Req<Self>) -> Result<Self::Ok, Self::Error> {
-        blocking(move || ctx.brandfetch.status()).await?
+        blocking(move || ctx.brandfetch.status(ctx.clock.unix_s())).await?
     }
 }
 /// Saves the client ID, which turns search on.
@@ -448,7 +472,7 @@ impl Endpoint for ClientIdPut {
         }
         blocking(move || {
             ctx.brandfetch.save_settings(Some(id))?;
-            ctx.brandfetch.status()
+            ctx.brandfetch.status(ctx.clock.unix_s())
         })
         .await?
     }
@@ -467,7 +491,7 @@ impl Endpoint for ClientIdDelete {
     async fn handle(ctx: Ctx, _: Req<Self>) -> Result<Self::Ok, Self::Error> {
         blocking(move || {
             ctx.brandfetch.save_settings(None)?;
-            ctx.brandfetch.status()
+            ctx.brandfetch.status(ctx.clock.unix_s())
         })
         .await?
     }
@@ -494,7 +518,7 @@ impl Endpoint for KeyPut {
         }
         blocking(move || {
             ctx.brandfetch.save_key(value)?;
-            ctx.brandfetch.status()
+            ctx.brandfetch.status(ctx.clock.unix_s())
         })
         .await?
     }
@@ -512,7 +536,7 @@ impl Endpoint for KeyDelete {
     async fn handle(ctx: Ctx, _: Req<Self>) -> Result<Self::Ok, Self::Error> {
         blocking(move || {
             ctx.brandfetch.forget_key()?;
-            ctx.brandfetch.status()
+            ctx.brandfetch.status(ctx.clock.unix_s())
         })
         .await?
     }
@@ -532,7 +556,7 @@ impl Endpoint for KeyTest {
     async fn handle(ctx: Ctx, _: Req<Self>) -> Result<Self::Ok, Self::Error> {
         blocking(move || {
             ctx.brandfetch.test_key()?;
-            ctx.brandfetch.status()
+            ctx.brandfetch.status(ctx.clock.unix_s())
         })
         .await?
     }
@@ -561,7 +585,7 @@ mod tests {
         let again = Brandfetch::new(dir.path().to_owned(), true);
         assert!(again.search_enabled());
         assert_eq!(
-            again.status().unwrap().client_id.as_deref(),
+            again.status(0).unwrap().client_id.as_deref(),
             Some("test-client-id")
         );
         again.save_settings(None).unwrap();
@@ -607,22 +631,14 @@ mod tests {
         let error = brandfetch.save_key("test-api-key".into()).unwrap_err();
         assert_eq!(error.code(), "brandfetch.no_keychain");
         assert_eq!(error.status(), StatusCode::SERVICE_UNAVAILABLE);
-        #[cfg(all(unix, not(target_os = "macos")))]
-        assert_eq!(
-            error.to_string(),
-            "No system keychain is available. Start GNOME Keyring or KWallet and try again."
-        );
-        #[cfg(windows)]
-        assert_eq!(
-            error.to_string(),
-            "Windows Credential Manager isn't available. Restart Open TouchDeck and try again."
-        );
+        // The UI words it for the platform; the Companion's text names none.
+        assert_eq!(error.to_string(), "The system keychain isn't available.");
         assert!(matches!(
             brandfetch.forget_key(),
             Err(BrandfetchError::NoKeychain)
         ));
         // Settings still load, and a pick or a key test says why it can't go on.
-        assert!(!brandfetch.status().unwrap().key_set);
+        assert!(!brandfetch.status(0).unwrap().key_set);
         let logo = BrandfetchLogo {
             brand: "example.com".into(),
             logo_type: LogoType::Icon,
@@ -632,7 +648,7 @@ mod tests {
             tint: None,
         };
         assert!(matches!(
-            brandfetch.fetch(&logo),
+            brandfetch.fetch(&logo, &|| false),
             Err(BrandfetchError::NoKeychain)
         ));
         assert!(matches!(
@@ -666,7 +682,7 @@ mod tests {
         mock.prefill(Some(" ".into()), None);
         assert!(!mock.search_enabled());
         mock.prefill(Some(" test-client-id ".into()), Some("test-api-key".into()));
-        let status = mock.status().unwrap();
+        let status = mock.status(0).unwrap();
         assert_eq!(status.client_id.as_deref(), Some("test-client-id"));
         assert!(status.key_set);
         let mut files = vec![];

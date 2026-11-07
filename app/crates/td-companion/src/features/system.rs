@@ -11,13 +11,13 @@ pub struct SystemInfo {
     pub data_dir_override: bool,
     pub platform: Platform,
 }
-/// The operating system the Companion runs on. The UI names the credential store from it.
+/// The operating system the Companion runs on: Windows or Linux, which Open TouchDeck
+/// supports, or another. The UI names the keychain from it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum Platform {
     Windows,
     Linux,
-    Macos,
     Other,
 }
 impl Platform {
@@ -25,7 +25,6 @@ impl Platform {
         match std::env::consts::OS {
             "windows" => Self::Windows,
             "linux" => Self::Linux,
-            "macos" => Self::Macos,
             _ => Self::Other,
         }
     }

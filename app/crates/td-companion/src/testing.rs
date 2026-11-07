@@ -330,9 +330,17 @@ impl TestCompanion {
     /// Runs one Brandfetch refresh as if the wall clock read `now`, in Unix seconds.
     pub async fn refresh_brandfetch(&self, now: u64) -> crate::features::brandfetch::RefreshReport {
         let ctx = self.ctx.clone();
-        tokio::task::spawn_blocking(move || ctx.brandfetch.refresh(&ctx.assets, &ctx.layouts, now))
+        tokio::task::spawn_blocking(move || ctx.brandfetch.refresh(&ctx.assets, now))
             .await
             .unwrap()
+    }
+    /// Starts the Companion's Brandfetch refresh loop, checking every `tick` by the clock that
+    /// [`Self::clock`] moves. It stops when the handle is aborted.
+    pub fn start_brandfetch_refresh(&self, tick: Duration) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(crate::features::brandfetch::refresh_loop(
+            self.ctx.clone(),
+            tick,
+        ))
     }
     /// Runs one 60 s maintenance step now.
     pub async fn maintain(&self) {

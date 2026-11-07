@@ -1,6 +1,7 @@
 //! The Brand API call behind a pick: find the brand with the user's API key, choose its best
 //! logo, download that file and draw it as a 64x64 icon. Search never comes here; the UI calls
-//! the Brand Search API itself. The Logo API CDN is never fetched.
+//! the Brand Search API itself. The Companion never builds a Logo API address
+//! (`cdn.brandfetch.io/<domain>?c=`); it downloads only the `src` a Brand API answer gives.
 use super::{BrandfetchError, BrandfetchLogo, LogoTheme, LogoType};
 use crate::features::assets::Fit;
 use image::RgbaImage;
@@ -16,6 +17,8 @@ pub const API_BASE: &str = "https://api.brandfetch.io";
 pub const FILE_ORIGINS: &[&str] = &["https://cdn.brandfetch.io", "https://asset.brandfetch.io"];
 const FILE_BYTES_MAX: u64 = 4 << 20;
 const TIMEOUT: Duration = Duration::from_secs(20);
+/// Logo files one pick downloads at most before it gives up.
+const FILE_TRIES: usize = 4;
 
 /// The user's Brand API key. It prints as `[redacted]`, and leaves this process only as the
 /// `Authorization: Bearer` header of a Brand API call.
@@ -59,7 +62,20 @@ pub struct Response {
 pub trait Http: Send + Sync {
     fn get(&self, url: &str, bearer: Option<&ApiKey>) -> Result<Response, String>;
 }
-pub struct UreqHttp;
+/// Real HTTP. It refuses anything but HTTPS, except for a test's local stand-in.
+pub struct UreqHttp {
+    https_only: bool,
+}
+impl UreqHttp {
+    pub fn https() -> Self {
+        Self { https_only: true }
+    }
+    /// Plain HTTP as well, for tests against a server on loopback.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn local() -> Self {
+        Self { https_only: false }
+    }
+}
 impl Http for UreqHttp {
     fn get(&self, url: &str, bearer: Option<&ApiKey>) -> Result<Response, String> {
         let mut request = ureq::get(url);
@@ -68,6 +84,7 @@ impl Http for UreqHttp {
         }
         let mut response = request
             .config()
+            .https_only(self.https_only)
             .timeout_global(Some(TIMEOUT))
             .http_status_as_error(false)
             .max_redirects(0)
@@ -165,14 +182,16 @@ fn on_origin(url: &str, origin: &str) -> bool {
     })
 }
 
-/// Calls the Brand API and downloads the best file of the requested logo type.
-/// `files` lists the origins a logo file may come from.
+/// Calls the Brand API and downloads the best file of the requested logo type, or of the
+/// next type when the brand has none. `files` lists the origins a logo file may come from.
+/// Between downloads it stops once `cancelled` says so.
 pub fn fetch(
     http: &dyn Http,
     base: &str,
     files: &[String],
     key: &ApiKey,
     logo: &BrandfetchLogo,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<Original, BrandfetchError> {
     let brand = brand(http, base, key, &logo.brand)?;
     let candidates = choose(&brand, logo.logo_type, logo.theme, files);
@@ -180,7 +199,12 @@ pub fn fetch(
         return Err(BrandfetchError::NoLogo);
     }
     let mut last = None;
-    for (src, format) in candidates {
+    for (src, format) in candidates.into_iter().take(FILE_TRIES) {
+        if cancelled() {
+            return Err(BrandfetchError::Unavailable(
+                "the pick was cancelled".into(),
+            ));
+        }
         match http.get(&src, None) {
             Ok(file) if file.status == 200 && !file.body.is_empty() => {
                 return Ok(Original {
@@ -232,8 +256,9 @@ pub fn check(http: &dyn Http, base: &str, key: &ApiKey) -> Result<(), Brandfetch
     brand(http, base, key, FREE_BRAND).map(|_| ())
 }
 
-/// Every downloadable file of the requested type, best first: logos by theme preference, then
-/// SVG, PNG, WebP and JPEG within each.
+/// Every downloadable file, best first: the requested type, then the other types in the order
+/// icon, symbol, logo, so a brand without an icon still gives its symbol or logo. Within a type,
+/// logos go by theme preference, and within a logo SVG, PNG, WebP and JPEG.
 fn choose(
     brand: &Brand,
     kind: LogoType,
@@ -246,20 +271,27 @@ fn choose(
         LogoTheme::Light => &[Some("light"), None],
         LogoTheme::Dark => &[Some("dark"), None],
     };
-    let mut logos: Vec<(usize, &Logo)> = brand
+    let kinds: Vec<LogoType> = std::iter::once(kind)
+        .chain(
+            [LogoType::Icon, LogoType::Symbol, LogoType::Logo]
+                .into_iter()
+                .filter(|k| *k != kind),
+        )
+        .collect();
+    let mut logos: Vec<(usize, usize, &Logo)> = brand
         .logos
         .iter()
-        .filter(|l| l.kind.as_deref() == Some(kind.name()))
         .filter_map(|l| {
-            order
+            let kind_rank = kinds
                 .iter()
-                .position(|t| *t == l.theme.as_deref())
-                .map(|rank| (rank, l))
+                .position(|k| l.kind.as_deref() == Some(k.name()))?;
+            let theme_rank = order.iter().position(|t| *t == l.theme.as_deref())?;
+            Some((kind_rank, theme_rank, l))
         })
         .collect();
-    logos.sort_by_key(|(rank, _)| *rank);
+    logos.sort_by_key(|(kind_rank, theme_rank, _)| (*kind_rank, *theme_rank));
     let mut out = Vec::new();
-    for (_, logo) in logos {
+    for (_, _, logo) in logos {
         let mut formats: Vec<(FileFormat, &str)> = logo
             .formats
             .iter()
@@ -395,11 +427,107 @@ mod tests {
                 "https://asset.brandfetch.io/l.webp",
                 "https://asset.brandfetch.io/l.jpeg",
                 "https://asset.brandfetch.io/d.svg",
+                // Then the other logo types, should every icon fail.
+                "https://asset.brandfetch.io/x.svg",
             ]
         );
         let dark: Vec<_> = choose(&b, LogoType::Icon, LogoTheme::Dark, &files());
         assert_eq!(dark[0].0, "https://asset.brandfetch.io/d.svg");
-        assert!(choose(&b, LogoType::Symbol, LogoTheme::Auto, &files()).is_empty());
+    }
+
+    #[test]
+    fn a_brand_without_an_icon_falls_back_to_its_symbol_then_its_logo() {
+        let b = brand(
+            r#"{"logos":[
+              {"type":"logo","theme":"light","formats":[{"src":"https://asset.brandfetch.io/logo.svg","format":"svg"}]},
+              {"type":"symbol","theme":"light","formats":[{"src":"https://asset.brandfetch.io/symbol.png","format":"png"}]}
+            ]}"#,
+        );
+        let srcs = |kind| -> Vec<String> {
+            choose(&b, kind, LogoTheme::Auto, &files())
+                .into_iter()
+                .map(|(src, _)| src)
+                .collect()
+        };
+        assert_eq!(
+            srcs(LogoType::Icon),
+            [
+                "https://asset.brandfetch.io/symbol.png",
+                "https://asset.brandfetch.io/logo.svg"
+            ]
+        );
+        assert_eq!(
+            srcs(LogoType::Logo)[0],
+            "https://asset.brandfetch.io/logo.svg"
+        );
+        let none = brand(r#"{"logos":[]}"#);
+        assert!(choose(&none, LogoType::Icon, LogoTheme::Auto, &files()).is_empty());
+    }
+
+    /// Answers the Brand API with `files` icon files on the CDN, then fails every download.
+    struct Flaky {
+        files: usize,
+        downloads: std::sync::Mutex<usize>,
+    }
+    impl Http for Flaky {
+        fn get(&self, url: &str, _: Option<&ApiKey>) -> Result<Response, String> {
+            if url.contains("/v2/brands/") {
+                let formats: Vec<String> = (0..self.files)
+                    .map(|n| {
+                        format!(r#"{{"src":"https://cdn.brandfetch.io/{n}.png","format":"png"}}"#)
+                    })
+                    .collect();
+                let body = format!(
+                    r#"{{"logos":[{{"type":"icon","theme":null,"formats":[{}]}}]}}"#,
+                    formats.join(",")
+                );
+                return Ok(Response {
+                    status: 200,
+                    reason: None,
+                    body: body.into_bytes(),
+                });
+            }
+            *self.downloads.lock().unwrap() += 1;
+            Err("offline".into())
+        }
+    }
+
+    #[test]
+    fn a_pick_tries_a_few_files_and_stops_when_cancelled() {
+        let key = ApiKey::new("test-api-key".into());
+        let logo = BrandfetchLogo {
+            brand: "example.com".into(),
+            logo_type: LogoType::Icon,
+            theme: LogoTheme::Auto,
+            padding: 0,
+            background: None,
+            tint: None,
+        };
+        let flaky = Flaky {
+            files: 20,
+            downloads: Default::default(),
+        };
+        let error = fetch(&flaky, API_BASE, &files(), &key, &logo, &|| false)
+            .err()
+            .unwrap();
+        assert!(matches!(error, BrandfetchError::Unavailable(_)));
+        assert_eq!(*flaky.downloads.lock().unwrap(), FILE_TRIES);
+
+        let stopped = Flaky {
+            files: 20,
+            downloads: Default::default(),
+        };
+        let asked = std::cell::Cell::new(0);
+        let cancelled = || {
+            asked.set(asked.get() + 1);
+            asked.get() > 1
+        };
+        assert!(fetch(&stopped, API_BASE, &files(), &key, &logo, &cancelled).is_err());
+        assert_eq!(
+            *stopped.downloads.lock().unwrap(),
+            1,
+            "one download, then the cancel"
+        );
     }
 
     /// Records each call and answers 200 with no logos.
@@ -445,12 +573,14 @@ mod tests {
             "http://brandfetch.example",
             "ftp://x",
         ] {
-            let error = fetch(&spy, base, &files(), &key, &logo).err().unwrap();
+            let error = fetch(&spy, base, &files(), &key, &logo, &|| false)
+                .err()
+                .unwrap();
             assert!(matches!(error, BrandfetchError::Unavailable(_)), "{base}");
         }
         assert!(spy.0.lock().unwrap().is_empty(), "no call over plain HTTP");
         assert!(matches!(
-            fetch(&spy, API_BASE, &files(), &key, &logo),
+            fetch(&spy, API_BASE, &files(), &key, &logo, &|| false),
             Err(BrandfetchError::NoLogo)
         ));
         check(&spy, API_BASE, &key).unwrap();

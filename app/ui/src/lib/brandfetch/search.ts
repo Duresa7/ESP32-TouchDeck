@@ -78,7 +78,8 @@ function problemOf(status: number): BrandSearchProblem {
 export async function searchBrands(clientId: string, query: string, signal: AbortSignal, send: typeof fetch = fetch): Promise<BrandHit[]> {
   let response: Response;
   try {
-    response = await send(searchUrl(clientId, query), { signal, cache: 'no-store', credentials: 'omit' });
+    // The page sends no Referer by default; Brandfetch is told only which app searches.
+    response = await send(searchUrl(clientId, query), { signal, cache: 'no-store', credentials: 'omit', referrerPolicy: 'origin' });
   } catch (error) {
     if (signal.aborted) throw error;
     throw new BrandSearchError('offline');

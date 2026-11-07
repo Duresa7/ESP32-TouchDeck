@@ -185,22 +185,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    // Brandfetch logos: a refresh check at start and every 24 h after (terms section 5.1).
-    let brand = ctx.clone();
-    let brandfetch = tokio::spawn(async move {
-        loop {
-            let ctx = brand.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                ctx.brandfetch.refresh(&ctx.assets, &ctx.layouts, now)
-            })
-            .await;
-            tokio::time::sleep(Duration::from_secs(24 * 60 * 60)).await;
-        }
-    });
+    // Brandfetch logos: a refresh check at start and every hour after (terms section 5.1).
+    let brandfetch = tokio::spawn(crate::features::brandfetch::refresh_loop(
+        ctx.clone(),
+        crate::features::brandfetch::REFRESH_TICK,
+    ));
     let signal = ctx.shutdown.clone();
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {

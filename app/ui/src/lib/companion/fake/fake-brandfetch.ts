@@ -8,11 +8,14 @@ export interface FakeBrandfetchOptions {
   keySet?: boolean;
   /** Provenance counts the Settings section shows. */
   logos?: { total: number; needRefresh: number; expired: string[] };
-  /** False acts like Linux with no Secret Service running: the key can't be saved. */
+  /** False acts like a PC whose keychain can't be reached: the key can't be saved. */
   keychain?: boolean;
+  /** Assets a refresh replaced, and their replacements. */
+  replaced?: Record<string, string>;
 }
 
-const NO_KEYCHAIN = 'No system keychain is available. Start GNOME Keyring or KWallet and try again.';
+// The Companion's own words, which name no platform: the UI words it for the platform.
+const NO_KEYCHAIN = "The system keychain isn't available.";
 
 /** The logo types the recorded Brand API answer has for every brand. */
 const RECORDED_TYPES: ReadonlySet<string> = new Set(['icon', 'symbol', 'logo']);
@@ -27,10 +30,11 @@ export function createFakeBrandfetch(options: FakeBrandfetchOptions = {}) {
   let total = options.logos?.total ?? 0;
   const needRefresh = options.logos?.needRefresh ?? 0;
   const expired = [...(options.logos?.expired ?? [])];
+  const replaced: Record<string, string> = { ...options.replaced };
   const brands: string[] = [];
   let keyTests = 0;
 
-  const status = (): BrandfetchStatus => ({ client_id: clientId, key_set: keySet, logos: total, need_refresh: needRefresh, expired: [...expired] });
+  const status = (): BrandfetchStatus => ({ client_id: clientId, key_set: keySet, logos: total, need_refresh: needRefresh, expired: [...expired], replaced: { ...replaced } });
 
   async function body(request: Request): Promise<Record<string, unknown> | null> {
     try {
@@ -87,6 +91,11 @@ export function createFakeBrandfetch(options: FakeBrandfetchOptions = {}) {
       return { seed: `brandfetch:${source.brand}:${source.logo_type}` };
     },
     status,
+    /** What a refresh does when a logo changed: `old` now leads to `next`. */
+    replace(old: string, next: string) {
+      for (const [from, to] of Object.entries(replaced)) if (to === old) replaced[from] = next;
+      replaced[old] = next;
+    },
     /** How many times Test key called the Brand API. */
     get keyTests(): number {
       return keyTests;

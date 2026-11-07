@@ -55,6 +55,8 @@ fn search(client_id: &str) -> Result<String, String> {
     // Errors stay vague on purpose: the transport's would quote the URL, client ID and all.
     let mut response = ureq::get(url.as_str())
         .config()
+        .https_only(true)
+        .timeout_global(Some(std::time::Duration::from_secs(20)))
         .http_status_as_error(false)
         .build()
         .call()

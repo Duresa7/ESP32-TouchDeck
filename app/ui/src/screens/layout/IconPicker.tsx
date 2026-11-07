@@ -5,6 +5,7 @@ import type { AssetRef, Builtin, CatalogHit } from '../../lib/companion/api.ts';
 import type { Companion } from '../../lib/companion/client.ts';
 import { useCompanion } from '../../lib/companion/connection.ts';
 import { toApiError } from '../../lib/companion/errors.ts';
+import { usePlatform } from '../../lib/companion/keychain.ts';
 import { jobsStore, waitForJob } from '../../lib/companion/jobs.ts';
 import type { EditorStore } from '../../lib/editor/store.ts';
 import { assetOf, type Tile } from '../../lib/layout/model.ts';
@@ -128,6 +129,7 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
   const cells = useRef(new Map<string, HTMLButtonElement>());
   const file = useRef<HTMLInputElement>(null);
   const brand = useBrandSearch(companion);
+  const platform = usePlatform();
   const deps = useMemo<PickDeps>(() => ({ companion, wait: (job, signal) => waitForJob<'assets.render'>(jobsStore, companion, job, { signal }) }), [companion]);
 
   useEffect(() => {
@@ -240,13 +242,13 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
         );
       case 'brand':
         return run(
-          `Getting ${item.name} from Brandfetch…`,
+          `Getting ${item.name}…`,
           (signal) => renderBrandfetch(deps, item.hit, signal),
           (ref) => {
             store.setAsset(tile.id, ref.id);
             keep({ kind: 'asset', asset: ref.id, name: BRAND_RECENT });
           },
-          (error) => brandProblem(error, item.name),
+          (error) => brandProblem(error, item.name, platform),
         );
       default: {
         const exhaustive: never = item;

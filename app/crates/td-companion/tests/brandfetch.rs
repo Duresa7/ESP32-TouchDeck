@@ -362,7 +362,7 @@ async fn every_brand_api_failure_maps_to_a_clear_job_error() {
             "brandfetch.unavailable",
         ),
         (
-            Answer::Brand(logos(&base, "logo", &["svg"])),
+            Answer::Brand(json!({"name": "Example", "logos": []})),
             "brandfetch.no_logo",
         ),
         (
@@ -377,10 +377,24 @@ async fn every_brand_api_failure_maps_to_a_clear_job_error() {
     }
     let done = render(&td, pick("../etc", "icon")).await;
     assert_eq!(done.error.unwrap().code, "brandfetch.not_found");
+
+    // A brand with no icon gives its symbol, or failing that its logo.
+    for kind in ["symbol", "logo"] {
+        fake.lock().answer = Answer::Brand(logos(&base, kind, &["png"]));
+        let done = render(&td, pick("example.com", "icon")).await;
+        assert_eq!(done.state, JobState::Succeeded, "{kind}");
+        assert!(
+            fake.lock()
+                .seen
+                .iter()
+                .any(|(path, _)| *path == format!("/files/{kind}.png")),
+            "{kind}"
+        );
+    }
 }
 
 #[tokio::test]
-async fn a_changed_logo_updates_the_stored_layout_and_never_pushes() {
+async fn a_changed_logo_is_offered_as_a_replacement_and_never_pushed() {
     let (td, fake, base) = rig().await;
     set_key(&td).await;
     let device = td.plug_device("mock0001").await;
@@ -416,9 +430,13 @@ async fn a_changed_logo_updates_the_stored_layout_and_never_pushes() {
     let new = report.replaced[0].1.clone();
     assert_ne!(new, old);
 
+    // The UI learns the replacement and swaps it in its drafts; the Companion's copy of what
+    // the Device shows stays as the Device shows it.
+    let status = td.call::<Get>((), NoQuery, ()).await.unwrap();
+    assert_eq!(status.replaced.get(&old), Some(&new));
     let copy = td.call::<LastSeen>(path(), NoQuery, ()).await.unwrap();
     let tile = serde_json::to_value(&copy.layout).unwrap()["pages"][0]["tiles"][0].clone();
-    assert_eq!(tile["asset"], format!("sha256:{new}"));
+    assert_eq!(tile["asset"], format!("sha256:{old}"));
     assert_eq!(
         td.deck(&device).received().len(),
         sent,
@@ -556,4 +574,34 @@ async fn saving_the_key_never_calls_brandfetch_and_a_key_test_makes_one_free_cal
         .await
         .unwrap();
     assert_eq!(response.status(), 502);
+}
+
+#[tokio::test]
+async fn the_refresh_loop_goes_by_the_companion_clock_and_catches_up_after_sleep() {
+    let (td, fake, base) = rig().await;
+    set_key(&td).await;
+    fake.lock().answer = Answer::Brand(logos(&base, "icon", &["svg"]));
+    assert_eq!(
+        render(&td, pick("example.com", "icon")).await.state,
+        JobState::Succeeded
+    );
+    let brand_calls = || {
+        fake.lock()
+            .seen
+            .iter()
+            .filter(|(path, _)| path.starts_with("/v2/brands/"))
+            .count()
+    };
+    assert_eq!(brand_calls(), 1);
+    let refresh = td.start_brandfetch_refresh(std::time::Duration::from_millis(20));
+    // Several checks pass, and a fresh logo makes no call.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(brand_calls(), 1);
+    // The PC "sleeps" 26 days: the next check reads the wall clock and calls once.
+    td.clock()
+        .advance(std::time::Duration::from_secs(26 * 24 * 60 * 60));
+    td.until(|_| brand_calls() == 2).await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(brand_calls(), 2, "renewed, so later checks call nothing");
+    refresh.abort();
 }
