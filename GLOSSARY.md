@@ -58,3 +58,13 @@ _Avoid_: trusted copy, authority copy
 **Integration**:
 A connection to something outside the app that supplies data or accepts commands, such as a CLIProxyAPI hub, the PC or media playback.
 _Avoid_: source, plugin
+
+### Connections
+
+**Carrier**:
+The way a Device and the Companion reach each other: USB, Wi-Fi or Bluetooth. A Device keeps the same identity on every Carrier and uses one at a time.
+_Avoid_: transport, connection type
+
+**Pairing**:
+A Device's approval of one Companion to reach it over Wi-Fi or Bluetooth, given once by entering the code the Device shows. It lasts until someone removes it.
+_Avoid_: bond (Bluetooth's word for the Device's keyboard hosts), trust, registration

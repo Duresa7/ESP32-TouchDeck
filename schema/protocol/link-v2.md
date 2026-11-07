@@ -30,8 +30,10 @@ required v2 field makes negotiation fail; the Companion can select v1 again.
 Ping remains every 2,000 ms. Expiry after 5,000 ms without a valid frame resets
 selection to v1, aborts v2 transfers, and marks live values stale. Reconnect
 always repeats discovery. No GPIO, clock, eFuse, or USB controller change is part
-of this protocol. [net-v1](net-v1.md) keeps its framing, authentication, identity,
-and `net.*` names. V2 selection here applies only to USB.
+of this protocol. The same selection runs on every Carrier: over Wi-Fi and BLE,
+[net-v2](net-v2.md) carries these frames and defines its own framing,
+authentication and `net.*` messages. Each USB or net-v2 session selects its
+protocol independently.
 
 ## Hello fields and limits
 
@@ -42,7 +44,7 @@ version, at most 32 UTF-8 bytes. `id` is the chip's factory base MAC rendered as
 12 lowercase hex digits in byte order. It MUST equal the USB serial number after
 removing colons and hyphens and folding ASCII case. A mismatch prevents automatic
 association with a saved Device. It is identity, not authentication. This is the
-same factory station identity used by net-v1, never a randomized interface MAC.
+same factory identity net-v2 uses as `device_id`, never a randomized interface MAC.
 `name` follows the naming rules below. These fields never contain credentials.
 
 Every capability below except `anim` and `live_images` is required. Bounds are ceilings, not promises of free
