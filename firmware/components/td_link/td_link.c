@@ -1,4 +1,5 @@
 #include "td_link.h"
+#include "td_link_carrier.h"
 #include "td_link_priv.h"
 #include "key_sink_link.h"
 #include "td_frame.h"
@@ -12,6 +13,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 
@@ -20,33 +22,72 @@
 #define TD_LINK_POLL_MS 10
 #define TD_LINK_PRESS_QUEUE 16
 #define TD_LINK_EVENTS_PER_TURN 16
+#define TD_LINK_PACKET_HEADER 3
 
 _Static_assert(TD_RX_FRAME_MAX >= TD_FRAME_BODY_MAX, "receive buffer must hold a decoded maximum frame");
 
+/* One carrier's online state. A carrier is online from a hello on it until nothing arrived on it for TD_LINK_IDLE_MS. */
+typedef struct {
+    const td_link_carrier_t *carrier;
+    bool online;
+    int64_t last_rx_ms;
+} carrier_slot_t;
+
 static StreamBufferHandle_t s_frames;
+static SemaphoreHandle_t s_rx_mutex;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
+/* The counters. Its online and last_rx_ms are the active carrier's, which td_link_state fills in. */
 static td_link_state_t s_state;
-static uint8_t s_rx_packet[2 + TD_FRAME_BODY_MAX];
+static carrier_slot_t s_carriers[TD_LINK_CARRIERS_MAX];
+static size_t s_carrier_count;
+/* The slot of the frame the link task handles now, or handled last. */
+static size_t s_current;
+/* A packet in s_frames is the slot, the body length and the body. One receive at a time fills this, under s_rx_mutex. */
+static uint8_t s_rx_packet[TD_LINK_PACKET_HEADER + TD_FRAME_BODY_MAX];
 static QueueHandle_t s_presses;
 static uint32_t s_press_seq;
 static td_input_mailbox_t s_input;
 
 typedef td_press_t press_t;
 
+/* Call under s_lock. */
+static bool slot_online(size_t slot, int64_t now)
+{
+    return s_carriers[slot].online && now - s_carriers[slot].last_rx_ms < TD_LINK_IDLE_MS;
+}
+
+/* The first carrier added that is online, else the one the last handled frame came on. Call under s_lock, with a
+ * carrier added. */
+static size_t active_slot(int64_t now)
+{
+    for (size_t slot = 0; slot < s_carrier_count; slot++) {
+        if (slot_online(slot, now)) {
+            return slot;
+        }
+    }
+    return s_current;
+}
+
 td_link_state_t td_link_state(void)
 {
     int64_t now = esp_timer_get_time() / 1000;
     portENTER_CRITICAL(&s_lock);
     td_link_state_t state = s_state;
+    if (s_carrier_count) {
+        size_t slot = active_slot(now);
+        state.online = slot_online(slot, now);
+        state.last_rx_ms = s_carriers[slot].last_rx_ms;
+    }
     portEXIT_CRITICAL(&s_lock);
-    state.online = state.online && now - state.last_rx_ms < TD_LINK_IDLE_MS;
     return state;
 }
 
 void td_link_hello(void)
 {
     portENTER_CRITICAL(&s_lock);
-    s_state.online = true;
+    if (s_carrier_count) {
+        s_carriers[s_current].online = true;
+    }
     portEXIT_CRITICAL(&s_lock);
     if (s_presses) {
         xQueueReset(s_presses);
@@ -60,9 +101,62 @@ void td_link_count_drop(void)
     portEXIT_CRITICAL(&s_lock);
 }
 
-static void receive_frame(const uint8_t *body, size_t len, void *context)
+/* USB: SLIP over the USB-Serial/JTAG console, which the debug console shares. */
+static bool usb_send(const td_link_carrier_t *carrier, const td_frame_t *frame)
 {
-    (void)context;
+    (void)carrier;
+    static uint8_t wire[TD_FRAME_WIRE_MAX];
+    size_t wire_len = td_frame_encode(frame, wire, sizeof wire);
+    return wire_len && td_console_write((const char *)wire, wire_len);
+}
+
+static const td_link_carrier_t s_usb = { .name = "usb", .send = usb_send };
+
+/* USB goes first, into the empty table that td_link_start finds, and every other carrier after it. */
+static esp_err_t add_carrier(const td_link_carrier_t *carrier)
+{
+    esp_err_t err = ESP_OK;
+    portENTER_CRITICAL(&s_lock);
+    if ((carrier == &s_usb) != (s_carrier_count == 0)) {
+        err = ESP_ERR_INVALID_STATE;
+    }
+    for (size_t slot = 0; slot < s_carrier_count; slot++) {
+        if (s_carriers[slot].carrier == carrier) {
+            err = ESP_ERR_INVALID_STATE;
+        }
+    }
+    if (err == ESP_OK && s_carrier_count == TD_LINK_CARRIERS_MAX) {
+        err = ESP_ERR_NO_MEM;
+    }
+    if (err == ESP_OK) {
+        s_carriers[s_carrier_count] = (carrier_slot_t){ .carrier = carrier };
+        s_carrier_count++;
+    }
+    portEXIT_CRITICAL(&s_lock);
+    return err;
+}
+
+esp_err_t td_link_carrier_add(const td_link_carrier_t *carrier)
+{
+    if (!carrier || !carrier->send) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return add_carrier(carrier);
+}
+
+void td_link_carrier_receive(const uint8_t *body, size_t len, void *carrier)
+{
+    size_t slot = 0;
+    portENTER_CRITICAL(&s_lock);
+    while (slot < s_carrier_count && s_carriers[slot].carrier != carrier) {
+        slot++;
+    }
+    const bool known = slot < s_carrier_count;
+    portEXIT_CRITICAL(&s_lock);
+    if (!known) {
+        td_link_count_drop();
+        return;
+    }
     td_frame_t frame;
     if (td_frame_decode(body, len, &frame) != TD_FRAME_OK) {
         portENTER_CRITICAL(&s_lock);
@@ -72,22 +166,26 @@ static void receive_frame(const uint8_t *body, size_t len, void *context)
     }
     int64_t now = esp_timer_get_time() / 1000;
     portENTER_CRITICAL(&s_lock);
-    if (now - s_state.last_rx_ms >= TD_LINK_IDLE_MS) {
-        s_state.online = false;
+    if (now - s_carriers[slot].last_rx_ms >= TD_LINK_IDLE_MS) {
+        s_carriers[slot].online = false;
     }
-    s_state.last_rx_ms = now;
+    s_carriers[slot].last_rx_ms = now;
     s_state.frames_rx++;
     portEXIT_CRITICAL(&s_lock);
 
-    if (xStreamBufferSpacesAvailable(s_frames) < len + 2) {
+    xSemaphoreTake(s_rx_mutex, portMAX_DELAY);
+    if (xStreamBufferSpacesAvailable(s_frames) < len + TD_LINK_PACKET_HEADER) {
+        xSemaphoreGive(s_rx_mutex);
         td_link_count_drop();
         return;
     }
-    s_rx_packet[0] = len & 0xff;
-    s_rx_packet[1] = len >> 8;
-    memcpy(s_rx_packet + 2, body, len);
-    size_t sent = xStreamBufferSend(s_frames, s_rx_packet, len + 2, 0);
-    configASSERT(sent == len + 2);
+    s_rx_packet[0] = (uint8_t)slot;
+    s_rx_packet[1] = (uint8_t)(len & 0xff);
+    s_rx_packet[2] = (uint8_t)(len >> 8);
+    memcpy(s_rx_packet + TD_LINK_PACKET_HEADER, body, len);
+    size_t sent = xStreamBufferSend(s_frames, s_rx_packet, len + TD_LINK_PACKET_HEADER, 0);
+    xSemaphoreGive(s_rx_mutex);
+    configASSERT(sent == len + TD_LINK_PACKET_HEADER);
 }
 
 static bool read_bytes(uint8_t *buf, size_t len, TickType_t first_wait)
@@ -105,10 +203,15 @@ static bool read_bytes(uint8_t *buf, size_t len, TickType_t first_wait)
 
 bool td_link_send(uint8_t type, uint8_t seq, uint8_t flags, const uint8_t *payload, size_t len)
 {
-    static uint8_t wire[TD_FRAME_WIRE_MAX];
     td_frame_t frame = { .type = type, .seq = seq, .flags = flags, .len = (uint16_t)len, .payload = payload };
-    size_t wire_len = td_frame_encode(&frame, wire, sizeof wire);
-    if (!wire_len || !td_console_write((const char *)wire, wire_len)) {
+    int64_t now = esp_timer_get_time() / 1000;
+    const td_link_carrier_t *carrier = NULL;
+    portENTER_CRITICAL(&s_lock);
+    if (s_carrier_count) {
+        carrier = s_carriers[active_slot(now)].carrier;
+    }
+    portEXIT_CRITICAL(&s_lock);
+    if (!carrier || !carrier->send(carrier, &frame)) {
         td_link_count_drop();
         return false;
     }
@@ -172,17 +275,20 @@ static void handle_message(const td_frame_t *frame)
 static void handle_frame(TickType_t wait)
 {
     static uint8_t body[TD_FRAME_BODY_MAX];
-    uint8_t header[2];
+    uint8_t header[TD_LINK_PACKET_HEADER];
     if (!read_bytes(header, sizeof header, wait)) {
         return;
     }
-    size_t len = header[0] | ((size_t)header[1] << 8);
+    size_t len = header[1] | ((size_t)header[2] << 8);
     read_bytes(body, len, portMAX_DELAY);
     td_frame_t frame;
     if (td_frame_decode(body, len, &frame) != TD_FRAME_OK) {
         td_link_count_drop();
         return;
     }
+    portENTER_CRITICAL(&s_lock);
+    s_current = header[0];
+    portEXIT_CRITICAL(&s_lock);
     if (frame.type == TD_FRAME_MESSAGE && frame.flags == 0) {
         handle_message(&frame);
     } else if (frame.type == TD_FRAME_CHUNK && frame.flags == 0) {
@@ -327,24 +433,26 @@ esp_err_t td_link_start(void)
     }
     s_frames = xStreamBufferCreate(TD_LINK_STREAM_BYTES, 1);
     s_presses = xQueueCreate(TD_LINK_PRESS_QUEUE, sizeof(press_t));
-    if (!s_frames || !s_presses) {
-        if (s_frames) {
-            vStreamBufferDelete(s_frames);
-            s_frames = NULL;
-        }
-        if (s_presses) {
-            vQueueDelete(s_presses);
-            s_presses = NULL;
-        }
-        return ESP_ERR_NO_MEM;
+    s_rx_mutex = xSemaphoreCreateMutex();
+    if (s_frames && s_presses && s_rx_mutex && add_carrier(&s_usb) == ESP_OK
+        && xTaskCreate(link_task, "td_link", 8192, NULL, 3, NULL) == pdPASS) {
+        td_console_set_frame_handler(td_link_carrier_receive, (void *)&s_usb);
+        return ESP_OK;
     }
-    if (xTaskCreate(link_task, "td_link", 8192, NULL, 3, NULL) != pdPASS) {
+    portENTER_CRITICAL(&s_lock);
+    s_carrier_count = 0;
+    portEXIT_CRITICAL(&s_lock);
+    if (s_frames) {
         vStreamBufferDelete(s_frames);
         s_frames = NULL;
+    }
+    if (s_presses) {
         vQueueDelete(s_presses);
         s_presses = NULL;
-        return ESP_ERR_NO_MEM;
     }
-    td_console_set_frame_handler(receive_frame, NULL);
-    return ESP_OK;
+    if (s_rx_mutex) {
+        vSemaphoreDelete(s_rx_mutex);
+        s_rx_mutex = NULL;
+    }
+    return ESP_ERR_NO_MEM;
 }
