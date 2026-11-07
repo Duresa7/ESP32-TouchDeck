@@ -27,9 +27,11 @@ CONFIG_LWIP_IRAM_OPTIMIZATION=n
 # readable while flash is written.
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=256
 
-# Task stacks sized from the board run's high-water marks with the station up (bytes used of the stack): tcpip 1168,
-# sys_evt 1124, esp_timer 1368 with the heartbeat on it, Tmr Svc 596. Each keeps at least 1.1 KB spare. A later
-# ticket that runs a TCP service or logs more from these tasks measures again.
+# Task stacks sized from the board run with the station up. `perf mem` at these sizes, as option -> stack the task
+# got -> minimum free bytes (high-water mark): tcpip 2048 -> 2560 -> 1400; sys_evt 1792 -> 2304 -> 1172; esp_timer
+# 3072 -> 3584 -> 2216, with the heartbeat on it; Tmr Svc 1536 -> 1536 -> 940. ESP-IDF gives the first three 512
+# bytes more than their option. Every one keeps at least 940 bytes free. A later ticket that runs a TCP service or
+# logs more from these tasks measures again.
 CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=2048
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=1792
 CONFIG_ESP_TIMER_TASK_STACK_SIZE=3072
