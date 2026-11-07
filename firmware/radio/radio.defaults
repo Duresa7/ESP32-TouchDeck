@@ -22,6 +22,10 @@ CONFIG_ESP_WIFI_MGMT_SBUF_NUM=6
 CONFIG_ESP_WIFI_IRAM_OPT=n
 CONFIG_ESP_WIFI_RX_IRAM_OPT=n
 CONFIG_LWIP_IRAM_OPTIMIZATION=n
+# malloc() puts blocks under 16 KB in internal RAM by default. In the radio build, blocks of 1 KB and up go to PSRAM
+# first, which the Wi-Fi station's share of internal RAM needs. Code runs from PSRAM (XIP), so PSRAM stays readable
+# while flash is written.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=1024
 
 # NimBLE is compiled in and stays dormant: nothing starts the controller or the host, so the Device never advertises,
 # scans or connects. A later opt-in setting, default off, starts it. The controller runs from flash and NimBLE takes
