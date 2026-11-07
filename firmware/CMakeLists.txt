@@ -3,8 +3,14 @@ cmake_minimum_required(VERSION 3.22)
 
 # The radio build: `idf.py -B <dir> -DTD_RADIO_BUILD=1 build`. It adds the td_radio component, which brings Wi-Fi,
 # lwIP and NimBLE, and layers radio/radio.defaults over the defaults. Its sdkconfig lives in its build directory, so
-# the committed sdkconfig stays the normal, radio-free one. Use a build directory of its own.
+# the committed sdkconfig stays the normal, radio-free one. CMake saves the option in the build directory's cache, so
+# every later build there is a radio build too: use a build directory of its own. The default build/ is refused, because
+# verify-touchdeck and a plain `idf.py flash` take the normal Firmware from it.
 if(TD_RADIO_BUILD)
+    if(CMAKE_BINARY_DIR STREQUAL "${CMAKE_SOURCE_DIR}/build")
+        message(FATAL_ERROR "The radio build needs a build directory of its own (idf.py -B <dir> -DTD_RADIO_BUILD=1). "
+                            "firmware/build is for the normal Firmware.")
+    endif()
     if(NOT DEFINED SDKCONFIG)
         set(SDKCONFIG "${CMAKE_BINARY_DIR}/sdkconfig")
     endif()

@@ -30,7 +30,11 @@ static void steady_report(void *arg)
     s_steady_free = heap_caps_get_free_size(INTERNAL);
     s_steady_largest = heap_caps_get_largest_free_block(INTERNAL);
     s_steady = true;
-    if (s_steady_free >= CONFIG_TD_RADIO_INTERNAL_FLOOR) {
+    /* The floor is measured with the station up. Without it the figure proves nothing, so it never passes. */
+    if (s_station != STATION_STARTED) {
+        ESP_LOGE(TAG, "steady free_internal=%u largest_internal=%u, wifi station not started, floor not measured",
+                 (unsigned)s_steady_free, (unsigned)s_steady_largest);
+    } else if (s_steady_free >= CONFIG_TD_RADIO_INTERNAL_FLOOR) {
         ESP_LOGI(TAG, "steady free_internal=%u largest_internal=%u floor=%u", (unsigned)s_steady_free,
                  (unsigned)s_steady_largest, (unsigned)CONFIG_TD_RADIO_INTERNAL_FLOOR);
     } else {
@@ -110,7 +114,7 @@ static int cmd_radio(int argc, char **argv)
     td_reply_int(&r, "free_internal", (long long)free_internal);
     td_reply_int(&r, "largest_internal", (long long)heap_caps_get_largest_free_block(INTERNAL));
     td_reply_int(&r, "floor", CONFIG_TD_RADIO_INTERNAL_FLOOR);
-    td_reply_bool(&r, "floor_ok", free_internal >= CONFIG_TD_RADIO_INTERNAL_FLOOR);
+    td_reply_bool(&r, "floor_ok", s_station == STATION_STARTED && free_internal >= CONFIG_TD_RADIO_INTERNAL_FLOOR);
     td_reply_bool(&r, "steady", s_steady);
     if (s_steady) {
         td_reply_int(&r, "steady_free_internal", (long long)s_steady_free);
