@@ -80,7 +80,7 @@ and link frame checks from `protocol.mjs`. `vectors-v2.mjs` regenerates
 builds its link bodies from [golden-frames-v2.json](../golden-frames-v2.json).
 
 ```powershell
-node --test schema/protocol/net-ref/net-v2.test.mjs
+node --test schema/protocol/net-ref/net-v2.test.mjs schema/protocol/net-ref/net-v2-negative.test.mjs
 node schema/protocol/net-ref/vectors-v2.mjs --write
 ```
 
@@ -94,3 +94,8 @@ Companion tickets bring their own.
 `receiveLimit` for the largest BLE fragment a receiver accepts (514 when its
 ATT_MTU is unknown), and `PeerBackoff`, which counts only the peer-caused
 outcomes in `COUNTED` toward per-peer backoff.
+
+`net-v2-negative.test.mjs` runs every shared negative vector through the
+reference: `DeviceSession` and `CompanionSession` answer and check the session
+items, `verifyPairProof` checks a pairing proof, `canonicalShare` applies the
+X25519 share rule, and `FlowCredit` is the Device's side of BLE credit.

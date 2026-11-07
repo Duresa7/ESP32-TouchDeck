@@ -350,6 +350,199 @@
       }
     ]
   },
+  "negative": {
+    "notice": "Every implementation MUST refuse these inputs. Public synthetic test values only.",
+    "inputs": {
+      "wrong_code": "654321",
+      "other_ephemeral": "4142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f60",
+      "other_device_id": "020000000002",
+      "unknown_companion_id": "606162636465666768696a6b6c6d6e6f"
+    },
+    "wrong_code": {
+      "receiver": "device",
+      "note": "pairing.wire request, offer, start and challenge, then this proof",
+      "proof": "002214024f1aa0d9ed7ab056bfb0ea01fd5dd6dcd42091aed6c8b16f8aca99e2ecc5ccc5",
+      "expected": "auth",
+      "error": "00037f0205"
+    },
+    "tampered_wrapped_key": [
+      {
+        "receiver": "companion",
+        "note": "first ciphertext byte flipped",
+        "accept": "005215020061421319a02c96d19e8d9c269fe3df2356d9243562ed1134a46f10a21fb314fbee5f64199d4e5f06f4a48894579e3a010405896609816aec50fc021bbd8740d44ac42d923b3402fd7cd323a59cbb5e",
+        "expected": "close"
+      },
+      {
+        "receiver": "companion",
+        "note": "last tag byte flipped",
+        "accept": "005215020061421319a02c96d19e8d9c269fe3df2356d9243562ed1134a46f10a21fb314faee5f64199d4e5f06f4a48894579e3a010405896609816aec50fc021bbd8740d44ac42d923b3402fd7cd323a59cbb5f",
+        "expected": "close"
+      }
+    ],
+    "swapped_client_share": {
+      "receiver": "device",
+      "note": "session.open carries another client_share; the Device answers with challenge, then gets the original session.proof",
+      "open": "00382002020000000001101112131415161718191a1b1c1d1e1f64b101b1d0be5a8704bd078f9895001fc03e8e9f9522f188dd128d9846d48466",
+      "challenge": "004221025869aff450549732cbaaed5e5df9b30a6da31cb0e5742bad5ad4a1a768f1a67bb690c74929e5a1523a56cd4321ebbc1050512486fad19ae983be8df11f78ac83",
+      "proof": "002222025ad09c7f27fee7cb55413a95cdec8485b3ac356ba98bd8e4c43b22ae79b13aca",
+      "expected": "close"
+    },
+    "swapped_device_share": {
+      "receiver": "companion",
+      "note": "session.challenge carries another device_share with the original device_proof",
+      "challenge": "0042210264b101b1d0be5a8704bd078f9895001fc03e8e9f9522f188dd128d9846d48466a83ecb8ea34400ed3b1777fb6212c4dcc3004439b84993e307084e1d0f8de74b",
+      "expected": "close"
+    },
+    "wrong_device_id": {
+      "receiver": "device",
+      "open": "00382002020000000002101112131415161718191a1b1c1d1e1f07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7c",
+      "expected": "auth",
+      "error": "00037f0205"
+    },
+    "unknown_companion_id": {
+      "receiver": "device",
+      "open": "00382002020000000001606162636465666768696a6b6c6d6e6f07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7c",
+      "expected": "auth",
+      "error": "00037f0205"
+    },
+    "counter_limit": {
+      "direction": "c2d",
+      "plaintext": "010101000c007b226d223a2270696e67227d2f2e",
+      "last_counter": 4294967295,
+      "last": "00242741d1c37c8606dc4b1a22016601f4feec3e8b13ef3a7d47b29a4676f43a77c1c5b6d41b",
+      "last_expected": "accept",
+      "beyond_counter": 4294967296,
+      "beyond": "0024a231559d6c6be8ac24957c4040a66e6859c19851e6fcb05c13a350f821692451fca8244a",
+      "beyond_expected": "close"
+    },
+    "max_record": {
+      "direction": "c2d",
+      "counter": 0,
+      "plaintext": "0102010000045a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a0314",
+      "wire": "04185d6b7be0b2691dc188a40bf6d930959938100a7a66932b04a6f2da29933e00fa4e102e7cb4341e4aadc629ed3386b1ae9737ade68651f915058e8b3484e7d25ec7e925ec9587bf900e301486598869afaa84d83649614ff85bd6f115f93fd347ae12143ac69a8d129d18640f0ea84d6145c4dd72b20cff4accffa66402b00741d56dea5a77125118e8ff3ba09c945547aa3920d4bb231d067239d3ed6272b6decb4e4ed0c8329b3baec7b5132042af67eef68a1fc281212dd6969618b19eee3e38379d3c683f2c8efa49eeb298ca8df0491306ea328944d157271976853aa1be47e2e62d3f731e856c215c9963f92c99572d2870519b15b4ff6bcf901b3925db098821724798c79f5afe476d0998421af3534e87314a49090fefa0a1f0a247d593af62b73e06106faa062f13e745f9ea713441a6d2977ed7bae0d92d0759c791cbf8c05b4b92f4ccf3d3d0b69afaf3edf3fe9641cd9c09d861e339f09a0bb2f11375b63f97c2e58e6da1dbe52bf4374727e87fddc0c298898360f0e7f3b70f43496d5cd9fb03cf52e74582678f89a5e617aa6d32ef9abdb0e7410398ec754960761effc0bdc92e557f808c3691e693fadcf5fcdee3899ec4bda5e6a9031b0c426294ed7e316d69c71af45016a8e0edc4c69a34c6fea3409d5cc7b7a71c24fe257466247d06f03915d8e0664de55c7fb52e1a482172926b128f9435cedb639987feddf2bca4223592a6ee7ab6050f09d2c5ee0d9cef73b8c54f0d56d0453047b222cd1f219f8da6c140ab9e2bc19a8c7ebd91eadaac4cfd610181fc07fcc45598ff227a11879ca6d2c129529dcf1a6f0f4aabfdb94c7d36962e2ffaa9f21fa9c11c01d980eea832b55708382ff653491ff3afb6ef781f682150f230463d0e30d1ead435426d212e96ef12338c820d1fe26a3328156f1a3d3f321e706e0b7b9816343687ccd8da8fb2ebe7e3ef3224648abfa4193cb13383bf88b02de5764c4b1fb14510a256ed2eab2ea0003f3b54cfc124c57379baa449495ce2dc23e3b79aafa9af31bc3a3e3e3f22a9fde5b5f00d36ac2f97a2220f460a4ef2061b0beabf5beb0acfff1ce5280b7e1db815032927506817489df98893a88afe8d1c2907a71cdec1a17240246ff14c0903a398aad97e31bcb9c2e5c4436e5e5e955478a6a947405c4df312a1cb5be153f13d3e36eaa9cd1618d424185e7b2ef8afd4e7057263e92a4bd64a45f9c963934a3c986cd7c305909c1da02fe403122652e48ab1e71ae9f59fe1e0f98627bd9c942ac8b0a76f8feb7a84cb51264714af8d5dce182324bb3ee959327f696d2125781817878d5ea13aecabdf7c4386e00d30023e09526a3773669b9d0911829fe4e66317a39a721f095e43be4917da28c54da8a1529a70a4b07ce81741e501165a1d7d8d5bb354676d66631f7ef6c6c9532427e08c66e2a312b9e270c865278580806d767976f51c3fb895ad82d4fb",
+      "expected": "accept"
+    },
+    "oversize_items": [
+      {
+        "phase": "handshake",
+        "prefix": "0201",
+        "expected": "close"
+      },
+      {
+        "phase": "record",
+        "prefix": "0419",
+        "expected": "close"
+      },
+      {
+        "phase": "record",
+        "prefix": "0017",
+        "expected": "close"
+      }
+    ],
+    "write_before_credit": {
+      "initial_credit": 2100,
+      "events": [
+        {
+          "enable": "flow"
+        },
+        {
+          "write": 20
+        }
+      ],
+      "expected": "close"
+    },
+    "credit_overrun": {
+      "initial_credit": 2100,
+      "events": [
+        {
+          "enable": "tx"
+        },
+        {
+          "enable": "flow"
+        },
+        {
+          "write": 20,
+          "repeat": 105
+        },
+        {
+          "write": 1
+        }
+      ],
+      "accepted_bytes": 2100,
+      "expected": "close"
+    },
+    "x25519": {
+      "rule": "A share with bit 255 set or u >= p closes before X25519. Otherwise a share the X25519 library refuses, or an all-zero Z, closes.",
+      "secret": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "small_order": [
+        {
+          "note": "u = 0",
+          "share": "0000000000000000000000000000000000000000000000000000000000000000",
+          "expected": "close"
+        },
+        {
+          "note": "u = 1",
+          "share": "0100000000000000000000000000000000000000000000000000000000000000",
+          "expected": "close"
+        },
+        {
+          "note": "small order",
+          "share": "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800",
+          "expected": "close"
+        },
+        {
+          "note": "small order",
+          "share": "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157",
+          "expected": "close"
+        },
+        {
+          "note": "u = p - 1",
+          "share": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+          "expected": "close"
+        },
+        {
+          "note": "u = p, non-canonical 0",
+          "share": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+          "expected": "close"
+        },
+        {
+          "note": "u = p + 1, non-canonical 1",
+          "share": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+          "expected": "close"
+        },
+        {
+          "note": "small order + p, bit 255 set",
+          "share": "cdeb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b880",
+          "expected": "close"
+        },
+        {
+          "note": "small order + p, bit 255 set",
+          "share": "4c9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f11d7",
+          "expected": "close"
+        },
+        {
+          "note": "u = 2p - 1, bit 255 set",
+          "share": "d9ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "expected": "close"
+        },
+        {
+          "note": "u = 2p, bit 255 set",
+          "share": "daffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "expected": "close"
+        },
+        {
+          "note": "u = 2p + 1, bit 255 set",
+          "share": "dbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "expected": "close"
+        }
+      ],
+      "bit_255_set": {
+        "note": "session.device_share with bit 255 set; masking alone would give session.Z",
+        "share": "5869aff450549732cbaaed5e5df9b30a6da31cb0e5742bad5ad4a1a768f1a6fb",
+        "expected": "close"
+      }
+    }
+  },
   "errors": {
     "busy": "00037f0201",
     "closed": "00037f0209"

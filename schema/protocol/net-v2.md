@@ -514,10 +514,30 @@ client_proof = MAC(kc, T_session || device_proof)
 ready_proof = MAC(kr, T_session || client_proof)
 ```
 
-The Device checks `device_id` against its own and looks up `companion_id`. An
-unknown id gets `auth` before any X25519 work. Both sides MUST reject an
-all-zero `Z` (RFC 7748 section 6.1), which a low-order share produces, by
-closing the carrier connection. The Companion checks `device_proof` before it
+The Device checks `device_id` against its own and looks up `companion_id`. A
+different `device_id` or an unknown `companion_id` gets `auth` before any
+X25519 work.
+
+**Share checks.** Every implementation follows this one rule for the peer's
+share, so a bad share fails the same way whatever its X25519 library does:
+
+1. The share MUST be canonical: bit 255 clear and `u < p`, where
+   `p = 2^255 - 19`. `X25519(e, 9)` always produces such a share. The
+   receiver checks this itself before any library call, because RFC 7748
+   masks bit 255 while libraries differ on values at or above `p`.
+2. Then the receiver computes `Z`. It treats a share its library refuses on
+   import and an all-zero `Z` (RFC 7748 section 6.1) as the same failure.
+   Mbed TLS PSA refuses some small-order points on import; x25519-dalek
+   accepts them and returns an all-zero `Z`, which
+   `SharedSecret::was_contributory()` reports. Either way the session fails.
+
+A failed share check closes the carrier connection with no error item and
+counts as a malformed item for per-peer backoff. The Device sends no
+`session.challenge`, and the Companion sends no `session.proof`. Pairings are
+unchanged. The vectors' `negative.x25519` lists all twelve small-order
+encodings and an honest share with bit 255 set; each MUST close.
+
+The Companion checks `device_proof` before it
 sends its proof. The Device checks `client_proof` before `session.ready`. The
 Companion checks `ready_proof` before it sends a record. A failed check closes
 the carrier connection and erases the ephemeral keys, without deleting the
@@ -750,7 +770,7 @@ the vectors from fixed public inputs; the test checks the committed file
 without rewriting it. Run from the repository root with Node 22 or later:
 
 ```powershell
-node --test schema/protocol/net-ref/net-v2.test.mjs
+node --test schema/protocol/net-ref/net-v2.test.mjs schema/protocol/net-ref/net-v2-negative.test.mjs
 node schema/protocol/net-ref/vectors-v2.mjs --write
 ```
 
@@ -771,10 +791,27 @@ node schema/protocol/net-ref/vectors-v2.mjs --write
   character, labelled by code point, that MUST close the carrier connection.
 * `errors.busy` and `errors.closed`, and the `ble` UUIDs and recommended
   initial credit.
+* `negative`: inputs every implementation MUST refuse, each with its
+  receiver and expected outcome (`auth`, `close`, or `accept` for the
+  boundary case):
+  * `wrong_code`: a `pair.proof` from the wrong code after the fixture's
+    pairing items. The Device sends `auth`.
+  * `tampered_wrapped_key`: `pair.accept` with a flipped ciphertext or tag
+    byte. The Companion closes without an LTK.
+  * `swapped_client_share` and `swapped_device_share`: a share replaced under
+    an unchanged proof. The proof check fails and the receiver closes.
+  * `wrong_device_id` and `unknown_companion_id`: `session.open` that gets
+    `auth`.
+  * `counter_limit`: a record at counter `2^32 - 1`, which opens, and one at
+    `2^32` with a valid tag, which closes.
+  * `max_record`: a 1050-byte item, which opens, and `oversize_items`: length
+    prefixes one past each phase's bounds, which close before allocation.
+  * `write_before_credit` and `credit_overrun`: `rx` events, as enabled
+    notifications and write lengths, that end the carrier connection.
+  * `x25519`: the twelve small-order encodings and an honest share with bit
+    255 set, which all close under the share checks.
 
-Implementations also test wrong codes, wrong ids, bad public values,
-reflection, replay, reorder, truncation, counter exhaustion, maximum-size
-items, fragment boundaries and middle-fragment sizes at ATT_MTU 23, phase
-length bounds, credit overrun, the pairing lockout across a reboot, which
-outcomes count toward per-peer backoff, the update prompt cooldown, and the
-network message list.
+Implementations also test reflection, replay, reorder, truncation, fragment
+boundaries and middle-fragment sizes at ATT_MTU 23, the pairing lockout across
+a reboot, which outcomes count toward per-peer backoff, the update prompt
+cooldown, and the network message list.

@@ -134,15 +134,34 @@ export function share(secret) {
   return createPublicKey(privateKey(secret)).export({ format: 'der', type: 'spki' }).subarray(-32);
 }
 
-export function x25519(secret, peerShare) {
-  let Z;
+export const P25519 = (1n << 255n) - 19n;
+
+// net-v2's share rule: a share is canonical, bit 255 clear and u < p, which
+// X25519(e, 9) always produces. RFC 7748 masks bit 255 and libraries treat
+// u >= p differently, so the check runs before any library sees the share.
+export function canonicalShare(peerShare) {
+  fixed(peerShare, 32, 'X25519 share');
+  requireThat((peerShare[31] & 0x80) === 0, 'non-canonical X25519 share');
+  const u = BigInt(`0x${Buffer.from(peerShare).reverse().toString('hex')}`);
+  requireThat(u < P25519, 'non-canonical X25519 share');
+  return peerShare;
+}
+
+// RFC 7748 X25519 without net-v2's checks, for tests only. It returns null
+// where OpenSSL refuses the all-zero result.
+export function rawX25519(secret, peerShare) {
   try {
-    Z = diffieHellman({ privateKey: privateKey(secret), publicKey: publicKey(peerShare) });
+    return diffieHellman({ privateKey: privateKey(secret), publicKey: publicKey(peerShare) });
   } catch {
-    // OpenSSL refuses an all-zero result itself; treat it like the explicit check below.
-    throw new Error('non-contributory X25519 share');
+    return null;
   }
-  requireThat(Z.length === 32 && Z.some((byte) => byte !== 0), 'non-contributory X25519 share');
+}
+
+export function x25519(secret, peerShare) {
+  canonicalShare(peerShare);
+  const Z = rawX25519(secret, peerShare);
+  // OpenSSL refuses an all-zero result itself; treat it like the explicit check.
+  requireThat(Z !== null && Z.length === 32 && Z.some((byte) => byte !== 0), 'non-contributory X25519 share');
   return Z;
 }
 
@@ -159,6 +178,78 @@ export function sessionKeys({ ltk, deviceId, companionId, clientShare, deviceSha
   const clientProof = mac(client, transcript, deckProof);
   const readyProof = mac(ready, transcript, clientProof);
   return { transcript, prk, deck, client, ready, c2d, d2c, deckProof, clientProof, readyProof };
+}
+
+// A refusal that sends a handshake error before closing; any other thrown
+// error closes the carrier connection without one.
+export function refuse(reason) {
+  const error = new Error(reason);
+  error.reason = reason;
+  return error;
+}
+
+// The Device's check of a pair.proof: a wrong code gives a different client_proof.
+export function verifyPairProof(keys, wire) {
+  const { fields } = parseHandshake(wire, 0x14);
+  if (!equal(fields, keys.clientProof)) throw refuse('auth');
+}
+
+// The Device's side of session setup, with an injected ephemeral secret.
+export class DeviceSession {
+  constructor({ deviceId, pairings, ephemeral }) {
+    this.deviceId = fixed(deviceId, 6, 'device_id');
+    this.pairings = pairings;
+    this.ephemeral = ephemeral;
+    this.keys = null;
+  }
+
+  open(wire) {
+    const { fields } = parseHandshake(wire, 0x20);
+    const companionId = fields.subarray(6, 22);
+    const ltk = this.pairings.get(companionId.toString('hex'));
+    if (!equal(fields.subarray(0, 6), this.deviceId) || !ltk) throw refuse('auth');
+    const clientShare = fields.subarray(22);
+    const Z = x25519(this.ephemeral, clientShare);
+    const deviceShare = share(this.ephemeral);
+    this.keys = sessionKeys({ ltk, deviceId: this.deviceId, companionId, clientShare, deviceShare, Z });
+    return handshake(0x21, deviceShare, this.keys.deckProof);
+  }
+
+  proof(wire) {
+    requireThat(this.keys !== null, 'unexpected session.proof');
+    const { fields } = parseHandshake(wire, 0x22);
+    requireThat(equal(fields, this.keys.clientProof), 'bad client proof');
+    return handshake(0x23, this.keys.readyProof);
+  }
+}
+
+// The Companion's side of session setup, with an injected ephemeral secret.
+export class CompanionSession {
+  constructor({ deviceId, companionId, ltk, ephemeral }) {
+    Object.assign(this, { deviceId, companionId, ltk, ephemeral, keys: null });
+  }
+
+  open() {
+    return handshake(0x20, this.deviceId, this.companionId, share(this.ephemeral));
+  }
+
+  challenge(wire) {
+    const { fields } = parseHandshake(wire, 0x21);
+    const deviceShare = fields.subarray(0, 32);
+    const Z = x25519(this.ephemeral, deviceShare);
+    const keys = sessionKeys({ ltk: this.ltk, deviceId: this.deviceId, companionId: this.companionId,
+      clientShare: share(this.ephemeral), deviceShare, Z });
+    requireThat(equal(fields.subarray(32), keys.deckProof), 'bad device proof');
+    this.keys = keys;
+    return handshake(0x22, keys.clientProof);
+  }
+
+  ready(wire) {
+    requireThat(this.keys !== null, 'unexpected session.ready');
+    const { fields } = parseHandshake(wire, 0x23);
+    requireThat(equal(fields, this.keys.readyProof), 'bad ready proof');
+    return this.keys;
+  }
 }
 
 export function recordParameters(direction, counter, length) {
@@ -299,6 +390,63 @@ export class Reassembler {
 
 // Credit on the flow characteristic: a u64be cumulative limit of rx bytes.
 export const creditValue = (limit) => u64(BigInt(limit));
+export const RECOMMENDED_CREDIT = MIN_INITIAL_CREDIT * 2;
+
+// The Device's side of BLE flow control. The carrier connection starts when
+// notifications are on for both tx and flow; the Device then grants its
+// initial credit. A write before that, a write beyond the credit, a lower
+// limit or turning notifications off ends the carrier connection.
+export class FlowCredit {
+  constructor(initial = RECOMMENDED_CREDIT) {
+    requireThat(Number.isInteger(initial) && initial >= MIN_INITIAL_CREDIT, 'initial credit below one item');
+    this.initial = initial;
+    this.enabled = new Set();
+    this.limit = null;
+    this.written = 0;
+    this.closed = false;
+  }
+
+  guard(action) {
+    requireThat(!this.closed, 'carrier connection closed');
+    try {
+      return action();
+    } catch (error) {
+      this.closed = true;
+      throw error;
+    }
+  }
+
+  // Returns the initial flow value when this enable starts the carrier connection.
+  enable(characteristic) {
+    return this.guard(() => {
+      requireThat(characteristic === 'tx' || characteristic === 'flow', 'unknown characteristic');
+      this.enabled.add(characteristic);
+      if (this.limit !== null || this.enabled.size < 2) return null;
+      this.limit = this.initial;
+      return creditValue(this.limit);
+    });
+  }
+
+  disable() {
+    return this.guard(() => requireThat(false, 'notifications disabled'));
+  }
+
+  grant(limit) {
+    return this.guard(() => {
+      requireThat(this.limit !== null && Number.isInteger(limit) && limit >= this.limit, 'credit decreased');
+      this.limit = limit;
+      return creditValue(limit);
+    });
+  }
+
+  write(length) {
+    return this.guard(() => {
+      requireThat(this.limit !== null, 'write before the carrier connection starts');
+      requireThat(this.written + length <= this.limit, 'write beyond credit');
+      this.written += length;
+    });
+  }
+}
 
 // Per-peer backoff. Only the outcomes in COUNTED are failures the peer caused.
 // The others end a connection without counting against its peer: a takeover
