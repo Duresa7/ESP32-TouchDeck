@@ -11,11 +11,11 @@ CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 CONFIG_ESP_WIFI_NVS_ENABLED=n
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
 CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
-CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=3
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=2
 CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
 CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=2
 CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=16
-CONFIG_ESP_WIFI_RX_BA_WIN=3
+CONFIG_ESP_WIFI_RX_BA_WIN=2
 CONFIG_ESP_WIFI_RX_MGMT_BUF_NUM_DEF=3
 CONFIG_ESP_WIFI_MGMT_SBUF_NUM=6
 # IRAM and DRAM share the same internal SRAM on the ESP32-S3, so code kept in IRAM for speed is heap the panel loses.
@@ -26,6 +26,14 @@ CONFIG_LWIP_IRAM_OPTIMIZATION=n
 # first, which the Wi-Fi station's share of internal RAM needs. Code runs from PSRAM (XIP), so PSRAM stays readable
 # while flash is written.
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=1024
+
+# Task stacks sized from the board run's high-water marks with the station up (bytes used of the stack): tcpip 1168,
+# sys_evt 1124, esp_timer 1368 with the heartbeat on it, Tmr Svc 596. Each keeps at least 1.1 KB spare. A later
+# ticket that runs a TCP service or logs more from these tasks measures again.
+CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=2048
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=1792
+CONFIG_ESP_TIMER_TASK_STACK_SIZE=3072
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=1536
 
 # NimBLE is compiled in and stays dormant: nothing starts the controller or the host, so the Device never advertises,
 # scans or connects. A later opt-in setting, default off, starts it. The controller runs from flash and NimBLE takes
