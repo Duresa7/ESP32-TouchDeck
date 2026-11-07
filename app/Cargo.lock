@@ -3095,6 +3095,7 @@ dependencies = [
  "rcgen",
  "reqwest",
  "resvg",
+ "roxmltree",
  "rustls",
  "rustls-platform-verifier",
  "serde",

@@ -139,57 +139,139 @@ pub fn valid_name(name: &str) -> bool {
         })
 }
 
-/// Whether a body is self-contained: no script, no event handler, no foreign object and no
-/// reference that leaves the SVG. Only `#fragment` references are allowed.
+const SVG_NS: &str = "http://www.w3.org/2000/svg";
+const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
+const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
+/// The most XML nodes one body may hold.
+const MAX_BODY_NODES: u32 = 50_000;
+/// Elements that run code, embed other documents or carry style sheets. `style` is left out
+/// whole, since Iconify bodies carry their style in attributes.
+const REFUSED_ELEMENTS: &[&str] = &[
+    "script",
+    "foreignobject",
+    "style",
+    "iframe",
+    "embed",
+    "object",
+    "handler",
+    "listener",
+];
+const ANIMATIONS: &[&str] = &[
+    "set",
+    "animate",
+    "animatetransform",
+    "animatemotion",
+    "discard",
+];
+
+/// Whether a body is self-contained, decided on its parsed XML rather than its text. Every
+/// element must be SVG and none may run code: no `script`, `foreignObject`, `style` or event
+/// handler in any namespace or case. Links (`href`, `xlink:href`) and CSS `url(…)` must point
+/// at a `#fragment`, after XML and CSS escapes are decoded. No DTD, processing instruction,
+/// `@import` or `javascript:` value, and no animation that retargets a link.
 pub fn safe_body(body: &str) -> bool {
-    let lower = body.to_ascii_lowercase();
-    if [
-        "<script",
-        "<foreignobject",
-        "javascript:",
-        "@import",
-        "<!entity",
-        "<!doctype",
-        "<?",
-    ]
-    .iter()
-    .any(|token| lower.contains(token))
+    let wrapped = format!("<svg xmlns=\"{SVG_NS}\" xmlns:xlink=\"{XLINK_NS}\">{body}</svg>");
+    let options = roxmltree::ParsingOptions {
+        allow_dtd: false,
+        nodes_limit: MAX_BODY_NODES,
+    };
+    let Ok(document) = roxmltree::Document::parse_with_options(&wrapped, options) else {
+        return false;
+    };
+    document
+        .root_element()
+        .descendants()
+        .skip(1)
+        .all(|node| match node.node_type() {
+            roxmltree::NodeType::Element => safe_element(node),
+            roxmltree::NodeType::Text | roxmltree::NodeType::Comment => true,
+            roxmltree::NodeType::PI | roxmltree::NodeType::Root => false,
+        })
+}
+
+fn safe_element(node: roxmltree::Node) -> bool {
+    let tag = node.tag_name();
+    if tag.namespace() != Some(SVG_NS) {
+        return false;
+    }
+    let name = tag.name().to_ascii_lowercase();
+    if REFUSED_ELEMENTS.contains(&name.as_str()) {
+        return false;
+    }
+    if ANIMATIONS.contains(&name.as_str())
+        && node.attributes().any(|attr| {
+            attr.name().eq_ignore_ascii_case("attributeName")
+                && attr.value().trim().to_ascii_lowercase().ends_with("href")
+        })
     {
         return false;
     }
-    let bytes = lower.as_bytes();
-    // Event handler attributes: whitespace, `on`, letters, then `=`.
-    for (at, _) in lower.match_indices("on") {
-        if at == 0 || !bytes[at - 1].is_ascii_whitespace() {
+    node.attributes().all(|attr| safe_attribute(&attr))
+}
+
+fn safe_attribute(attr: &roxmltree::Attribute) -> bool {
+    if !matches!(attr.namespace(), None | Some(XLINK_NS) | Some(XML_NS)) {
+        return false;
+    }
+    let name = attr.name().to_ascii_lowercase();
+    if name.starts_with("on") {
+        return false;
+    }
+    // roxmltree has already decoded `&#106;` and friends.
+    let value = attr.value();
+    if name == "href" {
+        return value.trim_start().starts_with('#');
+    }
+    let css: String = css_unescape(value)
+        .chars()
+        .filter(|c| !c.is_whitespace() && !c.is_control())
+        .flat_map(char::to_lowercase)
+        .collect();
+    if ["javascript:", "vbscript:", "@import", "expression("]
+        .iter()
+        .any(|token| css.contains(token))
+    {
+        return false;
+    }
+    css.match_indices("url(").all(|(at, _)| {
+        css[at + 4..]
+            .trim_start_matches(['"', '\''])
+            .starts_with('#')
+    })
+}
+
+/// Decodes CSS escapes: `\` and one to six hex digits (and one following space) is that code
+/// point, `\` before a newline is nothing, and `\` before anything else is that character.
+fn css_unescape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
             continue;
         }
-        let rest = &bytes[at + 2..];
-        let letters = rest.iter().take_while(|b| b.is_ascii_lowercase()).count();
-        if letters > 0 && rest[letters..].iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'=') {
-            return false;
+        let mut hex = String::new();
+        while hex.len() < 6 && chars.peek().is_some_and(char::is_ascii_hexdigit) {
+            hex.extend(chars.next());
         }
-    }
-    // `href` values and `url(...)` must start with `#`.
-    let starts_with_fragment = |rest: &str, open: &[char]| {
-        rest.trim_start()
-            .trim_start_matches(|c| open.contains(&c))
-            .trim_start()
-            .starts_with('#')
-    };
-    for (at, _) in lower.match_indices("href") {
-        let rest = lower[at + 4..].trim_start();
-        if let Some(value) = rest.strip_prefix('=')
-            && !starts_with_fragment(value, &['"', '\''])
-        {
-            return false;
+        if hex.is_empty() {
+            match chars.next() {
+                Some('\n') | None => {}
+                Some(other) => out.push(other),
+            }
+            continue;
         }
-    }
-    for (at, _) in lower.match_indices("url(") {
-        if !starts_with_fragment(&lower[at + 4..], &['"', '\'']) {
-            return false;
+        if chars.peek().is_some_and(|c| c.is_ascii_whitespace()) {
+            chars.next();
         }
+        let code = u32::from_str_radix(&hex, 16).unwrap_or(0xfffd);
+        out.push(
+            char::from_u32(code)
+                .filter(|c| *c != '\0')
+                .unwrap_or('\u{fffd}'),
+        );
     }
-    true
+    out
 }
 
 fn side(value: Option<f64>) -> Result<Option<f64>, String> {
@@ -290,10 +372,6 @@ impl IconSet {
         None
     }
 
-    pub fn contains(&self, name: &str) -> bool {
-        self.chain(name).is_some()
-    }
-
     fn hidden(&self, name: &str) -> bool {
         self.chain(name)
             .is_some_and(|(_, props)| props.first().is_some_and(|p| p.hidden == Some(true)))
@@ -350,7 +428,8 @@ impl IconSet {
         let mut rotate = 0i64;
         let (mut h_flip, mut v_flip) = (false, false);
         for props in &chain {
-            rotate += props.rotate.unwrap_or(0);
+            // Reduced at each step, so a huge rotate from the file can't overflow.
+            rotate = (rotate + props.rotate.unwrap_or(0).rem_euclid(4)).rem_euclid(4);
             h_flip ^= props.h_flip.unwrap_or(false);
             v_flip ^= props.v_flip.unwrap_or(false);
         }
@@ -454,6 +533,56 @@ mod tests {
         ] {
             assert!(!safe_body(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn the_review_bypasses_and_their_cousins_are_refused() {
+        for bad in [
+            // A prefixed element in the SVG namespace is still a script or foreign object.
+            r#"<x:script xmlns:x="http://www.w3.org/2000/svg">alert(1)</x:script>"#,
+            r#"<x:foreignObject xmlns:x="http://www.w3.org/2000/svg"><p/></x:foreignObject>"#,
+            r#"<SCRIPT>alert(1)</SCRIPT>"#,
+            // Character references are decoded before the value is checked.
+            r#"<a><set attributeName="href" to="&#106;avascript:alert(1)"/></a>"#,
+            r#"<animate attributeName="fill" values="red;&#106;avascript:x"/>"#,
+            r##"<a><animate attributeName="xlink:href" values="#a;#b"/></a>"##,
+            // CSS escapes are decoded before `url(` and `@import` are looked for.
+            r#"<path style="fill:\75 rl(https://example.org/x)"/>"#,
+            r#"<path style="fill:u\72l(https://example.org/x)"/>"#,
+            r#"<path style="@\69mport 'https://example.org/x.css'"/>"#,
+            r#"<path fill="URL( https://example.org/x )"/>"#,
+            // Anything outside SVG: other namespaces, processing instructions, DTDs.
+            r#"<g xmlns="http://example.org/other"><path/></g>"#,
+            r#"<path xmlns:e="http://example.org/e" e:href="https://example.org/x"/>"#,
+            r#"<?xml-stylesheet href="https://example.org/x.css"?><path/>"#,
+            r#"<!DOCTYPE x [<!ENTITY a "b">]><path/>"#,
+            r#"<use xlink:href="other.svg#a"/>"#,
+            r#"<image href=" https://example.org/x.png"/>"#,
+            r#"<style>path{fill:red}</style>"#,
+            r#"<path d="M0 0"#,
+        ] {
+            assert!(!safe_body(bad), "{bad}");
+        }
+        for good in [
+            r##"<path fill="url( '#g' )"/><path style="fill:url(#g);opacity:.5"/>"##,
+            r##"<use xlink:href="#a"/><use href=" #b"/>"##,
+            r#"<animate attributeName="opacity" values="0;1" dur="1s"/>"#,
+            r#"<g xml:space="preserve"><text>A &amp; B</text></g><!-- note -->"#,
+            r##"<x:path xmlns:x="http://www.w3.org/2000/svg" d="M0 0" fill="url(#g)"/>"##,
+        ] {
+            assert!(safe_body(good), "{good}");
+        }
+    }
+
+    #[test]
+    fn a_huge_rotate_does_not_overflow() {
+        let parsed = set(serde_json::json!({
+            "prefix": "test",
+            "icons": {"base": {"body": "<path/>", "rotate": i64::MAX}},
+            "aliases": {"turn": {"parent": "base", "rotate": i64::MAX}}
+        }));
+        // i64::MAX is 3 quarter turns past a whole number of turns; twice that is 2.
+        assert!(parsed.svg("turn", "#fff").unwrap().contains("rotate(180"));
     }
 
     #[test]
