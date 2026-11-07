@@ -33,7 +33,8 @@ always repeats discovery. No GPIO, clock, eFuse, or USB controller change is par
 of this protocol. The same selection runs on every Carrier: over Wi-Fi and BLE,
 [net-v2](net-v2.md) carries these frames and defines its own framing,
 authentication and `net.*` messages. Each USB or net-v2 session selects its
-protocol independently.
+protocol independently. On a network Carrier, net-v2 also limits which
+requests run and adds the `usb-only` reason.
 
 ## Hello fields and limits
 

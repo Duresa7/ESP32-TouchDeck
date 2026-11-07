@@ -8,7 +8,7 @@ top of them the Companion runs the same link session as over USB, including
 
 net-v2 replaces [net-v1](net-v1.md), which never shipped in Firmware. It keeps
 net-v1's SRP-6a pairing with a six-digit code, the long-term keys, the busy
-rule and the Device identity. It changes three things:
+rule and the Device identity. It changes these things:
 
 * Every session adds an ephemeral X25519 exchange, so a stolen long-term key
   doesn't decrypt recorded sessions ([ADR 0009](../../docs/adr/0009-net-sessions-add-x25519-for-forward-secrecy.md)).
@@ -16,6 +16,11 @@ rule and the Device identity. It changes three things:
   hello negotiation, so link-v2 is no longer USB-only.
 * One item format rides on TCP and on BLE GATT, with fragmentation rules that
   work at the smallest ATT MTU.
+* Pairing windows open only from the Device, and failed codes back off across
+  windows and reboots.
+* A network session may run only the messages listed for it. Firmware updates
+  need approval on the Device, and Wi-Fi credentials, opening pairing windows
+  and wiping Pairings stay USB-only.
 
 The suite is fixed, with no negotiation: SRP-6a over RFC 5054's 3072-bit group
 with generator 5 and SHA-512 for pairing; X25519 (RFC 7748) for the session
@@ -100,10 +105,36 @@ identity, not authentication; the session handshake is the authentication.
 
 The Device admits one net-v2 **owner** across both network Carriers: a carrier
 connection that starts while there is no owner, until it closes. A connection
-waiting for code entry is an owner. While an owner exists, any other carrier
+bound to a pairing window is an owner. While an owner exists, any other carrier
 connection, on TCP or on BLE, receives the `busy` error as soon as it starts
 and then closes. The Device writes that error within 100 ms and allocates no
-SRP or X25519 state for it.
+SRP or X25519 state for it. One exception lets a real Companion in past a
+connection that is only holding the Device:
+
+* **Takeover.** An owner is *unproven* until its first handshake item has
+  arrived and, for a session, until the Device has verified its
+  `client_proof`. A new carrier connection whose first item is `session.open`
+  naming a stored `companion_id` takes over from an unproven owner that is not
+  bound to a pairing window. The Device closes the old connection without an
+  error and continues with the new one. A `session.open` with an unknown id
+  gets `auth` and takes nothing over. An owner bound to a pairing window is
+  never taken over; the person at the Device can cancel it.
+
+Unauthenticated connections are kept short:
+
+* The first handshake item MUST arrive within 2000 ms of the carrier
+  connection starting, or the Device closes it with `expired`.
+* On BLE, the Companion MUST enable both notifications within 5000 ms of the LE
+  connection, or the Device disconnects. An LE connection that hasn't started a
+  carrier connection is not an owner, but it does use a connection slot.
+* **Per-peer backoff.** A peer is a TCP source address or a BLE address. When a
+  peer's carrier connection ends before `session.ready` or a verified
+  `client_proof`, the Device refuses that peer's next connections with `busy`
+  for a delay that starts at 1000 ms, doubles on each further failure up to
+  60000 ms, and resets when that peer reaches `session.ready`. The Device keeps
+  at least eight peers, evicting the oldest entry. Addresses are easy to
+  change, so this limits nuisance, not guessing; the pairing rules below do
+  that.
 
 USB wins. While the USB link is online (a valid `hello` within the last
 5000 ms, as in link-v1), the Device:
@@ -111,7 +142,7 @@ USB wins. While the USB link is online (a valid `hello` within the last
 * answers `session.open` with `busy`,
 * closes an established net-v2 session when USB comes online,
 * still allows pairing, because pairing carries no link frames. A person can
-  set up Wi-Fi and pair while the Device is plugged in.
+  set up Wi-Fi, open a pairing window and pair while the Device is plugged in.
 
 USB itself is never refused. Replies return on the Carrier that carried the
 request. Events go to the online Carrier. Because a session and an online USB
@@ -175,12 +206,21 @@ notification is one **fragment**:
   Device always knows its ATT_MTU. A Companion on WinRT can read it from the
   GATT session; one on BlueZ through btleplug may not be told, and then sends
   20-byte fragments. Neither side requires a larger MTU.
+* Each sender fixes its `F` when the carrier connection starts and keeps it
+  for that connection, even if it learns a larger MTU later.
 * Because `F` is at least 20, an item's first fragment always holds its whole
   length prefix.
-* A receiver accepts any fragment of 1 to `ATT_MTU - 3` bytes (514 at most).
-  It closes the carrier connection on an empty fragment, a first fragment
-  shorter than 2 bytes, a fragment that runs past the end of its item, or a
-  length outside the current state's bounds.
+* A receiver doesn't know the sender's `F` in advance. It learns it from the
+  first fragment that isn't an item's last, and from then on checks it. It
+  closes the carrier connection on:
+  * an empty fragment, or one longer than its own `ATT_MTU - 3` (514 at most);
+  * a first fragment shorter than 2 bytes;
+  * a fragment that isn't its item's last and is shorter than 20 bytes or
+    differs from the learned `F`;
+  * a last fragment longer than the learned `F`;
+  * a fragment that runs past the end of its item;
+  * a length outside the current phase's bounds: 3 to 512 for a handshake
+    item, 24 to 1048 for a record.
 * Prepared (long) writes and writes with response to `rx` are refused with an
   ATT error, and the Device disconnects.
 
@@ -235,6 +275,7 @@ connection. A Device that receives an item with version 1 sends `version`.
 | 6 | `expired` | A deadline or the pairing window expired |
 | 7 | `cancelled` | The person cancelled pairing on the Device |
 | 8 | `storage` | The Pairing could not be committed |
+| 9 | `closed` | No pairing window is open on the Device, or pairing is locked out |
 
 For example, `busy` is hex `00037f0201`. Errors close the carrier connection,
 except that the first two `auth` errors after a pairing proof return to code
@@ -252,23 +293,60 @@ below follow the glossary; the wire bytes are the same as net-v1's except the
 version byte and the label prefix.
 
 The first item on a carrier connection is `pair.request` or `session.open`.
-`pair.request` asks the Device to show a fresh six-digit decimal code,
-zero-padded, full screen with a Cancel button. The code is sampled uniformly
-from 0 to 999999 by rejection sampling. The pairing window lasts 120000 ms on a
-monotonic clock. The code never leaves the display or the SRP computation.
+
+**Pairing windows open only on the Device.** Nothing on a network Carrier can
+open one. A window opens when a person chooses "Pair new app" on the Device,
+or from USB, which needs the same physical access: the console's `net pair`
+command or the USB-only `net.pair` message below. The window lasts 120000 ms
+from opening on a monotonic clock, and the Device shows it full screen with a
+Cancel button and the time left. A `pair.request` with no open window gets
+`closed`. A Companion tells the person to open the window on the Device and
+try again; it never retries by itself.
+
+The first `pair.request` while a window is open binds the window to that
+carrier connection, which becomes the owner. The Device then shows a fresh
+six-digit decimal code, zero-padded, with the requesting `companion_name`.
+The code is sampled uniformly from 0 to 999999 by rejection sampling. It never
+leaves the display or the SRP computation. `pair.offer` reports the time left
+in the window.
 
 `companion_id` is a random 16-byte id, stable for one Companion installation.
 `companion_name` is 1 to 64 bytes of valid UTF-8 with no NUL or Unicode control
 characters; `name_len` counts bytes. The name labels the Pairing for a person
-and grants no authority. `window_id` is a fresh random 16-byte value. A new
-request can't replace or extend an open window. Three failed client proofs
-close the window and the carrier connection.
+and grants no authority. Besides control characters (`\p{Cc}`), the name MUST
+NOT contain the bidirectional overrides and isolates U+202A to U+202E and
+U+2066 to U+2069, which can make one name look like another on screen.
+`window_id` is a fresh random 16-byte value. A new request can't replace or
+extend an open window. Three failed client proofs close the window and the
+carrier connection.
 
 Cancel, carrier close, commit or expiry destroys the window, code, salt,
 verifier, private exponents and temporary keys. A failed proof destroys that
 attempt's SRP state but keeps the window and its failure count. Each retry
 uses fresh exponents, salt and nonces. An invalid public value or malformed
 item closes the carrier connection and the window.
+
+### Failure backoff
+
+Windows need a person at the Device, but a person can be tricked into opening
+one, and a nearby attacker can race the real Companion to bind it. So the
+Device also limits code guesses across windows and reboots:
+
+* `pair_failures` is a counter in NVS. Each failed client proof increments it,
+  and the Device commits it to NVS before it sends `auth`. A storage failure
+  closes the window as if it were locked out.
+* When `pair_failures` reaches 3 or more after an increment, the Device closes
+  the window and the carrier connection and locks pairing for
+  `min(30000 ms * 2^(pair_failures - 3), 900000 ms)`. That is 30 s, 60 s,
+  120 s and so on, capped at 15 minutes, so steady guessing gets at most 96
+  tries a day.
+* While locked, the Device opens no window. Its pairing screen shows the
+  number of failed codes and the time left, and `pair.request` gets `closed`.
+* The time left is stored in NVS whenever the lock starts, and at least once a
+  minute while it runs. After a reboot the lock resumes from the stored value,
+  so restarting the Device doesn't clear it.
+* A committed Pairing resets `pair_failures` to 0 and clears the lock. So does
+  `net.forget`, which is USB-only.
 
 | Kind | Name | Sender | Fields |
 |---|---|---|---|
@@ -286,7 +364,7 @@ byte lengths. The Device waits for code entry after `pair.offer`, and the
 Companion sends `pair.start` only after the person enters the code. A pairing
 attempt has a 10000 ms deadline from the first byte of `pair.start`, covering
 all crypto, proofs, persistence and `pair.stored`. The first item must arrive
-within 10000 ms of the carrier connection starting. Waiting for the person is
+within 2000 ms of the carrier connection starting. Waiting for the person is
 the only wait outside these deadlines. Partial reads never extend a deadline.
 
 ### SRP arithmetic
@@ -414,8 +492,13 @@ What this gives:
   still lets the thief open new sessions until the Pairing is removed.
 * Pairing resists offline code guessing from a passive capture or a fake
   Device that lacks the code. An active impersonator can test one guess per
-  exchange, three per window on the real Device. The Companion MUST ask the
-  person again after a failed proof and MUST NOT retry a code by itself.
+  exchange, three per window on the real Device, and every window needs a
+  person at the Device. The failure backoff caps guesses at 96 a day across
+  windows and reboots. The Companion MUST ask the person again after a failed
+  proof and MUST NOT retry a code by itself.
+* A Pairing still isn't USB. A network session can't change Wi-Fi
+  credentials, open pairing windows or wipe Pairings, and can install Firmware
+  only after the person at the Device approves it.
 
 ## Records
 
@@ -450,8 +533,9 @@ After `session.ready`, the Companion runs link-v2's negotiation exactly as on
 USB. It sends the plain `{"m":"hello"}`. A Device that implements net-v2 MUST
 answer with `protocols` containing 2. The Companion then sends
 `{"m":"hello","proto":2}`, and the reply selects protocol 2 for this session
-and carries `id`, `name` and `caps`. All link-v2 rules apply unchanged:
-re-selection, transfer aborts, live value resets, error reasons and limits.
+and carries `id`, `name` and `caps`. All link-v2 rules apply: re-selection,
+transfer aborts, live value resets, error reasons and limits. The one
+addition is which messages may run, in the next section.
 The Companion's link session is the same code on every Carrier; only frame
 delivery differs.
 
@@ -464,16 +548,53 @@ closes after 5000 ms without a valid frame from the Device. Partial items and
 invalid bytes refresh nothing. Closing the session releases the Companion's
 held keys and aborts its transfers.
 
-Messages that another contract limits to USB, such as Wi-Fi credentials, keep
-that limit; their contract defines the refusal over a network Carrier.
+## Messages on a network Carrier
+
+A Pairing can be guessed at or its key stolen, so a network session gets less
+power than USB, which needs physical access. The Device MUST enforce this list
+itself, under either selected link protocol. It applies to requests the
+Companion sends; Device events such as `press`, `key.report`, `v2.input` and
+`v2.page` flow as on USB.
+
+| Rule | Messages |
+|---|---|
+| Allowed | `hello`, `ping`, `link.state`, `layout.get`, `layout.put`, `icon.put`, `icon.list`, `icon.rm`, `settings.get`, `settings.put`, `store.stat`, `xfer.end`, `widget.set`, `dashboard.set`, `v2.name.get`, `v2.name.set`, `v2.asset.stat`, `v2.asset.list`, `v2.asset.put`, `v2.asset.end`, `v2.asset.delete`, `v2.live.set`, `v2.photo.put`, `v2.photo.end`, `v2.idle.get`, `v2.idle.set`, `v2.clock.set`, `net.state` |
+| Confirmed on the Device | `update.begin`, then the update's chunks and `update.end` as usual |
+| USB only | `net.pair`, `net.forget`, every `wifi.*` message, and every message not named above |
+
+Chunks and acks are allowed only for a transfer this session opened. A
+USB-only request gets `ok:false`, `reason:"usb-only"` and
+`error:"Only over USB"`, and changes nothing. A contract that adds a message
+MUST say which row it belongs to; until it does, the message is USB-only.
+
+**Firmware update over a network Carrier.** The person at the Device approves
+each image:
+
+1. On a network session, `update.begin` doesn't open a transfer. The Device
+   shows a full-screen prompt for 60000 ms: the requesting `companion_name`,
+   the image size, the first 8 hex digits of `sha256`, and Install and Cancel
+   buttons. It replies `ok:false`, `reason:"confirm"`.
+2. The Companion repeats the same `update.begin`, with the same `bytes` and
+   `sha256`, at most every 2000 ms, and tells the person to look at the
+   Device. Repeats get `confirm` while the prompt is up.
+3. After the person taps Install, the next matching `update.begin` from the
+   same session within the 60000 ms opens the transfer, with link-v1's normal
+   reply. The rest of the update, its checks and its rollback are link-v1's.
+4. Cancel, the prompt timing out, the session closing, or a repeat with a
+   different `bytes` or `sha256` ends the prompt. The next matching repeat gets
+   `reason:"declined"`; any later `update.begin` starts a new prompt.
+
+`confirm` and `declined` are added to link-v1's update reasons for network
+sessions only. Over USB, `update.begin` works as before.
 
 ## Timeouts and limits
 
 | Item | Value |
 |---|---|
-| First handshake item after the carrier connection starts | 10000 ms |
+| BLE LE connection to both notifications enabled | 5000 ms |
+| First handshake item after the carrier connection starts | 2000 ms |
 | Session setup, from the carrier connection starting | 10000 ms |
-| Pairing window, from the code appearing | 120000 ms |
+| Pairing window, from opening on the Device | 120000 ms |
 | Pairing attempt, from the first byte of `pair.start` | 10000 ms |
 | First `hello` after `session.ready` | 5000 ms |
 | `ping` interval, link expiry | 2000 ms, 5000 ms |
@@ -486,6 +607,9 @@ that limit; their contract defines the refusal over a network Carrier.
 | Records per direction per session | `2^32` |
 | Stored Pairings | 4 |
 | Failed proofs per pairing window | 3 |
+| Pairing lockout after the third and later failures | 30000 ms doubling, at most 900000 ms |
+| Per-peer backoff | 1000 ms doubling, at most 60000 ms |
+| Firmware update prompt on the Device | 60000 ms |
 
 ## Storage, management and secrets
 
@@ -497,24 +621,28 @@ keep `device_id`, `companion_id` and the Device name in ordinary settings.
 Forgetting a Device in the Companion deletes its local key and closes its
 session; it doesn't revoke the Device's entry. `net.forget` on the Device does.
 
-These link messages work over USB and over an authenticated net-v2 session.
-They use the normal link response envelope. Their JSON names stay as in net-v1
-([ADR 0003](../../docs/adr/0003-brand-changes-wire-names-stay.md)).
+These link messages use the normal link response envelope. Their JSON names
+stay as in net-v1 ([ADR 0003](../../docs/adr/0003-brand-changes-wire-names-stay.md)).
+`net.state` works over USB and over a net-v2 session. `net.pair` and
+`net.forget` are USB-only.
 
 | Request | Successful response fields |
 |---|---|
-| `{"m":"net.state"}` | `listening` Boolean, `port:47820`, `ble` Boolean, `session` null or `{app_id,app_name,carrier,since_ms}`, `paired` 0 to 4, `pairing` Boolean |
+| `{"m":"net.state"}` | `listening` Boolean, `port:47820`, `ble` Boolean, `session` null or `{app_id,app_name,carrier,since_ms}`, `paired` 0 to 4, `pairing` Boolean, `pair_failures` integer, `locked_ms` integer |
+| `{"m":"net.pair"}` | The same fields after opening a pairing window |
 | `{"m":"net.forget"}` | The same fields after clearing every Pairing |
 
 `app_id` is `companion_id` as 32 lowercase hex characters and `app_name` is
 `companion_name`. `carrier` is `"wifi"` or `"ble"`. `since_ms` is the
 Device's monotonic time at `session.ready`. `listening` reflects the TCP
 listener and `ble` whether the link service is advertising or connected.
-`pairing` is true only while a code is shown. A failure is `ok:false` with an
-`error` sentence and `reason:"storage"`. `net.forget` cancels a window, erases
-every Pairing durably and ends the session. Over a network Carrier it sends
-its final encrypted reply, with `session:null`, best effort within 100 ms,
-then closes. A failed erase still ends the session and reports the failure.
+`pairing` is true while a window is open. `pair_failures` is the stored
+counter and `locked_ms` the time left in a pairing lockout, 0 when none.
+`net.pair` fails with `reason:"locked"` during a lockout and `reason:"full"`
+when four Pairings exist. A failure is otherwise `ok:false` with an `error`
+sentence and `reason:"storage"`. `net.forget` cancels a window, erases every
+Pairing durably, resets `pair_failures` and the lockout, and ends any network
+session. A failed erase still ends the session and reports the failure.
 
 Codes, verifiers, private exponents, X25519 private keys, `Z`, LTKs and
 session keys MUST NOT appear in logs, console replies, `hello`, screenshots
@@ -580,8 +708,11 @@ node schema/protocol/net-ref/vectors-v2.mjs --write
   include their BLE fragments at ATT_MTU 23 and 247.
 * `tampered_record`, which MUST close the receiver, and
   `non_contributory_share`, an all-zero share that MUST close the handshake.
-* `errors.busy` and the `ble` UUIDs and recommended initial credit.
+* `errors.busy` and `errors.closed`, and the `ble` UUIDs and recommended
+  initial credit.
 
 Implementations also test wrong codes, wrong ids, bad public values,
 reflection, replay, reorder, truncation, counter exhaustion, maximum-size
-items, fragment boundaries at ATT_MTU 23, and credit overrun.
+items, fragment boundaries and middle-fragment sizes at ATT_MTU 23, phase
+length bounds, credit overrun, the pairing lockout across a reboot, and the
+network message list.

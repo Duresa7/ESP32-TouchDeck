@@ -13,3 +13,5 @@ net-v1 authenticated each Wi-Fi session with the Pairing's long-term key alone, 
 ## Consequences
 
 The Device's radio build must keep Curve25519 enabled in Mbed TLS. Both sides reject an all-zero shared secret. Pairing itself is unchanged: SRP already protects the LTK in transit, and a plain X25519 exchange with the code hashed in would not be a PAKE.
+
+Forward secrecy protects recorded traffic, not access. Someone who guesses a code or steals an LTK can still open new sessions, so net-v2 also opens pairing windows only from the Device, backs off failed codes in NVS, and keeps Firmware updates (approved on the Device), Wi-Fi credentials and wiping Pairings away from network sessions. The X25519 choice doesn't depend on those rules.
