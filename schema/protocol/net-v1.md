@@ -1,5 +1,8 @@
 # TouchDeck network link v1
 
+Superseded by [net-v2](net-v2.md). net-v1 never shipped in Firmware; this
+document stays as the record of the base design.
+
 This contract carries [link-v1](link-v1.md) over TCP port 47820. The pairing
 suite is SRP-6a, RFC 5054's 3072-bit group with generator 5 and SHA-512.
 Session authentication uses HMAC-SHA256 and HKDF-SHA256. Encryption uses

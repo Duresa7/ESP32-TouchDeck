@@ -1,7 +1,7 @@
 # Network protocol reference
 
-This reference implements the byte and crypto contract in
-[net-v1.md](../net-v1.md). It needs Node 22 or later and no packages.
+This reference implements the byte and crypto contracts in
+[net-v1.md](../net-v1.md) and [net-v2.md](../net-v2.md). It needs Node 22 or later and no packages.
 Its BigInt SRP code is a test oracle. Production code uses the documented
 ESP-IDF and RustCrypto backends. JavaScript cannot guarantee secret erasure
 or constant-time big-integer arithmetic.
@@ -69,3 +69,22 @@ the remote socket's close handling. `deadline` uses the exported monotonic `now(
 The Node client is a verification tool with bounded requests and layout reads.
 Its limits and volatile storage are intentional. M3-06 owns the production
 transport, transfer engine, discovery, UI, and persistent keyring behavior.
+
+## net-v2
+
+`net-v2.mjs` adds what [net-v2.md](../net-v2.md) changes: item version 2, the
+`touchdeck/net-v2/` labels, the X25519 session exchange, `TDN2` records, BLE
+fragments and credit values. It imports the SRP arithmetic, hashes, AES-GCM
+and link frame checks from `protocol.mjs`. `vectors-v2.mjs` regenerates
+[net-v2-vectors.json](../net-v2-vectors.json) from fixed public inputs, and
+builds its link bodies from [golden-frames-v2.json](../golden-frames-v2.json).
+
+```powershell
+node --test schema/protocol/net-ref/net-v2.test.mjs
+node schema/protocol/net-ref/vectors-v2.mjs --write
+```
+
+Every key, code and identity in those vectors is a synthetic test value. The
+test also checks X25519 against RFC 7748's own vectors and HKDF against Node's
+built-in implementation. There is no net-v2 socket peer yet; the Firmware and
+Companion tickets bring their own.
