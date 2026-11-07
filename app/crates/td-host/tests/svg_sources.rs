@@ -1,5 +1,5 @@
-//! What a catalog SVG and an uploaded SVG may hold: no entity expansion, no embedded images
-//! in uploads, and only small embedded PNGs in catalog icons.
+//! What a catalog SVG and an uploaded SVG may hold: no entity expansion, and no embedded
+//! images drawn in either.
 
 use base64::Engine;
 use std::io::Write;
