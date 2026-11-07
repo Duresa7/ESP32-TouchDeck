@@ -12,10 +12,11 @@ const binary = process.env.TOUCHDECK_COMPANION_BIN ||
 const evidence = process.env.TOUCHDECK_EVIDENCE_DIR || resolve('../../.verify/72');
 
 /** Keeps a process's output with the spec's results, so a CI failure shows what the Companion or Electron said. */
-function record(child: Pick<ChildProcess, 'stdout' | 'stderr'>, name: string) {
+function record(child: ChildProcess, name: string) {
   const log = createWriteStream(test.info().outputPath(name));
   child.stdout?.on('data', chunk => log.write(chunk));
   child.stderr?.on('data', chunk => log.write(chunk));
+  child.once('close', () => log.end());
 }
 
 /** Launches the Electron window and records its main-process output. */

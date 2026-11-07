@@ -158,11 +158,6 @@ jobs:
       - name: Run the Electron Playwright specs
         if: runner.os == 'Windows'
         run: pnpm --filter @touchdeck/electron e2e
-      # TEMPORARY: hunts the companion spec hang; removed before the PR is ready.
-      - name: Loop the Companion specs (temporary)
-        if: runner.os == 'Windows'
-        working-directory: app/electron
-        run: node node_modules/@playwright/test/cli.js test companion.spec.ts --repeat-each=16 --reporter=list
       # Each failed Electron spec leaves its error context and the Companion and Electron logs here.
       - name: Keep the output of failed Electron specs
         if: failure() && runner.os == 'Windows'
