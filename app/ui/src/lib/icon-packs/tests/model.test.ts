@@ -21,7 +21,7 @@ const pack = (change: Partial<PackInfo> = {}): PackInfo => ({
   ...change,
 });
 
-const error = (code: 'icon_pack.integrity' | 'icon_pack.download_failed' | 'icon_pack.exists' | 'icon_pack.invalid') => new ApiError(code, code);
+const error = (code: ConstructorParameters<typeof ApiError>[0]) => new ApiError(code, code);
 
 describe('pack hits', () => {
   test('carry their pack prefix in the source and the pack name in the category', () => {
@@ -69,5 +69,16 @@ describe('copy', () => {
     expect(installProblem(error('icon_pack.download_failed'), 'Lucide')).toContain('Check the internet connection');
     expect(importProblem(error('icon_pack.exists'), 'mine.json')).toContain('same prefix');
     expect(importProblem(error('icon_pack.invalid'), 'mine.json')).toContain("isn't an Iconify JSON pack");
+    expect(importProblem(error('icon_pack.too_many'), 'mine.json')).toBe('You can import up to 20 packs. Remove one, then import “mine.json” again.');
+  });
+
+  test('pick the fix by what went wrong, not one guess for every failure', () => {
+    const texts = ['icon_pack.download_failed', 'icon_pack.invalid', 'internal', 'icon_pack.not_found'].map((code) => installProblem(error(code), 'Lucide'));
+    expect(texts).toEqual([
+      "Couldn't download Lucide. Check the internet connection, then retry.",
+      "Lucide couldn't be unpacked, so it wasn't installed. Update Open TouchDeck, then retry.",
+      "Couldn't save Lucide on this PC. Check that the disk has free space, then retry.",
+      "Couldn't install Lucide. Restart Open TouchDeck, then retry.",
+    ]);
   });
 });

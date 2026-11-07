@@ -20,6 +20,8 @@ const json = (status: number, body: unknown) =>
 const failure = (status: number, code: string, message: string, details: unknown = null) => json(status, { error: { code, message, details } });
 
 const IMPORT_MAX = 32 * 1024 * 1024;
+/** The most imported packs, as the Companion keeps. */
+const IMPORTED_MAX = 20;
 const INK = '#f2f5fa';
 const CUSTOM = 'Custom (you provided it)';
 const NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -287,6 +289,7 @@ export function createFakeIconPacks(options: FakeIconPacksOptions) {
         if (typeof parsed === 'string') return failure(422, 'icon_pack.invalid', `This isn't a usable Iconify JSON pack: ${parsed}.`);
         const prefix = parsed.info.prefix;
         if (FAKE_PACKS.some((p) => p.prefix === prefix) || imported.has(prefix)) return failure(409, 'icon_pack.exists', `An Icon pack named "${prefix}" is already installed or reserved.`);
+        if (imported.size >= IMPORTED_MAX) return failure(409, 'icon_pack.too_many', `${IMPORTED_MAX} imported Icon packs are installed, the most the Companion keeps.`);
         imported.set(prefix, parsed);
         return json(200, parsed.info);
       }

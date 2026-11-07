@@ -73,7 +73,7 @@ function GeneralView({ onTroubleshooting, onIconPacks, focusEntry }: { onTrouble
           <button ref={packsEntry} type="button" className="row row-button" onClick={onIconPacks} data-testid="settings-icon-packs">
             <span className="row-text">
               <span className="row-title">Icon packs</span>
-              <span className="row-sub">Download icon sets to search offline, or import your own.</span>
+              <span className="row-sub">Download Icon packs to search offline, or import your own.</span>
             </span>
             <ChevronRight className="row-chevron" size={18} strokeWidth={1.9} aria-hidden />
           </button>

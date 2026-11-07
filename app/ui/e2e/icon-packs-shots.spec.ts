@@ -43,6 +43,7 @@ for (const theme of ['light', 'dark'] as const) {
       await page.evaluate(() => window.touchdeckDemo?.iconPacks.failInstall('lucide', { code: 'icon_pack.integrity', message: 'The download did not match its pinned checksum.', details: null }));
       await view.locator('[data-testid="icon-pack"][data-prefix="lucide"]').getByTestId('pack-install').click();
       await expect(view.locator('[data-testid="icon-pack"][data-prefix="lucide"]').getByTestId('pack-problem')).toBeVisible();
+      await view.locator('[data-testid="icon-pack"][data-prefix="lucide"]').getByTestId('pack-problem-details').getByText('Details').click();
       await view.locator('[data-testid="icon-pack"][data-prefix="logos"]').getByTestId('pack-install').click();
       await expect(view.locator('[data-testid="icon-pack"][data-prefix="logos"]').getByTestId('pack-status')).toBeVisible();
       await page.screenshot({ path: join(folder, `icon-packs-${theme}.png`) });

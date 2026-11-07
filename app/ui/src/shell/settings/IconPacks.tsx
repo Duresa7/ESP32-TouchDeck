@@ -20,11 +20,26 @@ function Status({ work }: { work: Extract<PackWork, { kind: 'installing' }> }) {
   );
 }
 
+/** A problem in the copy guide's words, with the Companion's own message under Details. */
+function Problem({ className, testId, text, detail }: { className: string; testId: string; text: string; detail: string }) {
+  return (
+    <div className={className} role="alert">
+      <p data-testid={testId}>{text}</p>
+      {detail && detail !== text && (
+        <details className="problem-details" data-testid={`${testId}-details`}>
+          <summary>Details</summary>
+          <p>{detail}</p>
+        </details>
+      )}
+    </div>
+  );
+}
+
 function PackRow({ pack, work, onInstall, onRemove }: { pack: PackInfo; work: PackWork | undefined; onInstall(): void; onRemove(): void }) {
   const busy = work?.kind === 'installing' || work?.kind === 'removing';
   return (
     <div className="row pack-row" data-testid="icon-pack" data-prefix={pack.prefix} data-installed={pack.installed} data-state={work?.kind ?? 'idle'}>
-      <span className="row-text">
+      <div className="row-text">
         <span className="row-title">{pack.name}</span>
         <span className="row-sub tabular">
           {packFacts(pack)} ·{' '}
@@ -47,12 +62,8 @@ function PackRow({ pack, work, onInstall, onRemove }: { pack: PackInfo; work: Pa
             ))}
           </span>
         )}
-        {work?.kind === 'failed' && (
-          <span className="row-problem" role="alert" data-testid="pack-problem" title={work.detail}>
-            {work.text}
-          </span>
-        )}
-      </span>
+        {work?.kind === 'failed' && <Problem className="row-problem" testId="pack-problem" text={work.text} detail={work.detail} />}
+      </div>
       {work?.kind === 'installing' ? (
         <Status work={work} />
       ) : pack.installed ? (
@@ -103,7 +114,7 @@ export function IconPacksView({ onBack, focusBack }: { onBack(): void; focusBack
           <X size={18} strokeWidth={1.9} aria-hidden />
         </Dialog.Close>
       </div>
-      <p className="dialog-lede">Download icon sets to search offline in the icon picker, or import your own. Nothing is installed until you choose.</p>
+      <p className="dialog-lede">Download Icon packs to search offline in the icon picker, or import your own. Nothing is installed until you choose.</p>
 
       <section className="settings-section" aria-labelledby={`${ids}-curated`} data-testid="icon-packs" data-state={load}>
         <h3 id={`${ids}-curated`}>Packs</h3>
@@ -136,15 +147,11 @@ export function IconPacksView({ onBack, focusBack }: { onBack(): void; focusBack
             mine.map(row)
           ) : (
             <div className="row">
-              <span className="row-note">An Iconify JSON file, such as icons.json from an Iconify set. Its license is yours to check.</span>
+              <span className="row-note">Import an Iconify JSON file to search its icons here. Its license is yours to check.</span>
             </div>
           )}
         </div>
-        {importProblem && (
-          <p className="settings-problem" role="alert" data-testid="pack-import-problem" title={importProblem.detail}>
-            {importProblem.text}
-          </p>
-        )}
+        {importProblem && <Problem className="settings-problem" testId="pack-import-problem" text={importProblem.text} detail={importProblem.detail} />}
         <input
           ref={file}
           type="file"

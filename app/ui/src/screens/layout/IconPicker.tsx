@@ -127,7 +127,7 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
   const running = useRef<AbortController | null>(null);
   const cells = useRef(new Map<string, HTMLButtonElement>());
   const file = useRef<HTMLInputElement>(null);
-  const packCredits = useIconPacks(companion, (s) => s.packs);
+  const packList = useIconPacks(companion, (s) => s.packs);
   const openIconPacks = useUi((s) => s.openIconPacks);
   const deps = useMemo<PickDeps>(() => ({ companion, wait: (job, signal) => waitForJob<'assets.render'>(jobsStore, companion, job, { signal }) }), [companion]);
 
@@ -444,7 +444,7 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
           selfh.st/icons
         </a>{' '}
         (CC BY 4.0, modified)
-        {credits(packCredits ?? []).map((credit) => (
+        {credits(packList ?? []).map((credit) => (
           <span key={credit.prefix} data-testid="icon-credit" data-prefix={credit.prefix}>
             {' '}
             ·{' '}

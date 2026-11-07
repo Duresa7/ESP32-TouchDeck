@@ -369,8 +369,9 @@ Opens from Settings, and from Get more icons in the icon picker.
 | Element | String |
 | --- | --- |
 | Settings entry | Icon packs |
+| Settings entry subtitle | Download Icon packs to search offline, or import your own. |
 | View title | Icon packs |
-| Lede | Download icon sets to search offline in the icon picker, or import your own. Nothing is installed until you choose. |
+| Lede | Download Icon packs to search offline in the icon picker, or import your own. Nothing is installed until you choose. |
 | Curated heading | Packs |
 | Pack facts | {count} icons · {size} · {license}[ · Credit required][ · Logos] |
 | Loading | Loading… |
@@ -380,7 +381,11 @@ Opens from Settings, and from Get more icons in the icon picker.
 | Remove button | Remove |
 | Removing | Removing… |
 | Checksum mismatch | {pack} didn't match its checksum, so it wasn't installed. Retry later. |
-| Download failed | Couldn't download {pack}. Check the internet connection, then retry. |
+| Download failed (`icon_pack.download_failed`) | Couldn't download {pack}. Check the internet connection, then retry. |
+| Package unusable (`icon_pack.invalid`) | {pack} couldn't be unpacked, so it wasn't installed. Update Open TouchDeck, then retry. |
+| Couldn't write the pack (`internal`) | Couldn't save {pack} on this PC. Check that the disk has free space, then retry. |
+| Any other install failure | Couldn't install {pack}. Restart Open TouchDeck, then retry. |
+| Under any failure | Details, holding the Companion's own message |
 | Too many installs | Other packs are still downloading. Wait for them, then retry. |
 | Install cancelled | {pack} wasn't installed. |
 | Retry button | Retry |
@@ -389,11 +394,12 @@ Opens from Settings, and from Get more icons in the icon picker.
 | Imported heading | Your packs |
 | Import button | Import a pack file |
 | Importing | Importing… |
-| No imported packs | An Iconify JSON file, such as icons.json from an Iconify set. Its license is yours to check. |
+| No imported packs | Import an Iconify JSON file to search its icons here. Its license is yours to check. |
 | Imported license | Custom (you provided it) |
 | Import clash | A pack with the same prefix as “{file}” is already installed or offered above. |
 | Import too large | “{file}” is larger than 32 MB. |
-| Import invalid | “{file}” isn't an Iconify JSON pack. Choose an icons.json file from an Iconify set. |
+| Import invalid | “{file}” isn't an Iconify JSON pack. Choose an Iconify JSON file, such as icons.json. |
+| Too many imports | You can import up to 20 packs. Remove one, then import “{file}” again. |
 | Footnote | Downloads come from the npm registry and must match a pinned checksum. Logos belong to their owners. |
 
 ## Tooltip names for the bottom-left icons

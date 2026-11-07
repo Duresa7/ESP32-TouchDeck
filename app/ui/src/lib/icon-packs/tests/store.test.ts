@@ -105,7 +105,7 @@ describe('importing a pack file', () => {
     await packs.importFile(pack('logos', { a: { body: '<path d="M0 0h1v1z"/>' } }), 'logos.json');
     expect(state().importProblem?.text).toBe('A pack with the same prefix as “logos.json” is already installed or offered above.');
     await packs.importFile(new Blob(['<svg/>']), 'icon.svg');
-    expect(state().importProblem?.text).toBe("“icon.svg” isn't an Iconify JSON pack. Choose an icons.json file from an Iconify set.");
+    expect(state().importProblem?.text).toBe("“icon.svg” isn't an Iconify JSON pack. Choose an Iconify JSON file, such as icons.json.");
     expect(state().packs?.some((p) => p.origin === 'imported')).toBe(false);
   });
 });

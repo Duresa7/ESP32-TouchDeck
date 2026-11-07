@@ -1,7 +1,7 @@
 import { isApiError } from '../companion/errors.ts';
 
-/** A pack icon's thumbnail: an object URL for its SVG, or `missing` once the Companion says so. */
-export type Thumbnail = string | 'missing';
+/** A pack icon's thumbnail: an object URL for its SVG, or missing once the Companion says so. */
+export type Thumbnail = { kind: 'url'; url: string } | { kind: 'missing' };
 
 export interface ThumbnailDeps {
   /** Fetches `<name>.svg` from `GET /assets/packs/{prefix}/{icon}`. */
@@ -30,13 +30,17 @@ export function createThumbnails({ fetch, toUrl, revoke, keep = 400, parallel = 
   const queue: (() => void)[] = [];
   let running = 0;
 
+  const release = (thumbnail: Thumbnail) => {
+    if (thumbnail.kind === 'url') revoke(thumbnail.url);
+  };
+
   const store = (key: string, value: Thumbnail) => {
     done.delete(key);
     done.set(key, value);
-    while (done.size > keep) {
-      const [oldest, url] = done.entries().next().value as [string, Thumbnail];
+    for (const [oldest, dropped] of done) {
+      if (done.size <= keep) break;
       done.delete(oldest);
-      if (url !== 'missing') revoke(url);
+      release(dropped);
     }
   };
 
@@ -76,11 +80,11 @@ export function createThumbnails({ fetch, toUrl, revoke, keep = 400, parallel = 
           await slot();
           try {
             const blob = await fetch(prefix, name);
-            return toUrl(blob.type === 'image/svg+xml' ? blob : new Blob([blob], { type: 'image/svg+xml' }));
+            return { kind: 'url', url: toUrl(blob.type === 'image/svg+xml' ? blob : new Blob([blob], { type: 'image/svg+xml' })) };
           } catch (error) {
             // Only the Companion's own answer is final; a dropped request may work next time.
             lasting = isApiError(error, 'icon_pack.not_found');
-            return 'missing';
+            return { kind: 'missing' };
           } finally {
             free();
           }
@@ -88,8 +92,8 @@ export function createThumbnails({ fetch, toUrl, revoke, keep = 400, parallel = 
           if (pending.get(key) === loading) {
             pending.delete(key);
             if (lasting) store(key, value);
-          } else if (value !== 'missing') {
-            revoke(value);
+          } else {
+            release(value);
           }
           return value;
         });
@@ -101,7 +105,7 @@ export function createThumbnails({ fetch, toUrl, revoke, keep = 400, parallel = 
       for (const [key, value] of [...done]) {
         if (!key.startsWith(`${prefix}/`)) continue;
         done.delete(key);
-        if (value !== 'missing') revoke(value);
+        release(value);
       }
       for (const key of [...pending.keys()]) if (key.startsWith(`${prefix}/`)) pending.delete(key);
     },

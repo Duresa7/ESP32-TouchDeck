@@ -31,7 +31,7 @@ describe('pack thumbnails', () => {
     const { thumbnails, fetched } = harness();
     expect(thumbnails.peek('mdi', 'spotify')).toBeUndefined();
     const [a, b] = await Promise.all([thumbnails.get('mdi', 'spotify'), thumbnails.get('mdi', 'spotify')]);
-    expect(a).toBe('blob:1:image/svg+xml');
+    expect(a).toEqual({ kind: 'url', url: 'blob:1:image/svg+xml' });
     expect(b).toBe(a);
     expect(thumbnails.peek('mdi', 'spotify')).toBe(a);
     await thumbnails.get('mdi', 'spotify');
@@ -42,9 +42,9 @@ describe('pack thumbnails', () => {
     const { thumbnails, fetched } = harness({
       fail: (name) => (name === 'gone' ? new ApiError('icon_pack.not_found', 'No such icon.') : name === 'flaky' ? new TypeError('offline') : null),
     });
-    expect(await thumbnails.get('mdi', 'gone')).toBe('missing');
-    expect(await thumbnails.get('mdi', 'gone')).toBe('missing');
-    expect(await thumbnails.get('mdi', 'flaky')).toBe('missing');
+    expect(await thumbnails.get('mdi', 'gone')).toEqual({ kind: 'missing' });
+    expect(await thumbnails.get('mdi', 'gone')).toEqual({ kind: 'missing' });
+    expect(await thumbnails.get('mdi', 'flaky')).toEqual({ kind: 'missing' });
     expect(thumbnails.peek('mdi', 'flaky')).toBeUndefined();
     await thumbnails.get('mdi', 'flaky');
     expect(fetched).toEqual(['mdi/gone', 'mdi/flaky', 'mdi/flaky']);
@@ -52,7 +52,7 @@ describe('pack thumbnails', () => {
 
   test('run a few requests at once and revoke what they drop', async () => {
     const { thumbnails, revoked, peak } = harness({ keep: 3, parallel: 2 });
-    const urls = await Promise.all(['a', 'b', 'c', 'd', 'e'].map((name) => thumbnails.get('mdi', name)));
+    const urls = (await Promise.all(['a', 'b', 'c', 'd', 'e'].map((name) => thumbnails.get('mdi', name)))).map((t) => (t.kind === 'url' ? t.url : t.kind));
     expect(peak()).toBe(2);
     expect(revoked).toEqual(urls.slice(0, 2));
     await thumbnails.get('tabler', 'x');

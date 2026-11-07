@@ -719,6 +719,25 @@ button {
   margin: var(--space-2) 0 0 2px;
 }
 
+.row-problem > p,
+.settings-problem > p {
+  margin: 0;
+}
+
+.problem-details {
+  color: var(--ink-2);
+}
+
+.problem-details summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.problem-details p {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+}
+
 .row-button {
   width: 100%;
   border: 0;

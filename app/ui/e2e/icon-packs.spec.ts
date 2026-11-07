@@ -58,6 +58,11 @@ test.describe('Settings, Icon packs', () => {
     const lucide = row(page, 'lucide');
     await lucide.getByTestId('pack-install').click();
     await expect(lucide.getByTestId('pack-problem')).toHaveText("Lucide didn't match its checksum, so it wasn't installed. Retry later.");
+    // The Companion's own message waits under Details.
+    const details = lucide.getByTestId('pack-problem-details');
+    await expect(details.locator('p')).toBeHidden();
+    await details.getByText('Details').click();
+    await expect(details.locator('p')).toHaveText('The download did not match its pinned checksum.');
     await expect(lucide.getByTestId('pack-install')).toHaveText('Retry');
     await lucide.getByTestId('pack-install').click();
     await expect(lucide).toHaveAttribute('data-installed', 'true');
@@ -77,7 +82,7 @@ test.describe('Settings, Icon packs', () => {
     await file.setInputFiles({ name: 'again.json', mimeType: 'application/json', buffer: Buffer.from(ICONS) });
     await expect(view(page).getByTestId('pack-import-problem')).toHaveText('A pack with the same prefix as “again.json” is already installed or offered above.');
     await file.setInputFiles({ name: 'logo.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>') });
-    await expect(view(page).getByTestId('pack-import-problem')).toHaveText("“logo.svg” isn't an Iconify JSON pack. Choose an icons.json file from an Iconify set.");
+    await expect(view(page).getByTestId('pack-import-problem')).toHaveText("“logo.svg” isn't an Iconify JSON pack. Choose an Iconify JSON file, such as icons.json.");
     await expect(view(page).locator('[data-testid="icon-pack"][data-installed="true"]')).toHaveCount(1);
   });
 
