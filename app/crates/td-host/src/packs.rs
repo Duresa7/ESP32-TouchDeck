@@ -34,6 +34,10 @@ const MAX_FILE: u64 = 64 << 20;
 pub const CUSTOM_LICENSE: &str = "Custom (you provided it)";
 const META: &str = "pack.json";
 const ICONS: &str = "icons.json";
+/// The one license file a pack keeps, whatever the package called it.
+const LICENSE: &str = "LICENSE";
+/// The longest pax header or GNU long name the reader takes.
+const MAX_HEADER: u64 = 64 << 10;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct PackLicense {
@@ -401,9 +405,18 @@ impl Packs {
             palette: pack.palette,
             samples: pack.samples.clone(),
         };
+        // Files keep fixed names, so a license spelled two ways can't collide on a
+        // case-insensitive file system.
+        let mut license = false;
         let files = files
             .iter()
-            .map(|(path, data)| (path.trim_start_matches("package/"), data.as_slice()))
+            .filter_map(|(path, data)| {
+                let name = path.trim_start_matches("package/");
+                if !is_license(name) {
+                    return Some((name, data.as_slice()));
+                }
+                (!std::mem::replace(&mut license, true)).then_some((LICENSE, data.as_slice()))
+            })
             .collect::<Vec<_>>();
         self.write(&meta, &files)?;
         self.keep(meta.clone(), set, names);
@@ -611,11 +624,43 @@ fn is_license(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_')
 }
 
+/// Whether an archive path stays inside the folder it would unpack into, on Linux and
+/// Windows alike: relative, no `..`, no drive or stream (`:`), no NUL.
+fn safe_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with(['/', '\\'])
+        && !path.contains([':', '\0'])
+        && path.split(['/', '\\']).all(|part| part != "..")
+}
+
+/// The `path` record of a pax extended header, if it has one.
+fn pax_path(data: &[u8]) -> Option<String> {
+    let mut rest = data;
+    let mut found = None;
+    while !rest.is_empty() {
+        let space = rest.iter().position(|b| *b == b' ')?;
+        let len: usize = std::str::from_utf8(&rest[..space]).ok()?.parse().ok()?;
+        if len <= space || len > rest.len() {
+            return None;
+        }
+        let record = &rest[space + 1..len];
+        let record = record.strip_suffix(b"\n").unwrap_or(record);
+        if let Some(value) = record.strip_prefix(b"path=") {
+            found = Some(String::from_utf8_lossy(value).into_owned());
+        }
+        rest = &rest[len..];
+    }
+    found
+}
+
 /// Reads the regular files `want` picks from a gzipped ustar archive, such as an npm tarball.
+/// Refuses the whole archive if any entry is a link or has a path that could leave its folder.
 fn untar(gz: &[u8], want: impl Fn(&str) -> bool) -> Result<Vec<(String, Vec<u8>)>, String> {
     let mut reader = flate2::read::GzDecoder::new(gz).take(MAX_UNPACKED);
     let mut out = Vec::new();
     let mut header = [0u8; 512];
+    // A pax header or GNU long name names the entry after it.
+    let mut long_path: Option<String> = None;
     loop {
         let mut filled = 0;
         while filled < header.len() {
@@ -646,13 +691,37 @@ fn untar(gz: &[u8], want: impl Fn(&str) -> bool) -> Result<Vec<(String, Vec<u8>)
         } else {
             String::new()
         };
-        let path = if prefix.is_empty() {
-            name
-        } else {
-            format!("{prefix}/{name}")
-        };
-        let regular = matches!(header[156], b'0' | 0);
+        let flag = header[156];
         let padded = size.div_ceil(512) * 512;
+        if matches!(flag, b'x' | b'L') {
+            if size > MAX_HEADER {
+                return Err("the archive has an oversized header".into());
+            }
+            let mut data = vec![0; padded as usize];
+            reader
+                .read_exact(&mut data)
+                .map_err(|_| "the archive is cut short".to_owned())?;
+            data.truncate(size as usize);
+            if flag == b'L' {
+                let end = data.iter().position(|b| *b == 0).unwrap_or(data.len());
+                long_path = Some(String::from_utf8_lossy(&data[..end]).into_owned());
+            } else if let Some(path) = pax_path(&data) {
+                long_path = Some(path);
+            }
+            continue;
+        }
+        let path = match long_path.take() {
+            Some(path) => path,
+            None if prefix.is_empty() => name,
+            None => format!("{prefix}/{name}"),
+        };
+        if !safe_path(&path) {
+            return Err(format!("the archive has an unsafe path: {path}"));
+        }
+        if matches!(flag, b'1' | b'2' | b'K') {
+            return Err(format!("the archive has a link: {path}"));
+        }
+        let regular = matches!(flag, b'0' | 0);
         if regular && want(&path) {
             if size > MAX_FILE {
                 return Err(format!("{path} is too large"));
@@ -682,13 +751,25 @@ pub(crate) mod tests {
 
     /// A gzipped ustar archive holding `files`.
     pub fn tarball(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let entries: Vec<_> = files
+            .iter()
+            .map(|(name, data)| (*name, b'0', *data))
+            .collect();
+        archive(&entries)
+    }
+
+    /// A gzipped ustar archive of `(name, type flag, data)` entries.
+    fn archive(entries: &[(&str, u8, &[u8])]) -> Vec<u8> {
         let mut tar = Vec::new();
-        for (name, data) in files {
+        for (name, flag, data) in entries {
             let mut header = [0u8; 512];
             header[..name.len()].copy_from_slice(name.as_bytes());
             header[100..108].copy_from_slice(b"0000644\0");
             header[124..136].copy_from_slice(format!("{:011o}\0", data.len()).as_bytes());
-            header[156] = b'0';
+            header[156] = *flag;
+            if *flag == b'2' {
+                header[157..169].copy_from_slice(b"/etc/passwd\0");
+            }
             header[257..263].copy_from_slice(b"ustar\0");
             header[148..156].copy_from_slice(b"        ");
             let sum: u32 = header.iter().map(|b| u32::from(*b)).sum();
@@ -776,6 +857,8 @@ pub(crate) mod tests {
             ("package/icons.json", MONO.as_bytes()),
             ("package/info.json", b"{}"),
             ("package/index.js", b"x"),
+            ("package/LICENSE.md", b"MIT"),
+            ("package/license", b"also MIT"),
         ]);
         let packs = Packs::with_list(
             dir.path().join("packs"),
@@ -802,7 +885,11 @@ pub(crate) mod tests {
             .map(|e| e.unwrap().file_name().into_string().unwrap())
             .collect();
         kept.sort();
-        assert_eq!(kept, ["icons.json", "info.json", "pack.json"]);
+        assert_eq!(kept, ["LICENSE", "icons.json", "info.json", "pack.json"]);
+        assert_eq!(
+            fs::read(dir.path().join("packs").join("mono").join(LICENSE)).unwrap(),
+            b"MIT"
+        );
 
         // A fresh store finds the pack on disk and loads it on first search.
         let packs = Packs::with_list(
@@ -911,6 +998,11 @@ pub(crate) mod tests {
             packs.import(b"{\"prefix\":\"x\"}"),
             Err(PackError::Invalid(_))
         ));
+        // Prefixes are lowercase, so `Mine` can't share `mine`'s folder on Windows.
+        assert!(matches!(
+            packs.import(MONO.replace("\"mono\"", "\"Mine\"").as_bytes()),
+            Err(PackError::Invalid(_))
+        ));
         assert_eq!(
             packs
                 .list()
@@ -936,5 +1028,72 @@ pub(crate) mod tests {
         assert!(untar(&gz[..gz.len() / 2], |_| true).is_err());
         assert!(untar(b"not gzip", |_| true).is_err());
         assert!(is_license("LICENSE.txt") && is_license("license") && !is_license("../LICENSE"));
+    }
+
+    #[test]
+    fn untar_refuses_entries_that_could_leave_the_pack_folder() {
+        let icons: &[u8] = b"{}";
+        let refused = |entries: &[(&str, u8, &[u8])]| {
+            let mut all = vec![("package/icons.json", b'0', icons)];
+            all.extend_from_slice(entries);
+            untar(&archive(&all), |_| true).unwrap_err()
+        };
+        for path in [
+            "../icons.json",
+            "package/../../icons.json",
+            "package\\..\\..\\icons.json",
+            "/etc/icons.json",
+            "\\\\server\\share\\icons.json",
+            "C:/icons.json",
+            "C:icons.json",
+            "package/icons.json:stream",
+        ] {
+            let error = refused(&[(path, b'0', icons)]);
+            assert!(error.contains("unsafe path"), "{path}: {error}");
+        }
+        // Links are refused even when the reader would skip them.
+        for flag in [b'1', b'2'] {
+            let error = refused(&[("package/LICENSE", flag, b"")]);
+            assert!(error.contains("link"), "{error}");
+        }
+        // A GNU long name or a pax path names the next entry, and is checked too.
+        let long: &[u8] = b"package/../../evil.json\0";
+        let error = refused(&[
+            ("././@LongLink", b'L', long),
+            ("package/ok.json", b'0', icons),
+        ]);
+        assert!(error.contains("../../evil.json"), "{error}");
+        let pax: &[u8] = b"32 path=package/../../evil.json\n";
+        let error = refused(&[("PaxHeader", b'x', pax), ("package/ok.json", b'0', icons)]);
+        assert!(error.contains("../../evil.json"), "{error}");
+        // A safe pax path is used as the entry's name.
+        let pax: &[u8] = b"27 path=package/icons.json\n";
+        let files = untar(
+            &archive(&[("PaxHeader", b'x', pax), ("short", b'0', icons)]),
+            |_| true,
+        )
+        .unwrap();
+        assert_eq!(files[0].0, "package/icons.json");
+    }
+
+    #[test]
+    fn a_pack_with_a_slipping_entry_is_never_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let gz = archive(&[
+            ("package/icons.json", b'0', MONO.as_bytes()),
+            ("package/../../escaped.json", b'0', b"{}"),
+        ]);
+        let packs = Packs::with_list(
+            dir.path().join("packs"),
+            Box::new(Serve(gz.clone())),
+            vec![listed("mono", &gz)],
+        );
+        assert!(matches!(
+            packs.install("mono", &|_| {}, &|| false),
+            Err(PackError::Invalid(e)) if e.contains("unsafe path")
+        ));
+        assert!(!dir.path().join("packs").exists());
+        assert!(!dir.path().join("escaped.json").exists());
+        assert!(!packs.list()[0].installed);
     }
 }

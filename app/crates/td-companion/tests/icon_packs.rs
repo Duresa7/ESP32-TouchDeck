@@ -456,13 +456,18 @@ async fn svg_uploads_render_without_reading_outside_files() {
     image::RgbaImage::from_pixel(8, 8, image::Rgba([0, 255, 0, 255]))
         .save(&secret)
         .unwrap();
+    // `/tmp/…` on Linux, `C:/…` on Windows; both name a real local file.
     let href = secret.to_string_lossy().replace('\\', "/");
+    let file_url = format!(
+        "file://{}{href}",
+        if href.starts_with('/') { "" } else { "/" }
+    );
     let svg = format!(
         r#"<?xml version="1.0"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 20 20">
   <rect width="10" height="20" fill="currentColor"/>
   <image x="10" width="10" height="20" href="{href}"/>
-  <image x="10" width="10" height="20" xlink:href="file:///{href}"/>
+  <image x="10" width="10" height="20" xlink:href="{file_url}"/>
 </svg>"#
     );
     let upload = |body: Vec<u8>| {
