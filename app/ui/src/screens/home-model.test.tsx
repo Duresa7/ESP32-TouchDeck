@@ -7,6 +7,7 @@ import { demoLayout, sampleDevice } from '../lib/companion/samples.ts';
 import { windowSession } from '../lib/companion/session.ts';
 import { createUiStore } from '../state/ui.ts';
 import { DevicePreview } from './DevicePreview.tsx';
+import { lastSeenLayout, readDeviceLayout, seenLayout } from './home-layouts.ts';
 import { deviceWidth, firmwareUpdate, lastSeen, previewOf, statusOf } from './home-model.ts';
 
 describe('Home', () => {
@@ -101,5 +102,79 @@ describe("a Device's Layout from the fake Companion", () => {
     expect(isApiError(await read('nope'), 'device.not_found')).toBe(true);
     fake.setLayout('b', demoLayout(['work']));
     expect(await read('b')).toMatchObject({ layout: { pages: [{ id: 'work' }] } });
+  });
+
+  it("answers layouts.last_seen with this PC's copy, connected or not, and no revision", async () => {
+    const connected = { state: 'connected', port: 'COM3', since_ms: 0, protocol: 2 } as const;
+    const fake = createFakeCompanion({
+      devices: [sampleDevice('a', 'Desk', connected), sampleDevice('c', 'Away')],
+      layouts: { a: demoLayout(), c: demoLayout() },
+    });
+    vi.stubGlobal('fetch', fake.fetch);
+    const companion = createClient('http://127.0.0.1:51234', windowSession(fake.bridge));
+    const read = (device: string, orientation: 'landscape' | 'portrait' = 'landscape') =>
+      companion.layouts.last_seen({ device, orientation }).catch((e: unknown) => e);
+    expect(await read('a')).toEqual({ layout: demoLayout() });
+    expect(await read('c')).toEqual({ layout: demoLayout() });
+    expect(isApiError(await read('c', 'portrait'), 'layout.not_found')).toBe(true);
+    expect(isApiError(await read('nope'), 'device.not_found')).toBe(true);
+  });
+
+  it("finds an offline Device's Layout in the orientation the PC last saw", async () => {
+    const tall = { ...demoLayout(['work']), orientation: 'portrait' } as const;
+    const fake = createFakeCompanion({
+      devices: [sampleDevice('wide', 'Desk'), sampleDevice('tall', 'Studio'), sampleDevice('none', 'Away')],
+      layouts: { wide: demoLayout(), tall },
+    });
+    vi.stubGlobal('fetch', fake.fetch);
+    const companion = createClient('http://127.0.0.1:51234', windowSession(fake.bridge));
+    expect(await lastSeenLayout(companion, 'wide', 'landscape')).toEqual(demoLayout());
+    expect(await lastSeenLayout(companion, 'tall', 'landscape')).toEqual(tall);
+    expect(await lastSeenLayout(companion, 'none', 'landscape')).toBeNull();
+  });
+
+  // What the Home hook runs on every link change; the UI tests have no DOM, so they drive it directly.
+  describe('the Layout Home keeps for a Device', () => {
+    const connected = { state: 'connected', port: 'COM3', since_ms: 0, protocol: 2 } as const;
+    const lost = { state: 'lost', reason: 'unplugged', detail: '', at_ms: 1 } as const;
+
+    it('keeps a Layout read while connected after the Device goes offline with no PC copy', async () => {
+      const fake = createFakeCompanion({ devices: [sampleDevice('kept', 'Desk', connected)], layouts: { kept: demoLayout() } });
+      vi.stubGlobal('fetch', fake.fetch);
+      const companion = createClient('http://127.0.0.1:51234', windowSession(fake.bridge));
+      const online = readDeviceLayout(companion, 'kept', 'landscape', true);
+      await vi.waitFor(() => expect(seenLayout('kept', 'landscape')).toEqual(demoLayout()));
+      online();
+      fake.layouts.forget('kept', 'landscape');
+      fake.update('kept', { link: lost });
+      const asked = vi.fn(fake.fetch);
+      vi.stubGlobal('fetch', asked);
+      readDeviceLayout(companion, 'kept', 'landscape', false);
+      // Both orientations come back layout.not_found.
+      await vi.waitFor(() => expect(asked).toHaveBeenCalledTimes(2));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(seenLayout('kept', 'landscape')).toEqual(demoLayout());
+    });
+
+    it('reads layouts.get again on reconnect and drops a late offline answer', async () => {
+      const fake = createFakeCompanion({ devices: [sampleDevice('back', 'Desk', lost)], layouts: { back: demoLayout() } });
+      let release = () => {};
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url.includes('/last-seen')) await held;
+        return fake.fetch(input, init);
+      });
+      const companion = createClient('http://127.0.0.1:51234', windowSession(fake.bridge));
+      const offline = readDeviceLayout(companion, 'back', 'landscape', false);
+      offline();
+      fake.update('back', { link: connected });
+      readDeviceLayout(companion, 'back', 'landscape', true);
+      await vi.waitFor(() => expect(seenLayout('back', 'landscape')).toEqual(demoLayout()));
+      fake.setLayout('back', demoLayout(['work']));
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(seenLayout('back', 'landscape')).toEqual(demoLayout());
+    });
   });
 });

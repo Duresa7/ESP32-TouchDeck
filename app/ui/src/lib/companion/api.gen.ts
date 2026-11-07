@@ -142,6 +142,11 @@ export type Layout = { schema: number, name: string, orientation: Orientation,
  */
 fullScreen?: boolean, pages: Array<Page>, };
 export type LayoutBody = Layout;
+export type LayoutLastSeen = { 
+/**
+ * The PC's copy, which may be stale. It has no revision, so it can't back an `If-Match`.
+ */
+layout: Layout, };
 export type LayoutPath = { device: string, orientation: Orientation, };
 export type LayoutRead = { layout: Layout, 
 /**
@@ -294,6 +299,7 @@ export const endpoints = {
   'jobs.get': { method: 'GET', path: '/jobs/{job}', access: 'session' },
   'jobs.list': { method: 'GET', path: '/jobs', access: 'session' },
   'layouts.get': { method: 'GET', path: '/devices/{device}/layouts/{orientation}', access: 'session' },
+  'layouts.last_seen': { method: 'GET', path: '/devices/{device}/layouts/{orientation}/last-seen', access: 'session' },
   'layouts.push': { method: 'PUT', path: '/devices/{device}/layouts/{orientation}', access: 'session' },
   'new_boards.list': { method: 'GET', path: '/new-boards', access: 'session' },
   'ports.list': { method: 'GET', path: '/ports', access: 'session' },
@@ -442,6 +448,7 @@ brightness: number | null, photo_frame: PhotoFramePatch | null, }, bearer?: stri
     },
     layouts: {
       get: (path: { device: string, orientation: Orientation, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<LayoutRead>('layouts.get', path, query, body, bearer, headers, signal),
+      last_seen: (path: { device: string, orientation: Orientation, }, query: null = null, body: null = null, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<LayoutLastSeen>('layouts.last_seen', path, query, body, bearer, headers, signal),
       push: (path: { device: string, orientation: Orientation, }, query: null = null, body: Layout, bearer?: string, headers?: Record<string, string>, signal?: AbortSignal) => call<Job>('layouts.push', path, query, body, bearer, headers, signal),
     },
     new_boards: {

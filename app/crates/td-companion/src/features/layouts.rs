@@ -1,4 +1,5 @@
-//! Each Device's Layout: read it from the Device with its revision, and push one as a Job.
+//! Each Device's Layout: read it from the Device with its revision, push one as a Job, and
+//! read the copy this PC last saw.
 use crate::{
     api::{ApiError, CommonError, Ctx, Endpoint, Feature, JobKind, NoQuery, Registration, Req},
     jobs::{Job, JobError, JobHandle, JobScope, Stop},
@@ -239,6 +240,71 @@ impl Endpoint for Get {
     }
 }
 
+#[derive(Serialize, Deserialize, TS)]
+pub struct LayoutLastSeen {
+    /// The PC's copy, which may be stale. It has no revision, so it can't back an `If-Match`.
+    pub layout: Layout,
+}
+#[derive(Debug, thiserror::Error)]
+pub enum LastSeenError {
+    #[error("The Device does not exist.")]
+    DeviceNotFound,
+    #[error("This PC has no copy of the Device's Layout for this orientation.")]
+    NotFound,
+    #[error(transparent)]
+    Common(#[from] CommonError),
+}
+impl ApiError for LastSeenError {
+    const CODES: &'static [&'static str] = &["layout.not_found", "device.not_found"];
+    fn status(&self) -> StatusCode {
+        match self {
+            Self::DeviceNotFound | Self::NotFound => StatusCode::NOT_FOUND,
+            Self::Common(e) => e.status(),
+        }
+    }
+    fn code(&self) -> &'static str {
+        match self {
+            Self::DeviceNotFound => "device.not_found",
+            Self::NotFound => "layout.not_found",
+            Self::Common(e) => e.code(),
+        }
+    }
+    fn details(&self) -> Option<serde_json::Value> {
+        match self {
+            Self::Common(e) => e.details(),
+            _ => None,
+        }
+    }
+}
+
+/// The Layout this PC last saw for a known Device and orientation, from the Layout store.
+/// It works whether or not the Device is connected and never reads the Device.
+pub struct LastSeen;
+impl Endpoint for LastSeen {
+    const NAME: &'static str = "layouts.last_seen";
+    const METHOD: Method = Method::GET;
+    const PATH: &'static str = "/devices/{device}/layouts/{orientation}/last-seen";
+    type Path = LayoutPath;
+    type Query = NoQuery;
+    type Body = ();
+    type Ok = LayoutLastSeen;
+    type Error = LastSeenError;
+    async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
+        let LayoutPath {
+            device,
+            orientation,
+        } = req.path;
+        let known = crate::devices::DeviceId::parse(&device).and_then(|id| ctx.devices.get(&id));
+        if known.is_none() {
+            return Err(LastSeenError::DeviceNotFound);
+        }
+        blocking(move || ctx.layouts.get(&device, orientation))
+            .await?
+            .map(|layout| LayoutLastSeen { layout })
+            .ok_or(LastSeenError::NotFound)
+    }
+}
+
 #[derive(Default, Serialize, Deserialize, TS)]
 pub struct PushProgress {
     pub assets_sent: u32,
@@ -457,6 +523,7 @@ fn send_missing_assets(
 fn feature() -> Feature {
     Feature::new("layouts")
         .endpoint::<Get>()
+        .endpoint::<LastSeen>()
         .endpoint::<Push>()
         .job::<PushJob>()
 }
