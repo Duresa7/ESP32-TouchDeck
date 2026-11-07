@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { launchOptions } from './e2e/launch-options.ts';
 
 // Component and e2e specs run against `pnpm dev:demo`, the UI on the fake Companion.
 // On Windows they drive the installed Microsoft Edge, so no browser download is needed.
@@ -14,6 +15,7 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:5174/',
     viewport: { width: 1180, height: 760 },
     trace: 'retain-on-failure',
+    launchOptions,
   },
   projects: [
     {
