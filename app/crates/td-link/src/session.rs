@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::io::{self, ErrorKind, Read, Write};
+use std::io;
+// The tests' byte-stream fakes still speak Read and Write under the USB carrier.
+#[cfg(test)]
+use std::io::{ErrorKind, Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::sync::{Arc, Mutex, PoisonError, TryLockError};
@@ -8,9 +11,15 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use td_core::{Body, Frame, Hello, Item, Pong, Reply, ReplyError, Request, Role, StreamDecoder};
+use td_core::{
+    Body, Frame, FrameError, Hello, Item, Pong, Reply, ReplyError, Request, Role,
+    frame::PAYLOAD_MAX,
+};
 
 use crate::Transport;
+use crate::carrier::{
+    Carrier, FrameReader, FrameWriter, Outbound, Received, Released, SendWindow, UsbCarrier,
+};
 use crate::xfer::LayoutState;
 
 const CONSOLE_LINE_MAX: usize = 16 * 1024;
@@ -157,7 +166,7 @@ struct LayoutReply {
 }
 
 struct Shared {
-    writer: Mutex<Box<dyn Write + Send>>,
+    writer: Mutex<Box<dyn FrameWriter>>,
     pending: Mutex<Pending>,
     open: AtomicBool,
     reason: Mutex<String>,
@@ -225,38 +234,18 @@ impl Shared {
         LinkError::Closed(self.reason.lock().unwrap().clone())
     }
 
-    fn write(&self, bytes: &[u8]) -> io::Result<()> {
+    fn send(&self, out: Outbound<'_>) -> io::Result<()> {
         let mut writer = self.writer.lock().unwrap();
-        self.write_locked(&mut **writer, bytes, Instant::now() + WRITE_DEADLINE)
+        self.send_locked(&mut **writer, out, Instant::now() + WRITE_DEADLINE)
     }
 
-    fn write_locked(
+    fn send_locked(
         &self,
-        writer: &mut dyn Write,
-        bytes: &[u8],
+        writer: &mut dyn FrameWriter,
+        out: Outbound<'_>,
         deadline: Instant,
     ) -> io::Result<()> {
-        let mut rest = bytes;
-        while !rest.is_empty() {
-            if !self.open.load(Ordering::Acquire) {
-                return Err(ErrorKind::BrokenPipe.into());
-            }
-            if Instant::now() >= deadline {
-                return Err(ErrorKind::TimedOut.into());
-            }
-            match writer.write(rest) {
-                Ok(0) => return Err(ErrorKind::WriteZero.into()),
-                Ok(n) => rest = &rest[n..],
-                Err(error)
-                    if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::Interrupted)
-                        && Instant::now() < deadline => {}
-                Err(error) => return Err(error),
-            }
-        }
-        if !self.open.load(Ordering::Acquire) {
-            return Err(ErrorKind::BrokenPipe.into());
-        }
-        writer.flush()
+        writer.send(out, &SendWindow::new(deadline, &self.open))
     }
 
     fn next_seq(pending: &mut Pending) -> Result<u8, LinkError> {
@@ -285,8 +274,8 @@ impl Shared {
             seq
         };
         let forget = || self.pending.lock().unwrap().waiting.remove(&seq);
-        let wire = Frame::message(Role::Request(seq), payload)
-            .encode()
+        let frame = Frame::message(Role::Request(seq), payload);
+        fits(&frame)
             .map_err(|error| LinkError::Io(format!("request does not fit one frame: {error}")))?;
         let sent = (|| {
             loop {
@@ -302,9 +291,9 @@ impl Shared {
                         if Instant::now() >= deadline {
                             return Err(LinkError::Timeout(timeout));
                         }
-                        let result = self.write_locked(
+                        let result = self.send_locked(
                             &mut **writer,
-                            &wire,
+                            Outbound::Frame(&frame),
                             deadline.min(Instant::now() + WRITE_DEADLINE),
                         );
                         return if Instant::now() >= deadline {
@@ -471,11 +460,9 @@ impl Transfer<'_> {
         if !shared.open.load(Ordering::Acquire) {
             return Err(shared.closed());
         }
-        let wire = frame
-            .encode()
-            .map_err(|error| LinkError::Io(format!("frame does not encode: {error}")))?;
+        fits(&frame).map_err(|error| LinkError::Io(format!("frame does not encode: {error}")))?;
         shared
-            .write(&wire)
+            .send(Outbound::Frame(&frame))
             .map_err(|error| LinkError::Io(error.to_string()))
     }
 }
@@ -491,10 +478,10 @@ impl Drop for Transfer<'_> {
     }
 }
 
-/// One link session over one transport. Replies match requests by `seq`, everything
+/// One link session over one [`Carrier`]. Replies match requests by `seq`, everything
 /// else arrives on the [`Incoming`] channel, and a `ping` every 2 seconds proves the deck
 /// is still there. Closing or dropping the session joins its threads, which releases
-/// the port.
+/// the carrier.
 pub struct Session {
     shared: Arc<Shared>,
     console: Mutex<()>,
@@ -503,11 +490,20 @@ pub struct Session {
 }
 
 impl Session {
+    /// Opens a session over USB: a [`UsbCarrier`] on the transport's byte stream.
     pub fn open(
         transport: Box<dyn Transport>,
         config: SessionConfig,
     ) -> io::Result<(Session, IncomingReceiver)> {
-        let (reader, writer) = transport.split()?;
+        Session::over(Box::new(UsbCarrier::new(transport)), config)
+    }
+
+    /// Opens a session over any carrier.
+    pub fn over(
+        carrier: Box<dyn Carrier>,
+        config: SessionConfig,
+    ) -> io::Result<(Session, IncomingReceiver)> {
+        let (reader, writer) = carrier.split()?;
         let (incoming, events) = mpsc::sync_channel(INCOMING_CAPACITY + 2);
         let queued = Arc::new(AtomicUsize::new(0));
         let overflow = Arc::new(AtomicBool::new(false));
@@ -653,7 +649,7 @@ impl Session {
             return Err(self.shared.closed());
         }
         self.shared
-            .write(format!("{line}\n").as_bytes())
+            .send(Outbound::Line(line))
             .map_err(|error| LinkError::Io(error.to_string()))
     }
 
@@ -679,7 +675,7 @@ impl Session {
             .shared
             .writer
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Box::new(io::sink());
+            .unwrap_or_else(PoisonError::into_inner) = Box::new(Released);
     }
 }
 
@@ -689,28 +685,29 @@ impl Drop for Session {
     }
 }
 
-fn read_loop(shared: &Shared, mut reader: Box<dyn Read + Send>) {
-    let mut decoder = StreamDecoder::default();
+/// Checks the link rule every carrier shares: a frame's payload fits [`PAYLOAD_MAX`].
+fn fits(frame: &Frame) -> Result<(), FrameError> {
+    let len = match &frame.body {
+        Body::Message(payload) => payload.len(),
+        Body::Chunk { data, .. } => data.len() + 3,
+        Body::Ack { .. } => 3,
+    };
+    if len > PAYLOAD_MAX {
+        return Err(FrameError::Length);
+    }
+    Ok(())
+}
+
+fn read_loop(shared: &Shared, mut reader: Box<dyn FrameReader>) {
     let mut line = ConsoleLine::default();
-    let mut buf = [0u8; 4096];
     while shared.open.load(Ordering::Acquire) {
-        match reader.read(&mut buf) {
-            Ok(0) => {
+        match reader.recv() {
+            Ok(Received::Ended) => {
                 shared.shutdown("the deck closed the stream");
                 break;
             }
-            Ok(n) => {
-                for item in decoder.feed(&buf[..n], Instant::now()) {
-                    shared.route(item, &mut line);
-                }
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    ErrorKind::TimedOut | ErrorKind::WouldBlock | ErrorKind::Interrupted
-                ) =>
-            {
-                for item in decoder.poll(Instant::now()) {
+            Ok(Received::Items(items)) => {
+                for item in items {
                     shared.route(item, &mut line);
                 }
             }
