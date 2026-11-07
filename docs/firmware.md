@@ -124,6 +124,17 @@ echo a request, and report the connection state. The text command `link state`
 reports the same counters. The port stays available for the debug console and
 ROM flashing.
 
+The link sends its frames through a carrier, declared in
+`firmware/components/td_link/include/td_link_carrier.h`. USB, SLIP over the
+USB-Serial/JTAG port, is added first and is the only carrier in this build. Each
+carrier keeps its own online state: a `hello` on it brings it online, and 5
+seconds with no frame on it take it offline. Replies and events leave through one
+active carrier. That is the first carrier that is online, so USB wins whenever the
+Companion talks over it. While no carrier is online, it is the carrier the last
+frame arrived on. Frames still arrive through the console's frame handler, with
+the carrier as its context, and `link state` reports the active carrier's
+`online` and `last_rx_ms`.
+
 The link also moves files and mirrors input. `layout.put` and `layout.get` copy a
 layout in chunks, `icon.put`, `icon.list`, and `icon.rm` manage the icons, and
 `settings.get`, `settings.put`, and `store.stat` read and change the deck. A put
@@ -547,6 +558,16 @@ and one firmware build first, which fetches cJSON into
 `firmware/managed_components`. It uses `cl` on Windows and `cc` with
 `-std=c11 -D_POSIX_C_SOURCE=200809L` elsewhere. CI runs it after the firmware
 build, with the other host tests.
+
+`python -B firmware/tools/test_link_carrier.py` compiles the production
+`td_link.c` and message dispatcher with host stand-ins for FreeRTOS, the console
+and the rest of the Device, from `firmware/tools/host/link/`. It sends link
+messages through the USB console's frame handler and through a fake carrier, and
+checks which carrier each reply and event leaves on, the USB wire bytes, and the
+online state per carrier. It needs a C compiler, `cl` from an x64 Visual Studio
+developer terminal on Windows or `cc` elsewhere, and one firmware build first,
+which fetches cJSON into `firmware/managed_components`. It doesn't need
+`IDF_PATH`.
 
 ## Protocol v2 identity
 
