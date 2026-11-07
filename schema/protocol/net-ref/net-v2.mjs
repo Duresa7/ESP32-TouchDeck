@@ -48,11 +48,15 @@ export const FORMAT_RANGES = [
 
 const isFormat = (codePoint) => FORMAT_RANGES.some(([first, last]) => codePoint >= first && codePoint <= last);
 
-// A companion_name holds no control (Cc) or format (Cf) characters.
+// The Hangul fillers are letters (Lo) that render as blank space.
+export const HANGUL_FILLERS = [0x115f, 0x1160, 0x3164, 0xffa0];
+
+// A companion_name holds no control (Cc) or format (Cf) characters and no
+// Hangul fillers.
 export function nameAllowed(name) {
   for (const character of name) {
     const codePoint = character.codePointAt(0);
-    if (/\p{Cc}/u.test(character) || isFormat(codePoint)) return false;
+    if (/\p{Cc}/u.test(character) || isFormat(codePoint) || HANGUL_FILLERS.includes(codePoint)) return false;
   }
   return true;
 }
@@ -301,16 +305,34 @@ export class Reassembler {
 export const creditValue = (limit) => u64(BigInt(limit));
 
 // Per-peer backoff. Only the outcomes in COUNTED are failures the peer caused.
-// The others end a connection without counting against its peer: a takeover
-// by another session.open, a busy refusal (backoff's own included), a
-// session.open refused while USB is online, and the person-side or
-// radio-side endings. 'ready' means the peer reached session.ready.
+// 'peer-closed' is a close the peer starts before any terminal error from
+// the Device. The others end a connection without counting against its peer:
+// a takeover by another session.open, a busy refusal (backoff's own
+// included), a session.open refused while USB is online, a radio loss, and
+// the person-side endings. 'ready' means the peer reached session.ready.
 export const BACKOFF = { first: 1000, cap: 60000, peers: 8 };
-export const COUNTED = new Set(['deadline', 'auth', 'proof', 'malformed']);
+export const COUNTED = new Set(['deadline', 'auth', 'proof', 'malformed', 'peer-closed']);
 export const NOT_COUNTED = new Set([
   'takeover', 'busy', 'usb-online', 'closed', 'full', 'cancelled', 'storage',
-  'window-expired', 'disconnect', 'paired',
+  'window-expired', 'radio-lost', 'paired',
 ]);
+
+// BLE disconnect reasons a peer sends in its terminate: remote user
+// terminated (0x13), low resources (0x14) and power off (0x15). Any other
+// reason the Device didn't cause, such as supervision timeout (0x08), is a
+// radio loss.
+export const BLE_PEER_CLOSE = new Set([0x13, 0x14, 0x15]);
+
+// The outcome of a close the Device didn't start: TCP 'fin' or 'rst', or a
+// BLE disconnect reason code.
+export function closeOutcome(carrier, reason) {
+  if (carrier === 'tcp') {
+    requireThat(reason === 'fin' || reason === 'rst', 'unknown TCP close');
+    return 'peer-closed';
+  }
+  requireThat(carrier === 'ble' && Number.isInteger(reason) && reason >= 0 && reason <= 0xff, 'unknown close');
+  return BLE_PEER_CLOSE.has(reason) ? 'peer-closed' : 'radio-lost';
+}
 
 export class PeerBackoff {
   constructor(peers = BACKOFF.peers) {
@@ -318,10 +340,18 @@ export class PeerBackoff {
     this.entries = new Map();
   }
 
-  // Milliseconds left before the peer may connect, 0 when it may.
+  // Milliseconds left in the peer's backoff, 0 when there is none.
   refusal(peer, now) {
     const entry = this.entries.get(peer);
     return entry ? Math.max(0, entry.until - now) : 0;
+  }
+
+  // The check on a peer's first handshake item. A session.open naming a
+  // stored companion_id skips backoff, as a takeover does; anything else
+  // from a peer in backoff gets busy.
+  admits(peer, now, { kind, storedCompanion = false } = {}) {
+    if (kind === 0x20 && storedCompanion) return true;
+    return this.refusal(peer, now) === 0;
   }
 
   failures(peer) {
@@ -340,5 +370,39 @@ export class PeerBackoff {
     this.entries.delete(peer);
     this.entries.set(peer, { failures, until: now + delay });
     if (this.entries.size > this.peers) this.entries.delete(this.entries.keys().next().value);
+  }
+}
+
+// pair_failures across windows and reboots (kept in NVS on the Device). A
+// failed client proof counts. So does a window whose bound carrier connection
+// ends any other way before a commit, except Cancel on the Device, the window
+// expiring or a storage failure, so dropping a window isn't a free retry.
+export const PAIR_LOCK = { first: 30000, cap: 900000, after: 3 };
+export const WINDOW_END_FREE = new Set(['cancelled', 'window-expired', 'storage', 'paired']);
+
+export class PairFailures {
+  constructor(stored = 0) {
+    this.count = stored;
+  }
+
+  proofFailed() {
+    this.count++;
+  }
+
+  // outcome is how the window's carrier connection ended; 'auth' means the
+  // third failed proof, which proofFailed already counted.
+  windowEnded(outcome) {
+    if (outcome === 'auth' || WINDOW_END_FREE.has(outcome)) return;
+    requireThat(COUNTED.has(outcome) || outcome === 'radio-lost', 'unknown window outcome');
+    this.count++;
+  }
+
+  committed() {
+    this.count = 0;
+  }
+
+  lockMs() {
+    if (this.count < PAIR_LOCK.after) return 0;
+    return Math.min(PAIR_LOCK.first * 2 ** Math.min(this.count - PAIR_LOCK.after, 16), PAIR_LOCK.cap);
   }
 }
