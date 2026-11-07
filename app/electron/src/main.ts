@@ -159,6 +159,8 @@ else {
   app.on('window-all-closed', () => app.quit());
   void app.whenReady().then(openWindow).catch(error => {
     if (closing) return;
+    // The dialog blocks until someone dismisses it; the log says why the window never opened.
+    console.error('Open TouchDeck could not open its window:', error);
     dialog.showErrorBox('Open TouchDeck', error instanceof Error && error.message === restartMessage
       ? restartMessage : 'Could not verify or start the Companion. Try restarting Open TouchDeck.');
     app.quit();
