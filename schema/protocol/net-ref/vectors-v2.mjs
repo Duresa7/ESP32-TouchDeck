@@ -6,12 +6,12 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import {
-  bytes, minimum, identity, clientPublic, clientSecret, serverSecret, u32, frame,
+  bytes, concat, minimum, identity, clientPublic, clientSecret, serverSecret, u16, u32, frame,
 } from './protocol.mjs';
 import {
   gatt, handshake, errorItem, pairKeys, wrapKey, commitProof, storedProof,
   share, x25519, sessionKeys, recordParameters, RecordSender, fragment, creditValue,
-  MIN_INITIAL_CREDIT,
+  MIN_INITIAL_CREDIT, FORMAT_RANGES, VERSION,
 } from './net-v2.mjs';
 
 const ramp = (start, length) => Buffer.from(Array.from({ length }, (_, i) => (start + i) & 255));
@@ -80,6 +80,44 @@ export function recordBodies() {
   ];
 }
 
+// A pair.request built without the name check, so rejected names can be encoded.
+export function rawRequest(name, companionId = inputs.companionId) {
+  const encoded = Buffer.from(name, 'utf8');
+  return concat(u16(encoded.length + 19), Buffer.from([0x10, VERSION]), companionId,
+    Buffer.from([encoded.length]), encoded);
+}
+
+const hex4 = (codePoint) => codePoint.toString(16).padStart(4, '0');
+const codePointLabel = (codePoint) => `U+${hex4(codePoint).toUpperCase()}`;
+const rangeLabel = ([first, last]) => (first === last ? hex4(first) : `${hex4(first)}-${hex4(last)}`);
+
+// Names every implementation MUST accept, and names with one control or format
+// character that it MUST refuse by closing the carrier connection.
+export const acceptedNames = [
+  ['ascii', 'Desk PC'],
+  ['accented', 'Bureau d’été'],
+  ['right-to-left letters', 'מחשב'],
+  ['emoji with variation selector', 'Desk \u{1f5a5}️'],
+  ['unassigned neighbour U+2065', 'Desk⁥PC'],
+];
+export const rejectedCodePoints = [
+  0x0000, 0x001b, 0x007f, 0x0085, 0x00ad, 0x061c, 0x180e, 0x200b, 0x200c, 0x200d, 0x200e,
+  0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2060, 0x2066, 0x2067, 0x2068, 0x2069,
+  0xfeff, 0xe0001, 0xe0041,
+];
+
+export function companionNames() {
+  return {
+    format_ranges: FORMAT_RANGES.map(rangeLabel),
+    accepted: acceptedNames.map(([label, name]) => ({ label, request: hex(rawRequest(name)) })),
+    rejected: [
+      ...rejectedCodePoints.map((codePoint) => ({ label: codePointLabel(codePoint),
+        request: hex(rawRequest(`Desk${String.fromCodePoint(codePoint)}PC`)), expected: 'close' })),
+      { label: 'leading U+FEFF', request: hex(rawRequest('﻿Desk PC')), expected: 'close' },
+    ],
+  };
+}
+
 export function buildVectors() {
   const pair = pairing();
   const sess = session();
@@ -117,6 +155,7 @@ export function buildVectors() {
     records,
     tampered_record: { direction: 'c2d', counter: 0, wire: hex(tampered), expected: 'close' },
     non_contributory_share: { device_share: hex(Buffer.alloc(32)), expected: 'close' },
+    companion_names: companionNames(),
     errors: { busy: hex(errorItem(1)), closed: hex(errorItem(9)) },
     ble: { ...gatt, initial_credit: MIN_INITIAL_CREDIT * 2, initial_credit_value: hex(creditValue(MIN_INITIAL_CREDIT * 2)) },
   };

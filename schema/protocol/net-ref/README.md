@@ -88,3 +88,9 @@ Every key, code and identity in those vectors is a synthetic test value. The
 test also checks X25519 against RFC 7748's own vectors and HKDF against Node's
 built-in implementation. There is no net-v2 socket peer yet; the Firmware and
 Companion tickets bring their own.
+
+`net-v2.mjs` also models three rules the Firmware and Companion must match:
+`nameAllowed` with the pinned `FORMAT_RANGES` table for `companion_name`,
+`receiveLimit` for the largest BLE fragment a receiver accepts (514 when its
+ATT_MTU is unknown), and `PeerBackoff`, which counts only the peer-caused
+outcomes in `COUNTED` toward per-peer backoff.
