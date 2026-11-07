@@ -24,6 +24,10 @@ _Avoid_: deck software
 The background program on the user's computer that runs the Devices, Integrations and actions, and serves the app's UI to the desktop window or a browser.
 _Avoid_: daemon, service, backend, host
 
+**Carrier**:
+How the Companion reaches a Device: USB today, Wi-Fi and Bluetooth later. Every carrier moves the same link frames, so everything the Companion does with a Device works the same on each.
+_Avoid_: transport, connection type
+
 ### Layout
 
 **Layout**:
@@ -58,3 +62,13 @@ _Avoid_: trusted copy, authority copy
 **Integration**:
 A connection to something outside the app that supplies data or accepts commands, such as a CLIProxyAPI hub, the PC or media playback.
 _Avoid_: source, plugin
+
+### Connections
+
+**Carrier**:
+The way a Device and the Companion reach each other: USB, Wi-Fi or Bluetooth. A Device keeps the same identity on every Carrier and uses one at a time.
+_Avoid_: transport, connection type
+
+**Pairing**:
+A Device's approval of one Companion to reach it over Wi-Fi or Bluetooth, given once by entering the code the Device shows. It lasts until someone removes it.
+_Avoid_: bond (Bluetooth's word for the Device's keyboard hosts), trust, registration
