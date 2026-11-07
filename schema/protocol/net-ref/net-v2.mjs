@@ -33,13 +33,38 @@ const SIZES = new Map([
   [0x16, 32], [0x17, 32], [0x20, 54], [0x21, 64], [0x22, 32], [0x23, 32], [0x7f, 1],
 ]);
 
+// The format characters (General_Category Cf) of Unicode 17.0, as inclusive
+// code point ranges. net-v2.md pins this table so implementations without a
+// Unicode database agree on it. It covers the bidi marks, overrides and
+// isolates, the zero-width characters, the BOM, soft hyphen and tag characters.
+export const FORMAT_RANGES = [
+  [0x00ad, 0x00ad], [0x0600, 0x0605], [0x061c, 0x061c], [0x06dd, 0x06dd],
+  [0x070f, 0x070f], [0x0890, 0x0891], [0x08e2, 0x08e2], [0x180e, 0x180e],
+  [0x200b, 0x200f], [0x202a, 0x202e], [0x2060, 0x2064], [0x2066, 0x206f],
+  [0xfeff, 0xfeff], [0xfff9, 0xfffb], [0x110bd, 0x110bd], [0x110cd, 0x110cd],
+  [0x13430, 0x1343f], [0x1bca0, 0x1bca3], [0x1d173, 0x1d17a], [0xe0001, 0xe0001],
+  [0xe0020, 0xe007f],
+];
+
+const isFormat = (codePoint) => FORMAT_RANGES.some(([first, last]) => codePoint >= first && codePoint <= last);
+
+// A companion_name holds no control (Cc) or format (Cf) characters.
+export function nameAllowed(name) {
+  for (const character of name) {
+    const codePoint = character.codePointAt(0);
+    if (/\p{Cc}/u.test(character) || isFormat(codePoint)) return false;
+  }
+  return true;
+}
+
 function validateFields(kind, fields) {
   if (kind === 0x10) {
     requireThat(fields.length >= 18 && fields.length <= 81, 'invalid pair request');
     const name = fields.subarray(17);
     requireThat(fields[16] === name.length, 'invalid name length');
-    const decoded = new TextDecoder('utf-8', { fatal: true }).decode(name);
-    requireThat(!/[\p{Cc}\u202a-\u202e\u2066-\u2069]/u.test(decoded), 'control character in name');
+    // ignoreBOM keeps a leading U+FEFF in the text, so the check sees it.
+    const decoded = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(name);
+    requireThat(nameAllowed(decoded), 'control character in name');
     return;
   }
   requireThat(SIZES.has(kind), 'unknown handshake kind');
@@ -209,6 +234,14 @@ export function fragment(item, attMtu = ATT_MTU_MIN) {
   return out;
 }
 
+// The largest fragment a receiver accepts: its own ATT_MTU - 3, or 514 when its
+// BLE stack doesn't report the MTU, because the peer may have negotiated more.
+export function receiveLimit(attMtu = null) {
+  if (attMtu === null) return ATT_MTU_MAX - 3;
+  requireThat(Number.isInteger(attMtu) && attMtu >= ATT_MTU_MIN && attMtu <= ATT_MTU_MAX, 'invalid ATT_MTU');
+  return attMtu - 3;
+}
+
 export const PHASE_LIMITS = {
   handshake: [MIN_HANDSHAKE_BODY, MAX_HANDSHAKE_BODY],
   record: [MIN_RECORD_BODY, MAX_RECORD_BODY],
@@ -218,7 +251,7 @@ export const PHASE_LIMITS = {
 // the caller switches to 'record' after session.ready. The sender's F is learned
 // from the first fragment that isn't an item's last, then checked.
 export class Reassembler {
-  constructor(maxFragment = ATT_MTU_MAX - 3) {
+  constructor(maxFragment = receiveLimit()) {
     this.maxFragment = maxFragment;
     this.phase = 'handshake';
     this.f = null;
@@ -266,3 +299,46 @@ export class Reassembler {
 
 // Credit on the flow characteristic: a u64be cumulative limit of rx bytes.
 export const creditValue = (limit) => u64(BigInt(limit));
+
+// Per-peer backoff. Only the outcomes in COUNTED are failures the peer caused.
+// The others end a connection without counting against its peer: a takeover
+// by another session.open, a busy refusal (backoff's own included), a
+// session.open refused while USB is online, and the person-side or
+// radio-side endings. 'ready' means the peer reached session.ready.
+export const BACKOFF = { first: 1000, cap: 60000, peers: 8 };
+export const COUNTED = new Set(['deadline', 'auth', 'proof', 'malformed']);
+export const NOT_COUNTED = new Set([
+  'takeover', 'busy', 'usb-online', 'closed', 'full', 'cancelled', 'storage',
+  'window-expired', 'disconnect', 'paired',
+]);
+
+export class PeerBackoff {
+  constructor(peers = BACKOFF.peers) {
+    this.peers = peers;
+    this.entries = new Map();
+  }
+
+  // Milliseconds left before the peer may connect, 0 when it may.
+  refusal(peer, now) {
+    const entry = this.entries.get(peer);
+    return entry ? Math.max(0, entry.until - now) : 0;
+  }
+
+  failures(peer) {
+    return this.entries.get(peer)?.failures ?? 0;
+  }
+
+  end(peer, outcome, now) {
+    if (outcome === 'ready') {
+      this.entries.delete(peer);
+      return;
+    }
+    if (NOT_COUNTED.has(outcome)) return;
+    requireThat(COUNTED.has(outcome), 'unknown connection outcome');
+    const failures = this.failures(peer) + 1;
+    const delay = Math.min(BACKOFF.first * 2 ** Math.min(failures - 1, 16), BACKOFF.cap);
+    this.entries.delete(peer);
+    this.entries.set(peer, { failures, until: now + delay });
+    if (this.entries.size > this.peers) this.entries.delete(this.entries.keys().next().value);
+  }
+}

@@ -171,6 +171,185 @@
     "device_share": "0000000000000000000000000000000000000000000000000000000000000000",
     "expected": "close"
   },
+  "companion_names": {
+    "format_ranges": [
+      "00ad",
+      "0600-0605",
+      "061c",
+      "06dd",
+      "070f",
+      "0890-0891",
+      "08e2",
+      "180e",
+      "200b-200f",
+      "202a-202e",
+      "2060-2064",
+      "2066-206f",
+      "feff",
+      "fff9-fffb",
+      "110bd",
+      "110cd",
+      "13430-1343f",
+      "1bca0-1bca3",
+      "1d173-1d17a",
+      "e0001",
+      "e0020-e007f"
+    ],
+    "accepted": [
+      {
+        "label": "ascii",
+        "request": "001a1002101112131415161718191a1b1c1d1e1f074465736b205043"
+      },
+      {
+        "label": "accented",
+        "request": "00231002101112131415161718191a1b1c1d1e1f104275726561752064e28099c3a974c3a9"
+      },
+      {
+        "label": "right-to-left letters",
+        "request": "001b1002101112131415161718191a1b1c1d1e1f08d79ed797d7a9d791"
+      },
+      {
+        "label": "emoji with variation selector",
+        "request": "001f1002101112131415161718191a1b1c1d1e1f0c4465736b20f09f96a5efb88f"
+      },
+      {
+        "label": "unassigned neighbour U+2065",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be281a55043"
+      }
+    ],
+    "rejected": [
+      {
+        "label": "U+0000",
+        "request": "001a1002101112131415161718191a1b1c1d1e1f074465736b005043",
+        "expected": "close"
+      },
+      {
+        "label": "U+001B",
+        "request": "001a1002101112131415161718191a1b1c1d1e1f074465736b1b5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+007F",
+        "request": "001a1002101112131415161718191a1b1c1d1e1f074465736b7f5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+0085",
+        "request": "001b1002101112131415161718191a1b1c1d1e1f084465736bc2855043",
+        "expected": "close"
+      },
+      {
+        "label": "U+00AD",
+        "request": "001b1002101112131415161718191a1b1c1d1e1f084465736bc2ad5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+061C",
+        "request": "001b1002101112131415161718191a1b1c1d1e1f084465736bd89c5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+180E",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be1a08e5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+200B",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be2808b5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+200C",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be2808c5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+200D",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be2808d5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+200E",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be2808e5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+200F",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be2808f5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+202A",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be280aa5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+202B",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be280ab5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+202C",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be280ac5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+202D",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be280ad5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+202E",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be280ae5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+2060",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be281a05043",
+        "expected": "close"
+      },
+      {
+        "label": "U+2066",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be281a65043",
+        "expected": "close"
+      },
+      {
+        "label": "U+2067",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be281a75043",
+        "expected": "close"
+      },
+      {
+        "label": "U+2068",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be281a85043",
+        "expected": "close"
+      },
+      {
+        "label": "U+2069",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be281a95043",
+        "expected": "close"
+      },
+      {
+        "label": "U+FEFF",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736befbbbf5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+E0001",
+        "request": "001d1002101112131415161718191a1b1c1d1e1f0a4465736bf3a080815043",
+        "expected": "close"
+      },
+      {
+        "label": "U+E0041",
+        "request": "001d1002101112131415161718191a1b1c1d1e1f0a4465736bf3a081815043",
+        "expected": "close"
+      },
+      {
+        "label": "leading U+FEFF",
+        "request": "001d1002101112131415161718191a1b1c1d1e1f0aefbbbf4465736b205043",
+        "expected": "close"
+      }
+    ]
+  },
   "errors": {
     "busy": "00037f0201",
     "closed": "00037f0209"
