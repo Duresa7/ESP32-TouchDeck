@@ -5,7 +5,7 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::time::{Duration, Instant};
 
-use super::wire::{self, ERROR, MAX_HANDSHAKE_BODY, MIN_HANDSHAKE_BODY};
+use super::wire::{self, ERROR, Phase};
 use super::{NetError, Refusal};
 
 /// How long a terminal error waits for the peer before the socket closes.
@@ -40,18 +40,13 @@ impl Items {
         Ok(())
     }
 
-    /// The next whole item, prefix included, if one is buffered. A length outside
-    /// `min..=max` is a protocol error.
-    fn take(&mut self, min: usize, max: usize) -> Result<Option<Vec<u8>>, NetError> {
+    /// The next whole item, prefix included, if one is buffered. A length outside the
+    /// phase's bounds is a protocol error.
+    fn take(&mut self, phase: Phase) -> Result<Option<Vec<u8>>, NetError> {
         if self.buf.len() < 2 {
             return Ok(None);
         }
-        let len = usize::from(u16::from_be_bytes([self.buf[0], self.buf[1]]));
-        if !(min..=max).contains(&len) {
-            return Err(NetError::Protocol(format!(
-                "item length {len} is out of bounds"
-            )));
-        }
+        let len = phase.body_len([self.buf[0], self.buf[1]])?;
         if self.buf.len() < len + 2 {
             return Ok(None);
         }
@@ -83,14 +78,9 @@ impl Items {
     }
 
     /// Reads one whole item by `deadline`. Partial reads never extend it.
-    pub(crate) fn read(
-        &mut self,
-        min: usize,
-        max: usize,
-        deadline: Instant,
-    ) -> Result<Vec<u8>, NetError> {
+    pub(crate) fn read(&mut self, phase: Phase, deadline: Instant) -> Result<Vec<u8>, NetError> {
         loop {
-            if let Some(item) = self.take(min, max)? {
+            if let Some(item) = self.take(phase)? {
                 return Ok(item);
             }
             let left = deadline.saturating_duration_since(Instant::now());
@@ -102,22 +92,21 @@ impl Items {
     }
 
     /// The next whole item already read, without waiting.
-    pub(crate) fn buffered(&mut self, min: usize, max: usize) -> Result<Option<Vec<u8>>, NetError> {
-        self.take(min, max)
+    pub(crate) fn buffered(&mut self, phase: Phase) -> Result<Option<Vec<u8>>, NetError> {
+        self.take(phase)
     }
 
     /// One read of at most `wait`, then the next whole item if there is one.
     pub(crate) fn poll(
         &mut self,
-        min: usize,
-        max: usize,
+        phase: Phase,
         wait: Duration,
     ) -> Result<Option<Vec<u8>>, NetError> {
-        if let Some(item) = self.take(min, max)? {
+        if let Some(item) = self.take(phase)? {
             return Ok(Some(item));
         }
         self.fill(wait)?;
-        self.take(min, max)
+        self.take(phase)
     }
 
     /// Reads one handshake item of `kind` by `deadline`. An error item is [`NetError::Refused`].
@@ -126,7 +115,7 @@ impl Items {
         kind: u8,
         deadline: Instant,
     ) -> Result<(Vec<u8>, Vec<u8>), NetError> {
-        let item = self.read(MIN_HANDSHAKE_BODY, MAX_HANDSHAKE_BODY, deadline)?;
+        let item = self.read(Phase::Handshake, deadline)?;
         let (got, fields) = wire::parse_handshake(&item)?;
         if got == ERROR {
             let reason = Refusal::from_u8(fields[0]).expect("parse_handshake checked the reason");

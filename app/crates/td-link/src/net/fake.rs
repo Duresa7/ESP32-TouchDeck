@@ -20,10 +20,9 @@ use x25519_dalek::{EphemeralSecret, PublicKey};
 
 use super::socket::Items;
 use super::wire::{
-    self, C2D, D2C, MAX_HANDSHAKE_BODY, MAX_RECORD_BODY, MIN_HANDSHAKE_BODY, MIN_RECORD_BODY,
-    PAIR_ACCEPT, PAIR_CHALLENGE, PAIR_COMMIT, PAIR_OFFER, PAIR_PROOF, PAIR_REQUEST, PAIR_START,
-    PAIR_STORED, PairKeys, RecordReceiver, RecordSender, SESSION_CHALLENGE, SESSION_OPEN,
-    SESSION_PROOF, SESSION_READY, SessionKeys, SrpServer,
+    self, C2D, D2C, PAIR_ACCEPT, PAIR_CHALLENGE, PAIR_COMMIT, PAIR_OFFER, PAIR_PROOF, PAIR_REQUEST,
+    PAIR_START, PAIR_STORED, PairKeys, Phase, RecordReceiver, RecordSender, SESSION_CHALLENGE,
+    SESSION_OPEN, SESSION_PROOF, SESSION_READY, SessionKeys, SrpServer,
 };
 use super::{CompanionId, DeviceId, NetError, Refusal, random, random_exponent};
 use crate::{MockDeck, Transport};
@@ -33,6 +32,8 @@ const SETUP: Duration = Duration::from_secs(10);
 const ATTEMPT: Duration = Duration::from_secs(10);
 const WINDOW: Duration = Duration::from_millis(wire::PAIR_WINDOW_MS as u64);
 const PROMPT: Duration = Duration::from_secs(60);
+const COOLDOWN: Duration = Duration::from_secs(60);
+const COOLDOWN_MAX: Duration = Duration::from_secs(3_600);
 const EXPIRY: Duration = Duration::from_secs(5);
 const MAX_PAIRINGS: usize = 4;
 
@@ -104,7 +105,11 @@ struct State {
     locked_until: Option<Instant>,
     owner: Option<(u64, TcpStream)>,
     session: Option<String>,
+    /// The Pairing of the network session, while there is one.
+    peer: Option<CompanionId>,
     prompt: Option<Prompt>,
+    /// Per Pairing: when its update prompt cooldown ends, and how long the last one was.
+    cooldowns: BTreeMap<CompanionId, (Instant, Duration)>,
     sessions: u32,
     unreachable: bool,
     lose_stored: bool,
@@ -286,11 +291,21 @@ impl FakeNetDevice {
         }
     }
 
-    /// The person taps Install on the update prompt.
+    /// The person taps Install on the update prompt. That also ends the cooldown.
     pub fn tap_install(&self) -> bool {
-        match self.state().prompt.as_mut() {
+        let mut state = self.state();
+        let State {
+            prompt,
+            peer,
+            cooldowns,
+            ..
+        } = &mut *state;
+        match prompt.as_mut() {
             Some(Prompt::Showing { approved, .. }) => {
                 *approved = true;
+                if let Some(peer) = peer {
+                    cooldowns.remove(peer);
+                }
                 true
             }
             _ => false,
@@ -299,9 +314,22 @@ impl FakeNetDevice {
 
     /// The person taps Cancel on the update prompt.
     pub fn tap_cancel(&self) {
+        end_prompt(&mut self.state(), Instant::now());
+    }
+
+    /// Time left in the session's update prompt cooldown.
+    pub fn update_cooldown(&self) -> Option<Duration> {
+        let state = self.state();
+        let (until, _) = state.cooldowns.get(state.peer.as_ref()?)?;
+        Some(until.saturating_duration_since(Instant::now())).filter(|left| !left.is_zero())
+    }
+
+    /// The session's update prompt cooldown ends now; the next one is still longer.
+    pub fn end_update_cooldown(&self) {
         let mut state = self.state();
-        if let Some(Prompt::Showing { bytes, sha, .. }) = state.prompt.take() {
-            state.prompt = Some(Prompt::Ended { bytes, sha });
+        let Some(peer) = state.peer else { return };
+        if let Some((until, _)) = state.cooldowns.get_mut(&peer) {
+            *until = Instant::now();
         }
     }
 }
@@ -312,6 +340,46 @@ impl Drop for FakeNetDevice {
         self.drop_connection();
         // Wakes the accept loop so it sees the stop.
         let _ = TcpStream::connect_timeout(&self.inner.addr, Duration::from_millis(200));
+    }
+}
+
+/// Counts a failed pairing in the stored counter; from the third on, pairing locks out.
+fn count_failure(state: &mut State) {
+    state.pair_failures += 1;
+    if state.pair_failures >= 3 {
+        let lock =
+            Duration::from_millis((30_000u64 << (state.pair_failures - 3).min(5)).min(900_000));
+        state.locked_until = Some(Instant::now() + lock);
+    }
+}
+
+/// Ends a prompt that wasn't approved, at `at`, and starts or lengthens its Pairing's
+/// cooldown: 60 s, doubling up to an hour.
+fn end_prompt(state: &mut State, at: Instant) {
+    let Some(Prompt::Showing {
+        bytes,
+        sha,
+        approved: false,
+        ..
+    }) = state.prompt.take_if(|p| {
+        matches!(
+            p,
+            Prompt::Showing {
+                approved: false,
+                ..
+            }
+        )
+    })
+    else {
+        return;
+    };
+    state.prompt = Some(Prompt::Ended { bytes, sha });
+    if let Some(peer) = state.peer {
+        let length = state
+            .cooldowns
+            .get(&peer)
+            .map_or(COOLDOWN, |(_, last)| (*last * 2).min(COOLDOWN_MAX));
+        state.cooldowns.insert(peer, (at + length, length));
     }
 }
 
@@ -331,12 +399,18 @@ impl Drop for Owned<'_> {
         if state.owner.as_ref().is_some_and(|(id, _)| *id == self.1) {
             state.owner = None;
             state.session = None;
-            if state.window.as_ref().is_some_and(|w| w.bound) {
-                state.window = None;
+            // A window dropped before a commit counts as a failed code, unless it expired;
+            // Cancel on the Device and a counted proof already cleared it.
+            if let Some(window) = state.window.take_if(|w| w.bound)
+                && window.ends > Instant::now()
+            {
+                count_failure(&mut state);
             }
+            end_prompt(&mut state, Instant::now());
             if let Some(Prompt::Showing { bytes, sha, .. }) = state.prompt.take() {
                 state.prompt = Some(Prompt::Ended { bytes, sha });
             }
+            state.peer = None;
         }
     }
 }
@@ -374,7 +448,7 @@ impl Inner {
         }
         let _owned = Owned(self, conn);
         let started = Instant::now();
-        let first = match items.read(MIN_HANDSHAKE_BODY, MAX_HANDSHAKE_BODY, started + FIRST_ITEM) {
+        let first = match items.read(Phase::Handshake, started + FIRST_ITEM) {
             Ok(first) => first,
             Err(error) if error.is_timeout() => return refuse(&mut items, Refusal::Expired),
             Err(_) => return items.close(),
@@ -438,11 +512,7 @@ impl Inner {
                     }
                     Some(_) => {}
                 }
-                match items.poll(
-                    MIN_HANDSHAKE_BODY,
-                    MAX_HANDSHAKE_BODY,
-                    Duration::from_millis(50),
-                ) {
+                match items.poll(Phase::Handshake, Duration::from_millis(50)) {
                     Ok(Some(item)) => break item,
                     Ok(None) => {}
                     Err(_) => return items.close(),
@@ -470,7 +540,6 @@ impl Inner {
                 return items.close();
             };
             let Ok(key) = server.key(&a_pub) else {
-                self.state().window = None;
                 return items.close();
             };
             let Ok(keys) = PairKeys::derive(&key, request, &offer, &start, &challenge) else {
@@ -485,17 +554,11 @@ impl Inner {
             if !wire::same(&proof, &keys.client_proof) {
                 let end = {
                     let mut state = self.state();
-                    state.pair_failures += 1;
+                    count_failure(&mut state);
                     let failures = state.window.as_mut().map_or(u8::MAX, |w| {
                         w.failures += 1;
                         w.failures
                     });
-                    if state.pair_failures >= 3 {
-                        let lock = Duration::from_millis(
-                            (30_000u64 << (state.pair_failures - 3).min(5)).min(900_000),
-                        );
-                        state.locked_until = Some(Instant::now() + lock);
-                    }
                     let end = state.pair_failures >= 3 || failures >= 3;
                     if end {
                         state.window = None;
@@ -564,10 +627,9 @@ impl Inner {
         };
         let secret = EphemeralSecret::random();
         let device_share = PublicKey::from(&secret).to_bytes();
-        let shared = secret.diffie_hellman(&PublicKey::from(client_share));
-        if !shared.was_contributory() {
+        let Ok(shared) = wire::agree(secret, &client_share) else {
             return items.close();
-        }
+        };
         let Ok(keys) = SessionKeys::derive(
             &ltk,
             &device_id,
@@ -602,6 +664,7 @@ impl Inner {
         {
             let mut state = self.state();
             state.session = Some(name);
+            state.peer = Some(companion_id);
             state.sessions += 1;
         }
         self.bridge(
@@ -650,7 +713,7 @@ impl Inner {
         };
         let mut last = Instant::now();
         while alive.load(Ordering::Acquire) {
-            let item = match items.poll(MIN_RECORD_BODY, MAX_RECORD_BODY, crate::READ_TICK) {
+            let item = match items.poll(Phase::Record, crate::READ_TICK) {
                 Ok(Some(item)) => item,
                 Ok(None) if last.elapsed() < EXPIRY => continue,
                 _ => break,
@@ -707,12 +770,23 @@ impl Inner {
                 .to_owned();
             let mut state = self.state();
             let now = Instant::now();
-            let prompt = state.prompt.take().map(|prompt| match prompt {
-                Prompt::Showing {
-                    bytes, sha, until, ..
-                } if until <= now => Prompt::Ended { bytes, sha },
-                prompt => prompt,
-            });
+            if let Some(Prompt::Showing { until, .. }) = state.prompt
+                && until <= now
+            {
+                end_prompt(&mut state, until);
+            }
+            let cooling = state
+                .peer
+                .and_then(|peer| state.cooldowns.get(&peer))
+                .is_some_and(|(until, _)| *until > now);
+            if cooling {
+                // That is also the repeat an ended prompt owes `declined`.
+                if matches!(state.prompt, Some(Prompt::Ended { .. })) {
+                    state.prompt = None;
+                }
+                return refuse("declined", "The update was declined on the Device");
+            }
+            let prompt = state.prompt.take();
             let (next, answer) = match prompt {
                 Some(Prompt::Showing {
                     bytes: b,
@@ -734,8 +808,18 @@ impl Inner {
                         )
                     }
                 }
-                Some(Prompt::Showing { bytes, sha, .. }) => {
-                    (Prompt::Ended { bytes, sha }, Some("declined"))
+                Some(Prompt::Showing {
+                    bytes, sha, until, ..
+                }) => {
+                    // A different image ends the prompt unapproved.
+                    state.prompt = Some(Prompt::Showing {
+                        bytes,
+                        sha,
+                        approved: false,
+                        until,
+                    });
+                    end_prompt(&mut state, now);
+                    return refuse("declined", "The update was declined on the Device");
                 }
                 Some(Prompt::Ended { bytes: b, sha: s }) if b == bytes && s == sha => {
                     (Prompt::None, Some("declined"))

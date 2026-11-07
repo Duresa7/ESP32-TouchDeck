@@ -150,6 +150,36 @@ fn cancel_on_the_device_ends_the_pairing() {
 }
 
 #[test]
+fn a_dropped_window_counts_as_a_failed_code() {
+    let device = fake();
+    device.open_window().unwrap();
+    let pairing = pair(&addr(&device), &COMPANION, "Test workstation", TIMEOUT).unwrap();
+    assert!(device.code().is_some());
+    drop(pairing);
+    let end = Instant::now() + TIMEOUT;
+    while device.pair_failures() == 0 && Instant::now() < end {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        device.pair_failures(),
+        1,
+        "binding a window and dropping it isn't free"
+    );
+    assert_eq!(device.code(), None, "the window closed");
+
+    device.open_window().unwrap();
+    let pairing = pair(&addr(&device), &COMPANION, "Test workstation", TIMEOUT).unwrap();
+    device.cancel_window();
+    drop(pairing);
+    thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        device.pair_failures(),
+        1,
+        "Cancel on the Device doesn't count"
+    );
+}
+
+#[test]
 fn a_failed_key_save_stops_before_commit() {
     let device = fake();
     device.open_window().unwrap();
@@ -326,6 +356,50 @@ fn cancel_on_the_device_declines_the_update() {
         waiting.join().unwrap()
     });
     assert_eq!(result.unwrap_err(), "the update was declined on the Device");
+}
+
+#[test]
+fn an_unapproved_prompt_starts_a_cooldown_that_doubles() {
+    let device = fake();
+    let paired = pair_with(&device, COMPANION);
+    let (session, _incoming) = session(&device, &paired.credential);
+    let (bytes, sha) = image();
+    let approval = Approval {
+        repeat: Duration::from_millis(50),
+        limit: TIMEOUT,
+    };
+    let cancelled = |session: &Session| {
+        thread::scope(|scope| {
+            let waiting = scope.spawn(|| begin(session, bytes, &sha, approval, &mut || {}));
+            let end = Instant::now() + TIMEOUT;
+            while device.update_prompt().is_none() && Instant::now() < end {
+                thread::sleep(Duration::from_millis(10));
+            }
+            device.tap_cancel();
+            waiting.join().unwrap()
+        })
+    };
+    assert!(cancelled(&session).is_err());
+    let left = device.update_cooldown().expect("a cooldown");
+    assert!(
+        left > Duration::from_secs(55) && left <= Duration::from_secs(60),
+        "{left:?}"
+    );
+
+    // During the cooldown update.begin is declined at once and shows nothing.
+    let mut told = 0;
+    let result = begin(&session, bytes, &sha, approval, &mut || told += 1);
+    assert_eq!(result.unwrap_err(), "the update was declined on the Device");
+    assert_eq!((told, device.update_prompt()), (0, None));
+
+    // After it, a new prompt shows; cancelling that one doubles the cooldown.
+    device.end_update_cooldown();
+    assert!(cancelled(&session).is_err());
+    let left = device.update_cooldown().expect("a second cooldown");
+    assert!(
+        left > Duration::from_secs(115) && left <= Duration::from_secs(120),
+        "{left:?}"
+    );
 }
 
 #[test]

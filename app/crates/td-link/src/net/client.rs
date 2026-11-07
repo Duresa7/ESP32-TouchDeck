@@ -11,9 +11,9 @@ use zeroize::Zeroize;
 
 use super::socket::Items;
 use super::wire::{
-    self, C2D, D2C, MAX_RECORD_BODY, MIN_RECORD_BODY, PAIR_ACCEPT, PAIR_CHALLENGE, PAIR_COMMIT,
-    PAIR_OFFER, PAIR_PROOF, PAIR_REQUEST, PAIR_START, PAIR_STORED, PairKeys, RecordReceiver,
-    RecordSender, SESSION_CHALLENGE, SESSION_OPEN, SESSION_PROOF, SESSION_READY, SessionKeys,
+    self, C2D, D2C, PAIR_ACCEPT, PAIR_CHALLENGE, PAIR_COMMIT, PAIR_OFFER, PAIR_PROOF, PAIR_REQUEST,
+    PAIR_START, PAIR_STORED, PairKeys, Phase, RecordReceiver, RecordSender, SESSION_CHALLENGE,
+    SESSION_OPEN, SESSION_PROOF, SESSION_READY, SessionKeys,
 };
 use super::{
     Address, CompanionId, Credential, DeviceId, NetError, PAIR_ATTEMPT, Refusal, SESSION_SETUP,
@@ -265,10 +265,7 @@ impl NetCarrier {
         items.send(&wire::handshake(SESSION_OPEN, &open)?, deadline)?;
         let (_, fields) = items.expect(SESSION_CHALLENGE, deadline)?;
         let device_share: [u8; 32] = fields[..32].try_into().expect("challenge length checked");
-        let shared = secret.diffie_hellman(&PublicKey::from(device_share));
-        if !shared.was_contributory() {
-            return Err(NetError::Auth("non-contributory X25519 share".into()));
-        }
+        let shared = wire::agree(secret, &device_share)?;
         let keys = SessionKeys::derive(
             &credential.ltk,
             &credential.device_id,
@@ -336,10 +333,7 @@ fn invalid(error: impl ToString) -> io::Error {
 
 impl FrameReader for NetReader {
     fn recv(&mut self) -> io::Result<Received> {
-        let first = match self
-            .items
-            .poll(MIN_RECORD_BODY, MAX_RECORD_BODY, crate::READ_TICK)
-        {
+        let first = match self.items.poll(Phase::Record, crate::READ_TICK) {
             Ok(Some(item)) => item,
             Ok(None) => return Ok(Received::Items(Vec::new())),
             Err(NetError::Closed) => return Ok(Received::Ended),
@@ -350,7 +344,7 @@ impl FrameReader for NetReader {
         };
         let mut frames = vec![self.frame(&first)];
         loop {
-            match self.items.buffered(MIN_RECORD_BODY, MAX_RECORD_BODY) {
+            match self.items.buffered(Phase::Record) {
                 Ok(Some(item)) => frames.push(self.frame(&item)),
                 Ok(None) => break,
                 Err(error) => frames.push(Err(invalid(error))),

@@ -556,10 +556,10 @@ Feature module `wifi`. See Wi-Fi Carrier above.
 | `wifi.pairings_list` | `GET /wifi/pairings` | → `WifiPairing[]` |
 | `wifi.pair_start` | `POST /wifi/pairings` | `{address}` → `PairingStarted`. `address` is an IPv4 or IPv6 address or a host name, with an optional port that defaults to 47820. The Device must have its pairing window open (Pair new app on the Device), or 409 `wifi.window_closed`. 502 `wifi.unreachable`, 409 `wifi.full`, `wifi.already_paired` or `wifi.busy` |
 | `wifi.pair_code` | `POST /wifi/attempts/{attempt}/code` | `{code}`, the six digits on the Device → `WifiPairing`, and the Device then connects over Wi-Fi. A wrong code gives 422 `wifi.wrong_code` with `details.attempts_left`; the third gives 429 `wifi.locked`, and the Device refuses pairing for 30 s, doubling. 409 `wifi.expired` when the window closed, 503 `wifi.keychain`, 404 `wifi.attempt_not_found` |
-| `wifi.pair_cancel` | `DELETE /wifi/attempts/{attempt}` | → `()`. Closes the window on the Device |
+| `wifi.pair_cancel` | `DELETE /wifi/attempts/{attempt}` | → `()`. Closes the window on the Device, which counts it as a wrong code, as net-v2 does any window dropped before the code is right |
 | `wifi.pairings_forget` | `DELETE /wifi/pairings/{device}` | → `()`. Deletes the key and closes a Wi-Fi link. The Device keeps its side until it's forgotten there. 404 `wifi.not_paired`. `devices.forget` also forgets the Pairing |
 
-A started pairing holds one connection to the Device until its code is right, it's cancelled, the window closes or 130 s pass.
+A started pairing holds one connection to the Device until its code is right, it's cancelled, the window closes or 130 s pass. The Device shows the Pairing as "Open TouchDeck on" and the computer's name, without the characters net-v2 refuses in a name, cut to 64 bytes.
 
 ### Layouts
 

@@ -362,18 +362,28 @@ fn pair_error(error: NetError) -> PairError {
 
 /// The name this Companion shows on the Device: the computer's name.
 fn companion_name() -> String {
-    let name = std::env::var("COMPUTERNAME")
+    let host = std::env::var("COMPUTERNAME")
         .ok()
-        .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
-        .map(|n| n.trim().to_owned())
-        .filter(|n| net::wire::valid_name(n))
-        .unwrap_or_else(|| "Open TouchDeck".into());
-    format!("Open TouchDeck on {name}")
+        .or_else(|| std::fs::read_to_string("/etc/hostname").ok());
+    name_for(host.as_deref())
+}
+
+/// "Open TouchDeck on <host>", with any character net-v2 refuses in a name dropped and cut to
+/// 64 bytes on a character boundary.
+fn name_for(host: Option<&str>) -> String {
+    let host: String = host
+        .unwrap_or_default()
         .chars()
-        .take(net::wire::NAME_MAX)
-        .collect::<String>()
-        .trim()
-        .to_owned()
+        .filter(|&c| net::wire::name_char_allowed(c))
+        .collect();
+    let mut name = match host.trim() {
+        "" => "Open TouchDeck".to_owned(),
+        host => format!("Open TouchDeck on {host}"),
+    };
+    while name.len() > net::wire::NAME_MAX {
+        name.pop();
+    }
+    name.trim_end().to_owned()
 }
 
 fn device_id_of(device: &net::DeviceId) -> DeviceId {
@@ -961,5 +971,17 @@ mod tests {
     #[test]
     fn the_companion_name_is_valid_on_the_wire() {
         assert!(net::wire::valid_name(&companion_name()));
+        assert_eq!(name_for(Some("DESK-PC\n")), "Open TouchDeck on DESK-PC");
+        assert_eq!(
+            name_for(Some("zero\u{200b}width\u{3164}")),
+            "Open TouchDeck on zerowidth"
+        );
+        assert_eq!(name_for(None), "Open TouchDeck");
+        assert_eq!(name_for(Some("\u{feff}")), "Open TouchDeck");
+        let long = name_for(Some(&"\u{e9}".repeat(40)));
+        assert!(
+            long.len() <= net::wire::NAME_MAX && net::wire::valid_name(&long),
+            "{long}"
+        );
     }
 }

@@ -13,6 +13,7 @@ use srp::client::SrpClient;
 use srp::groups::G_3072;
 use subtle::ConstantTimeEq;
 use td_core::Frame;
+use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
 use zeroize::Zeroize;
 
 use super::{NetError, Refusal};
@@ -65,15 +66,47 @@ fn auth(detail: impl Into<String>) -> NetError {
     NetError::Auth(detail.into())
 }
 
-/// Whether a Companion name may go in `pair.request`: 1 to 64 UTF-8 bytes, no control
-/// characters, and no bidirectional overrides or isolates.
+/// `\p{Cf}`, the format characters, pinned to Unicode 17.0 as net-v2 lists them.
+pub const FORMAT_RANGES: &[(u32, u32)] = &[
+    (0x00ad, 0x00ad),
+    (0x0600, 0x0605),
+    (0x061c, 0x061c),
+    (0x06dd, 0x06dd),
+    (0x070f, 0x070f),
+    (0x0890, 0x0891),
+    (0x08e2, 0x08e2),
+    (0x180e, 0x180e),
+    (0x200b, 0x200f),
+    (0x202a, 0x202e),
+    (0x2060, 0x2064),
+    (0x2066, 0x206f),
+    (0xfeff, 0xfeff),
+    (0xfff9, 0xfffb),
+    (0x110bd, 0x110bd),
+    (0x110cd, 0x110cd),
+    (0x13430, 0x1343f),
+    (0x1bca0, 0x1bca3),
+    (0x1d173, 0x1d17a),
+    (0xe0001, 0xe0001),
+    (0xe0020, 0xe007f),
+];
+
+/// Letters that render as blank space.
+pub const HANGUL_FILLERS: [char; 4] = ['\u{115f}', '\u{1160}', '\u{3164}', '\u{ffa0}'];
+
+/// Whether `c` may appear in a Companion name: not a control character (`\p{Cc}`), a
+/// format character (`\p{Cf}`) or a Hangul filler.
+pub fn name_char_allowed(c: char) -> bool {
+    let u = u32::from(c);
+    !c.is_control()
+        && !FORMAT_RANGES.iter().any(|&(lo, hi)| (lo..=hi).contains(&u))
+        && !HANGUL_FILLERS.contains(&c)
+}
+
+/// Whether a Companion name may go in `pair.request`: 1 to 64 UTF-8 bytes of allowed
+/// characters.
 pub fn valid_name(name: &str) -> bool {
-    (1..=NAME_MAX).contains(&name.len())
-        && !name.chars().any(|c| {
-            c.is_control()
-                || ('\u{202a}'..='\u{202e}').contains(&c)
-                || ('\u{2066}'..='\u{2069}').contains(&c)
-        })
+    (1..=NAME_MAX).contains(&name.len()) && name.chars().all(name_char_allowed)
 }
 
 /// Whether a code is the six ASCII digits the Device shows.
@@ -152,6 +185,55 @@ pub fn parse_handshake(item: &[u8]) -> Result<(u8, &[u8]), NetError> {
     let (kind, fields) = (item[2], &item[4..]);
     check_fields(kind, fields)?;
     Ok((kind, fields))
+}
+
+/// What an item's length prefix may say: handshake items before `session.ready`, records
+/// after it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase {
+    Handshake,
+    Record,
+}
+
+impl Phase {
+    /// The body length a prefix announces, checked against this phase's bounds before
+    /// anything is read or kept.
+    pub fn body_len(self, prefix: [u8; 2]) -> Result<usize, NetError> {
+        let len = usize::from(u16::from_be_bytes(prefix));
+        let (min, max) = match self {
+            Phase::Handshake => (MIN_HANDSHAKE_BODY, MAX_HANDSHAKE_BODY),
+            Phase::Record => (MIN_RECORD_BODY, MAX_RECORD_BODY),
+        };
+        if (min..=max).contains(&len) {
+            Ok(len)
+        } else {
+            Err(protocol(format!("item length {len} is out of bounds")))
+        }
+    }
+}
+
+/// net-v2's share check, step 1: bit 255 clear and `u < p`, `p = 2^255 - 19`.
+pub fn canonical_share(share: &[u8; SHARE_LEN]) -> bool {
+    if share[31] & 0x80 != 0 {
+        return false;
+    }
+    // u >= p only when the top byte is 0x7f, the middle bytes are all 0xff and the low
+    // byte is at least 0xed.
+    !(share[31] == 0x7f && share[1..31].iter().all(|&b| b == 0xff) && share[0] >= 0xed)
+}
+
+/// `Z` from our secret and the peer's share, under net-v2's share checks: a non-canonical
+/// share, and a share that gives an all-zero `Z`, fail the same way, before any key is
+/// derived.
+pub fn agree(secret: EphemeralSecret, share: &[u8; SHARE_LEN]) -> Result<SharedSecret, NetError> {
+    if !canonical_share(share) {
+        return Err(auth("invalid X25519 share"));
+    }
+    let shared = secret.diffie_hellman(&PublicKey::from(*share));
+    if !shared.was_contributory() {
+        return Err(auth("invalid X25519 share"));
+    }
+    Ok(shared)
 }
 
 /// Constant-time equality for proofs and tags.
@@ -791,16 +873,57 @@ mod tests {
     }
 
     #[test]
-    fn names_refuse_controls_and_bidirectional_overrides() {
+    fn names_refuse_controls_format_characters_and_fillers() {
         assert!(valid_name("Desk PC"));
+        assert!(valid_name("Desk \u{1f5a5}\u{fe0f}"));
+        assert!(valid_name(&"\u{e9}".repeat(32)));
+        assert!(
+            !valid_name(&"\u{e9}".repeat(33)),
+            "64 bytes, not 64 characters"
+        );
         assert!(!valid_name(""));
         assert!(!valid_name(&"a".repeat(65)));
         assert!(!valid_name("evil\u{202e}cp"));
         assert!(!valid_name("tab\there"));
         assert!(!valid_name("iso\u{2067}late"));
+        assert!(!valid_name("zero\u{200b}width"));
+        assert!(!valid_name("\u{feff}bom"));
+        assert!(!valid_name("next\u{85}line"));
+        assert!(!valid_name("blank\u{3164}"));
+        assert!(valid_name("unassigned\u{2065}"));
         assert!(valid_code("012345"));
         assert!(!valid_code("12345"));
         assert!(!valid_code("12345a"));
+    }
+
+    #[test]
+    fn length_prefixes_are_checked_per_phase() {
+        assert_eq!(Phase::Handshake.body_len([0, 3]).unwrap(), 3);
+        assert_eq!(Phase::Handshake.body_len([2, 0]).unwrap(), 512);
+        assert!(Phase::Handshake.body_len([0, 2]).is_err());
+        assert!(Phase::Handshake.body_len([2, 1]).is_err());
+        assert_eq!(Phase::Record.body_len([0, 24]).unwrap(), 24);
+        assert_eq!(Phase::Record.body_len([4, 24]).unwrap(), 1_048);
+        assert!(Phase::Record.body_len([0, 23]).is_err());
+        assert!(Phase::Record.body_len([4, 25]).is_err());
+    }
+
+    #[test]
+    fn shares_at_or_above_p_or_with_bit_255_are_not_canonical() {
+        let mut p = [0xffu8; 32];
+        p[0] = 0xed;
+        p[31] = 0x7f;
+        assert!(!canonical_share(&p));
+        p[0] = 0xec;
+        assert!(
+            canonical_share(&p),
+            "p - 1 is canonical, though small order"
+        );
+        let mut high = [0u8; 32];
+        high[0] = 9;
+        assert!(canonical_share(&high));
+        high[31] = 0x80;
+        assert!(!canonical_share(&high));
     }
 
     #[test]
