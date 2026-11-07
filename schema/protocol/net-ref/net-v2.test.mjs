@@ -82,10 +82,24 @@ test('net-v2: non-contributory X25519 shares close the handshake', () => {
 test('net-v2: handshake items carry version 2 and refuse net-v1 items', () => {
   for (const wire of Object.values(fixture.session.wire)) assert.equal(bytes(wire)[3], 2);
   assert.equal(fixture.errors.busy, '00037f0201');
+  assert.equal(fixture.errors.closed, '00037f0209');
+  assert.throws(() => handshake(0x7f, Buffer.from([10])), /invalid error/);
   const v1 = Buffer.from(bytes(fixture.session.wire.proof));
   v1[3] = 1;
   assert.throws(() => parseHandshake(v1), /version/);
   assert.throws(() => handshake(0x20, Buffer.alloc(53)), /length/);
+});
+
+test('net-v2: pair.request names refuse control characters and bidi overrides', () => {
+  const request = (name) => {
+    const bytesOfName = Buffer.from(name);
+    return handshake(0x10, inputs.companionId, Buffer.from([bytesOfName.length]), bytesOfName);
+  };
+  assert.equal(parseHandshake(request('Desk PC')).kind, 0x10);
+  for (const code of [0x00, 0x1b, 0x7f, 0x202a, 0x202e, 0x2066, 0x2069]) {
+    assert.throws(() => request(`Desk${String.fromCodePoint(code)}PC`), /control character/);
+  }
+  assert.equal(parseHandshake(request(`Desk${String.fromCodePoint(0x2065)}PC`)).kind, 0x10);
 });
 
 test('net-v2: records open each way and carry the golden link-v2 bodies', () => {
@@ -125,17 +139,65 @@ test('net-v2: BLE fragments are full size except the last and reassemble to the 
       parts.slice(0, -1).forEach((part) => assert.equal(part.length, mtu - 3));
       assert.ok(parts.at(-1).length >= 1 && parts.at(-1).length <= mtu - 3);
       const reassembler = new Reassembler(mtu - 3);
+      reassembler.records();
       const items = parts.map((part) => reassembler.push(part)).filter(Boolean);
       assert.deepEqual(items, [bytes(record.wire)]);
     }
   }
-  const handshakeParts = fragment(bytes(fixture.pairing.wire.start), 23);
+  const start = bytes(fixture.pairing.wire.start);
+  const handshakeParts = fragment(start, 23);
   assert.equal(handshakeParts.length, Math.ceil(420 / 20));
+  const reassembler = new Reassembler(20);
+  assert.deepEqual(handshakeParts.map((part) => reassembler.push(part)).filter(Boolean), [start]);
+});
+
+test('net-v2: BLE reassembly enforces the handshake and record length bounds', () => {
+  const handshakeMax = new Reassembler(244);
+  assert.throws(() => handshakeMax.push(Buffer.from([0x02, 0x01])), /item length/);
+  assert.throws(() => new Reassembler(244).push(Buffer.from([0x00, 0x02, 0x7f, 0x02])), /item length/);
+  assert.equal(new Reassembler(244).push(bytes(fixture.errors.busy)).toString('hex'), fixture.errors.busy);
+
+  const recordMin = new Reassembler(244);
+  recordMin.records();
+  assert.throws(() => recordMin.push(concat(Buffer.from([0x00, 0x17]), Buffer.alloc(23))), /item length/);
+  const recordMax = new Reassembler(244);
+  recordMax.records();
+  assert.throws(() => recordMax.push(Buffer.from([0x04, 0x19])), /item length/);
+  const fullRecord = new Reassembler(244);
+  fullRecord.records();
+  const maxItem = concat(Buffer.from([0x04, 0x18]), Buffer.alloc(1048));
+  assert.deepEqual(fragment(maxItem, 247).map((part) => fullRecord.push(part)).filter(Boolean), [maxItem]);
+});
+
+test('net-v2: BLE middle fragments are exactly F and the last is at most F', () => {
+  const wire = bytes(fixture.records[3].wire);
+  const parts = fragment(wire, 23);
+
+  const shortMiddle = new Reassembler(244);
+  shortMiddle.records();
+  shortMiddle.push(parts[0]);
+  assert.throws(() => shortMiddle.push(parts[1].subarray(0, 19)), /shorter than 20/);
+
+  const changedF = new Reassembler(244);
+  changedF.records();
+  changedF.push(parts[0]);
+  assert.throws(() => changedF.push(concat(parts[1], parts[2])), /differs from F/);
+
+  const tiny = new Reassembler(244);
+  tiny.records();
+  assert.throws(() => tiny.push(wire.subarray(0, 5)), /shorter than 20/);
+
+  const longLast = new Reassembler(244);
+  longLast.records();
+  const record = bytes(fixture.records[2].wire);
+  longLast.push(record.subarray(0, 20));
+  assert.throws(() => longLast.push(record.subarray(20)), /longer than F/);
 });
 
 test('net-v2: BLE reassembly refuses fragments that break item boundaries', () => {
   const wire = bytes(fixture.records[2].wire);
   const crossing = new Reassembler(64);
+  crossing.records();
   crossing.push(wire.subarray(0, 20));
   assert.throws(() => crossing.push(concat(wire.subarray(20), Buffer.from([0]))), /boundary/);
   assert.throws(() => crossing.push(Buffer.from([0, 0])), /closed/);

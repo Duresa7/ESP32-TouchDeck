@@ -172,7 +172,8 @@
     "expected": "close"
   },
   "errors": {
-    "busy": "00037f0201"
+    "busy": "00037f0201",
+    "closed": "00037f0209"
   },
   "ble": {
     "service": "6198f058-afef-4469-b47f-07315672e2dd",

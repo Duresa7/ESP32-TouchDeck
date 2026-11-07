@@ -4,12 +4,13 @@
 // BLE fragmentation. It is a test oracle, not a production crypto backend.
 import { createPrivateKey, createPublicKey, diffieHellman } from 'node:crypto';
 import {
-  ascii, concat, fixed, hash, mac, extract, requireThat, seal, open,
+  ascii, concat, equal, fixed, hash, mac, extract, requireThat, seal, open,
   u16, u64, validateFrame, LIMIT,
 } from './protocol.mjs';
 
 export const VERSION = 2;
 export const PORT = 47820;
+export const MIN_HANDSHAKE_BODY = 3;
 export const MAX_HANDSHAKE_BODY = 512;
 export const MAX_RECORD_BODY = 1048;
 export const MIN_RECORD_BODY = 24;
@@ -38,12 +39,12 @@ function validateFields(kind, fields) {
     const name = fields.subarray(17);
     requireThat(fields[16] === name.length, 'invalid name length');
     const decoded = new TextDecoder('utf-8', { fatal: true }).decode(name);
-    requireThat(!/\p{Cc}/u.test(decoded), 'control character in name');
+    requireThat(!/[\p{Cc}\u202a-\u202e\u2066-\u2069]/u.test(decoded), 'control character in name');
     return;
   }
   requireThat(SIZES.has(kind), 'unknown handshake kind');
   requireThat(fields.length === SIZES.get(kind), 'invalid handshake length');
-  if (kind === 0x7f) requireThat(fields[0] >= 1 && fields[0] <= 8, 'invalid error');
+  if (kind === 0x7f) requireThat(fields[0] >= 1 && fields[0] <= 9, 'invalid error');
   if (kind === 0x11) {
     const remaining = fields.readUInt32BE(22);
     requireThat(remaining > 0 && remaining <= 120000, 'invalid window duration');
@@ -89,7 +90,7 @@ export function wrapKey(keys, ltk) {
 
 export function acceptKey(keys, acceptance) {
   const { fields } = parseHandshake(acceptance, 0x15);
-  requireThat(fields.subarray(0, 32).equals(keys.deckProof), 'bad deck proof');
+  requireThat(equal(fields.subarray(0, 32), keys.deckProof), 'bad deck proof');
   return fixed(open(keys.wrap, Buffer.alloc(12), fields.subarray(32),
     concat(keys.transcript, keys.clientProof, keys.deckProof)), 32, 'LTK');
 }
@@ -208,31 +209,54 @@ export function fragment(item, attMtu = ATT_MTU_MIN) {
   return out;
 }
 
-// Reassembles fragments into items. limit is the largest body this state accepts.
+export const PHASE_LIMITS = {
+  handshake: [MIN_HANDSHAKE_BODY, MAX_HANDSHAKE_BODY],
+  record: [MIN_RECORD_BODY, MAX_RECORD_BODY],
+};
+
+// Reassembles BLE fragments into items. The phase sets the allowed body length;
+// the caller switches to 'record' after session.ready. The sender's F is learned
+// from the first fragment that isn't an item's last, then checked.
 export class Reassembler {
   constructor(maxFragment = ATT_MTU_MAX - 3) {
     this.maxFragment = maxFragment;
+    this.phase = 'handshake';
+    this.f = null;
     this.pending = null;
     this.closed = false;
   }
 
-  push(chunk, limit = MAX_RECORD_BODY) {
+  records() {
+    requireThat(this.pending === null, 'phase change inside an item');
+    this.phase = 'record';
+  }
+
+  push(chunk) {
     requireThat(!this.closed, 'reassembler closed');
     try {
       requireThat(chunk.length >= 1 && chunk.length <= this.maxFragment, 'invalid fragment size');
       if (this.pending === null) {
         requireThat(chunk.length >= 2, 'fragment splits a length prefix');
         const length = chunk.readUInt16BE();
-        requireThat(length >= 1 && length <= limit, 'invalid item length');
-        this.pending = { need: length + 2, parts: [] };
+        const [min, max] = PHASE_LIMITS[this.phase];
+        requireThat(length >= min && length <= max, 'invalid item length');
+        this.pending = { need: length + 2, have: 0, parts: [] };
       }
-      const have = this.pending.parts.reduce((sum, part) => sum + part.length, 0);
-      requireThat(have + chunk.length <= this.pending.need, 'fragment crosses an item boundary');
-      this.pending.parts.push(Buffer.from(chunk));
-      if (have + chunk.length < this.pending.need) return null;
-      const item = concat(...this.pending.parts);
+      const { pending } = this;
+      requireThat(pending.have + chunk.length <= pending.need, 'fragment crosses an item boundary');
+      const last = pending.have + chunk.length === pending.need;
+      if (last) {
+        requireThat(this.f === null || chunk.length <= this.f, 'last fragment longer than F');
+      } else {
+        requireThat(chunk.length >= 20, 'middle fragment shorter than 20');
+        if (this.f === null) this.f = chunk.length;
+        requireThat(chunk.length === this.f, 'middle fragment differs from F');
+      }
+      pending.parts.push(Buffer.from(chunk));
+      pending.have += chunk.length;
+      if (!last) return null;
       this.pending = null;
-      return item;
+      return concat(...pending.parts);
     } catch (error) {
       this.closed = true;
       throw error;

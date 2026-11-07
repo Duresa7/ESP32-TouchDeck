@@ -117,7 +117,7 @@ export function buildVectors() {
     records,
     tampered_record: { direction: 'c2d', counter: 0, wire: hex(tampered), expected: 'close' },
     non_contributory_share: { device_share: hex(Buffer.alloc(32)), expected: 'close' },
-    errors: { busy: hex(errorItem(1)) },
+    errors: { busy: hex(errorItem(1)), closed: hex(errorItem(9)) },
     ble: { ...gatt, initial_credit: MIN_INITIAL_CREDIT * 2, initial_credit_value: hex(creditValue(MIN_INITIAL_CREDIT * 2)) },
   };
 }
