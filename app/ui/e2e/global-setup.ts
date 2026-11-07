@@ -1,11 +1,13 @@
 import { chromium, type FullConfig } from '@playwright/test';
+import { checkLaunchOptions, launchOptions } from './launch-options.ts';
 
 export default async function globalSetup(config: FullConfig) {
   const baseURL = config.projects[0]?.use.baseURL ?? 'http://127.0.0.1:5174/';
   const channel = process.platform === 'win32' ? 'msedge' : undefined;
-  const browser = await chromium.launch({ channel });
+  const browser = await chromium.launch({ ...launchOptions, channel });
   try {
     const page = await browser.newPage({ baseURL });
+    await checkLaunchOptions(page, channel);
     await page.goto('/');
     await page.getByRole('list', { name: 'Devices' }).waitFor({ state: 'visible' });
     await page.getByRole('button', { name: 'Layout', exact: true }).click();
