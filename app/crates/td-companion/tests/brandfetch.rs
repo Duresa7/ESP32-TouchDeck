@@ -40,7 +40,7 @@ enum Answer {
 }
 struct Fake {
     answer: Answer,
-    svg: String,
+    svg: Vec<u8>,
     /// Where `/files/moved.*` redirects to.
     moved: String,
     /// Every request as `(path and query, authorization header)`.
@@ -420,7 +420,7 @@ async fn a_changed_logo_is_offered_as_a_replacement_and_never_pushed() {
     assert_eq!(td.wait(&job).await.state, JobState::Succeeded);
     let sent = td.deck(&device).received().len();
 
-    fake.lock().svg = SVG.replace("#e01020", "#2040f0");
+    fake.lock().svg = SVG.replace("#e01020", "#2040f0").into_bytes();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -604,4 +604,52 @@ async fn the_refresh_loop_goes_by_the_companion_clock_and_catches_up_after_sleep
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert_eq!(brand_calls(), 2, "renewed, so later checks call nothing");
     refresh.abort();
+}
+
+#[tokio::test]
+async fn a_hostile_svg_fails_cleanly_and_reads_nothing_outside_the_file() {
+    use base64::Engine;
+    use std::io::Write;
+    let (td, fake, base) = rig().await;
+    set_key(&td).await;
+    fake.lock().answer = Answer::Brand(logos(&base, "icon", &["svg"]));
+    // A local file the hostile SVG links to. Had it been read, the pick would draw its red.
+    let local = td.data_dir().join("local.svg");
+    std::fs::write(&local, SVG).unwrap();
+    let href = url::Url::from_file_path(&local).unwrap();
+    let image = |href: &str| {
+        format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="10" height="10"><image href="{href}" xlink:href="{href}" width="10" height="10"/></svg>"#
+        )
+        .into_bytes()
+    };
+    let nested = format!(
+        "data:image/svg+xml;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(SVG)
+    );
+    let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gzip.write_all(SVG.as_bytes()).unwrap();
+    let entity = r##"<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY red "#e01020">]><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="&red;"/></svg>"##;
+    for (name, svg) in [
+        ("an ENTITY", entity.as_bytes().to_vec()),
+        ("gzip", gzip.finish().unwrap()),
+        ("a local file image", image(href.as_str())),
+        ("a nested SVG data: image", image(&nested)),
+    ] {
+        fake.lock().svg = svg;
+        let done = render(&td, pick("example.com", "icon")).await;
+        assert_eq!(done.state, JobState::Failed, "{name}");
+        let error = done.error.unwrap();
+        assert_eq!(
+            error.code, "asset.render_failed",
+            "{name}: {}",
+            error.message
+        );
+    }
+    // The same stand-in still serves a plain SVG that works.
+    fake.lock().svg = SVG.into();
+    assert_eq!(
+        render(&td, pick("example.com", "icon")).await.state,
+        JobState::Succeeded
+    );
 }

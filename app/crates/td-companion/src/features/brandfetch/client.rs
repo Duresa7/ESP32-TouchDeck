@@ -7,7 +7,7 @@ use crate::features::assets::Fit;
 use image::RgbaImage;
 use serde::Deserialize;
 use std::time::Duration;
-use td_host::{catalog, icon_pack};
+use td_host::icon_pack::{self, SvgSource};
 
 pub const API_BASE: &str = "https://api.brandfetch.io";
 /// The hosts the Companion downloads a logo file from: only the `src` addresses the Brand API
@@ -311,28 +311,32 @@ pub fn draw(original: &Original, logo: &BrandfetchLogo, fit: Fit) -> Result<Rgba
         return Err("Invalid padding".into());
     }
     let cover = matches!(fit, Fit::Cover);
-    let options = catalog::Options {
-        cover,
-        padding: logo.padding,
-        background: logo.background,
-        tint: logo.tint,
-        ..Default::default()
+    let image = if original.format == FileFormat::Svg {
+        // A third party's file, drawn by the rules for uploads: no DOCTYPE, ENTITY or
+        // compression, and no linked or embedded image is ever read.
+        let inner = side - 2 * logo.padding;
+        icon_pack::render_svg_fit_from(&original.bytes, inner, inner, cover, SvgSource::Upload)?
+    } else {
+        let format = match original.format {
+            FileFormat::Png => image::ImageFormat::Png,
+            FileFormat::Webp => image::ImageFormat::WebP,
+            _ => image::ImageFormat::Jpeg,
+        };
+        let mut reader =
+            image::ImageReader::with_format(std::io::Cursor::new(&original.bytes), format);
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(4096);
+        limits.max_image_height = Some(4096);
+        limits.max_alloc = Some(64 << 20);
+        reader.limits(limits);
+        reader.decode().map_err(|e| e.to_string())?.into_rgba8()
     };
-    if original.format == FileFormat::Svg {
-        return catalog::fit(&original.bytes, true, options).map_err(|e| e.to_string());
+    // A file that draws nothing, such as an SVG whose only content is an image it may not
+    // read, makes no icon.
+    if image.pixels().all(|pixel| pixel.0[3] == 0) {
+        return Err("the logo draws nothing".into());
     }
-    let format = match original.format {
-        FileFormat::Png => image::ImageFormat::Png,
-        FileFormat::Webp => image::ImageFormat::WebP,
-        _ => image::ImageFormat::Jpeg,
-    };
-    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(&original.bytes), format);
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(4096);
-    limits.max_image_height = Some(4096);
-    reader.limits(limits);
-    let image = reader.decode().map_err(|e| e.to_string())?.into_rgba8();
-    let image = if cover {
+    let image = if cover && original.format != FileFormat::Svg {
         let (w, h) = image.dimensions();
         let s = w.min(h);
         image::imageops::crop_imm(&image, (w - s) / 2, (h - s) / 2, s, s).to_image()
