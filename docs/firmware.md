@@ -564,8 +564,10 @@ build, with the other host tests.
 and the rest of the Device, from `firmware/tools/host/link/`. It sends link
 messages through the USB console's frame handler and through a fake carrier, and
 checks which carrier each reply and event leaves on, the USB wire bytes, and the
-online state per carrier. It needs the same environment and firmware build as
-`test_ui_core.py`.
+online state per carrier. It needs a C compiler, `cl` from an x64 Visual Studio
+developer terminal on Windows or `cc` elsewhere, and one firmware build first,
+which fetches cJSON into `firmware/managed_components`. It doesn't need
+`IDF_PATH`.
 
 ## Protocol v2 identity
 
