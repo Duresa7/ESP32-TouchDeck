@@ -6,12 +6,13 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import {
-  bytes, concat, minimum, identity, clientPublic, clientSecret, serverSecret, u16, u32, frame,
+  bytes, concat, minimum, identity, clientPublic, clientSecret, serverSecret, u16, u32, u64, frame,
+  seal, LIMIT,
 } from './protocol.mjs';
 import {
   gatt, handshake, errorItem, pairKeys, wrapKey, commitProof, storedProof,
   share, x25519, sessionKeys, recordParameters, RecordSender, fragment, creditValue,
-  MIN_INITIAL_CREDIT, FORMAT_RANGES, VERSION,
+  MIN_INITIAL_CREDIT, FORMAT_RANGES, VERSION, MAX_HANDSHAKE_BODY, MAX_RECORD_BODY, MIN_RECORD_BODY,
 } from './net-v2.mjs';
 
 const ramp = (start, length) => Buffer.from(Array.from({ length }, (_, i) => (start + i) & 255));
@@ -118,6 +119,109 @@ export function companionNames() {
   };
 }
 
+// Every small-order X25519 u-coordinate, in its canonical form and as the
+// non-canonical encodings u + p, some with bit 255 set (from cr.yp.to/ecdh.html).
+export const smallOrderShares = [
+  ['u = 0', '0000000000000000000000000000000000000000000000000000000000000000'],
+  ['u = 1', '0100000000000000000000000000000000000000000000000000000000000000'],
+  ['small order', 'e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800'],
+  ['small order', '5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157'],
+  ['u = p - 1', 'ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f'],
+  ['u = p, non-canonical 0', 'edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f'],
+  ['u = p + 1, non-canonical 1', 'eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f'],
+  ['small order + p, bit 255 set', 'cdeb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b880'],
+  ['small order + p, bit 255 set', '4c9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f11d7'],
+  ['u = 2p - 1, bit 255 set', 'd9ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'],
+  ['u = 2p, bit 255 set', 'daffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'],
+  ['u = 2p + 1, bit 255 set', 'dbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'],
+];
+
+// Synthetic values used only by the negative vectors.
+export const negativeInputs = {
+  wrongCode: '654321',
+  otherEphemeral: ramp(0x41, 32),
+  otherDeviceId: bytes('020000000002'),
+  unknownCompanionId: ramp(0x60, 16),
+};
+
+const flip = (wire, index) => {
+  const out = Buffer.from(wire);
+  out[index] ^= 1;
+  return out;
+};
+
+// A record sealed at any counter, past the limit included, so receivers can
+// prove they refuse it even though its tag is valid.
+export function sealAt(key, direction, counter, body) {
+  const length = body.length + 16;
+  const aad = concat(Buffer.from('TDN2', 'ascii'), Buffer.from([direction]), u64(counter), u16(length));
+  return concat(u16(length), seal(key, concat(Buffer.alloc(4), u64(counter)), body, aad));
+}
+
+export function negativeVectors(pair = pairing(), sess = session()) {
+  const wrong = clientSecret({ I: pair.I, code: negativeInputs.wrongCode, salt: inputs.salt, a: inputs.a, B: pair.server.B });
+  const wrongKeys = pairKeys(wrong.K, pair.request, pair.offer, pair.start, pair.challenge);
+
+  const otherShare = share(negativeInputs.otherEphemeral);
+  const swappedOpen = handshake(0x20, inputs.deviceId, inputs.companionId, otherShare);
+  const swappedZ = x25519(inputs.deviceEphemeral, otherShare);
+  const swappedKeys = sessionKeys({ ltk: inputs.ltk, deviceId: inputs.deviceId, companionId: inputs.companionId,
+    clientShare: otherShare, deviceShare: sess.deviceShare, Z: swappedZ });
+
+  const highBit = Buffer.from(sess.deviceShare);
+  highBit[31] |= 0x80;
+
+  const ping = frame({ m: 'ping' });
+  const maxBody = frame(Buffer.alloc(1024, 0x5a), { type: 2 });
+  const last = LIMIT - 1n;
+  const credit = MIN_INITIAL_CREDIT * 2;
+
+  return {
+    notice: 'Every implementation MUST refuse these inputs. Public synthetic test values only.',
+    inputs: { wrong_code: negativeInputs.wrongCode, other_ephemeral: hex(negativeInputs.otherEphemeral),
+      other_device_id: hex(negativeInputs.otherDeviceId), unknown_companion_id: hex(negativeInputs.unknownCompanionId) },
+    wrong_code: { receiver: 'device', note: 'pairing.wire request, offer, start and challenge, then this proof',
+      proof: hex(handshake(0x14, wrongKeys.clientProof)), expected: 'auth', error: hex(errorItem(5)) },
+    tampered_wrapped_key: [
+      { receiver: 'companion', note: 'first ciphertext byte flipped', accept: hex(flip(pair.accept, 4 + 32)), expected: 'close' },
+      { receiver: 'companion', note: 'last tag byte flipped', accept: hex(flip(pair.accept, pair.accept.length - 1)), expected: 'close' },
+    ],
+    swapped_client_share: { receiver: 'device',
+      note: 'session.open carries another client_share; the Device answers with challenge, then gets the original session.proof',
+      open: hex(swappedOpen), challenge: hex(handshake(0x21, sess.deviceShare, swappedKeys.deckProof)),
+      proof: sess.wire.proof.toString('hex'), expected: 'close' },
+    swapped_device_share: { receiver: 'companion',
+      note: 'session.challenge carries another device_share with the original device_proof',
+      challenge: hex(handshake(0x21, otherShare, sess.keys.deckProof)), expected: 'close' },
+    wrong_device_id: { receiver: 'device', open: hex(handshake(0x20, negativeInputs.otherDeviceId, inputs.companionId, sess.clientShare)),
+      expected: 'auth', error: hex(errorItem(5)) },
+    unknown_companion_id: { receiver: 'device', open: hex(handshake(0x20, inputs.deviceId, negativeInputs.unknownCompanionId, sess.clientShare)),
+      expected: 'auth', error: hex(errorItem(5)) },
+    counter_limit: { direction: 'c2d', plaintext: hex(ping),
+      last_counter: Number(last), last: hex(sealAt(sess.keys.c2d, 0, last, ping)), last_expected: 'accept',
+      beyond_counter: Number(LIMIT), beyond: hex(sealAt(sess.keys.c2d, 0, LIMIT, ping)), beyond_expected: 'close' },
+    max_record: { direction: 'c2d', counter: 0, plaintext: hex(maxBody),
+      wire: hex(new RecordSender(sess.keys.c2d, 0).seal(maxBody)), expected: 'accept' },
+    oversize_items: [
+      { phase: 'handshake', prefix: hex(u16(MAX_HANDSHAKE_BODY + 1)), expected: 'close' },
+      { phase: 'record', prefix: hex(u16(MAX_RECORD_BODY + 1)), expected: 'close' },
+      { phase: 'record', prefix: hex(u16(MIN_RECORD_BODY - 1)), expected: 'close' },
+    ],
+    write_before_credit: { initial_credit: credit,
+      events: [{ enable: 'flow' }, { write: 20 }], expected: 'close' },
+    credit_overrun: { initial_credit: credit,
+      events: [{ enable: 'tx' }, { enable: 'flow' }, { write: 20, repeat: credit / 20 }, { write: 1 }],
+      accepted_bytes: credit, expected: 'close' },
+    x25519: {
+      rule: 'A share with bit 255 set or u >= p closes before X25519. Otherwise a share the X25519 library refuses, or an all-zero Z, closes.',
+      secret: hex(inputs.clientEphemeral),
+      small_order: smallOrderShares.map(([note, value]) => ({ note, share: value, expected: 'close' })),
+      bit_255_set: { note: 'session.device_share with bit 255 set; masking alone would give session.Z',
+        share: hex(highBit), expected: 'close' },
+    },
+  };
+}
+
 export function buildVectors() {
   const pair = pairing();
   const sess = session();
@@ -156,6 +260,7 @@ export function buildVectors() {
     tampered_record: { direction: 'c2d', counter: 0, wire: hex(tampered), expected: 'close' },
     non_contributory_share: { device_share: hex(Buffer.alloc(32)), expected: 'close' },
     companion_names: companionNames(),
+    negative: negativeVectors(pair, sess),
     errors: { busy: hex(errorItem(1)), closed: hex(errorItem(9)) },
     ble: { ...gatt, initial_credit: MIN_INITIAL_CREDIT * 2, initial_credit_value: hex(creditValue(MIN_INITIAL_CREDIT * 2)) },
   };
