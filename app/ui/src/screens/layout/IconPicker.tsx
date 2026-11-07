@@ -12,8 +12,11 @@ import { catalogTint, createCatalogSearch, monogram, SOURCE_NAMES, type CatalogS
 import { moveSpot, type Spot } from '../../lib/icons/grid.ts';
 import { appProblem, catalogProblem, ICONS_FAILED, renderApp, renderCatalog, renderUpload, searchProblem, uploadProblem, type PickDeps } from '../../lib/icons/pick.ts';
 import { forget, readRecent, recentKey, remember, writeRecent, type RecentIcon } from '../../lib/icons/recent.ts';
+import { pickProblem as brandProblem, RECENT_NAME as BRAND_RECENT, renderBrandfetch } from '../../lib/brandfetch/pick.ts';
+import type { BrandHit } from '../../lib/brandfetch/search.ts';
 import { button } from '../../shell/button.ts';
 import { AssetImage } from './AssetImage.tsx';
+import { BrandSearchStatus, BrandThumb, brandName, useBrandSearch } from './BrandfetchResults.tsx';
 import { BuiltinIcon, SYMBOL_NAMES } from './glyphs.tsx';
 
 const COLS = 4;
@@ -23,10 +26,11 @@ type Item =
   | { kind: 'symbol'; key: string; icon: string; name: string }
   | { kind: 'file'; key: string; id: string; name: string }
   | { kind: 'asset'; key: string; asset: string; name: string }
-  | { kind: 'hit'; key: string; hit: CatalogHit; name: string };
+  | { kind: 'hit'; key: string; hit: CatalogHit; name: string }
+  | { kind: 'brand'; key: string; hit: BrandHit; name: string };
 
 interface Section {
-  id: 'recent' | 'logos' | 'builtin';
+  id: 'recent' | 'logos' | 'brandfetch' | 'builtin';
   title: string;
   items: Item[];
 }
@@ -87,6 +91,8 @@ function Glyph({ item, onMissing }: { item: Item; onMissing(): void }) {
       return <AssetImage id={item.id} size={32} onMissing={onMissing} />;
     case 'asset':
       return <AssetImage id={item.asset} size={32} onMissing={onMissing} />;
+    case 'brand':
+      return <BrandThumb hit={item.hit} />;
     case 'hit': {
       const tint = catalogTint(item.hit);
       return (
@@ -121,6 +127,7 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
   const running = useRef<AbortController | null>(null);
   const cells = useRef(new Map<string, HTMLButtonElement>());
   const file = useRef<HTMLInputElement>(null);
+  const brand = useBrandSearch(companion);
   const deps = useMemo<PickDeps>(() => ({ companion, wait: (job, signal) => waitForJob<'assets.render'>(jobsStore, companion, job, { signal }) }), [companion]);
 
   useEffect(() => {
@@ -156,6 +163,7 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
   const offered: Section[] = words.length
       ? [
           { id: 'logos', title: 'Logos', items: hits.map((hit): Item => ({ kind: 'hit', key: `hit:${hit.source}:${hit.id}`, hit, name: hit.name })) },
+          { id: 'brandfetch', title: 'Brandfetch', items: brand.hits.map((hit): Item => ({ kind: 'brand', key: `brand:${hit.brandId}`, hit, name: brandName(hit) })) },
           {
             id: 'builtin',
             title: 'Built-in',
@@ -229,6 +237,16 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
             keep({ kind: 'asset', asset: ref.id, name: item.name });
           },
           (error) => catalogProblem(error, item.name),
+        );
+      case 'brand':
+        return run(
+          `Getting ${item.name} from Brandfetch…`,
+          (signal) => renderBrandfetch(deps, item.hit, signal),
+          (ref) => {
+            store.setAsset(tile.id, ref.id);
+            keep({ kind: 'asset', asset: ref.id, name: BRAND_RECENT });
+          },
+          (error) => brandProblem(error, item.name),
         );
       default: {
         const exhaustive: never = item;
@@ -310,6 +328,7 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
             setQuery(event.target.value);
             setSpot({ section: 0, index: 0 });
             searcher.current?.type(event.target.value);
+            brand.type(event.target.value);
           }}
           onKeyDown={searchKeys}
           data-testid="icon-search"
@@ -325,7 +344,7 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
             <div className="icon-cells">
               {section.items.map((item, i) => {
                 const here = active.section === s && active.index === i;
-                const source = item.kind === 'hit' ? SOURCE_NAMES[item.hit.source] ?? item.hit.source : null;
+                const source = item.kind === 'hit' ? SOURCE_NAMES[item.hit.source] ?? item.hit.source : item.kind === 'brand' ? 'Brandfetch' : null;
                 return (
                   <button
                     key={item.key}
@@ -371,6 +390,7 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
             </div>
           )}
           {builtins === 'failed' && !words.length && <p className="field-error">{ICONS_FAILED}</p>}
+          {words.length > 0 && <BrandSearchStatus search={brand} />}
         </div>
       </div>
       <div className="icon-work" role="status" data-testid="icon-work" data-state={work.kind}>
@@ -423,7 +443,18 @@ export function IconPicker({ store, tile, searchRef, onDone }: IconPickerProps) 
         <a href="https://selfh.st/icons" target="_blank" rel="noreferrer">
           selfh.st/icons
         </a>{' '}
-        (CC BY 4.0, modified) · Logos belong to their owners
+        (CC BY 4.0, modified)
+        {brand.clientId && (
+          <>
+            {' '}
+            ·{' '}
+            <a href="https://brandfetch.com" target="_blank" rel="noreferrer">
+              Brandfetch
+            </a>{' '}
+            (your keys)
+          </>
+        )}{' '}
+        · Logos belong to their owners
       </p>
     </div>
   );

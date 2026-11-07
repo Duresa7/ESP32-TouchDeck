@@ -3,7 +3,7 @@ import { createStore } from 'zustand/vanilla';
 import type { Appearance } from './theme.ts';
 
 export type Section = 'home' | 'layout' | 'integrations';
-export type SettingsSection = 'general' | 'troubleshooting';
+export type SettingsSection = 'general' | 'troubleshooting' | 'brandfetch';
 
 export interface UiState {
   section: Section;

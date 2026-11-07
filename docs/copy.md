@@ -267,7 +267,7 @@ Opens from the Device's name.
 | Secret field, saved | Saved · ends in {last4} |
 | Secret field, empty | Not set |
 | Secret field buttons | Save, Forget |
-| Secret field hint | Stored in Windows Credential Manager, never in a file. |
+| Secret field hint | Stored in {keychain}, never in a file. `{keychain}` is "Windows Credential Manager" on Windows and "your system keychain (GNOME Keyring or KWallet)" on Linux |
 | Forget confirm | Forget the {field}? {integration} stops until you add it again. |
 | Preset tile button | Add to Layout |
 | Preset tile added | Added to {device}'s Layout |

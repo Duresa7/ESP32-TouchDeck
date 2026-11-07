@@ -41,6 +41,7 @@ pub struct Ctx {
     pub layouts: crate::store::LayoutStore,
     pub assets: crate::store::AssetStore,
     pub catalog: Arc<td_host::catalog::Catalog>,
+    pub brandfetch: crate::features::brandfetch::Brandfetch,
     pub(crate) uploads: crate::features::uploads::Uploads,
     auth: Arc<Mutex<Auth>>,
     pub(crate) clock: Clock,
@@ -134,6 +135,7 @@ impl Ctx {
                 data.join("cache/catalog"),
                 Box::new(td_host::catalog::HttpFetcher),
             )),
+            brandfetch: crate::features::brandfetch::Brandfetch::new(data.join("brandfetch"), mock),
             uploads: Default::default(),
             devices,
             events,
@@ -560,7 +562,7 @@ async fn guard(State((ctx, access)): State<Guard>, request: Request, next: Next)
         },
         Err(e) => e.into_response(),
     };
-    with_security_headers(response, port)
+    with_security_headers(response, port, ctx.brandfetch.search_enabled())
 }
 fn untimed(access: &Routes, request: &Request) -> bool {
     request
@@ -630,7 +632,9 @@ fn admit(ctx: &Ctx, access: &Routes, mut request: Request) -> Result<Request, Co
     }
     Ok(request)
 }
-fn with_security_headers(mut response: Response, port: u16) -> Response {
+/// `brandfetch` opens the CSP to Brandfetch's search API and logo images, only after the user
+/// saved a Brandfetch client ID. Without it the policy keeps every request on this origin.
+fn with_security_headers(mut response: Response, port: u16, brandfetch: bool) -> Response {
     let headers = response.headers_mut();
     for (k, v) in [
         ("x-frame-options", "DENY"),
@@ -644,9 +648,17 @@ fn with_security_headers(mut response: Response, port: u16) -> Response {
     headers
         .entry("cache-control")
         .or_insert("no-store".parse().unwrap());
+    let (img, connect) = if brandfetch {
+        (
+            " https://cdn.brandfetch.io https://asset.brandfetch.io",
+            " https://api.brandfetch.io",
+        )
+    } else {
+        ("", "")
+    };
     let csp = format!(
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
-         img-src 'self' blob: data:; connect-src 'self' ws://127.0.0.1:{port}; \
+         img-src 'self' blob: data:{img}; connect-src 'self' ws://127.0.0.1:{port}{connect}; \
          font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; \
          frame-ancestors 'none'"
     );

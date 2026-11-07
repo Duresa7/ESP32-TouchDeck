@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { AlertDialog } from '@base-ui/react/alert-dialog';
 import { KeyRound } from 'lucide-react';
 import { useStore } from 'zustand';
+import { useKeychainName } from '../../lib/companion/keychain.ts';
 import type { DetailStore } from '../../lib/integrations/detail.ts';
 import type { FormField } from '../../lib/integrations/model.ts';
 import { button } from '../../shell/button.ts';
@@ -23,6 +24,7 @@ export function SecretField({ store, field, integration }: { store: DetailStore;
   const set = secret?.set === true;
   const editing = !set || replacing;
   const noun = field.label.toLowerCase();
+  const keychain = useKeychainName();
 
   useEffect(() => {
     if (replacing) input.current?.focus();
@@ -104,7 +106,7 @@ export function SecretField({ store, field, integration }: { store: DetailStore;
         </p>
       )}
       <p className="field-hint" id={`${id}-hint`}>
-        Stored in Windows Credential Manager, never in a file.
+        Stored in {keychain}, never in a file.
       </p>
       <AlertDialog.Root open={confirming} onOpenChange={setConfirming}>
         <AlertDialog.Portal>

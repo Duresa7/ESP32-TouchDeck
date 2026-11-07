@@ -257,6 +257,8 @@ pub enum AssetSource {
     Upload {
         upload: String,
     },
+    /// A logo from Brandfetch, fetched with the user's API key.
+    Brandfetch(super::brandfetch::BrandfetchLogo),
 }
 const GIF_TARGET_MAX: u16 = 4096;
 #[derive(Serialize, Deserialize, TS)]
@@ -430,6 +432,7 @@ fn render(
                 },
             )
             .map_err(|e| AssetError::RenderFailed(e.to_string()))?,
+        AssetSource::Brandfetch(logo) => return super::brandfetch::render(ctx, logo, fit, job),
         AssetSource::Upload { upload } => {
             let bytes = ctx
                 .uploads
@@ -799,7 +802,7 @@ fn gif_error(error: td_host::gif_normalize::GifError) -> AssetError {
     }
 }
 
-fn stored(error: crate::store::PutError) -> AssetError {
+pub(crate) fn stored(error: crate::store::PutError) -> AssetError {
     use crate::store::PutError as E;
     match error {
         E::Invalid => AssetError::GifFailed { reason: "invalid" },

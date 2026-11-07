@@ -64,6 +64,36 @@ impl LayoutStore {
             .flat_map(|device| self.all(&device))
             .collect()
     }
+    /// Blocking. Points every Tile of every stored Layout that shows Asset `old` at `new`
+    /// instead, and returns how many Layouts changed. Never writes to a Device.
+    pub fn replace_asset(&self, old: &str, new: &str) -> std::io::Result<usize> {
+        let (old, new) = (format!("sha256:{old}"), format!("sha256:{new}"));
+        let mut changed = 0;
+        let devices: Vec<String> = std::fs::read_dir(&self.dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .collect();
+        for device in devices {
+            for mut layout in self.all(&device) {
+                let mut hit = false;
+                for page in &mut layout.pages {
+                    if let td_core::layout::Page::Grid { tiles, .. } = page {
+                        for tile in tiles.iter_mut().filter(|t| t.asset.as_ref() == Some(&old)) {
+                            tile.asset = Some(new.clone());
+                            hit = true;
+                        }
+                    }
+                }
+                if hit {
+                    self.put(&device, &layout)?;
+                    changed += 1;
+                }
+            }
+        }
+        Ok(changed)
+    }
 }
 pub fn name(orientation: Orientation) -> &'static str {
     match orientation {

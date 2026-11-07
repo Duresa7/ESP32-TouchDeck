@@ -7,6 +7,7 @@ import type { Appearance } from '../state/theme.ts';
 import { useUi, type SettingsSection } from '../state/ui.ts';
 import { button } from './button.ts';
 import { About } from './settings/About.tsx';
+import { BrandfetchEntry, BrandfetchView } from './settings/Brandfetch.tsx';
 import { PairedBrowsers } from './settings/PairedBrowsers.tsx';
 import { StartAtSignIn } from './settings/StartAtSignIn.tsx';
 import { TroubleshootingView } from './settings/Troubleshooting.tsx';
@@ -17,13 +18,13 @@ const appearances: { value: Appearance; label: string }[] = [
   { value: 'dark', label: 'Dark' },
 ];
 
-function GeneralView({ onTroubleshooting, focusEntry }: { onTroubleshooting(): void; focusEntry: boolean }) {
+function GeneralView({ onTroubleshooting, onBrandfetch, focusEntry }: { onTroubleshooting(): void; onBrandfetch(): void; focusEntry: SettingsSection | null }) {
   const appearance = useUi((s) => s.appearance);
   const setAppearance = useUi((s) => s.setAppearance);
   const entry = useRef<HTMLButtonElement>(null);
   const ids = useId();
   useEffect(() => {
-    if (focusEntry) entry.current?.focus();
+    if (focusEntry === 'troubleshooting') entry.current?.focus();
   }, [focusEntry]);
 
   return (
@@ -65,6 +66,8 @@ function GeneralView({ onTroubleshooting, focusEntry }: { onTroubleshooting(): v
 
       <PairedBrowsers />
 
+      <BrandfetchEntry onOpen={onBrandfetch} focus={focusEntry === 'brandfetch'} />
+
       <section className="settings-section">
         <div className="group">
           <button ref={entry} type="button" className="row row-button" onClick={onTroubleshooting}>
@@ -90,16 +93,15 @@ function GeneralView({ onTroubleshooting, focusEntry }: { onTroubleshooting(): v
 function SettingsViews() {
   const section = useUi((s) => s.settingsSection);
   const show = useUi((s) => s.showSettingsSection);
-  const [moved, setMoved] = useState(false);
+  // The view the person came back from, so focus lands on its entry row again.
+  const [from, setFrom] = useState<SettingsSection | null>(null);
   const go = (next: SettingsSection) => {
-    setMoved(true);
+    setFrom(section);
     show(next);
   };
-  return section === 'troubleshooting' ? (
-    <TroubleshootingView onBack={() => go('general')} focusBack={moved} />
-  ) : (
-    <GeneralView onTroubleshooting={() => go('troubleshooting')} focusEntry={moved} />
-  );
+  if (section === 'troubleshooting') return <TroubleshootingView onBack={() => go('general')} focusBack={from !== null} />;
+  if (section === 'brandfetch') return <BrandfetchView onBack={() => go('general')} focusBack={from !== null} />;
+  return <GeneralView onTroubleshooting={() => go('troubleshooting')} onBrandfetch={() => go('brandfetch')} focusEntry={from} />;
 }
 
 export function SettingsDialog() {

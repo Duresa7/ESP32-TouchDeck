@@ -319,6 +319,21 @@ impl TestCompanion {
         let _ = self.ctx.shutdown.send(true);
         tokio::time::timeout(within, &mut self.task).await.is_ok()
     }
+    /// The Brandfetch settings and provenance, to point it at a local server.
+    pub fn brandfetch(&self) -> &crate::features::brandfetch::Brandfetch {
+        &self.ctx.brandfetch
+    }
+    /// This Companion's data directory, a fresh temporary one.
+    pub fn data_dir(&self) -> &std::path::Path {
+        self._data.path()
+    }
+    /// Runs one Brandfetch refresh as if the wall clock read `now`, in Unix seconds.
+    pub async fn refresh_brandfetch(&self, now: u64) -> crate::features::brandfetch::RefreshReport {
+        let ctx = self.ctx.clone();
+        tokio::task::spawn_blocking(move || ctx.brandfetch.refresh(&ctx.assets, &ctx.layouts, now))
+            .await
+            .unwrap()
+    }
     /// Runs one 60 s maintenance step now.
     pub async fn maintain(&self) {
         assert!(crate::process::maintain(&self.ctx).await);
