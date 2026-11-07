@@ -25,6 +25,9 @@
 #include "td_recovery.h"
 #include "td_store.h"
 #include "td_update.h"
+#if CONFIG_TD_RADIO_BUILD
+#include "td_radio.h"
+#endif
 #if CONFIG_TD_PERF_TOOLS
 #include "display_perf.h"
 /* The perf tools' boot checkpoints, for `perf mem boot`. */
@@ -134,6 +137,11 @@ void app_main(void)
     size_t update_cmd_count;
     const esp_console_cmd_t *update_cmds = td_update_console_commands(&update_cmd_count);
     register_commands("Update", update_cmds, update_cmd_count);
+#if CONFIG_TD_RADIO_BUILD
+    size_t radio_cmd_count;
+    const esp_console_cmd_t *radio_cmds = td_radio_console_commands(&radio_cmd_count);
+    register_commands("Radio", radio_cmds, radio_cmd_count);
+#endif
     BOOT_MARK("commands");
 
     /* The volume mounts before the console starts, and the settings load before the display does, which sizes its
@@ -212,6 +220,15 @@ void app_main(void)
         ESP_LOGE(TAG, "Touch failed to start: %s", esp_err_to_name(touch_err));
     }
     BOOT_MARK("touch");
+
+#if CONFIG_TD_RADIO_BUILD
+    /* Last, so the panel and the render tasks have their internal RAM before the station takes its share. */
+    esp_err_t radio_err = td_radio_start();
+    if (radio_err != ESP_OK) {
+        ESP_LOGE(TAG, "Radio failed to start: %s", esp_err_to_name(radio_err));
+    }
+    BOOT_MARK("radio");
+#endif
 
     int ticks = 0;
     while (true) {
