@@ -142,23 +142,36 @@ Unauthenticated connections are kept short:
     kind, field or state transition, invalid UTF-8 or a refused name, an
     invalid public value or an all-zero `Z`, a broken fragment rule, a
     prepared write or write with response, a write beyond the credit or
-    before the carrier connection starts, and disabling notifications.
+    before the carrier connection starts, and disabling notifications;
+  * a close the peer starts before the Device has sent a terminal error or
+    decided to close: a TCP FIN or RST, or a BLE disconnect whose reason is
+    one a peer sends when it terminates, 0x13 (remote user terminated),
+    0x14 (low resources) or 0x15 (power off). Otherwise a peer could
+    connect, idle until just before the first-item deadline, drop and
+    repeat for free.
 
   Nothing else counts. In particular these never count against the peer
   whose connection ends: a connection that another `session.open` takes over,
   a `busy` refusal (including one sent because of this backoff), and a
   `session.open` refused because USB is online. Neither do `closed`, `full`,
-  `cancelled`, `storage`, an expired pairing window, a committed Pairing, or
-  the peer or the radio ending the connection before any deadline, because
-  the Device can't tell a peer that left from a lost BLE link.
+  `cancelled`, `storage`, an expired pairing window, a committed Pairing, a
+  peer closing after the Device's terminal error, or a radio loss: any other
+  BLE disconnect reason the Device didn't cause, such as supervision timeout
+  (0x08). A modified controller can report any reason, so, like the address,
+  this limits nuisance rather than a determined attacker.
 
-  Each failure refuses that peer's next carrier connections with `busy` for a
-  delay from the failure that starts at 1000 ms, doubles on each further
-  failure up to 60000 ms, and resets when that peer reaches `session.ready`.
-  The Device keeps at least eight peers, evicting the one whose last failure
-  is oldest. Because takeovers and refusals don't count, someone who copies
-  the cleartext `companion_id` from a `session.open` on BLE can delay the
-  real Companion's handshake but can't push its address into backoff.
+  Each failure refuses that peer for a delay from the failure that starts at
+  1000 ms, doubles on each further failure up to 60000 ms, and resets when
+  that peer reaches `session.ready`. The Device applies the refusal to the
+  peer's first handshake item, as it does a takeover: a `session.open` that
+  names a stored `companion_id` skips the backoff and goes on to the
+  handshake, and any other first item gets `busy`. So someone who sends from
+  the real Companion's public BLE address with an unknown id, which gets
+  `auth` and counts against that address, can't keep the real Companion
+  out. The Device keeps at least eight peers, evicting the one whose last
+  failure is oldest. Because takeovers and refusals don't count, someone who
+  copies the cleartext `companion_id` from a `session.open` on BLE can delay
+  the real Companion's handshake but can't push its address into backoff.
   Addresses are easy to change, so this limits nuisance, not guessing; the
   pairing rules below do that.
 
@@ -358,8 +371,9 @@ is pinned to Unicode 17.0's, these inclusive hex ranges, also in the vectors'
 `0890-0891`, `08e2`, `180e`, `200b-200f`, `202a-202e`, `2060-2064`,
 `2066-206f`, `feff`, `fff9-fffb`, `110bd`, `110cd`, `13430-1343f`,
 `1bca0-1bca3`, `1d173-1d17a`, `e0001` and `e0020-e007f`. `\p{Cc}` is
-U+0000 to U+001F and U+007F to U+009F. A refused name closes the carrier
-connection.
+U+0000 to U+001F and U+007F to U+009F. The name also MUST NOT contain the
+Hangul fillers U+115F, U+1160, U+3164 and U+FFA0, letters (`\p{Lo}`) that
+render as blank space. A refused name closes the carrier connection.
 `window_id` is a fresh random 16-byte value. A new request can't replace or
 extend an open window. Three failed client proofs close the window and the
 carrier connection.
@@ -379,6 +393,14 @@ Device also limits code guesses across windows and reboots:
 * `pair_failures` is a counter in NVS. Each failed client proof increments it,
   and the Device commits it to NVS before it sends `auth`. A storage failure
   closes the window as if it were locked out.
+* A dropped window counts too. When the carrier connection bound to a window
+  ends before a commit for any reason other than Cancel on the Device, the
+  window expiring, a storage failure or a failed proof already counted, the
+  Device increments `pair_failures` once and commits it to NVS, and the
+  lockout below applies. That covers a peer close, a radio loss, a missed
+  deadline and a malformed item, so binding a fresh window and dropping it
+  isn't a free retry. A radio loss counts here, unlike in per-peer backoff,
+  because a dropped window costs the person at the Device a new window.
 * When `pair_failures` reaches 3 or more after an increment, the Device closes
   the window and the carrier connection and locks pairing for
   `min(30000 ms * 2^(pair_failures - 3), 900000 ms)`. That is 30 s, 60 s,
@@ -685,7 +707,7 @@ sessions only. Over USB, `update.begin` works as before.
 | Stored Pairings | 4 |
 | Failed proofs per pairing window | 3 |
 | Pairing lockout after the third and later failures | 30000 ms doubling, at most 900000 ms |
-| Per-peer backoff, peer-caused failures only | 1000 ms doubling, at most 60000 ms |
+| Per-peer backoff, peer-caused failures only, skipped by a stored `companion_id` | 1000 ms doubling, at most 60000 ms |
 | Firmware update prompt on the Device | 60000 ms |
 | Update prompt cooldown per Pairing after an unapproved prompt | 60000 ms doubling, at most 3600000 ms |
 
@@ -788,7 +810,8 @@ node schema/protocol/net-ref/vectors-v2.mjs --write
   `non_contributory_share`, an all-zero share that MUST close the handshake.
 * `companion_names`: the pinned `\p{Cf}` ranges, `pair.request` items whose
   names every receiver MUST accept, and items with one control or format
-  character, labelled by code point, that MUST close the carrier connection.
+  character or Hangul filler, labelled by code point, that MUST close the
+  carrier connection.
 * `errors.busy` and `errors.closed`, and the `ble` UUIDs and recommended
   initial credit.
 * `negative`: inputs every implementation MUST refuse, each with its

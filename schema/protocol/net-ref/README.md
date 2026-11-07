@@ -89,6 +89,12 @@ test also checks X25519 against RFC 7748's own vectors and HKDF against Node's
 built-in implementation. There is no net-v2 socket peer yet; the Firmware and
 Companion tickets bring their own.
 
+For per-peer backoff and pairing, `closeOutcome` tells a close the peer starts
+from a radio loss, `PeerBackoff.admits` lets a `session.open` naming a stored
+`companion_id` past a backoff, and `PairFailures` counts failed proofs and
+dropped pairing windows toward the pairing lockout. `HANGUL_FILLERS` extends
+the `companion_name` rule.
+
 `net-v2.mjs` also models three rules the Firmware and Companion must match:
 `nameAllowed` with the pinned `FORMAT_RANGES` table for `companion_name`,
 `receiveLimit` for the largest BLE fragment a receiver accepts (514 when its

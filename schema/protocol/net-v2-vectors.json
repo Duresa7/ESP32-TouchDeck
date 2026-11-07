@@ -249,6 +249,16 @@
         "expected": "close"
       },
       {
+        "label": "U+115F",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be1859f5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+1160",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be185a05043",
+        "expected": "close"
+      },
+      {
         "label": "U+180E",
         "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be1a08e5043",
         "expected": "close"
@@ -329,8 +339,18 @@
         "expected": "close"
       },
       {
+        "label": "U+3164",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736be385a45043",
+        "expected": "close"
+      },
+      {
         "label": "U+FEFF",
         "request": "001c1002101112131415161718191a1b1c1d1e1f094465736befbbbf5043",
+        "expected": "close"
+      },
+      {
+        "label": "U+FFA0",
+        "request": "001c1002101112131415161718191a1b1c1d1e1f094465736befbea05043",
         "expected": "close"
       },
       {

@@ -6,6 +6,7 @@ import {
   derive, handshake, parseHandshake, acceptKey, share, x25519, sessionKeys,
   RecordSender, RecordReceiver, fragment, Reassembler, receiveLimit, creditValue, gatt,
   MAX_ITEM, MIN_INITIAL_CREDIT, FORMAT_RANGES, nameAllowed, PeerBackoff, COUNTED, NOT_COUNTED,
+  HANGUL_FILLERS, closeOutcome, PairFailures,
 } from './net-v2.mjs';
 import { inputs, goldenFrames, pairing, session, buildVectors, readVectors } from './vectors-v2.mjs';
 
@@ -110,7 +111,8 @@ test('net-v2: the shared name vectors accept and refuse the same pair.request it
     assert.throws(() => parseHandshake(bytes(request), 0x10), /control character/, label);
   }
   const labels = rejected.map(({ label }) => label);
-  for (const mark of ['U+200E', 'U+200F', 'U+061C', 'U+200B', 'U+200C', 'U+200D', 'U+2060', 'U+FEFF']) {
+  for (const mark of ['U+200E', 'U+200F', 'U+061C', 'U+200B', 'U+200C', 'U+200D', 'U+2060', 'U+FEFF',
+    'U+115F', 'U+1160', 'U+3164', 'U+FFA0']) {
     assert.ok(labels.includes(mark), mark);
   }
 });
@@ -317,7 +319,7 @@ test('net-v2: a taken-over handshake, busy and a refusal while USB is online nev
     fresh.end('peer', outcome, 0);
     assert.equal(fresh.refusal('peer', 0), 0, outcome);
   }
-  assert.deepEqual([...COUNTED].sort(), ['auth', 'deadline', 'malformed', 'proof']);
+  assert.deepEqual([...COUNTED].sort(), ['auth', 'deadline', 'malformed', 'peer-closed', 'proof']);
 });
 
 test('net-v2: per-peer backoff keeps at least eight peers and evicts the oldest', () => {
@@ -329,4 +331,83 @@ test('net-v2: per-peer backoff keeps at least eight peers and evicts the oldest'
   assert.equal(backoff.failures('peer-1'), 0);
   assert.equal(backoff.failures('peer-0'), 2);
   assert.equal(backoff.failures('peer-8'), 1);
+});
+
+test('net-v2: names refuse the Hangul fillers', () => {
+  for (const codePoint of HANGUL_FILLERS) {
+    assert.equal(nameAllowed(`Desk${String.fromCodePoint(codePoint)}PC`), false);
+    assert.match(String.fromCodePoint(codePoint), /\p{Lo}/u);
+  }
+  assert.equal(nameAllowed('\ud55c\uae00 PC'), true);
+});
+
+test('net-v2: a close the peer starts counts toward backoff, a radio loss does not', () => {
+  assert.equal(closeOutcome('tcp', 'fin'), 'peer-closed');
+  assert.equal(closeOutcome('tcp', 'rst'), 'peer-closed');
+  for (const reason of [0x13, 0x14, 0x15]) assert.equal(closeOutcome('ble', reason), 'peer-closed');
+  for (const reason of [0x08, 0x22, 0x3d, 0x3e]) assert.equal(closeOutcome('ble', reason), 'radio-lost');
+  assert.throws(() => closeOutcome('tcp', 'timeout'), /unknown/);
+
+  // Connect, idle 1.9 s, drop, repeat: each drop now costs the peer.
+  const backoff = new PeerBackoff();
+  let now = 0;
+  const delays = [];
+  for (let i = 0; i < 4; i++) {
+    now += 1900;
+    backoff.end('idler', closeOutcome('tcp', i % 2 ? 'rst' : 'fin'), now);
+    delays.push(backoff.refusal('idler', now));
+    now += backoff.refusal('idler', now);
+  }
+  assert.deepEqual(delays, [1000, 2000, 4000, 8000]);
+
+  const ble = new PeerBackoff();
+  for (let i = 0; i < 5; i++) ble.end('flaky', closeOutcome('ble', 0x08), i * 5000);
+  assert.equal(ble.failures('flaky'), 0);
+  ble.end('flaky', closeOutcome('ble', 0x13), 30000);
+  assert.equal(ble.refusal('flaky', 30000), 1000);
+});
+
+test('net-v2: a session.open naming a stored companion_id skips per-peer backoff', () => {
+  const backoff = new PeerBackoff();
+  // An attacker sends from the real Companion's public BLE address with an
+  // unknown id, once a minute, keeping that address at the cap.
+  for (let minute = 0; minute < 8; minute++) backoff.end('victim', 'auth', minute * 60000);
+  const now = 7 * 60000 + 1;
+  assert.equal(backoff.refusal('victim', now), 60000 - 1);
+  assert.equal(backoff.admits('victim', now, { kind: 0x20, storedCompanion: true }), true);
+  assert.equal(backoff.admits('victim', now, { kind: 0x20, storedCompanion: false }), false);
+  assert.equal(backoff.admits('victim', now, { kind: 0x10 }), false);
+  assert.equal(backoff.admits('victim', now, { kind: 0x10, storedCompanion: true }), false);
+  assert.equal(backoff.admits('stranger', now, { kind: 0x10 }), true);
+  // The real Companion reaches session.ready, which clears the address.
+  backoff.end('victim', 'ready', now + 500);
+  assert.equal(backoff.admits('victim', now + 500, { kind: 0x10 }), true);
+});
+
+test('net-v2: a dropped pairing window counts toward pair_failures', () => {
+  const failures = new PairFailures();
+  failures.windowEnded('peer-closed');
+  failures.windowEnded('radio-lost');
+  assert.equal(failures.lockMs(), 0);
+  failures.windowEnded('deadline');
+  assert.equal(failures.count, 3);
+  assert.equal(failures.lockMs(), 30000);
+  failures.windowEnded('malformed');
+  assert.equal(failures.lockMs(), 60000);
+  for (const outcome of ['cancelled', 'window-expired', 'storage', 'paired']) failures.windowEnded(outcome);
+  assert.equal(failures.count, 4);
+  assert.throws(() => failures.windowEnded('busy'), /unknown window outcome/);
+
+  // Three failed proofs in one window count three times, not four.
+  const proofs = new PairFailures();
+  proofs.proofFailed();
+  proofs.proofFailed();
+  proofs.proofFailed();
+  proofs.windowEnded('auth');
+  assert.equal(proofs.count, 3);
+  proofs.committed();
+  assert.equal(proofs.lockMs(), 0);
+
+  const restored = new PairFailures(40);
+  assert.equal(restored.lockMs(), 900000);
 });
