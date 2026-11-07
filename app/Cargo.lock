@@ -3036,6 +3036,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "dirs 6.0.0",
+ "flate2",
  "fs2",
  "futures-util",
  "getrandom 0.3.4",
@@ -3082,6 +3083,8 @@ dependencies = [
 name = "td-host"
 version = "1.0.1"
 dependencies = [
+ "base64 0.22.1",
+ "flate2",
  "freedesktop-icons",
  "gif",
  "image",

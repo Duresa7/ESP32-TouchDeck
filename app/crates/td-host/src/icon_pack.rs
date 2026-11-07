@@ -79,8 +79,7 @@ pub fn render_svg_fit(
     height: u32,
     cover: bool,
 ) -> Result<RgbaImage, String> {
-    let tree = usvg::Tree::from_data(svg, &usvg::Options::default())
-        .map_err(|error| format!("svg: {error}"))?;
+    let tree = parse_svg(svg)?;
     let size = tree.size();
     let sx = width as f32 / size.width();
     let sy = height as f32 / size.height();
@@ -99,6 +98,55 @@ pub fn render_svg_fit(
         *out = Rgba([color.red(), color.green(), color.blue(), color.alpha()]);
     }
     Ok(image)
+}
+
+/// The ink monochrome icons draw with: the stroke colour of the built-in Lucide icons. An SVG
+/// that paints with `currentColor` gets it through its root `color` attribute.
+pub const INK: &str = "#f2f5fa";
+
+/// Parses an SVG that may come from anywhere. Nothing outside the document is read: an
+/// `<image>` that names a file or URL draws nothing, and only `data:` images inside it render.
+pub fn parse_svg(svg: &[u8]) -> Result<usvg::Tree, String> {
+    let options = usvg::Options {
+        resources_dir: None,
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: usvg::ImageHrefResolver::default_data_resolver(),
+            resolve_string: Box::new(|_, _| None),
+        },
+        ..usvg::Options::default()
+    };
+    usvg::Tree::from_data(svg, &options).map_err(|error| format!("svg: {error}"))
+}
+
+/// Renders an uploaded SVG so its longer side is `max` pixels, keeping its aspect. A root
+/// without a `color` draws `currentColor` in [`INK`], the way a pack icon does.
+pub fn render_svg_upload(svg: &[u8], max: u32) -> Result<RgbaImage, String> {
+    let text = std::str::from_utf8(svg).map_err(|_| "svg: not UTF-8".to_owned())?;
+    let inked = with_root_color(text);
+    let tree = parse_svg(inked.as_bytes())?;
+    let size = tree.size();
+    let scale = max as f32 / size.width().max(size.height());
+    let width = ((size.width() * scale).round() as u32).clamp(1, max);
+    let height = ((size.height() * scale).round() as u32).clamp(1, max);
+    render_svg_fit(inked.as_bytes(), width, height, false)
+}
+
+/// Adds `color` to the root `<svg>` tag when it sets none.
+fn with_root_color(svg: &str) -> String {
+    let Some(start) = svg.find("<svg") else {
+        return svg.to_owned();
+    };
+    let Some(end) = svg[start..].find('>').map(|e| start + e) else {
+        return svg.to_owned();
+    };
+    let tag = &svg[start..end];
+    if tag
+        .split_ascii_whitespace()
+        .any(|attr| attr.starts_with("color="))
+    {
+        return svg.to_owned();
+    }
+    format!("{} color=\"{INK}\"{}", &svg[..start + 4], &svg[start + 4..])
 }
 
 /// Contains an image inside a padded Tile, then applies tint and composites its background.

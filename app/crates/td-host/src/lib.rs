@@ -6,6 +6,7 @@ pub mod approval;
 pub mod catalog;
 pub mod gif_normalize;
 pub mod icon_pack;
+pub mod iconify;
 pub mod icons;
 #[cfg(target_os = "linux")]
 mod icons_linux;
@@ -17,6 +18,7 @@ mod input_linux;
 #[cfg(windows)]
 mod input_windows;
 pub mod keymap;
+pub mod packs;
 pub mod sources;
 
 pub use approval::{Approvals, CommandSpec, Grant};

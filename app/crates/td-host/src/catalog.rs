@@ -42,8 +42,35 @@ pub fn index() -> &'static Index {
         serde_json::from_str(include_str!("catalog/index.json")).expect("bundled catalog")
     })
 }
+/// How well `query` (trimmed and lowercased) matches one of `terms`: 0 exact, 1 prefix,
+/// 2 substring, or `None`.
+pub fn rank<S: AsRef<str>>(query: &str, terms: impl IntoIterator<Item = S>) -> Option<u8> {
+    terms
+        .into_iter()
+        .filter_map(|s| rank_one(query, &s.as_ref().to_lowercase()))
+        .min()
+}
+/// [`rank`] for one term that is already lowercase.
+pub fn rank_one(query: &str, term: &str) -> Option<u8> {
+    if term == query {
+        Some(0)
+    } else if term.starts_with(query) {
+        Some(1)
+    } else if term.contains(query) {
+        Some(2)
+    } else {
+        None
+    }
+}
 /// Exact, prefix, then substring matches; ties retain the generated name/source/id order.
 pub fn search(query: &str, source: Option<&str>) -> Vec<&'static Entry> {
+    search_ranked(query, source)
+        .into_iter()
+        .map(|(_, e)| e)
+        .collect()
+}
+/// [`search`] with each hit's rank, so other sources can merge into the same order.
+pub fn search_ranked(query: &str, source: Option<&str>) -> Vec<(u8, &'static Entry)> {
     let query = query.trim().to_lowercase();
     let mut hits: Vec<_> = index()
         .entries
@@ -54,27 +81,15 @@ pub fn search(query: &str, source: Option<&str>) -> Vec<&'static Entry> {
                     && (e.license.contains("NC") || e.license.contains("ND")))
         })
         .filter_map(|e| {
-            let rank = std::iter::once(&e.name)
-                .chain(&e.aliases)
-                .chain(&e.tags)
-                .filter_map(|s| {
-                    let s = s.to_lowercase();
-                    if s == query {
-                        Some(0)
-                    } else if s.starts_with(&query) {
-                        Some(1)
-                    } else if s.contains(&query) {
-                        Some(2)
-                    } else {
-                        None
-                    }
-                })
-                .min()?;
+            let rank = rank(
+                &query,
+                std::iter::once(&e.name).chain(&e.aliases).chain(&e.tags),
+            )?;
             Some((rank, e))
         })
         .collect();
     hits.sort_by_key(|(rank, _)| *rank);
-    hits.into_iter().map(|(_, e)| e).collect()
+    hits
 }
 #[derive(Debug)]
 pub enum Error {
@@ -117,6 +132,27 @@ impl Fetcher for HttpFetcher {
             .body_mut()
             .with_config()
             .limit(4 * 1024 * 1024)
+            .read_to_vec()
+            .map_err(|e| Error::Fetch(e.to_string()))
+    }
+}
+/// Like [`HttpFetcher`] with its own byte cap and timeout, for larger downloads such as
+/// Icon packs.
+pub struct HttpDownload {
+    pub limit: u64,
+    pub timeout: Duration,
+}
+impl Fetcher for HttpDownload {
+    fn fetch(&self, url: &str) -> Result<Vec<u8>, Error> {
+        ureq::get(url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
+            .call()
+            .map_err(|e| Error::Fetch(e.to_string()))?
+            .body_mut()
+            .with_config()
+            .limit(self.limit)
             .read_to_vec()
             .map_err(|e| Error::Fetch(e.to_string()))
     }

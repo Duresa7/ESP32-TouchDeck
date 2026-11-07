@@ -41,6 +41,7 @@ pub struct Ctx {
     pub layouts: crate::store::LayoutStore,
     pub assets: crate::store::AssetStore,
     pub catalog: Arc<td_host::catalog::Catalog>,
+    pub packs: Arc<td_host::packs::Packs>,
     pub(crate) uploads: crate::features::uploads::Uploads,
     auth: Arc<Mutex<Auth>>,
     pub(crate) clock: Clock,
@@ -133,6 +134,13 @@ impl Ctx {
             catalog: Arc::new(td_host::catalog::Catalog::new(
                 data.join("cache/catalog"),
                 Box::new(td_host::catalog::HttpFetcher),
+            )),
+            packs: Arc::new(td_host::packs::Packs::new(
+                data.join("packs"),
+                Box::new(td_host::catalog::HttpDownload {
+                    limit: td_host::packs::MAX_DOWNLOAD,
+                    timeout: std::time::Duration::from_secs(120),
+                }),
             )),
             uploads: Default::default(),
             devices,
