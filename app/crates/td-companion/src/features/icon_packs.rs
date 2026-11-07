@@ -24,29 +24,33 @@ use ts_rs::TS;
 pub const SOURCE: &str = "iconify:";
 /// The most hits `assets.catalog_search` returns.
 pub const SEARCH_LIMIT: usize = 500;
+/// The policy an Icon pack thumbnail is served under, in place of the app's.
+pub const THUMBNAIL_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
 #[derive(Debug, thiserror::Error)]
 pub enum IconPackError {
-    #[error("{0}")]
-    Pack(String, &'static str, StatusCode),
+    #[error(transparent)]
+    Pack(#[from] PackError),
     #[error(transparent)]
     Job(#[from] JobError),
     #[error(transparent)]
     Common(#[from] CommonError),
 }
-impl From<PackError> for IconPackError {
-    fn from(error: PackError) -> Self {
-        let (code, status) = match &error {
+impl IconPackError {
+    /// A pack error's code and status. Cancelling and disk errors answer as their Job and
+    /// common counterparts do.
+    fn pack(error: &PackError) -> (&'static str, StatusCode) {
+        match error {
             PackError::NotFound => ("icon_pack.not_found", StatusCode::NOT_FOUND),
             PackError::Exists(_) => ("icon_pack.exists", StatusCode::CONFLICT),
             PackError::Busy => ("icon_pack.busy", StatusCode::CONFLICT),
+            PackError::TooMany => ("icon_pack.too_many", StatusCode::CONFLICT),
             PackError::Invalid(_) => ("icon_pack.invalid", StatusCode::UNPROCESSABLE_ENTITY),
             PackError::Integrity => ("icon_pack.integrity", StatusCode::UNPROCESSABLE_ENTITY),
             PackError::Download(_) => ("icon_pack.download_failed", StatusCode::BAD_GATEWAY),
-            PackError::Cancelled => return JobError::Cancelled.into(),
-            PackError::Io(_) => return CommonError::Internal.into(),
-        };
-        Self::Pack(error.to_string(), code, status)
+            PackError::Cancelled => (JobError::Cancelled.code(), JobError::Cancelled.status()),
+            PackError::Io(_) => (CommonError::Internal.code(), CommonError::Internal.status()),
+        }
     }
 }
 impl ApiError for IconPackError {
@@ -54,6 +58,7 @@ impl ApiError for IconPackError {
         "icon_pack.not_found",
         "icon_pack.exists",
         "icon_pack.busy",
+        "icon_pack.too_many",
         "icon_pack.invalid",
         "icon_pack.integrity",
         "icon_pack.download_failed",
@@ -61,21 +66,21 @@ impl ApiError for IconPackError {
     ];
     fn status(&self) -> StatusCode {
         match self {
-            Self::Pack(_, _, status) => *status,
+            Self::Pack(e) => Self::pack(e).1,
             Self::Job(e) => e.status(),
             Self::Common(e) => e.status(),
         }
     }
     fn code(&self) -> &'static str {
         match self {
-            Self::Pack(_, code, _) => code,
+            Self::Pack(e) => Self::pack(e).0,
             Self::Job(e) => e.code(),
             Self::Common(e) => e.code(),
         }
     }
     fn details(&self) -> Option<serde_json::Value> {
         match self {
-            Self::Pack(..) => None,
+            Self::Pack(_) => None,
             Self::Job(e) => e.details(),
             Self::Common(e) => e.details(),
         }
@@ -135,7 +140,8 @@ impl Endpoint for Install {
     type Error = IconPackError;
     async fn handle(ctx: Ctx, req: Req<Self>) -> Result<Self::Ok, Self::Error> {
         let prefix = req.path.prefix;
-        if !ctx.packs.list().iter().any(|p| p.prefix == prefix) {
+        // Only curated packs download; an imported one has nowhere to come from.
+        if !ctx.packs.is_curated(&prefix) {
             return Err(PackError::NotFound.into());
         }
         let work = ctx.clone();
@@ -147,9 +153,6 @@ impl Endpoint for Install {
     }
 }
 fn install(ctx: &Ctx, prefix: &str, job: &JobHandle<InstallJob>) -> Result<PackInfo, Stop> {
-    job.progress(&InstallProgress {
-        stage: PackStage::Download,
-    });
     let result = ctx.packs.install(
         prefix,
         &|stage| job.progress(&InstallProgress { stage }),
@@ -242,8 +245,17 @@ impl Endpoint for Thumbnail {
             blocking(move || ctx.packs.svg(&prefix, &name)).await??,
         ))
     }
+    /// The SVG is served under its own, stricter policy: nothing loads, scripts never run,
+    /// and inline styles still apply.
     fn respond(value: PackSvg) -> Response {
-        ([(header::CONTENT_TYPE, "image/svg+xml")], value.0).into_response()
+        (
+            [
+                (header::CONTENT_TYPE, "image/svg+xml"),
+                (header::CONTENT_SECURITY_POLICY, THUMBNAIL_CSP),
+            ],
+            value.0,
+        )
+            .into_response()
     }
 }
 

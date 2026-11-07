@@ -137,10 +137,10 @@ impl Ctx {
             )),
             packs: Arc::new(td_host::packs::Packs::new(
                 data.join("packs"),
-                Box::new(td_host::catalog::HttpDownload {
-                    limit: td_host::packs::MAX_DOWNLOAD,
-                    timeout: std::time::Duration::from_secs(120),
-                }),
+                Box::new(td_host::catalog::HttpDownload::new(
+                    td_host::packs::MAX_DOWNLOAD,
+                    std::time::Duration::from_secs(120),
+                )),
             )),
             uploads: Default::default(),
             devices,
@@ -658,7 +658,11 @@ fn with_security_headers(mut response: Response, port: u16) -> Response {
          font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; \
          frame-ancestors 'none'"
     );
-    headers.insert("content-security-policy", csp.parse().unwrap());
+    // A response that sets a stricter policy of its own, such as an Icon pack thumbnail,
+    // keeps it.
+    headers
+        .entry("content-security-policy")
+        .or_insert(csp.parse().unwrap());
     response
 }
 

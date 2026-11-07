@@ -45,6 +45,9 @@ fn tarball(files: &[(&str, &[u8])]) -> Vec<u8> {
         header[124..136].copy_from_slice(format!("{:011o}\0", data.len()).as_bytes());
         header[156] = b'0';
         header[257..263].copy_from_slice(b"ustar\0");
+        header[148..156].copy_from_slice(b"        ");
+        let sum: u32 = header.iter().map(|b| u32::from(*b)).sum();
+        header[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
         tar.extend_from_slice(&header);
         tar.extend_from_slice(data);
         tar.resize(tar.len().div_ceil(512) * 512, 0);
@@ -266,16 +269,12 @@ async fn install_search_render_thumbnail_and_remove() {
     let headers = response.headers().clone();
     assert_eq!(headers["content-type"], "image/svg+xml");
     assert_eq!(headers["x-content-type-options"], "nosniff");
-    let port = td.url.rsplit(':').next().unwrap();
+    // The thumbnail's own policy replaces the app's: nothing loads and no script runs.
     assert_eq!(
         headers["content-security-policy"],
-        format!(
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
-         img-src 'self' blob: data:; connect-src 'self' ws://127.0.0.1:{port}; \
-         font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; \
-         frame-ancestors 'none'"
-        )
+        "default-src 'none'; style-src 'unsafe-inline'; sandbox"
     );
+    assert_eq!(headers.get_all("content-security-policy").iter().count(), 1);
     let svg = response.text().await.unwrap();
     assert!(
         svg.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\""),
@@ -444,6 +443,19 @@ async fn imports_are_validated_marked_custom_and_refuse_clashes() {
             .collect::<Vec<_>>(),
         [("mono", false), ("mine", true)]
     );
+    // An imported pack has nothing to download, so installing it is refused before any Job.
+    let (status, error) = failure(td.request::<Install>(
+        PackPath {
+            prefix: "mine".into(),
+        },
+        NoQuery,
+        &(),
+    ))
+    .await;
+    assert_eq!(
+        (status, error["code"].as_str()),
+        (404, Some("icon_pack.not_found"))
+    );
     let (status, _) = failure(import(vec![b' '; (32 << 20) + 1], "application/json")).await;
     assert_eq!(status, 413);
 }
@@ -517,4 +529,79 @@ async fn svg_uploads_render_without_reading_outside_files() {
     );
     let (status, _) = failure(upload(vec![b'<'; (16 << 20) + 1])).await;
     assert_eq!(status, 413);
+}
+
+#[tokio::test]
+async fn svg_uploads_refuse_entities_and_draw_no_embedded_images() {
+    let td = TestCompanion::start().await;
+    let upload = |body: Vec<u8>| {
+        td.raw()
+            .post("/api/v1/uploads")
+            .bearer_auth(&td.token)
+            .header("content-type", "image/svg+xml")
+            .body(body)
+    };
+    // The billion-laughs shape, capped small: a decoy root in a comment, one entity and many
+    // references to it. It is refused before any entity expands.
+    let laughs = format!(
+        "<!-- <svg --><!DOCTYPE svg [<!ENTITY a \"{}\">]>\
+         <svg xmlns=\"http://www.w3.org/2000/svg\"><text>{}</text></svg>",
+        "x".repeat(1024),
+        "&a;".repeat(4096)
+    );
+    let plain_doctype = "<!DOCTYPE svg><svg xmlns=\"http://www.w3.org/2000/svg\"/>";
+    for (body, reason) in [(laughs.as_str(), "ENTITY"), (plain_doctype, "DOCTYPE")] {
+        let (status, error) = failure(upload(body.as_bytes().to_vec())).await;
+        assert_eq!(
+            (status, error["code"].as_str()),
+            (400, Some("request.invalid"))
+        );
+        assert!(
+            error["details"]["reason"]
+                .as_str()
+                .unwrap()
+                .contains(reason),
+            "{error}"
+        );
+    }
+
+    // A PNG embedded as a data: URL is never decoded, so it can't skip the size limit.
+    let mut png = Vec::new();
+    image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    use base64::Engine;
+    let svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 20 20\">\
+         <rect width=\"10\" height=\"20\" fill=\"currentColor\"/>\
+         <image x=\"10\" width=\"10\" height=\"20\" href=\"data:image/png;base64,{}\"/></svg>",
+        base64::engine::general_purpose::STANDARD.encode(&png)
+    );
+    let uploaded: Value = upload(svg.into_bytes())
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let body: CreateAsset =
+        serde_json::from_value(json!({"source": {"kind": "upload", "upload": uploaded["id"]}}))
+            .unwrap();
+    let done = td
+        .wait(&td.call::<Create>((), NoQuery, body).await.unwrap())
+        .await;
+    assert_eq!(done.state, JobState::Succeeded, "{done:?}");
+    let asset = done.result.unwrap()["id"].as_str().unwrap().to_owned();
+    let file = td
+        .request::<File>(AssetPath { asset }, NoQuery, &())
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    assert_eq!(pixel(&file, 20, 32).1, 255);
+    assert_eq!(pixel(&file, 44, 32).1, 0);
 }

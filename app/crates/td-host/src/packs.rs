@@ -9,6 +9,7 @@
 use crate::{
     catalog::{self, Fetcher},
     iconify::{self, IconSet},
+    tarball,
 };
 use base64::Engine;
 use image::RgbaImage;
@@ -17,8 +18,7 @@ use sha2::{Digest, Sha512};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
-    io::Read,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
 };
 use ts_rs::TS;
@@ -27,17 +27,17 @@ use ts_rs::TS;
 pub const REGISTRY: &str = "https://registry.npmjs.org/";
 /// The largest tarball or imported file accepted.
 pub const MAX_DOWNLOAD: u64 = 32 << 20;
-/// The most bytes a tarball may unpack to, and the largest single file kept from it.
-const MAX_UNPACKED: u64 = 256 << 20;
-const MAX_FILE: u64 = 64 << 20;
+/// The most imported packs installed at once.
+pub const MAX_IMPORTED: usize = 20;
 /// The license title of an imported pack.
 pub const CUSTOM_LICENSE: &str = "Custom (you provided it)";
+/// The files a pack folder holds. Every name is fixed, so nothing from an archive or a request
+/// names a file.
 const META: &str = "pack.json";
 const ICONS: &str = "icons.json";
+const INFO: &str = "info.json";
 /// The one license file a pack keeps, whatever the package called it.
 const LICENSE: &str = "LICENSE";
-/// The longest pax header or GNU long name the reader takes.
-const MAX_HEADER: u64 = 64 << 10;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct PackLicense {
@@ -140,9 +140,11 @@ pub enum PackError {
     Exists(String),
     /// The file isn't a usable Iconify JSON pack.
     Invalid(String),
-    /// The download failed, was too large, or didn't match its pinned integrity.
+    /// [`MAX_IMPORTED`] imported packs are installed already.
+    TooMany,
+    /// The download failed or was too large.
     Download(String),
-    /// The pinned SHA-512 didn't match.
+    /// The download didn't match its pinned SHA-512.
     Integrity,
     /// Another install of this pack is running.
     Busy,
@@ -158,6 +160,10 @@ impl std::fmt::Display for PackError {
                 "An Icon pack named \"{prefix}\" is already installed or reserved."
             ),
             Self::Invalid(reason) => write!(f, "This isn't a usable Iconify JSON pack: {reason}."),
+            Self::TooMany => write!(
+                f,
+                "{MAX_IMPORTED} imported Icon packs are installed, the most the Companion keeps."
+            ),
             Self::Download(reason) => write!(f, "The Icon pack didn't download: {reason}."),
             Self::Integrity => write!(
                 f,
@@ -241,6 +247,13 @@ impl Packs {
         }
     }
 
+    /// Whether a curated pack has this prefix. Reads no disk.
+    pub fn is_curated(&self, prefix: &str) -> bool {
+        self.curated.iter().any(|c| c.prefix == prefix)
+    }
+
+    /// The folder of the pack with this prefix. A valid prefix is lowercase letters, digits
+    /// and single hyphens, so it can't climb out of the packs folder.
     fn folder(&self, prefix: &str) -> Option<PathBuf> {
         iconify::valid_name(prefix).then(|| self.dir.join(prefix))
     }
@@ -373,16 +386,20 @@ impl Packs {
             return Err(PackError::Integrity);
         }
         stage(PackStage::Extract);
-        let files = untar(&bytes, |path| {
-            let Some(name) = path.strip_prefix("package/") else {
-                return false;
-            };
-            name == ICONS || name == "info.json" || is_license(name)
-        })
-        .map_err(PackError::Invalid)?;
+        // Each kept file gets one of the fixed names; the archive's own name picks it only.
+        let kept = |path: &str| -> Option<&'static str> {
+            match path.strip_prefix("package/")? {
+                ICONS => Some(ICONS),
+                INFO => Some(INFO),
+                name if is_license(name) => Some(LICENSE),
+                _ => None,
+            }
+        };
+        let files =
+            tarball::untar(&bytes, |path| kept(path).is_some()).map_err(PackError::Invalid)?;
         let icons = files
             .iter()
-            .find(|(name, _)| name == "package/icons.json")
+            .find(|(path, _)| kept(path) == Some(ICONS))
             .ok_or_else(|| PackError::Invalid("the package holds no icons.json".into()))?;
         let set = IconSet::parse(&icons.1).map_err(PackError::Invalid)?;
         if set.prefix != pack.prefix {
@@ -405,20 +422,15 @@ impl Packs {
             palette: pack.palette,
             samples: pack.samples.clone(),
         };
-        // Files keep fixed names, so a license spelled two ways can't collide on a
-        // case-insensitive file system.
-        let mut license = false;
-        let files = files
-            .iter()
-            .filter_map(|(path, data)| {
-                let name = path.trim_start_matches("package/");
-                if !is_license(name) {
-                    return Some((name, data.as_slice()));
-                }
-                (!std::mem::replace(&mut license, true)).then_some((LICENSE, data.as_slice()))
-            })
-            .collect::<Vec<_>>();
-        self.write(&meta, &files)?;
+        // Fixed names also mean a license spelled two ways can't collide on a case-insensitive
+        // file system: the first one is kept.
+        let mut written: Vec<(&'static str, &[u8])> = Vec::new();
+        for (path, data) in &files {
+            if let Some(name) = kept(path).filter(|name| written.iter().all(|w| w.0 != *name)) {
+                written.push((name, data));
+            }
+        }
+        self.write(&meta, &written)?;
         self.keep(meta.clone(), set, names);
         stage(PackStage::Done);
         Ok(self.info(meta))
@@ -431,8 +443,16 @@ impl Packs {
         }
         let set = IconSet::parse(json).map_err(PackError::Invalid)?;
         let prefix = set.prefix.clone();
-        if self.curated.iter().any(|c| c.prefix == prefix) || self.meta(&prefix).is_some() {
+        let installed = self.installed();
+        if self.is_curated(&prefix) || installed.contains_key(&prefix) {
             return Err(PackError::Exists(prefix));
+        }
+        let imported = installed
+            .values()
+            .filter(|m| m.origin == PackOrigin::Imported)
+            .count();
+        if imported >= MAX_IMPORTED {
+            return Err(PackError::TooMany);
         }
         let _guard = Installing::start(&self.installing, &prefix)?;
         let info = set.info.clone().unwrap_or_default();
@@ -466,8 +486,10 @@ impl Packs {
         Ok(self.info(meta))
     }
 
-    /// Writes a pack into a staging folder, then moves it into place.
-    fn write(&self, meta: &Meta, files: &[(&str, &[u8])]) -> Result<(), PackError> {
+    /// Writes a pack into a staging folder, then moves it into place. A folder already at the
+    /// target holds no usable pack, since installs and imports check for one first, so it is
+    /// removed: `rename` can't replace a folder on Windows, nor a non-empty one on Linux.
+    fn write(&self, meta: &Meta, files: &[(&'static str, &[u8])]) -> Result<(), PackError> {
         let target = self.folder(&meta.prefix).ok_or(PackError::NotFound)?;
         fs::create_dir_all(&self.dir)?;
         let staging = self.dir.join(format!(".staging-{}", meta.prefix));
@@ -478,6 +500,9 @@ impl Packs {
                 fs::write(staging.join(name), data)?;
             }
             fs::write(staging.join(META), serde_json::to_vec_pretty(meta)?)?;
+            if fs::symlink_metadata(&target).is_ok() {
+                remove_any(&target)?;
+            }
             fs::rename(&staging, &target)
         })();
         if result.is_err() {
@@ -614,6 +639,15 @@ impl Drop for Installing<'_> {
     }
 }
 
+/// Removes a file, a link or a folder with everything in it. A link is removed, not followed.
+fn remove_any(path: &Path) -> std::io::Result<()> {
+    if fs::symlink_metadata(path)?.is_file() {
+        fs::remove_file(path)
+    } else {
+        fs::remove_dir_all(path)
+    }
+}
+
 fn is_license(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     !name.contains('/')
@@ -624,165 +658,13 @@ fn is_license(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_')
 }
 
-/// Whether an archive path stays inside the folder it would unpack into, on Linux and
-/// Windows alike: relative, no `..`, no drive or stream (`:`), no NUL.
-fn safe_path(path: &str) -> bool {
-    !path.is_empty()
-        && !path.starts_with(['/', '\\'])
-        && !path.contains([':', '\0'])
-        && path.split(['/', '\\']).all(|part| part != "..")
-}
-
-/// The `path` record of a pax extended header, if it has one.
-fn pax_path(data: &[u8]) -> Option<String> {
-    let mut rest = data;
-    let mut found = None;
-    while !rest.is_empty() {
-        let space = rest.iter().position(|b| *b == b' ')?;
-        let len: usize = std::str::from_utf8(&rest[..space]).ok()?.parse().ok()?;
-        if len <= space || len > rest.len() {
-            return None;
-        }
-        let record = &rest[space + 1..len];
-        let record = record.strip_suffix(b"\n").unwrap_or(record);
-        if let Some(value) = record.strip_prefix(b"path=") {
-            found = Some(String::from_utf8_lossy(value).into_owned());
-        }
-        rest = &rest[len..];
-    }
-    found
-}
-
-/// Reads the regular files `want` picks from a gzipped ustar archive, such as an npm tarball.
-/// Refuses the whole archive if any entry is a link or has a path that could leave its folder.
-fn untar(gz: &[u8], want: impl Fn(&str) -> bool) -> Result<Vec<(String, Vec<u8>)>, String> {
-    let mut reader = flate2::read::GzDecoder::new(gz).take(MAX_UNPACKED);
-    let mut out = Vec::new();
-    let mut header = [0u8; 512];
-    // A pax header or GNU long name names the entry after it.
-    let mut long_path: Option<String> = None;
-    loop {
-        let mut filled = 0;
-        while filled < header.len() {
-            let n = reader
-                .read(&mut header[filled..])
-                .map_err(|e| format!("the archive is damaged: {e}"))?;
-            if n == 0 {
-                break;
-            }
-            filled += n;
-        }
-        if filled == 0 || header.iter().all(|b| *b == 0) {
-            return Ok(out);
-        }
-        if filled < header.len() {
-            return Err("the archive ends inside a header".into());
-        }
-        let text = |range: std::ops::Range<usize>| {
-            let field = &header[range];
-            let end = field.iter().position(|b| *b == 0).unwrap_or(field.len());
-            String::from_utf8_lossy(&field[..end]).into_owned()
-        };
-        let size = u64::from_str_radix(text(124..136).trim_matches([' ', '\0']), 8)
-            .map_err(|_| "the archive has a bad size field".to_owned())?;
-        let name = text(0..100);
-        let prefix = if &header[257..262] == b"ustar" {
-            text(345..500)
-        } else {
-            String::new()
-        };
-        let flag = header[156];
-        let padded = size.div_ceil(512) * 512;
-        if matches!(flag, b'x' | b'L') {
-            if size > MAX_HEADER {
-                return Err("the archive has an oversized header".into());
-            }
-            let mut data = vec![0; padded as usize];
-            reader
-                .read_exact(&mut data)
-                .map_err(|_| "the archive is cut short".to_owned())?;
-            data.truncate(size as usize);
-            if flag == b'L' {
-                let end = data.iter().position(|b| *b == 0).unwrap_or(data.len());
-                long_path = Some(String::from_utf8_lossy(&data[..end]).into_owned());
-            } else if let Some(path) = pax_path(&data) {
-                long_path = Some(path);
-            }
-            continue;
-        }
-        let path = match long_path.take() {
-            Some(path) => path,
-            None if prefix.is_empty() => name,
-            None => format!("{prefix}/{name}"),
-        };
-        if !safe_path(&path) {
-            return Err(format!("the archive has an unsafe path: {path}"));
-        }
-        if matches!(flag, b'1' | b'2' | b'K') {
-            return Err(format!("the archive has a link: {path}"));
-        }
-        let regular = matches!(flag, b'0' | 0);
-        if regular && want(&path) {
-            if size > MAX_FILE {
-                return Err(format!("{path} is too large"));
-            }
-            let mut data = vec![0; size as usize];
-            reader
-                .read_exact(&mut data)
-                .map_err(|_| format!("{path} is cut short"))?;
-            std::io::copy(&mut (&mut reader).take(padded - size), &mut std::io::sink())
-                .map_err(|e| e.to_string())?;
-            out.retain(|(p, _)| *p != path);
-            out.push((path, data));
-        } else {
-            let skipped = std::io::copy(&mut (&mut reader).take(padded), &mut std::io::sink())
-                .map_err(|e| e.to_string())?;
-            if skipped < padded {
-                return Err("the archive is cut short".into());
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use std::io::Write;
-
-    /// A gzipped ustar archive holding `files`.
-    pub fn tarball(files: &[(&str, &[u8])]) -> Vec<u8> {
-        let entries: Vec<_> = files
-            .iter()
-            .map(|(name, data)| (*name, b'0', *data))
-            .collect();
-        archive(&entries)
-    }
-
-    /// A gzipped ustar archive of `(name, type flag, data)` entries.
-    fn archive(entries: &[(&str, u8, &[u8])]) -> Vec<u8> {
-        let mut tar = Vec::new();
-        for (name, flag, data) in entries {
-            let mut header = [0u8; 512];
-            header[..name.len()].copy_from_slice(name.as_bytes());
-            header[100..108].copy_from_slice(b"0000644\0");
-            header[124..136].copy_from_slice(format!("{:011o}\0", data.len()).as_bytes());
-            header[156] = *flag;
-            if *flag == b'2' {
-                header[157..169].copy_from_slice(b"/etc/passwd\0");
-            }
-            header[257..263].copy_from_slice(b"ustar\0");
-            header[148..156].copy_from_slice(b"        ");
-            let sum: u32 = header.iter().map(|b| u32::from(*b)).sum();
-            header[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
-            tar.extend_from_slice(&header);
-            tar.extend_from_slice(data);
-            tar.resize(tar.len().div_ceil(512) * 512, 0);
-        }
-        tar.extend_from_slice(&[0; 1024]);
-        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
-        gz.write_all(&tar).unwrap();
-        gz.finish().unwrap()
-    }
+    use crate::tarball::{
+        MAX_UNPACKED,
+        tests::{archive, tarball},
+    };
 
     #[test]
     fn curated_list_is_pinned_to_the_registry() {
@@ -1015,68 +897,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn untar_keeps_only_wanted_files_and_refuses_damage() {
-        let gz = tarball(&[
-            ("package/icons.json", b"{}"),
-            ("package/index.js", b"alert(1)"),
-            ("package/LICENSE", b"MIT"),
-        ]);
-        let files = untar(&gz, |p| p != "package/index.js").unwrap();
-        let names: Vec<_> = files.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(names, ["package/icons.json", "package/LICENSE"]);
-        assert_eq!(files[1].1, b"MIT");
-        assert!(untar(&gz[..gz.len() / 2], |_| true).is_err());
-        assert!(untar(b"not gzip", |_| true).is_err());
-        assert!(is_license("LICENSE.txt") && is_license("license") && !is_license("../LICENSE"));
-    }
-
-    #[test]
-    fn untar_refuses_entries_that_could_leave_the_pack_folder() {
-        let icons: &[u8] = b"{}";
-        let refused = |entries: &[(&str, u8, &[u8])]| {
-            let mut all = vec![("package/icons.json", b'0', icons)];
-            all.extend_from_slice(entries);
-            untar(&archive(&all), |_| true).unwrap_err()
-        };
-        for path in [
-            "../icons.json",
-            "package/../../icons.json",
-            "package\\..\\..\\icons.json",
-            "/etc/icons.json",
-            "\\\\server\\share\\icons.json",
-            "C:/icons.json",
-            "C:icons.json",
-            "package/icons.json:stream",
-        ] {
-            let error = refused(&[(path, b'0', icons)]);
-            assert!(error.contains("unsafe path"), "{path}: {error}");
-        }
-        // Links are refused even when the reader would skip them.
-        for flag in [b'1', b'2'] {
-            let error = refused(&[("package/LICENSE", flag, b"")]);
-            assert!(error.contains("link"), "{error}");
-        }
-        // A GNU long name or a pax path names the next entry, and is checked too.
-        let long: &[u8] = b"package/../../evil.json\0";
-        let error = refused(&[
-            ("././@LongLink", b'L', long),
-            ("package/ok.json", b'0', icons),
-        ]);
-        assert!(error.contains("../../evil.json"), "{error}");
-        let pax: &[u8] = b"32 path=package/../../evil.json\n";
-        let error = refused(&[("PaxHeader", b'x', pax), ("package/ok.json", b'0', icons)]);
-        assert!(error.contains("../../evil.json"), "{error}");
-        // A safe pax path is used as the entry's name.
-        let pax: &[u8] = b"27 path=package/icons.json\n";
-        let files = untar(
-            &archive(&[("PaxHeader", b'x', pax), ("short", b'0', icons)]),
-            |_| true,
-        )
-        .unwrap();
-        assert_eq!(files[0].0, "package/icons.json");
-    }
-
-    #[test]
     fn a_pack_with_a_slipping_entry_is_never_installed() {
         let dir = tempfile::tempdir().unwrap();
         let gz = archive(&[
@@ -1095,5 +915,75 @@ pub(crate) mod tests {
         assert!(!dir.path().join("packs").exists());
         assert!(!dir.path().join("escaped.json").exists());
         assert!(!packs.list()[0].installed);
+    }
+
+    #[test]
+    fn only_the_files_a_pack_needs_are_kept_under_fixed_names() {
+        assert!(is_license("LICENSE.txt") && is_license("license") && !is_license("../LICENSE"));
+        let dir = tempfile::tempdir().unwrap();
+        let gz = tarball(&[
+            ("package/icons.json", MONO.as_bytes()),
+            ("package/Licence.md", b"first"),
+            ("package/LICENSE", b"second"),
+            ("package/nested/icons.json", b"{}"),
+            ("other/icons.json", b"{}"),
+        ]);
+        let packs = Packs::with_list(
+            dir.path().to_owned(),
+            Box::new(Serve(gz.clone())),
+            vec![listed("mono", &gz)],
+        );
+        packs.install("mono", &|_| {}, &|| false).unwrap();
+        let mut kept: Vec<_> = fs::read_dir(dir.path().join("mono"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        kept.sort();
+        assert_eq!(kept, [LICENSE, ICONS, META]);
+        assert_eq!(
+            fs::read(dir.path().join("mono").join(LICENSE)).unwrap(),
+            b"first"
+        );
+    }
+
+    #[test]
+    fn a_leftover_folder_is_replaced_not_renamed_onto() {
+        let dir = tempfile::tempdir().unwrap();
+        let gz = tarball(&[("package/icons.json", MONO.as_bytes())]);
+        let packs = Packs::with_list(
+            dir.path().to_owned(),
+            Box::new(Serve(gz.clone())),
+            vec![listed("mono", &gz)],
+        );
+        // A folder without a usable pack.json, as an interrupted older install might leave.
+        fs::create_dir_all(dir.path().join("mono").join("stale")).unwrap();
+        fs::write(dir.path().join("mono").join("stale").join("x"), b"x").unwrap();
+        fs::write(dir.path().join("mine"), b"a file, not a folder").unwrap();
+        assert!(packs.install("mono", &|_| {}, &|| false).unwrap().installed);
+        assert!(!dir.path().join("mono").join("stale").exists());
+        let mine = MONO.replace("\"mono\"", "\"mine\"");
+        assert!(packs.import(mine.as_bytes()).unwrap().installed);
+        assert!(dir.path().join("mine").join(ICONS).is_file());
+    }
+
+    #[test]
+    fn imports_stop_at_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let packs = Packs::with_list(dir.path().to_owned(), Box::new(Serve(Vec::new())), vec![]);
+        let file = |i: usize| MONO.replace("\"mono\"", &format!("\"mine-{i}\""));
+        for i in 0..MAX_IMPORTED {
+            packs.import(file(i).as_bytes()).unwrap();
+        }
+        assert!(matches!(
+            packs.import(file(MAX_IMPORTED).as_bytes()),
+            Err(PackError::TooMany)
+        ));
+        // A clash still says so, and removing one makes room.
+        assert!(matches!(
+            packs.import(file(0).as_bytes()),
+            Err(PackError::Exists(_))
+        ));
+        packs.remove("mine-0").unwrap();
+        packs.import(file(MAX_IMPORTED).as_bytes()).unwrap();
     }
 }

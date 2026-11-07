@@ -20,6 +20,7 @@ mod input_windows;
 pub mod keymap;
 pub mod packs;
 pub mod sources;
+mod tarball;
 
 pub use approval::{Approvals, CommandSpec, Grant};
 pub use input::{FakeSink, InputSink, KeyEvent, Mirror, Mirrored, Outcome};
