@@ -11,7 +11,7 @@ opt-in setting starts it, nothing in the linked image may start the BLE controll
 connect, and the Wi-Fi station may start but never join a network or scan.
 
     python firmware/tools/radio_guard.py normal <build dir>
-    python firmware/tools/radio_guard.py radio <build dir>
+    python firmware/tools/radio_guard.py radio <build dir> [--size-json <idf.py size --format json2 output>]
 """
 
 import argparse
@@ -74,6 +74,12 @@ RADIO_BUILD_OPTIONS = {
     "ESP_WIFI_NVS_ENABLED": False,
 }
 RADIO_BUILD_COMPONENTS = ("td_radio", "esp_wifi", "esp_netif", "lwip", "bt")
+# The steady-state internal RAM the radio build must keep free with the station up, in bytes.
+INTERNAL_FLOOR = 24576
+# The radio build's static internal RAM (DIRAM in `idf.py size`), in bytes. The board measured 28815 bytes free in
+# steady state at 151083 bytes static, and every static byte comes out of that margin. Raise this only with a new
+# board measurement of the floor.
+DIRAM_CEILING = 153600
 
 # Functions that would start BLE, put it on the air, or join or scan a Wi-Fi network. The radio build's image must
 # define none of them: the linker drops every function that nothing calls, so a name missing from the image is a call
@@ -84,7 +90,9 @@ DORMANT_SYMBOLS = (
     "esp_nimble_init",
     "nimble_port_init",
     "nimble_port_run",
+    "nimble_port_freertos_init",
     "ble_hs_init",
+    "ble_hs_start",
     "ble_gap_adv_start",
     "ble_gap_ext_adv_start",
     "ble_gap_connect",
@@ -93,6 +101,10 @@ DORMANT_SYMBOLS = (
     "ble_gap_ext_disc",
     "esp_wifi_connect",
     "esp_wifi_scan_start",
+    "esp_wifi_wps_start",
+    "esp_wifi_80211_tx",
+    "esp_smartconfig_start",
+    "esp_now_init",
 )
 # What proves the radio build wires its station at all.
 REQUIRED_SYMBOLS = ("td_radio_start", "esp_wifi_init", "esp_wifi_start")
@@ -164,8 +176,12 @@ def check_radio(build, symbols=None):
     settings = _settings(build)
     _common(settings)
     for key, want in RADIO_BUILD_OPTIONS.items():
-        if bool(settings.get(key)) != want:
+        # A missing key fails too, so a renamed option cannot pass as off.
+        if key not in settings or bool(settings[key]) != want:
             raise GuardError(f"Radio build needs {key}={'y' if want else 'n'}")
+    floor = settings.get("TD_RADIO_INTERNAL_FLOOR")
+    if not isinstance(floor, int) or floor < INTERNAL_FLOOR:
+        raise GuardError(f"Radio build needs TD_RADIO_INTERNAL_FLOOR >= {INTERNAL_FLOOR}, not {floor!r}")
     components = _components(build)
     missing = [name for name in RADIO_BUILD_COMPONENTS if name not in components]
     if missing:
@@ -181,13 +197,29 @@ def check_radio(build, symbols=None):
             "dormant": list(DORMANT_SYMBOLS), "build_components": components}
 
 
+def check_diram(size_report, ceiling=DIRAM_CEILING):
+    """Fails when `idf.py size --format json2` reports more static internal RAM than the ceiling. Returns the use."""
+    report = json.loads(Path(size_report).read_text(encoding="utf-8"))
+    used = next((part["used"] for part in report["layout"] if part["name"] == "DIRAM"), None)
+    if used is None:
+        raise GuardError("The size report has no DIRAM figure")
+    if used > ceiling:
+        raise GuardError(f"Radio build uses {used} bytes of static internal RAM, over the {ceiling}-byte ceiling")
+    return used
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("kind", choices=("normal", "radio"))
     parser.add_argument("build", type=Path)
+    parser.add_argument("--size-json", type=Path, help="radio: `idf.py size --format json2` output to hold to the "
+                                                        "static internal RAM ceiling")
     args = parser.parse_args()
     try:
         result = (check_normal if args.kind == "normal" else check_radio)(args.build)
+        if args.kind == "radio" and args.size_json:
+            result["diram"] = check_diram(args.size_json)
+            result["diram_ceiling"] = DIRAM_CEILING
     except GuardError as error:
         print(json.dumps({"ok": False, "kind": args.kind, "error": str(error)}))
         return 1

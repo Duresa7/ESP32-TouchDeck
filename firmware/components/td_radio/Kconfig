@@ -10,11 +10,13 @@ menu "TouchDeck radio build"
 
     config TD_RADIO_INTERNAL_FLOOR
         int "Internal RAM the radio build keeps free in steady state, in bytes"
+        range 24576 131072
         default 24576
         help
             The display, the render tasks and the perf task need internal RAM. With the Wi-Fi station started, the
             radio build logs an error when less than this is free once it reaches steady state, and `radio state`
-            reports floor_ok false.
+            reports floor_ok false. It also reports floor_ok false while the station is not started. The radio
+            guard fails a build that sets it below 24576.
 
     config TD_RADIO_STEADY_MS
         int "Time from radio start to the steady-state heap report, in milliseconds"

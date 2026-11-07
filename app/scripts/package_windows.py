@@ -113,6 +113,8 @@ def prebuilt_firmware(out, revision, source):
     bundle = folder / "touchdeck.tdfw"
     shutil.copyfile(source, bundle)
     manifest = bundle_tool().check_bundle(bundle)
+    if manifest.get("radio"):
+        raise ValueError("--firmware-bundle holds the radio build; an installer ships the normal Firmware only")
     return {"source_revision": None, "requested_revision": revision, "bundle": bundle.name,
             "sha256": sha(bundle.read_bytes()), "manifest": manifest, "audit": None}
 
