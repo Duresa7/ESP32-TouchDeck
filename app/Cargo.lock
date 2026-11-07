@@ -3256,6 +3256,7 @@ dependencies = [
  "hyper-util",
  "image",
  "inventory",
+ "keyring",
  "libc",
  "parking_lot",
  "reqwest",
