@@ -530,7 +530,13 @@ mod tests {
     }
     #[test]
     fn fits_both_orientations_and_all_grid_spans() {
+        let options = |width, height| Options {
+            width,
+            height,
+            ..Default::default()
+        };
         let mut sizes = std::collections::BTreeSet::new();
+        let mut rendered = std::collections::BTreeSet::new();
         for (screen_w, screen_h) in [(1024, 600), (600, 1024)] {
             for fullscreen in [false, true] {
                 let (w, h) = if fullscreen {
@@ -553,24 +559,34 @@ mod tests {
                     }
                     lengths
                 };
-                for width in edges(w) {
-                    for height in edges(h) {
+                let (widths, heights) = (edges(w), edges(h));
+                for &width in &widths {
+                    for &height in &heights {
                         sizes.insert((width, height));
                     }
                 }
+                // Rendering costs one pass per pixel, so render every distinct
+                // width and height once against the other axis's smallest edge,
+                // plus the largest Tile.
+                let (min_w, min_h) = (*widths.first().unwrap(), *heights.first().unwrap());
+                rendered.extend(widths.iter().map(|&width| (width, min_h)));
+                rendered.extend(heights.iter().map(|&height| (min_w, height)));
+                rendered.insert((*widths.last().unwrap(), *heights.last().unwrap()));
             }
         }
-        for (width, height) in sizes {
-            let image = fit(
-                SVG,
-                true,
-                Options {
-                    width,
-                    height,
-                    ..Default::default()
-                },
-            )
-            .unwrap();
+        // Every grid size passes the size checks: a size fit rejected would
+        // return InvalidSize before it reached the (cheap) SVG parse error.
+        for &(width, height) in &sizes {
+            assert!(
+                matches!(
+                    fit(b"", true, options(width, height)),
+                    Err(Error::Render(_))
+                ),
+                "{width}x{height} rejected"
+            );
+        }
+        for (width, height) in rendered {
+            let image = fit(SVG, true, options(width, height)).unwrap();
             assert_eq!(image.dimensions(), (width, height));
         }
     }
